@@ -5,7 +5,8 @@ export const config = {
   miniAppUrl: process.env.MINI_APP_URL ?? "http://localhost:3000",
   defaultMonthlyBudget: Number(process.env.DEFAULT_MONTHLY_BUDGET ?? 45000),
   openAiApiKey: process.env.OPENAI_API_KEY,
-  openAiModel: process.env.OPENAI_MODEL ?? "gpt-4.1-mini"
+  openAiModel: process.env.OPENAI_MODEL ?? "gpt-5-mini",
+  deepgramApiKey: process.env.DEEPGRAM_API_KEY
 };
 
 export function requireRuntimeConfig() {

@@ -8,6 +8,7 @@ import { migrate, pool } from "./db.js";
 import { createExpenseParser } from "./expenseParser.js";
 import { createRepository } from "./repository.js";
 import { createTelegramBot } from "./telegram.js";
+import { createVoiceTranscriber } from "./voiceTranscriber.js";
 
 const root = resolve(fileURLToPath(new URL("../../..", import.meta.url)));
 const webRoot = join(root, "apps", "miniapp", "src");
@@ -20,9 +21,14 @@ const expenseParser = createExpenseParser({
   apiKey: config.openAiApiKey,
   model: config.openAiModel
 });
+const voiceTranscriber = createVoiceTranscriber({
+  telegramBotToken: config.telegramBotToken,
+  deepgramApiKey: config.deepgramApiKey
+});
 const bot = createTelegramBot({
   repository,
   expenseParser,
+  voiceTranscriber,
   token: config.telegramBotToken,
   miniAppUrl: config.miniAppUrl
 });

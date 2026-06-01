@@ -59,6 +59,37 @@ test("confirm callback saves draft and returns totals", async () => {
   }
 });
 
+test("voice message is transcribed and creates a draft response", async () => {
+  const calls = [];
+  const originalLog = console.log;
+  console.log = (...args) => calls.push(args);
+  try {
+    const bot = createTelegramBot({
+      token: "",
+      miniAppUrl: "http://localhost:3000",
+      repository: fakeRepository(),
+      voiceTranscriber: {
+        isConfigured: () => true,
+        transcribeTelegramVoice: async () => "кофе 70 бат"
+      }
+    });
+
+    await bot.handleUpdate({
+      message: {
+        chat: { id: 10 },
+        from: { id: 100, first_name: "M" },
+        voice: { file_id: "voice-file-id", mime_type: "audio/ogg" }
+      }
+    });
+
+    assert.match(calls[0][1].text, /кофе/);
+    assert.match(calls[0][1].text, /70 THB/);
+    assert.equal(calls[0][1].replyMarkup.inline_keyboard[0][0].callback_data, "confirm:42");
+  } finally {
+    console.log = originalLog;
+  }
+});
+
 function fakeRepository() {
   return {
     confirmedDraftId: null,

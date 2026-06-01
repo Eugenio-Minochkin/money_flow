@@ -1,17 +1,23 @@
 import { categoryName } from "../../../packages/shared/src/categories.js";
 import { createExpenseParser } from "./expenseParser.js";
 
-export function createTelegramBot({ repository, token, miniAppUrl, expenseParser = createExpenseParser() }) {
+export function createTelegramBot({
+  repository,
+  token,
+  miniAppUrl,
+  expenseParser = createExpenseParser(),
+  voiceTranscriber
+}) {
   return {
     async handleUpdate(update) {
-      if (update.message) return handleMessage({ update, repository, token, miniAppUrl, expenseParser });
+      if (update.message) return handleMessage({ update, repository, token, miniAppUrl, expenseParser, voiceTranscriber });
       if (update.callback_query) return handleCallback({ update, repository, token, miniAppUrl });
       return { ok: true };
     }
   };
 }
 
-async function handleMessage({ update, repository, token, miniAppUrl, expenseParser }) {
+async function handleMessage({ update, repository, token, miniAppUrl, expenseParser, voiceTranscriber }) {
   const message = update.message;
   const from = message.from;
   if (!from) return { ok: true };
@@ -22,7 +28,7 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
     username: from.username
   });
 
-  const text = message.text?.trim();
+  const text = await messageText({ message, token, voiceTranscriber });
   if (!text) return sendMessage(token, message.chat.id, "Пока умею принимать только текстовые расходы.");
 
   if (text === "/start") {
@@ -50,6 +56,20 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
 
   const draft = await repository.createDraft(user.id, text, parsed.expenses);
   return sendMessage(token, message.chat.id, formatDraft(draft.id, parsed.expenses), draftKeyboard(draft.id, miniAppUrl, from.id));
+}
+
+async function messageText({ message, token, voiceTranscriber }) {
+  if (message.text?.trim()) return message.text.trim();
+  if (!message.voice) return null;
+  if (!voiceTranscriber?.isConfigured()) {
+    return null;
+  }
+  try {
+    return await voiceTranscriber.transcribeTelegramVoice(message.voice);
+  } catch (error) {
+    console.error("[telegram] voice transcription failed", error.message);
+    return null;
+  }
 }
 
 async function handleCallback({ update, repository, token, miniAppUrl }) {

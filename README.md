@@ -59,7 +59,8 @@ Edit `.env.production`:
 - `TELEGRAM_BOT_TOKEN` - token from BotFather
 - `POSTGRES_PASSWORD` - strong database password
 - `OPENAI_API_KEY` - optional; enables AI parsing for text messages
-- `OPENAI_MODEL` - optional; defaults to `gpt-4.1-mini`
+- `OPENAI_MODEL` - optional; defaults to `gpt-5-mini`
+- `DEEPGRAM_API_KEY` - optional; enables Telegram voice message transcription
 
 Start:
 
