@@ -6,12 +6,21 @@ export function calculateBudgetSnapshot({
   monthTotal,
   monthlyBudget,
   plannedRemainingTotal = 0,
+  todayDisplayTotal = 0,
+  weekDisplayTotal = 0,
+  monthDisplayTotal = 0,
+  plannedRemainingDisplayTotal = 0,
+  displayCurrency = "USD",
   now
 }) {
   const remaining = monthlyBudget - monthTotal;
   const freeRemaining = remaining - plannedRemainingTotal;
+  const freeRemainingDisplay = Math.max(monthDisplayTotal, 0) === 0 && monthTotal === 0
+    ? 0
+    : Math.max(displayFromBase(freeRemaining, monthTotal, monthDisplayTotal), 0);
   const daysLeftInMonth = monthDaysLeft(now);
   const safeToSpendPerDay = roundMoney(Math.max(freeRemaining, 0) / daysLeftInMonth);
+  const safeToSpendDisplayPerDay = roundMoney(freeRemainingDisplay / daysLeftInMonth);
 
   return {
     today: roundMoney(todayTotal),
@@ -23,8 +32,22 @@ export function calculateBudgetSnapshot({
     freeRemaining: roundMoney(freeRemaining),
     daysLeftInMonth,
     safeToSpendPerDay,
+    display: {
+      currency: displayCurrency,
+      today: roundMoney(todayDisplayTotal),
+      week: roundMoney(weekDisplayTotal),
+      month: roundMoney(monthDisplayTotal),
+      plannedRemaining: roundMoney(plannedRemainingDisplayTotal),
+      freeRemaining: roundMoney(freeRemainingDisplay),
+      safeToSpendPerDay: safeToSpendDisplayPerDay
+    },
     status: budgetStatus({ monthTotal, monthlyBudget, now })
   };
+}
+
+function displayFromBase(value, baseTotal, displayTotal) {
+  if (!baseTotal) return 0;
+  return value * (displayTotal / baseTotal);
 }
 
 function budgetStatus({ monthTotal, monthlyBudget, now }) {

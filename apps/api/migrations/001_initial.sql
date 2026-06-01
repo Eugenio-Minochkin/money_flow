@@ -4,9 +4,14 @@ CREATE TABLE IF NOT EXISTS users (
   first_name TEXT,
   username TEXT,
   base_currency TEXT NOT NULL DEFAULT 'THB',
+  display_currency TEXT NOT NULL DEFAULT 'USD',
+  usd_thb_rate NUMERIC(14, 6) NOT NULL DEFAULT 36,
   monthly_budget_amount NUMERIC(14, 2) NOT NULL DEFAULT 45000,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+ALTER TABLE users ADD COLUMN IF NOT EXISTS display_currency TEXT NOT NULL DEFAULT 'USD';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS usd_thb_rate NUMERIC(14, 6) NOT NULL DEFAULT 36;
 
 CREATE TABLE IF NOT EXISTS drafts (
   id BIGSERIAL PRIMARY KEY,
@@ -56,3 +61,14 @@ CREATE TABLE IF NOT EXISTS planned_expenses (
 );
 
 CREATE INDEX IF NOT EXISTS planned_expenses_user_active_idx ON planned_expenses(user_id, active);
+
+CREATE TABLE IF NOT EXISTS planned_expense_payments (
+  id BIGSERIAL PRIMARY KEY,
+  planned_expense_id BIGINT NOT NULL REFERENCES planned_expenses(id) ON DELETE CASCADE,
+  expense_id BIGINT NOT NULL REFERENCES expenses(id) ON DELETE CASCADE,
+  paid_month TEXT NOT NULL,
+  paid_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(planned_expense_id, paid_month)
+);
+
+CREATE INDEX IF NOT EXISTS planned_expense_payments_month_idx ON planned_expense_payments(planned_expense_id, paid_month);

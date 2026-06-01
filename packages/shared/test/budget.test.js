@@ -21,8 +21,37 @@ test("calculates month remaining and safe-to-spend", () => {
     freeRemaining: 16500,
     daysLeftInMonth: 24,
     safeToSpendPerDay: 687.5,
+    display: {
+      currency: "USD",
+      today: 0,
+      week: 0,
+      month: 0,
+      plannedRemaining: 0,
+      freeRemaining: 0,
+      safeToSpendPerDay: 0
+    },
     status: "above_plan"
   });
+});
+
+test("calculates display currency safe-to-spend", () => {
+  const snapshot = calculateBudgetSnapshot({
+    todayTotal: 360,
+    todayDisplayTotal: 10,
+    weekTotal: 720,
+    weekDisplayTotal: 20,
+    monthTotal: 3600,
+    monthDisplayTotal: 100,
+    monthlyBudget: 45000,
+    plannedRemainingTotal: 3600,
+    plannedRemainingDisplayTotal: 100,
+    displayCurrency: "USD",
+    now: new Date("2026-06-07T10:00:00+07:00")
+  });
+
+  assert.equal(snapshot.display.month, 100);
+  assert.equal(snapshot.display.plannedRemaining, 100);
+  assert.equal(snapshot.display.safeToSpendPerDay, 43.75);
 });
 
 test("subtracts planned expenses from free-to-spend", () => {

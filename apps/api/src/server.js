@@ -107,6 +107,26 @@ async function route(req, res) {
     return sendJson(res, 200, { user });
   }
 
+  if (req.method === "PATCH" && url.pathname === "/api/settings") {
+    const body = await readJson(req);
+    if (!body.telegramUserId) return sendJson(res, 400, { error: "telegramUserId_required" });
+    const user = await repository.updateUserSettings(Number(body.telegramUserId), body.settings ?? {});
+    if (!user) return sendJson(res, 404, { error: "user_not_found" });
+    return sendJson(res, 200, { user });
+  }
+
+  const plannedPayMatch = url.pathname.match(/^\/api\/planned-expenses\/(\d+)\/pay$/);
+  if (plannedPayMatch && req.method === "POST") {
+    const body = await readJson(req);
+    if (!body.telegramUserId) return sendJson(res, 400, { error: "telegramUserId_required" });
+    const expense = await repository.payPlannedExpenseForTelegramUser(
+      Number(plannedPayMatch[1]),
+      Number(body.telegramUserId),
+      body.paidAt ? new Date(body.paidAt) : new Date()
+    );
+    return sendJson(res, 200, { expense });
+  }
+
   const draftMatch = url.pathname.match(/^\/api\/drafts\/(\d+)(\/confirm)?$/);
   if (draftMatch) {
     const draftId = Number(draftMatch[1]);

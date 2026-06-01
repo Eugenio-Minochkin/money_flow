@@ -37,6 +37,30 @@ export function createRepository(pool, options = {}) {
       return result.rows[0] ?? null;
     },
 
+    async updateUserSettings(telegramUserId, settings) {
+      const monthlyBudgetAmount = Number(settings.monthlyBudgetAmount);
+      const usdThbRate = Number(settings.usdThbRate ?? 36);
+      if (!Number.isFinite(monthlyBudgetAmount) || monthlyBudgetAmount <= 0) {
+        throw new Error("Monthly budget must be positive");
+      }
+      if (!Number.isFinite(usdThbRate) || usdThbRate <= 0) {
+        throw new Error("USD/THB rate must be positive");
+      }
+      const baseCurrency = normalizeCurrency(settings.baseCurrency, "THB");
+      const displayCurrency = normalizeCurrency(settings.displayCurrency, "USD");
+      const result = await pool.query(
+        `UPDATE users
+         SET monthly_budget_amount = $1,
+             base_currency = $2,
+             display_currency = $3,
+             usd_thb_rate = $4
+         WHERE telegram_user_id = $5
+         RETURNING *`,
+        [monthlyBudgetAmount, baseCurrency, displayCurrency, usdThbRate, telegramUserId]
+      );
+      return result.rows[0] ?? null;
+    },
+
     async createDraft(userId, sourceText, items) {
       const status = items.some((item) => item.needs_review) ? "inbox" : "pending";
       const result = await pool.query(
@@ -78,7 +102,7 @@ export function createRepository(pool, options = {}) {
       try {
         await client.query("BEGIN");
         const draftResult = await client.query(
-          `SELECT drafts.*, users.base_currency
+          `SELECT drafts.*, users.base_currency, users.usd_thb_rate
            FROM drafts
            JOIN users ON users.id = drafts.user_id
            WHERE drafts.id = $1 AND users.telegram_user_id = $2
@@ -105,9 +129,9 @@ export function createRepository(pool, options = {}) {
               draft.id,
               item.amount,
               item.currency,
-              item.currency === draft.base_currency ? item.amount : item.amount,
+              amountBase(item.amount, item.currency, draft.usd_thb_rate),
               draft.base_currency,
-              JSON.stringify({ [draft.base_currency]: item.amount }),
+              JSON.stringify(convertedAmounts(item.amount, item.currency, draft.base_currency, draft.usd_thb_rate)),
               spentAt.toISOString().slice(0, 10),
               item.description,
               item.category_slug,
@@ -153,25 +177,32 @@ export function createRepository(pool, options = {}) {
     async updateExpenseForTelegramUser(expenseId, telegramUserId, patch) {
       const item = normalizeDraftItem(patch);
       const spentAt = new Date(item.spent_at);
+      const user = await this.getUserByTelegramId(telegramUserId);
+      const baseCurrency = user?.base_currency ?? "THB";
+      const usdThbRate = Number(user?.usd_thb_rate ?? 36);
+      const baseAmount = amountBase(item.amount, item.currency, usdThbRate);
       const result = await pool.query(
         `UPDATE expenses
          SET amount_original = $1,
              currency_original = $2,
-             amount_base = $1,
-             converted_amounts = $3,
-             exchange_rate_date = $4,
-             description = $5,
-             category_slug = $6,
-             tags = $7,
-             spent_at = $8
-         WHERE id = $9
-           AND user_id = (SELECT id FROM users WHERE telegram_user_id = $10)
+             amount_base = $3,
+             converted_amounts = $4,
+             exchange_rate_date = $5,
+             exchange_rate_source = $6,
+             description = $7,
+             category_slug = $8,
+             tags = $9,
+             spent_at = $10
+         WHERE id = $11
+           AND user_id = (SELECT id FROM users WHERE telegram_user_id = $12)
          RETURNING id, amount_original, currency_original, description, category_slug, tags, spent_at`,
         [
           item.amount,
           item.currency,
-          JSON.stringify({ THB: item.amount }),
+          baseAmount,
+          JSON.stringify(convertedAmounts(item.amount, item.currency, baseCurrency, usdThbRate)),
           spentAt.toISOString().slice(0, 10),
+          exchangeRateSource(usdThbRate),
           item.description,
           item.category_slug,
           item.tags,
@@ -210,38 +241,46 @@ export function createRepository(pool, options = {}) {
         )`;
       }
       const result = await pool.query(
-        `SELECT id, amount_original, currency_original, description, category_slug, tags, spent_at
+        `SELECT id, amount_original, currency_original, amount_base, converted_amounts,
+                description, category_slug, tags, spent_at
          FROM expenses
          WHERE user_id = $1 AND spent_at >= $2 AND spent_at < $3
          ${searchSql}
          ORDER BY spent_at DESC`,
         params
       );
-      return result.rows;
+      return result.rows.map((row) => withDisplay(row, user));
     },
 
     async topCategories(userId, now = new Date()) {
+      const userResult = await pool.query("SELECT * FROM users WHERE id = $1", [userId]);
+      const user = userResult.rows[0] ?? {};
       const bounds = localPeriodBounds(now, "month");
       const result = await pool.query(
-        `SELECT category_slug, COALESCE(SUM(amount_base), 0)::float AS total
+        `SELECT category_slug,
+                COALESCE(SUM(amount_base), 0)::float AS total,
+                COALESCE(SUM(COALESCE(NULLIF(converted_amounts->>$4, '')::float, amount_base / NULLIF($5, 0))), 0)::float AS display_total
          FROM expenses
          WHERE user_id = $1 AND spent_at >= $2 AND spent_at < $3
          GROUP BY category_slug
          ORDER BY total DESC
          LIMIT 6`,
-        [userId, bounds.start, bounds.end]
+        [userId, bounds.start, bounds.end, user.display_currency ?? "USD", Number(user.usd_thb_rate ?? 36)]
       );
-      return result.rows;
+      return result.rows.map((row) => withDisplayTotal(row, user));
     },
 
     async listPlannedExpensesForTelegramUser(telegramUserId) {
       const result = await pool.query(
-        `SELECT planned_expenses.*
+        `SELECT planned_expenses.*, paid.paid_month
          FROM planned_expenses
          JOIN users ON users.id = planned_expenses.user_id
+         LEFT JOIN planned_expense_payments paid
+           ON paid.planned_expense_id = planned_expenses.id
+          AND paid.paid_month = $2
          WHERE users.telegram_user_id = $1 AND planned_expenses.active = true
          ORDER BY planned_expenses.id DESC`,
-        [telegramUserId]
+        [telegramUserId, monthKey(new Date())]
       );
       return result.rows;
     },
@@ -250,6 +289,7 @@ export function createRepository(pool, options = {}) {
       const user = await this.getUserByTelegramId(telegramUserId);
       if (!user) return null;
       const planned = normalizePlannedExpense(input);
+      const amountInBase = amountBase(planned.amount, planned.currency, user.usd_thb_rate);
       const result = await pool.query(
         `INSERT INTO planned_expenses (
            user_id, amount, currency, amount_base, description, category_slug, tags,
@@ -261,7 +301,7 @@ export function createRepository(pool, options = {}) {
           user.id,
           planned.amount,
           planned.currency,
-          planned.amount_base,
+          amountInBase,
           planned.description,
           planned.category_slug,
           planned.tags,
@@ -275,6 +315,8 @@ export function createRepository(pool, options = {}) {
 
     async updatePlannedExpense(telegramUserId, plannedExpenseId, input) {
       const planned = normalizePlannedExpense(input);
+      const user = await this.getUserByTelegramId(telegramUserId);
+      const amountInBase = amountBase(planned.amount, planned.currency, user?.usd_thb_rate ?? 36);
       const result = await pool.query(
         `UPDATE planned_expenses
          SET amount = $1,
@@ -293,7 +335,7 @@ export function createRepository(pool, options = {}) {
         [
           planned.amount,
           planned.currency,
-          planned.amount_base,
+          amountInBase,
           planned.description,
           planned.category_slug,
           planned.tags,
@@ -320,23 +362,92 @@ export function createRepository(pool, options = {}) {
       return result.rows[0] ?? null;
     },
 
+    async payPlannedExpenseForTelegramUser(plannedExpenseId, telegramUserId, paidAt = new Date()) {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        const plannedResult = await client.query(
+          `SELECT planned_expenses.*, users.base_currency, users.usd_thb_rate
+           FROM planned_expenses
+           JOIN users ON users.id = planned_expenses.user_id
+           WHERE planned_expenses.id = $1
+             AND users.telegram_user_id = $2
+             AND planned_expenses.active = true
+           FOR UPDATE`,
+          [plannedExpenseId, telegramUserId]
+        );
+        const planned = plannedResult.rows[0];
+        if (!planned) throw new Error("Planned expense not found");
+
+        const usdThbRate = Number(planned.usd_thb_rate ?? 36);
+        const baseAmount = amountBase(planned.amount, planned.currency, usdThbRate);
+        const converted = convertedAmounts(planned.amount, planned.currency, planned.base_currency, usdThbRate);
+        const expenseResult = await client.query(
+          `INSERT INTO expenses (
+             user_id, draft_id, amount_original, currency_original, amount_base, base_currency,
+             converted_amounts, exchange_rate_date, description, category_slug, tags, spent_at
+           )
+           VALUES ($1, NULL, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+           RETURNING *`,
+          [
+            planned.user_id,
+            planned.amount,
+            planned.currency,
+            baseAmount,
+            planned.base_currency,
+            JSON.stringify(converted),
+            paidAt.toISOString().slice(0, 10),
+            planned.description,
+            planned.category_slug,
+            planned.tags ?? [],
+            paidAt
+          ]
+        );
+        const expense = expenseResult.rows[0];
+        await client.query(
+          `INSERT INTO planned_expense_payments (planned_expense_id, expense_id, paid_month, paid_at)
+           VALUES ($1, $2, $3, $4)
+           ON CONFLICT (planned_expense_id, paid_month)
+           DO UPDATE SET expense_id = EXCLUDED.expense_id, paid_at = EXCLUDED.paid_at`,
+          [planned.id, expense.id, monthKey(paidAt), paidAt]
+        );
+        await client.query("COMMIT");
+        return expense;
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
+    },
+
     async totals(userId, now = new Date()) {
+      const userResult = await pool.query("SELECT * FROM users WHERE id = $1", [userId]);
+      const user = userResult.rows[0] ?? {};
       const [today, week, month] = await Promise.all([
-        totalForPeriod(pool, userId, "today", now),
-        totalForPeriod(pool, userId, "week", now),
-        totalForPeriod(pool, userId, "month", now)
+        totalForPeriod(pool, userId, "today", now, user),
+        totalForPeriod(pool, userId, "week", now, user),
+        totalForPeriod(pool, userId, "month", now, user)
       ]);
-      return { today, week, month };
+      return {
+        today: today.total,
+        week: week.total,
+        month: month.total,
+        todayDisplay: today.displayTotal,
+        weekDisplay: week.displayTotal,
+        monthDisplay: month.displayTotal
+      };
     },
 
     async dashboard(telegramUserId, now = new Date()) {
       const user = await this.getUserByTelegramId(telegramUserId);
       if (!user) return null;
       const totals = await this.totals(user.id, now);
-      const plannedExpenses = await this.listPlannedExpensesForTelegramUser(telegramUserId);
+      const plannedExpenses = await listPlannedExpensesForTelegramUserAt(pool, telegramUserId, now);
       const plannedRemainingTotal = calculatePlannedRemaining(plannedExpenses, now);
       const latest = await pool.query(
-        `SELECT id, amount_original, currency_original, description, category_slug, tags, spent_at
+        `SELECT id, amount_original, currency_original, amount_base, converted_amounts,
+                description, category_slug, tags, spent_at
          FROM expenses
          WHERE user_id = $1
          ORDER BY spent_at DESC
@@ -347,12 +458,23 @@ export function createRepository(pool, options = {}) {
         todayTotal: totals.today,
         weekTotal: totals.week,
         monthTotal: totals.month,
+        todayDisplayTotal: totals.todayDisplay,
+        weekDisplayTotal: totals.weekDisplay,
+        monthDisplayTotal: totals.monthDisplay,
+        displayCurrency: user.display_currency ?? "USD",
         monthlyBudget: Number(user.monthly_budget_amount),
         plannedRemainingTotal,
+        plannedRemainingDisplayTotal: displayFromBase(plannedRemainingTotal, user),
         now
       });
       const topCategories = await this.topCategories(user.id, now);
-      return { user, snapshot, latestExpenses: latest.rows, topCategories, plannedExpenses };
+      return {
+        user,
+        snapshot,
+        latestExpenses: latest.rows.map((row) => withDisplay(row, user)),
+        topCategories,
+        plannedExpenses: plannedExpenses.map((row) => withDisplayPlanned(row, user))
+      };
     }
   };
 }
@@ -363,6 +485,21 @@ function normalizeDraft(draft) {
     ...draft,
     items: Array.isArray(draft.items) ? draft.items : JSON.parse(draft.items)
   };
+}
+
+async function listPlannedExpensesForTelegramUserAt(pool, telegramUserId, now) {
+  const result = await pool.query(
+    `SELECT planned_expenses.*, paid.paid_month
+     FROM planned_expenses
+     JOIN users ON users.id = planned_expenses.user_id
+     LEFT JOIN planned_expense_payments paid
+       ON paid.planned_expense_id = planned_expenses.id
+      AND paid.paid_month = $2
+     WHERE users.telegram_user_id = $1 AND planned_expenses.active = true
+     ORDER BY planned_expenses.id DESC`,
+    [telegramUserId, monthKey(now)]
+  );
+  return result.rows;
 }
 
 function normalizeDraftItem(item) {
@@ -399,8 +536,82 @@ function normalizePlannedExpense(item) {
   };
 }
 
+function normalizeCurrency(value, fallback) {
+  const currency = String(value || fallback).toUpperCase();
+  return ["THB", "USD", "RUB"].includes(currency) ? currency : fallback;
+}
+
+function amountBase(amount, currency, usdThbRate = 36) {
+  const numeric = Number(amount);
+  if (currency === "USD") return roundMoney(numeric * Number(usdThbRate || 36));
+  return roundMoney(numeric);
+}
+
+function convertedAmounts(amount, currency, baseCurrency = "THB", usdThbRate = 36) {
+  const base = amountBase(amount, currency, usdThbRate);
+  const usd = currency === "USD" ? Number(amount) : base / Number(usdThbRate || 36);
+  return {
+    [baseCurrency]: roundMoney(base),
+    USD: roundMoney(usd)
+  };
+}
+
+function exchangeRateSource(usdThbRate) {
+  return `manual-usd-thb:${Number(usdThbRate || 36)}`;
+}
+
+function withDisplay(row, user) {
+  return {
+    ...row,
+    display: {
+      currency: user.display_currency ?? "USD",
+      amount: displayAmount(row, user)
+    }
+  };
+}
+
+function withDisplayTotal(row, user) {
+  return {
+    ...row,
+    display: {
+      currency: user.display_currency ?? "USD",
+      amount: roundMoney(Number(row.display_total ?? displayFromBase(row.total, user)))
+    }
+  };
+}
+
+function withDisplayPlanned(row, user) {
+  return {
+    ...row,
+    display: {
+      currency: user.display_currency ?? "USD",
+      amount: displayFromBase(row.amount_base, user)
+    }
+  };
+}
+
+function displayAmount(row, user) {
+  const converted = typeof row.converted_amounts === "string"
+    ? JSON.parse(row.converted_amounts)
+    : row.converted_amounts;
+  const currency = user.display_currency ?? "USD";
+  if (converted && converted[currency] != null) return roundMoney(Number(converted[currency]));
+  return displayFromBase(row.amount_base, user);
+}
+
+function displayFromBase(amountBaseValue, user) {
+  const currency = user.display_currency ?? "USD";
+  if (currency === "THB") return roundMoney(Number(amountBaseValue));
+  return roundMoney(Number(amountBaseValue) / Number(user.usd_thb_rate ?? 36));
+}
+
+function roundMoney(value) {
+  return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
+}
+
 function calculatePlannedRemaining(plannedExpenses, now) {
   return plannedExpenses.reduce((sum, item) => {
+    if (item.paid_month === monthKey(now)) return sum;
     return sum + Number(item.amount_base) * occurrencesLeftThisMonth(item, now);
   }, 0);
 }
@@ -428,13 +639,23 @@ function startOfLocalDay(now) {
   return new Date(Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate()) - 7 * 60 * 60_000);
 }
 
-async function totalForPeriod(pool, userId, period, now) {
+function monthKey(now) {
+  const local = new Date(now.getTime() + 7 * 60 * 60_000);
+  const month = String(local.getUTCMonth() + 1).padStart(2, "0");
+  return `${local.getUTCFullYear()}-${month}`;
+}
+
+async function totalForPeriod(pool, userId, period, now, user = {}) {
   const bounds = localPeriodBounds(now, period);
   const result = await pool.query(
-    `SELECT COALESCE(SUM(amount_base), 0)::float AS total
+    `SELECT COALESCE(SUM(amount_base), 0)::float AS total,
+            COALESCE(SUM(COALESCE(NULLIF(converted_amounts->>$4, '')::float, amount_base / NULLIF($5, 0))), 0)::float AS display_total
      FROM expenses
      WHERE user_id = $1 AND spent_at >= $2 AND spent_at < $3`,
-    [userId, bounds.start, bounds.end]
+    [userId, bounds.start, bounds.end, user.display_currency ?? "USD", Number(user.usd_thb_rate ?? 36)]
   );
-  return Number(result.rows[0].total);
+  return {
+    total: Number(result.rows[0]?.total ?? 0),
+    displayTotal: Number(result.rows[0]?.display_total ?? 0)
+  };
 }

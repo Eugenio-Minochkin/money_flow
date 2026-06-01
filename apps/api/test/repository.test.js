@@ -17,6 +17,33 @@ test("updates monthly budget for a Telegram user", async () => {
   assert.equal(queries[0].params[1], 100);
 });
 
+test("updates user budget and display currency settings", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql, params });
+    return {
+      rows: [{
+        monthly_budget_amount: params[0],
+        base_currency: params[1],
+        display_currency: params[2],
+        usd_thb_rate: params[3]
+      }]
+    };
+  }));
+
+  const user = await repo.updateUserSettings(100, {
+    monthlyBudgetAmount: 60000,
+    baseCurrency: "THB",
+    displayCurrency: "USD",
+    usdThbRate: 36.5
+  });
+
+  assert.equal(Number(user.monthly_budget_amount), 60000);
+  assert.equal(user.display_currency, "USD");
+  assert.equal(Number(user.usd_thb_rate), 36.5);
+  assert.equal(queries[0].params[4], 100);
+});
+
 test("returns a draft owned by a Telegram user", async () => {
   const repo = createRepository(fakePool(() => ({
     rows: [{ id: "42", status: "pending", items: [{ description: "кофе" }] }]
@@ -46,10 +73,10 @@ test("updates an expense owned by a Telegram user", async () => {
       amount_original: params[0],
       amount_base: params[0],
       currency_original: params[1],
-      description: params[4],
-      category_slug: params[5],
-      tags: params[6],
-      spent_at: params[7]
+      description: params[6],
+      category_slug: params[7],
+      tags: params[8],
+      spent_at: params[9]
     }]
   })));
 
@@ -119,6 +146,133 @@ test("creates and lists planned expenses", async () => {
 
   assert.equal(created.description, "ChatGPT");
   assert.equal(planned[0].recurrence, "monthly");
+});
+
+test("paying a planned expense creates an expense and records payment month", async () => {
+  const queries = [];
+  const client = {
+    async query(sql, params = []) {
+      queries.push({ sql, params });
+      if (String(sql).includes("SELECT planned_expenses.*, users.base_currency")) {
+        return {
+          rows: [{
+            id: "5",
+            user_id: "1",
+            amount: "17000",
+            currency: "THB",
+            amount_base: "17000",
+            description: "квартира",
+            category_slug: "home",
+            tags: ["дом"],
+            base_currency: "THB"
+          }]
+        };
+      }
+      if (String(sql).includes("INSERT INTO expenses")) {
+        return {
+          rows: [{
+            id: "20",
+            amount_original: params[1],
+            currency_original: params[2],
+            amount_base: params[3],
+            description: params[7],
+            category_slug: params[8]
+          }]
+        };
+      }
+      if (String(sql).includes("INSERT INTO planned_expense_payments")) return { rows: [{ id: "9" }] };
+      return { rows: [] };
+    },
+    release() {}
+  };
+  const repo = createRepository({
+    async connect() {
+      return client;
+    }
+  });
+
+  const expense = await repo.payPlannedExpenseForTelegramUser(5, 100, new Date("2026-06-17T09:00:00+07:00"));
+
+  assert.equal(expense.description, "квартира");
+  assert.equal(Number(expense.amount_original), 17000);
+  assert.ok(queries.some((query) => String(query.sql).includes("INSERT INTO planned_expense_payments")));
+  assert.ok(queries.some((query) => String(query.sql) === "COMMIT"));
+});
+
+test("dashboard excludes current-month paid planned expenses from reserve", async () => {
+  const repo = createRepository(fakePool((sql) => {
+    if (String(sql).startsWith("SELECT * FROM users")) {
+      return { rows: [{ id: "1", telegram_user_id: "100", monthly_budget_amount: "45000" }] };
+    }
+    if (String(sql).includes("planned_expense_payments")) {
+      return {
+        rows: [{
+          id: "5",
+          amount: "17000",
+          amount_base: "17000",
+          currency: "THB",
+          description: "квартира",
+          category_slug: "home",
+          recurrence: "monthly",
+          due_day: 17,
+          paid_month: "2026-06"
+        }]
+      };
+    }
+    if (String(sql).includes("COALESCE(SUM(amount_base)")) return { rows: [{ total: 0 }] };
+    if (String(sql).includes("FROM expenses") && String(sql).includes("ORDER BY spent_at")) return { rows: [] };
+    if (String(sql).includes("GROUP BY category_slug")) return { rows: [] };
+    return { rows: [] };
+  }));
+
+  const dashboard = await repo.dashboard(100, new Date("2026-06-10T10:00:00+07:00"));
+
+  assert.equal(dashboard.snapshot.plannedRemaining, 0);
+  assert.equal(dashboard.snapshot.freeRemaining, 45000);
+});
+
+test("dashboard returns USD display totals from converted amounts", async () => {
+  const repo = createRepository(fakePool((sql) => {
+    if (String(sql).startsWith("SELECT * FROM users")) {
+      return {
+        rows: [{
+          id: "1",
+          telegram_user_id: "100",
+          monthly_budget_amount: "45000",
+          display_currency: "USD",
+          usd_thb_rate: "36"
+        }]
+      };
+    }
+    if (String(sql).includes("planned_expense_payments")) return { rows: [] };
+    if (String(sql).includes("display_total")) return { rows: [{ total: 3600, display_total: 100 }] };
+    if (String(sql).includes("FROM expenses") && String(sql).includes("ORDER BY spent_at")) {
+      return {
+        rows: [{
+          id: "7",
+          amount_original: "3600",
+          currency_original: "THB",
+          amount_base: "3600",
+          converted_amounts: { THB: 3600, USD: 100 },
+          description: "ужин",
+          category_slug: "food_cafe",
+          tags: [],
+          spent_at: "2026-06-01T10:00:00.000Z"
+        }]
+      };
+    }
+    if (String(sql).includes("GROUP BY category_slug")) {
+      return { rows: [{ category_slug: "food_cafe", total: 3600, display_total: 100 }] };
+    }
+    return { rows: [] };
+  }));
+
+  const dashboard = await repo.dashboard(100, new Date("2026-06-10T10:00:00+07:00"));
+
+  assert.equal(dashboard.snapshot.display.currency, "USD");
+  assert.equal(dashboard.snapshot.display.month, 100);
+  assert.equal(dashboard.latestExpenses[0].display.amount, 100);
+  assert.equal(dashboard.topCategories[0].display.amount, 100);
 });
 
 function fakePool(handler) {

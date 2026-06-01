@@ -3,18 +3,18 @@ const telegramUserId = params.get("telegramUserId") || window.Telegram?.WebApp?.
 const draftId = params.get("draftId");
 
 const categories = [
-  ["food_cafe", "Еда и кафе"],
-  ["groceries", "Продукты"],
-  ["home", "Дом"],
-  ["transport", "Байк / транспорт"],
-  ["health", "Тело / здоровье"],
-  ["sport_activities", "Спорт / активности"],
-  ["gear", "Вещи / экипировка"],
-  ["travel", "Путешествия"],
-  ["subscriptions", "Подписки / связь"],
-  ["gifts_help", "Подарки / помощь"],
-  ["entertainment", "Развлечения"],
-  ["other", "Другое"]
+  ["food_cafe", "Еда и кафе", "#d85d35"],
+  ["groceries", "Продукты", "#c28f2c"],
+  ["home", "Дом", "#9a6a30"],
+  ["transport", "Байк / транспорт", "#2f80c0"],
+  ["health", "Тело / здоровье", "#b84d7a"],
+  ["sport_activities", "Спорт / активности", "#4e9b55"],
+  ["gear", "Вещи / экипировка", "#7a6a55"],
+  ["travel", "Путешествия", "#1d7f75"],
+  ["subscriptions", "Подписки / связь", "#6a62c8"],
+  ["gifts_help", "Подарки / помощь", "#c46a8a"],
+  ["entertainment", "Развлечения", "#d87135"],
+  ["other", "Другое", "#756b61"]
 ];
 
 const money = new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 });
@@ -23,20 +23,31 @@ const statusLabels = {
   below_plan: "ниже плана",
   on_plan: "в плане"
 };
+const screenTitles = {
+  dashboard: "Dashboard",
+  history: "History",
+  settings: "Settings"
+};
 
 let dashboardState = null;
 let draftState = null;
 let historyState = [];
+let hiddenNoticeIds = new Set();
 
 if (window.Telegram?.WebApp) {
   window.Telegram.WebApp.ready();
   window.Telegram.WebApp.expand();
 }
 
-document.querySelector("#budgetForm").addEventListener("submit", saveBudget);
+document.querySelector("#settingsForm").addEventListener("submit", saveSettings);
 document.querySelector("#historySearchForm").addEventListener("submit", (event) => {
   event.preventDefault();
   loadHistory();
+});
+document.querySelector("#togglePlannedForm").addEventListener("click", () => {
+  const form = document.querySelector("#plannedForm");
+  form.classList.toggle("hidden");
+  if (!form.classList.contains("hidden")) form.scrollIntoView({ behavior: "smooth", block: "start" });
 });
 document.querySelectorAll("[data-tab]").forEach((button) => {
   button.addEventListener("click", () => switchTab(button.dataset.tab));
@@ -56,6 +67,8 @@ async function loadDashboard() {
   const data = await api(`/api/dashboard?telegramUserId=${encodeURIComponent(telegramUserId)}`);
   dashboardState = data;
   renderSnapshot(data.snapshot);
+  renderSettings(data.user);
+  renderPlannedNotice(data.plannedExpenses ?? []);
   renderTopCategories(data.topCategories ?? [], data.snapshot.month);
   renderPlannedExpenses(data.plannedExpenses ?? []);
   renderLatest(data.latestExpenses ?? []);
@@ -77,6 +90,8 @@ async function loadDraft(id) {
 function switchTab(tab) {
   document.querySelector("#dashboardTab").classList.toggle("hidden", tab !== "dashboard");
   document.querySelector("#historyTab").classList.toggle("hidden", tab !== "history");
+  document.querySelector("#settingsTab").classList.toggle("hidden", tab !== "settings");
+  document.querySelector("#screenTitle").textContent = screenTitles[tab] ?? "Dashboard";
   document.querySelectorAll("[data-tab]").forEach((button) => {
     button.classList.toggle("active", button.dataset.tab === tab);
   });
@@ -84,19 +99,52 @@ function switchTab(tab) {
 }
 
 function renderSnapshot(snapshot) {
-  setText("#safeToSpend", `${money.format(snapshot.safeToSpendPerDay)} THB`);
-  setText("#today", `${money.format(snapshot.today)} THB`);
-  setText("#week", `${money.format(snapshot.week)} THB`);
-  setText("#month", `${money.format(snapshot.month)} THB`);
-  setText("#budget", `${money.format(snapshot.monthlyBudget)} THB`);
-  setText("#planned", `${money.format(snapshot.plannedRemaining)} THB`);
-  setText("#freeRemaining", `${money.format(snapshot.freeRemaining)} THB`);
-  document.querySelector("#budgetInput").value = Math.round(snapshot.monthlyBudget);
+  setText("#safeToSpend", moneyBase(snapshot.safeToSpendPerDay));
+  setText("#safeToSpendDisplay", moneyDisplay(snapshot.display?.safeToSpendPerDay, snapshot.display?.currency));
+  setText("#today", moneyBase(snapshot.today));
+  setText("#todayDisplay", moneyDisplay(snapshot.display?.today, snapshot.display?.currency));
+  setText("#week", moneyBase(snapshot.week));
+  setText("#weekDisplay", moneyDisplay(snapshot.display?.week, snapshot.display?.currency));
+  setText("#month", moneyBase(snapshot.month));
+  setText("#monthDisplay", moneyDisplay(snapshot.display?.month, snapshot.display?.currency));
+  setText("#freeRemaining", moneyBase(snapshot.freeRemaining));
+  setText("#freeRemainingDisplay", moneyDisplay(snapshot.display?.freeRemaining, snapshot.display?.currency));
 
   const status = document.querySelector("#status");
   status.textContent = statusLabels[snapshot.status] ?? snapshot.status;
   status.classList.toggle("above", snapshot.status === "above_plan");
   status.classList.toggle("below", snapshot.status === "below_plan");
+}
+
+function renderSettings(user) {
+  document.querySelector("#budgetInput").value = Math.round(Number(user.monthly_budget_amount ?? 45000));
+  document.querySelector("#baseCurrencyInput").value = user.base_currency ?? "THB";
+  document.querySelector("#displayCurrencyInput").value = user.display_currency ?? "USD";
+  document.querySelector("#usdThbRateInput").value = Number(user.usd_thb_rate ?? 36);
+}
+
+function renderPlannedNotice(items) {
+  const notice = document.querySelector("#plannedNotice");
+  const due = items.find((item) => isDueToday(item) && !item.paid_month && !hiddenNoticeIds.has(String(item.id)));
+  if (!due) {
+    notice.classList.add("hidden");
+    notice.innerHTML = "";
+    return;
+  }
+  notice.classList.remove("hidden");
+  notice.innerHTML = `
+    <div class="notice-title">
+      <span>Сегодня плановая оплата</span>
+      <strong>${moneyBase(due.amount_base ?? due.amount)}</strong>
+    </div>
+    <div class="expense-meta">${escapeHtml(due.description)} · ${escapeHtml(categoryLabel(due.category_slug))}</div>
+    <div class="button-row">
+      <button type="button" data-pay-planned="${due.id}">Оплачено</button>
+      <button type="button" class="ghost-button" data-hide-notice="${due.id}">Позже</button>
+      <button type="button" class="ghost-button" data-edit-planned="${due.id}">Изменить</button>
+    </div>
+  `;
+  bindPlannedActions(notice, items);
 }
 
 function renderTopCategories(items, monthTotal) {
@@ -109,11 +157,12 @@ function renderTopCategories(items, monthTotal) {
     const total = Number(item.total);
     const percent = monthTotal > 0 ? Math.round((total / monthTotal) * 100) : 0;
     return `
-      <div class="bar-row">
+      <div class="bar-row" style="--category-color: ${categoryColor(item.category_slug)}">
         <div class="bar-row-top">
           <span>${escapeHtml(categoryLabel(item.category_slug))}</span>
-          <strong>${money.format(total)} THB · ${percent}%</strong>
+          <strong>${moneyBase(total)} · ${percent}%</strong>
         </div>
+        <div class="bar-row-display">${moneyDisplay(item.display?.amount, item.display?.currency)}</div>
         <div class="bar-track"><div class="bar-fill" style="width: ${Math.min(percent, 100)}%"></div></div>
       </div>
     `;
@@ -142,7 +191,7 @@ function renderHistory(expenses) {
     <section class="history-day">
       <div class="history-day-heading">
         <h3>${escapeHtml(group.label)}</h3>
-        <strong>${money.format(group.total)} THB</strong>
+        <strong>${moneyBase(group.total)}</strong>
       </div>
       ${group.items.map(expenseRow).join("")}
     </section>
@@ -152,13 +201,15 @@ function renderHistory(expenses) {
 
 function expenseRow(expense) {
   return `
-    <article class="expense-row">
-      <div>
+    <article class="expense-row" style="--category-color: ${categoryColor(expense.category_slug)}">
+      <div class="expense-main">
         <div class="expense-title">${escapeHtml(expense.description)}</div>
         <div class="expense-meta">${formatDate(expense.spent_at)} · ${escapeHtml(categoryLabel(expense.category_slug))}</div>
       </div>
       <div class="expense-actions">
-        <div class="expense-amount">${money.format(Number(expense.amount_original))} ${escapeHtml(expense.currency_original)}</div>
+        <div class="expense-amount">${money.format(Number(expense.amount_original))} ${escapeHtml(expense.currency_original)}
+          <em>${moneyDisplay(expense.display?.amount, expense.display?.currency)}</em>
+        </div>
         <div class="button-row compact">
           <button type="button" class="ghost-button" data-edit-expense="${expense.id}">Изменить</button>
           <button type="button" class="danger-button" data-delete-expense="${expense.id}">Удалить</button>
@@ -179,10 +230,7 @@ function bindExpenseActions(container, expenses) {
     button.addEventListener("click", async () => {
       const expense = expenses.find((item) => String(item.id) === button.dataset.deleteExpense);
       if (!window.confirm(`Удалить расход "${expense.description}"?`)) return;
-      await api(`/api/expenses/${expense.id}`, {
-        method: "DELETE",
-        body: { telegramUserId }
-      });
+      await api(`/api/expenses/${expense.id}`, { method: "DELETE", body: { telegramUserId } });
       await loadDashboard();
       await loadHistory();
     });
@@ -247,35 +295,53 @@ function renderPlannedExpenses(items) {
     return;
   }
   list.innerHTML = items.map((item) => `
-    <article class="expense-row">
-      <div>
+    <article class="expense-row" style="--category-color: ${categoryColor(item.category_slug)}">
+      <div class="expense-main">
         <div class="expense-title">${escapeHtml(item.description)}</div>
-        <div class="expense-meta">${recurrenceLabel(item.recurrence)} · ${escapeHtml(categoryLabel(item.category_slug))}</div>
+        <div class="expense-meta">${recurrenceLabel(item.recurrence)} · ${escapeHtml(categoryLabel(item.category_slug))}${item.paid_month ? " · оплачено" : ""}</div>
       </div>
       <div class="expense-actions">
-        <div class="expense-amount">${money.format(Number(item.amount))} ${escapeHtml(item.currency)}</div>
+        <div class="expense-amount">${money.format(Number(item.amount))} ${escapeHtml(item.currency)}
+          <em>${moneyDisplay(item.display?.amount, item.display?.currency)}</em>
+        </div>
         <div class="button-row compact">
+          <button type="button" data-pay-planned="${item.id}"${item.paid_month ? " disabled" : ""}>Оплачено</button>
           <button type="button" class="ghost-button" data-edit-planned="${item.id}">Изменить</button>
           <button type="button" class="danger-button" data-delete-planned="${item.id}">Отключить</button>
         </div>
       </div>
     </article>
   `).join("");
-  list.querySelectorAll("[data-edit-planned]").forEach((button) => {
+  bindPlannedActions(list, items);
+}
+
+function bindPlannedActions(container, items) {
+  container.querySelectorAll("[data-edit-planned]").forEach((button) => {
     button.addEventListener("click", () => {
-      const item = dashboardState.plannedExpenses.find((planned) => String(planned.id) === button.dataset.editPlanned);
+      const item = items.find((planned) => String(planned.id) === button.dataset.editPlanned);
       renderPlannedForm(item);
+      document.querySelector("#plannedForm").classList.remove("hidden");
       document.querySelector("#plannedForm").scrollIntoView({ behavior: "smooth", block: "start" });
     });
   });
-  list.querySelectorAll("[data-delete-planned]").forEach((button) => {
+  container.querySelectorAll("[data-delete-planned]").forEach((button) => {
     button.addEventListener("click", async () => {
-      await api(`/api/planned-expenses/${button.dataset.deletePlanned}`, {
-        method: "DELETE",
-        body: { telegramUserId }
-      });
+      await api(`/api/planned-expenses/${button.dataset.deletePlanned}`, { method: "DELETE", body: { telegramUserId } });
       renderPlannedForm();
       await loadDashboard();
+    });
+  });
+  container.querySelectorAll("[data-pay-planned]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      await api(`/api/planned-expenses/${button.dataset.payPlanned}/pay`, { method: "POST", body: { telegramUserId } });
+      await loadDashboard();
+      await loadHistory();
+    });
+  });
+  container.querySelectorAll("[data-hide-notice]").forEach((button) => {
+    button.addEventListener("click", () => {
+      hiddenNoticeIds.add(button.dataset.hideNotice);
+      renderPlannedNotice(dashboardState.plannedExpenses ?? []);
     });
   });
 }
@@ -355,11 +421,19 @@ function editableItemFields(item, prefix, index) {
   `;
 }
 
-async function saveBudget(event) {
+async function saveSettings(event) {
   event.preventDefault();
-  await api("/api/settings/budget", {
+  await api("/api/settings", {
     method: "PATCH",
-    body: { telegramUserId, monthlyBudgetAmount: Number(document.querySelector("#budgetInput").value) }
+    body: {
+      telegramUserId,
+      settings: {
+        monthlyBudgetAmount: Number(document.querySelector("#budgetInput").value),
+        baseCurrency: document.querySelector("#baseCurrencyInput").value,
+        displayCurrency: document.querySelector("#displayCurrencyInput").value,
+        usdThbRate: Number(document.querySelector("#usdThbRateInput").value)
+      }
+    }
   });
   await loadDashboard();
 }
@@ -371,10 +445,7 @@ async function saveDraft(event) {
 
 async function saveDraftItems() {
   const items = draftState.items.map((item, index) => collectItem(`draft-${index}`, item));
-  const data = await api(`/api/drafts/${draftState.id}`, {
-    method: "PATCH",
-    body: { telegramUserId, items }
-  });
+  const data = await api(`/api/drafts/${draftState.id}`, { method: "PATCH", body: { telegramUserId, items } });
   draftState = data.draft;
   renderDraftEditor(draftState);
 }
@@ -389,10 +460,7 @@ async function confirmDraft() {
 
 async function saveExpense(event, expenseId) {
   event.preventDefault();
-  await api(`/api/expenses/${expenseId}`, {
-    method: "PATCH",
-    body: { telegramUserId, expense: collectItem("expense", {}) }
-  });
+  await api(`/api/expenses/${expenseId}`, { method: "PATCH", body: { telegramUserId, expense: collectItem("expense", {}) } });
   document.querySelector("#expenseEditorSection").classList.add("hidden");
   await loadDashboard();
   await loadHistory();
@@ -402,11 +470,9 @@ async function savePlanned(event, plannedId) {
   event.preventDefault();
   const method = plannedId ? "PATCH" : "POST";
   const path = plannedId ? `/api/planned-expenses/${plannedId}` : "/api/planned-expenses";
-  await api(path, {
-    method,
-    body: { telegramUserId, plannedExpense: collectPlanned() }
-  });
+  await api(path, { method, body: { telegramUserId, plannedExpense: collectPlanned() } });
   renderPlannedForm();
+  document.querySelector("#plannedForm").classList.add("hidden");
   await loadDashboard();
 }
 
@@ -424,10 +490,8 @@ function collectItem(prefix, original) {
 }
 
 function collectPlanned() {
-  const amount = Number(input("planned-amount").value);
   return {
-    amount,
-    amount_base: amount,
+    amount: Number(input("planned-amount").value),
     currency: input("planned-currency").value,
     description: input("planned-description").value.trim(),
     category_slug: input("planned-category_slug").value,
@@ -463,6 +527,14 @@ function groupByDay(expenses) {
   return [...groups.values()];
 }
 
+function isDueToday(item) {
+  const today = new Date();
+  if (item.recurrence === "one_off" && item.due_date) {
+    return new Date(item.due_date).toDateString() === today.toDateString();
+  }
+  return Number(item.due_day) === today.getDate();
+}
+
 function input(name) {
   return document.querySelector(`[name="${name}"]`);
 }
@@ -475,6 +547,10 @@ function categoryLabel(slug) {
   return categories.find(([value]) => value === slug)?.[1] ?? slug;
 }
 
+function categoryColor(slug) {
+  return categories.find(([value]) => value === slug)?.[2] ?? "#756b61";
+}
+
 function recurrenceLabel(value) {
   return {
     monthly: "раз в месяц",
@@ -482,6 +558,17 @@ function recurrenceLabel(value) {
     twice_monthly: "2 раза в месяц",
     one_off: "один раз"
   }[value] ?? value;
+}
+
+function moneyBase(value) {
+  return `${money.format(Number(value ?? 0))} THB`;
+}
+
+function moneyDisplay(value, currency = "USD") {
+  if (value == null || Number.isNaN(Number(value))) return "";
+  const prefix = currency === "USD" ? "~$" : "";
+  const suffix = currency === "USD" ? "" : ` ${currency}`;
+  return `${prefix}${money.format(Number(value))}${suffix}`;
 }
 
 function setText(selector, text) {

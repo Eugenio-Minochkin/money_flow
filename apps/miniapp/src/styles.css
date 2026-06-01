@@ -1,14 +1,19 @@
 :root {
   color-scheme: light;
-  --bg: #f6f7f3;
-  --ink: #17201a;
-  --muted: #697268;
-  --line: #dfe4dc;
-  --panel: #ffffff;
-  --green: #1f7a4d;
-  --blue: #235789;
-  --red: #b23a48;
-  --amber: #a86416;
+  --bg: #f6f1ea;
+  --ink: #251d18;
+  --muted: #756b61;
+  --line: #e5d9cc;
+  --panel: #fffdfa;
+  --accent: #1d7f75;
+  --accent-soft: #e2f1ef;
+  --hero: #1e504b;
+  --hero-muted: #d4eee9;
+  --usd: #7b57b3;
+  --red: #b13b46;
+  --amber: #b26b16;
+  --notice-bg: #fff0e8;
+  --notice-line: #f0c6b4;
 }
 
 * {
@@ -24,7 +29,7 @@ body {
 }
 
 .shell {
-  width: min(100%, 720px);
+  width: min(100%, 760px);
   margin: 0 auto;
   padding: 20px 16px 32px;
 }
@@ -34,20 +39,22 @@ body {
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
-  margin-bottom: 20px;
+  margin-bottom: 18px;
 }
 
 .eyebrow,
 .metric span,
 .hero-metric span,
-.expense-meta {
+.expense-meta,
+.bar-row-display,
+.form-note {
   color: var(--muted);
   font-size: 13px;
 }
 
 .eyebrow {
   margin: 0 0 4px;
-  font-weight: 700;
+  font-weight: 800;
   text-transform: uppercase;
 }
 
@@ -70,26 +77,27 @@ h2 {
   flex: 0 0 auto;
   max-width: 46%;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 999px;
   padding: 8px 10px;
-  background: var(--panel);
-  color: var(--blue);
+  background: var(--accent-soft);
+  color: var(--accent);
   font-size: 13px;
-  font-weight: 700;
+  font-weight: 800;
   text-align: right;
 }
 
 .status-pill.above {
   color: var(--amber);
+  background: #fff3df;
 }
 
 .status-pill.below {
-  color: var(--green);
+  color: var(--accent);
 }
 
 .tabs {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
   margin-bottom: 12px;
 }
@@ -102,31 +110,45 @@ h2 {
 }
 
 .tab-button.active {
-  border-color: var(--green);
-  background: #e8f2ec;
-  color: var(--green);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 
 .hero-metric {
   display: grid;
-  gap: 8px;
-  min-height: 128px;
+  gap: 7px;
+  min-height: 132px;
   padding: 22px;
-  border-radius: 8px;
-  background: #143d2a;
+  border-radius: 12px;
+  background: var(--hero);
   color: #fff;
   align-content: center;
   margin-bottom: 12px;
 }
 
-.hero-metric span {
-  color: #c8e0d3;
+.hero-metric span,
+.hero-metric em {
+  color: var(--hero-muted);
 }
 
 .hero-metric strong {
   font-size: clamp(38px, 12vw, 68px);
   line-height: 1;
   overflow-wrap: anywhere;
+}
+
+.hero-metric em,
+.metric em,
+.expense-amount em {
+  color: var(--usd);
+  font-style: normal;
+  font-weight: 800;
+}
+
+.hero-metric em {
+  color: var(--hero-muted);
+  font-size: 18px;
 }
 
 .metrics-grid {
@@ -136,15 +158,16 @@ h2 {
 }
 
 .metric,
-.section {
+.section,
+.notice {
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 10px;
   background: var(--panel);
 }
 
 .metric {
   display: grid;
-  gap: 8px;
+  gap: 6px;
   min-height: 92px;
   padding: 14px;
   align-content: center;
@@ -154,6 +177,20 @@ h2 {
   font-size: 24px;
   line-height: 1.1;
   overflow-wrap: anywhere;
+}
+
+.notice {
+  margin-top: 12px;
+  padding: 14px;
+  border-color: var(--notice-line);
+  background: var(--notice-bg);
+}
+
+.notice-title {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-weight: 900;
 }
 
 .section {
@@ -170,10 +207,14 @@ h2 {
   border-bottom: 1px solid var(--line);
 }
 
-.expense-list {
-  display: grid;
+.split-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 
+.expense-list,
 .bar-list,
 .history-list {
   display: grid;
@@ -181,9 +222,10 @@ h2 {
 
 .bar-row {
   display: grid;
-  gap: 8px;
+  gap: 7px;
   padding: 14px;
   border-bottom: 1px solid var(--line);
+  border-left: 4px solid var(--category-color, var(--accent));
 }
 
 .bar-row:last-child {
@@ -213,14 +255,14 @@ h2 {
   height: 8px;
   overflow: hidden;
   border-radius: 999px;
-  background: #edf0ea;
+  background: #f0e8df;
 }
 
 .bar-fill {
   height: 100%;
   min-width: 6px;
   border-radius: inherit;
-  background: var(--green);
+  background: var(--category-color, var(--accent));
 }
 
 .history-day {
@@ -233,7 +275,7 @@ h2 {
 
 .history-day-heading {
   padding: 12px 14px;
-  background: #f9faf7;
+  background: #fff8ef;
 }
 
 .history-day-heading h3 {
@@ -247,6 +289,7 @@ h2 {
   gap: 10px;
   padding: 14px;
   border-bottom: 1px solid var(--line);
+  border-left: 4px solid var(--category-color, var(--accent));
 }
 
 .expense-row:last-child {
@@ -254,13 +297,19 @@ h2 {
 }
 
 .expense-title {
-  font-weight: 700;
+  font-weight: 800;
   overflow-wrap: anywhere;
 }
 
 .expense-amount {
-  font-weight: 800;
+  font-weight: 900;
   white-space: nowrap;
+  text-align: right;
+}
+
+.expense-amount em {
+  display: block;
+  font-size: 13px;
 }
 
 .expense-actions {
@@ -305,19 +354,24 @@ button {
   min-height: 42px;
   border: 0;
   border-radius: 8px;
-  background: var(--green);
+  background: var(--accent);
   color: #fff;
   font: inherit;
-  font-weight: 800;
+  font-weight: 850;
   padding: 9px 14px;
   cursor: pointer;
+}
+
+button:disabled {
+  cursor: default;
+  opacity: .55;
 }
 
 .ghost-button {
   min-height: 32px;
   border: 1px solid var(--line);
   background: #fff;
-  color: var(--blue);
+  color: var(--usd);
   font-size: 13px;
   padding: 5px 9px;
 }
@@ -335,10 +389,12 @@ button {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  margin-top: 10px;
 }
 
 .button-row.compact {
   justify-content: flex-end;
+  margin-top: 0;
 }
 
 .edit-card {
@@ -356,6 +412,10 @@ button {
   gap: 10px;
 }
 
+.form-note {
+  line-height: 1.45;
+}
+
 .hidden {
   display: none;
 }
@@ -370,18 +430,15 @@ button {
   color: var(--red);
 }
 
-@media (max-width: 420px) {
-  .metrics-grid {
+@media (max-width: 460px) {
+  .metrics-grid,
+  .field-grid,
+  .inline-form {
     grid-template-columns: 1fr;
   }
 
   .status-pill {
     max-width: 52%;
-  }
-
-  .inline-form,
-  .field-grid {
-    grid-template-columns: 1fr;
   }
 
   .expense-row {
@@ -390,5 +447,13 @@ button {
 
   .expense-actions {
     justify-items: start;
+  }
+
+  .expense-amount {
+    text-align: left;
+  }
+
+  .button-row.compact {
+    justify-content: flex-start;
   }
 }
