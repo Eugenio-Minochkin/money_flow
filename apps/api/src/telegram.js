@@ -1,17 +1,17 @@
-import { parseExpenseText } from "../../../packages/shared/src/parser.js";
 import { categoryName } from "../../../packages/shared/src/categories.js";
+import { createExpenseParser } from "./expenseParser.js";
 
-export function createTelegramBot({ repository, token, miniAppUrl }) {
+export function createTelegramBot({ repository, token, miniAppUrl, expenseParser = createExpenseParser() }) {
   return {
     async handleUpdate(update) {
-      if (update.message) return handleMessage({ update, repository, token, miniAppUrl });
+      if (update.message) return handleMessage({ update, repository, token, miniAppUrl, expenseParser });
       if (update.callback_query) return handleCallback({ update, repository, token, miniAppUrl });
       return { ok: true };
     }
   };
 }
 
-async function handleMessage({ update, repository, token, miniAppUrl }) {
+async function handleMessage({ update, repository, token, miniAppUrl, expenseParser }) {
   const message = update.message;
   const from = message.from;
   if (!from) return { ok: true };
@@ -43,7 +43,7 @@ async function handleMessage({ update, repository, token, miniAppUrl }) {
     return sendMessage(token, message.chat.id, "Открыть Mini App:", appKeyboard(miniAppUrl, from.id));
   }
 
-  const parsed = parseExpenseText(text);
+  const parsed = await expenseParser.parse(text);
   if (parsed.expenses.length === 0) {
     return sendMessage(token, message.chat.id, "Не нашел сумму. Напиши так: кофе 70 бат.");
   }

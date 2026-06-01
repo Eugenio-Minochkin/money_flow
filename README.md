@@ -58,6 +58,8 @@ Edit `.env.production`:
 - `APP_DOMAIN` - public domain pointed to the server
 - `TELEGRAM_BOT_TOKEN` - token from BotFather
 - `POSTGRES_PASSWORD` - strong database password
+- `OPENAI_API_KEY` - optional; enables AI parsing for text messages
+- `OPENAI_MODEL` - optional; defaults to `gpt-4.1-mini`
 
 Start:
 
