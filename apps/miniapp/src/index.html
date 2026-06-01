@@ -40,11 +40,38 @@
         </article>
       </section>
 
+      <section class="section form-section">
+        <div class="section-heading">
+          <h2>Бюджет</h2>
+        </div>
+        <form class="inline-form" id="budgetForm">
+          <label>
+            <span>Месячный бюджет</span>
+            <input id="budgetInput" name="monthlyBudgetAmount" type="number" min="1" step="1" inputmode="decimal" />
+          </label>
+          <button type="submit">Сохранить</button>
+        </form>
+      </section>
+
+      <section class="section form-section hidden" id="draftEditorSection">
+        <div class="section-heading">
+          <h2>Черновик</h2>
+        </div>
+        <form id="draftForm"></form>
+      </section>
+
       <section class="section">
         <div class="section-heading">
           <h2>Последние расходы</h2>
         </div>
         <div class="expense-list" id="latestExpenses"></div>
+      </section>
+
+      <section class="section form-section hidden" id="expenseEditorSection">
+        <div class="section-heading">
+          <h2>Расход</h2>
+        </div>
+        <form id="expenseForm"></form>
       </section>
     </main>
 

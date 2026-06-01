@@ -127,7 +127,7 @@ function draftKeyboard(draftId, miniAppUrl, telegramUserId) {
   return {
     inline_keyboard: [
       [{ text: "Confirm all", callback_data: `confirm:${draftId}` }],
-      [{ text: "Edit", callback_data: `edit:${draftId}` }, { text: "Cancel", callback_data: `cancel:${draftId}` }],
+      [{ text: "Edit", web_app: { url: `${miniAppUrl}?telegramUserId=${telegramUserId}&draftId=${draftId}` } }, { text: "Cancel", callback_data: `cancel:${draftId}` }],
       [{ text: "Move to Inbox", callback_data: `inbox:${draftId}` }],
       [{ text: "Open in Mini App", web_app: { url: `${miniAppUrl}?telegramUserId=${telegramUserId}` } }]
     ]

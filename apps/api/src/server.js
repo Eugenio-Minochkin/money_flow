@@ -63,6 +63,50 @@ async function route(req, res) {
     return sendJson(res, 200, dashboard);
   }
 
+  if (req.method === "PATCH" && url.pathname === "/api/settings/budget") {
+    const body = await readJson(req);
+    if (!body.telegramUserId) return sendJson(res, 400, { error: "telegramUserId_required" });
+    const user = await repository.updateMonthlyBudget(Number(body.telegramUserId), Number(body.monthlyBudgetAmount));
+    if (!user) return sendJson(res, 404, { error: "user_not_found" });
+    return sendJson(res, 200, { user });
+  }
+
+  const draftMatch = url.pathname.match(/^\/api\/drafts\/(\d+)(\/confirm)?$/);
+  if (draftMatch) {
+    const draftId = Number(draftMatch[1]);
+    if (req.method === "GET" && !draftMatch[2]) {
+      const telegramUserId = Number(url.searchParams.get("telegramUserId"));
+      if (!telegramUserId) return sendJson(res, 400, { error: "telegramUserId_required" });
+      const draft = await repository.getDraftForTelegramUser(draftId, telegramUserId);
+      if (!draft) return sendJson(res, 404, { error: "draft_not_found" });
+      return sendJson(res, 200, { draft });
+    }
+
+    if (req.method === "PATCH" && !draftMatch[2]) {
+      const body = await readJson(req);
+      if (!body.telegramUserId) return sendJson(res, 400, { error: "telegramUserId_required" });
+      const draft = await repository.updateDraftItems(draftId, Number(body.telegramUserId), body.items ?? []);
+      if (!draft) return sendJson(res, 404, { error: "draft_not_found" });
+      return sendJson(res, 200, { draft });
+    }
+
+    if (req.method === "POST" && draftMatch[2]) {
+      const body = await readJson(req);
+      if (!body.telegramUserId) return sendJson(res, 400, { error: "telegramUserId_required" });
+      const expenses = await repository.confirmDraft(draftId, Number(body.telegramUserId));
+      return sendJson(res, 200, { expenses });
+    }
+  }
+
+  const expenseMatch = url.pathname.match(/^\/api\/expenses\/(\d+)$/);
+  if (expenseMatch && req.method === "PATCH") {
+    const body = await readJson(req);
+    if (!body.telegramUserId) return sendJson(res, 400, { error: "telegramUserId_required" });
+    const expense = await repository.updateExpenseForTelegramUser(Number(expenseMatch[1]), Number(body.telegramUserId), body.expense);
+    if (!expense) return sendJson(res, 404, { error: "expense_not_found" });
+    return sendJson(res, 200, { expense });
+  }
+
   if (req.method === "GET" && url.pathname === "/health") {
     return sendJson(res, 200, { ok: true });
   }

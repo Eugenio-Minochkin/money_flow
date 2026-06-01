@@ -22,6 +22,21 @@ export function createRepository(pool, options = {}) {
       return result.rows[0] ?? null;
     },
 
+    async updateMonthlyBudget(telegramUserId, monthlyBudgetAmount) {
+      const amount = Number(monthlyBudgetAmount);
+      if (!Number.isFinite(amount) || amount <= 0) {
+        throw new Error("Monthly budget must be positive");
+      }
+      const result = await pool.query(
+        `UPDATE users
+         SET monthly_budget_amount = $1
+         WHERE telegram_user_id = $2
+         RETURNING *`,
+        [amount, telegramUserId]
+      );
+      return result.rows[0] ?? null;
+    },
+
     async createDraft(userId, sourceText, items) {
       const status = items.some((item) => item.needs_review) ? "inbox" : "pending";
       const result = await pool.query(
@@ -31,6 +46,31 @@ export function createRepository(pool, options = {}) {
         [userId, status, sourceText, JSON.stringify(items)]
       );
       return result.rows[0];
+    },
+
+    async getDraftForTelegramUser(draftId, telegramUserId) {
+      const result = await pool.query(
+        `SELECT drafts.*
+         FROM drafts
+         JOIN users ON users.id = drafts.user_id
+         WHERE drafts.id = $1 AND users.telegram_user_id = $2`,
+        [draftId, telegramUserId]
+      );
+      return normalizeDraft(result.rows[0] ?? null);
+    },
+
+    async updateDraftItems(draftId, telegramUserId, items) {
+      const normalized = items.map(normalizeDraftItem);
+      const result = await pool.query(
+        `UPDATE drafts
+         SET items = $1
+         WHERE id = $2
+           AND status IN ('pending', 'inbox')
+           AND user_id = (SELECT id FROM users WHERE telegram_user_id = $3)
+         RETURNING *`,
+        [JSON.stringify(normalized), draftId, telegramUserId]
+      );
+      return normalizeDraft(result.rows[0] ?? null);
     },
 
     async confirmDraft(draftId, telegramUserId) {
@@ -110,6 +150,39 @@ export function createRepository(pool, options = {}) {
       );
     },
 
+    async updateExpenseForTelegramUser(expenseId, telegramUserId, patch) {
+      const item = normalizeDraftItem(patch);
+      const spentAt = new Date(item.spent_at);
+      const result = await pool.query(
+        `UPDATE expenses
+         SET amount_original = $1,
+             currency_original = $2,
+             amount_base = $1,
+             converted_amounts = $3,
+             exchange_rate_date = $4,
+             description = $5,
+             category_slug = $6,
+             tags = $7,
+             spent_at = $8
+         WHERE id = $9
+           AND user_id = (SELECT id FROM users WHERE telegram_user_id = $10)
+         RETURNING id, amount_original, currency_original, description, category_slug, tags, spent_at`,
+        [
+          item.amount,
+          item.currency,
+          JSON.stringify({ THB: item.amount }),
+          spentAt.toISOString().slice(0, 10),
+          item.description,
+          item.category_slug,
+          item.tags,
+          spentAt,
+          expenseId,
+          telegramUserId
+        ]
+      );
+      return result.rows[0] ?? null;
+    },
+
     async totals(userId, now = new Date()) {
       const [today, month] = await Promise.all([
         totalForPeriod(pool, userId, "today", now),
@@ -138,6 +211,31 @@ export function createRepository(pool, options = {}) {
       });
       return { user, snapshot, latestExpenses: latest.rows };
     }
+  };
+}
+
+function normalizeDraft(draft) {
+  if (!draft) return null;
+  return {
+    ...draft,
+    items: Array.isArray(draft.items) ? draft.items : JSON.parse(draft.items)
+  };
+}
+
+function normalizeDraftItem(item) {
+  const amount = Number(item.amount);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    throw new Error("Expense amount must be positive");
+  }
+  return {
+    amount,
+    currency: item.currency || "THB",
+    description: String(item.description || "расход").trim(),
+    category_slug: item.category_slug || "other",
+    tags: Array.isArray(item.tags) ? item.tags.map(String).filter(Boolean) : [],
+    spent_at: item.spent_at || new Date().toISOString(),
+    confidence: Number.isFinite(Number(item.confidence)) ? Number(item.confidence) : 1,
+    needs_review: Boolean(item.needs_review)
   };
 }
 
