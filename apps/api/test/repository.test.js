@@ -66,6 +66,61 @@ test("updates an expense owned by a Telegram user", async () => {
   assert.equal(expense.description, "завтрак");
 });
 
+test("deletes an expense owned by a Telegram user", async () => {
+  const repo = createRepository(fakePool((_sql, params) => ({
+    rows: [{ id: params[0] }]
+  })));
+
+  const deleted = await repo.deleteExpenseForTelegramUser(7, 100);
+
+  assert.equal(deleted.id, 7);
+});
+
+test("lists expenses for history", async () => {
+  const repo = createRepository(fakePool(() => ({
+    rows: [{ id: "1", description: "кофе" }]
+  })));
+
+  const expenses = await repo.listExpensesForTelegramUser(100, { period: "month", search: "кофе" });
+
+  assert.equal(expenses[0].description, "кофе");
+});
+
+test("returns top categories", async () => {
+  const repo = createRepository(fakePool(() => ({
+    rows: [{ category_slug: "food_cafe", total: 1200 }]
+  })));
+
+  const categories = await repo.topCategories(1, new Date("2026-06-07T10:00:00+07:00"));
+
+  assert.equal(categories[0].category_slug, "food_cafe");
+  assert.equal(categories[0].total, 1200);
+});
+
+test("creates and lists planned expenses", async () => {
+  const repo = createRepository(fakePool((_sql, params) => {
+    if (String(_sql).startsWith("INSERT")) {
+      return { rows: [{ id: "5", description: params[4], recurrence: params[7] }] };
+    }
+    return { rows: [{ id: "5", description: "ChatGPT", recurrence: "monthly" }] };
+  }));
+
+  const created = await repo.createPlannedExpense(100, {
+    amount: 20,
+    currency: "USD",
+    amount_base: 20,
+    description: "ChatGPT",
+    category_slug: "subscriptions",
+    tags: ["регулярная трата"],
+    recurrence: "monthly",
+    due_day: 10
+  });
+  const planned = await repo.listPlannedExpensesForTelegramUser(100);
+
+  assert.equal(created.description, "ChatGPT");
+  assert.equal(planned[0].recurrence, "monthly");
+});
+
 function fakePool(handler) {
   return {
     async query(sql, params = []) {

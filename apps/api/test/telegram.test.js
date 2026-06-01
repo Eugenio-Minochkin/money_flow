@@ -52,8 +52,8 @@ test("confirm callback saves draft and returns totals", async () => {
     });
 
     assert.equal(repo.confirmedDraftId, "42");
-    assert.match(calls[0][1].text, /Записал: 70 THB/);
-    assert.match(calls[0][1].text, /Сегодня: 70 THB/);
+    assert.match(calls[0][1].text, /Записал:<\/b> 70 THB/);
+    assert.match(calls[0][1].text, /Сегодня:<\/b> 70 THB/);
   } finally {
     console.log = originalLog;
   }
@@ -107,9 +107,12 @@ function fakeRepository() {
       return {
         snapshot: {
           today: 70,
+          week: 70,
           month: 70,
           monthlyBudget: 45000,
           remaining: 44930,
+          plannedRemaining: 0,
+          freeRemaining: 44930,
           safeToSpendPerDay: 1497.67,
           status: "below_plan"
         }

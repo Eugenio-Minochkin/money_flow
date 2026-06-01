@@ -63,6 +63,42 @@ async function route(req, res) {
     return sendJson(res, 200, dashboard);
   }
 
+  if (req.method === "GET" && url.pathname === "/api/expenses") {
+    const telegramUserId = Number(url.searchParams.get("telegramUserId"));
+    if (!telegramUserId) return sendJson(res, 400, { error: "telegramUserId_required" });
+    const expenses = await repository.listExpensesForTelegramUser(telegramUserId, {
+      period: url.searchParams.get("period") ?? "month",
+      search: url.searchParams.get("search") ?? ""
+    });
+    return sendJson(res, 200, { expenses });
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/planned-expenses") {
+    const telegramUserId = Number(url.searchParams.get("telegramUserId"));
+    if (!telegramUserId) return sendJson(res, 400, { error: "telegramUserId_required" });
+    const plannedExpenses = await repository.listPlannedExpensesForTelegramUser(telegramUserId);
+    return sendJson(res, 200, { plannedExpenses });
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/planned-expenses") {
+    const body = await readJson(req);
+    if (!body.telegramUserId) return sendJson(res, 400, { error: "telegramUserId_required" });
+    const plannedExpense = await repository.createPlannedExpense(Number(body.telegramUserId), body.plannedExpense);
+    if (!plannedExpense) return sendJson(res, 404, { error: "user_not_found" });
+    return sendJson(res, 201, { plannedExpense });
+  }
+
+  const plannedMatch = url.pathname.match(/^\/api\/planned-expenses\/(\d+)$/);
+  if (plannedMatch && (req.method === "PATCH" || req.method === "DELETE")) {
+    const body = await readJson(req);
+    if (!body.telegramUserId) return sendJson(res, 400, { error: "telegramUserId_required" });
+    const plannedExpense = req.method === "PATCH"
+      ? await repository.updatePlannedExpense(Number(body.telegramUserId), Number(plannedMatch[1]), body.plannedExpense)
+      : await repository.deactivatePlannedExpense(Number(body.telegramUserId), Number(plannedMatch[1]));
+    if (!plannedExpense) return sendJson(res, 404, { error: "planned_expense_not_found" });
+    return sendJson(res, 200, { plannedExpense });
+  }
+
   if (req.method === "PATCH" && url.pathname === "/api/settings/budget") {
     const body = await readJson(req);
     if (!body.telegramUserId) return sendJson(res, 400, { error: "telegramUserId_required" });
@@ -99,10 +135,12 @@ async function route(req, res) {
   }
 
   const expenseMatch = url.pathname.match(/^\/api\/expenses\/(\d+)$/);
-  if (expenseMatch && req.method === "PATCH") {
+  if (expenseMatch && (req.method === "PATCH" || req.method === "DELETE")) {
     const body = await readJson(req);
     if (!body.telegramUserId) return sendJson(res, 400, { error: "telegramUserId_required" });
-    const expense = await repository.updateExpenseForTelegramUser(Number(expenseMatch[1]), Number(body.telegramUserId), body.expense);
+    const expense = req.method === "PATCH"
+      ? await repository.updateExpenseForTelegramUser(Number(expenseMatch[1]), Number(body.telegramUserId), body.expense)
+      : await repository.deleteExpenseForTelegramUser(Number(expenseMatch[1]), Number(body.telegramUserId));
     if (!expense) return sendJson(res, 404, { error: "expense_not_found" });
     return sendJson(res, 200, { expense });
   }

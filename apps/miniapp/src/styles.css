@@ -87,6 +87,26 @@ h2 {
   color: var(--green);
 }
 
+.tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.tab-button {
+  min-height: 40px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--muted);
+}
+
+.tab-button.active {
+  border-color: var(--green);
+  background: #e8f2ec;
+  color: var(--green);
+}
+
 .hero-metric {
   display: grid;
   gap: 8px;
@@ -152,6 +172,73 @@ h2 {
 
 .expense-list {
   display: grid;
+}
+
+.bar-list,
+.history-list {
+  display: grid;
+}
+
+.bar-row {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.bar-row:last-child {
+  border-bottom: 0;
+}
+
+.bar-row-top,
+.history-day-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.bar-row-top span,
+.history-day-heading h3 {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.bar-row-top strong,
+.history-day-heading strong {
+  white-space: nowrap;
+}
+
+.bar-track {
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #edf0ea;
+}
+
+.bar-fill {
+  height: 100%;
+  min-width: 6px;
+  border-radius: inherit;
+  background: var(--green);
+}
+
+.history-day {
+  border-bottom: 1px solid var(--line);
+}
+
+.history-day:last-child {
+  border-bottom: 0;
+}
+
+.history-day-heading {
+  padding: 12px 14px;
+  background: #f9faf7;
+}
+
+.history-day-heading h3 {
+  margin: 0;
+  font-size: 15px;
 }
 
 .expense-row {
@@ -235,10 +322,23 @@ button {
   padding: 5px 9px;
 }
 
+.danger-button {
+  min-height: 32px;
+  border: 1px solid #edd0d4;
+  background: #fff;
+  color: var(--red);
+  font-size: 13px;
+  padding: 5px 9px;
+}
+
 .button-row {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.button-row.compact {
+  justify-content: flex-end;
 }
 
 .edit-card {

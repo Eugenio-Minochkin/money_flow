@@ -1,15 +1,26 @@
 import { monthDaysLeft } from "./time.js";
 
-export function calculateBudgetSnapshot({ todayTotal, monthTotal, monthlyBudget, now }) {
+export function calculateBudgetSnapshot({
+  todayTotal,
+  weekTotal = 0,
+  monthTotal,
+  monthlyBudget,
+  plannedRemainingTotal = 0,
+  now
+}) {
   const remaining = monthlyBudget - monthTotal;
+  const freeRemaining = remaining - plannedRemainingTotal;
   const daysLeftInMonth = monthDaysLeft(now);
-  const safeToSpendPerDay = roundMoney(Math.max(remaining, 0) / daysLeftInMonth);
+  const safeToSpendPerDay = roundMoney(Math.max(freeRemaining, 0) / daysLeftInMonth);
 
   return {
     today: roundMoney(todayTotal),
+    week: roundMoney(weekTotal),
     month: roundMoney(monthTotal),
     monthlyBudget: roundMoney(monthlyBudget),
     remaining: roundMoney(remaining),
+    plannedRemaining: roundMoney(plannedRemainingTotal),
+    freeRemaining: roundMoney(freeRemaining),
     daysLeftInMonth,
     safeToSpendPerDay,
     status: budgetStatus({ monthTotal, monthlyBudget, now })

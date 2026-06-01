@@ -10,7 +10,9 @@ export function createTelegramBot({
 }) {
   return {
     async handleUpdate(update) {
-      if (update.message) return handleMessage({ update, repository, token, miniAppUrl, expenseParser, voiceTranscriber });
+      if (update.message) {
+        return handleMessage({ update, repository, token, miniAppUrl, expenseParser, voiceTranscriber });
+      }
       if (update.callback_query) return handleCallback({ update, repository, token, miniAppUrl });
       return { ok: true };
     }
@@ -28,14 +30,23 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
     username: from.username
   });
 
-  const text = await messageText({ message, token, voiceTranscriber });
-  if (!text) return sendMessage(token, message.chat.id, "Пока умею принимать только текстовые расходы.");
+  const text = await messageText({ message, voiceTranscriber });
+  if (!text) {
+    return sendMessage(token, message.chat.id, "Пока умею принимать только текстовые и голосовые расходы.");
+  }
 
   if (text === "/start") {
     return sendMessage(
       token,
       message.chat.id,
-      "Я помогу быстро вести расходы. Напиши, например: кофе 70 бат. Сначала покажу черновик, потом сохраню после подтверждения.",
+      [
+        "Привет. Я помогу быстро вести расходы.",
+        "",
+        "Напиши или надиктуй, например:",
+        "<b>кофе 70 бат и обед 180</b>",
+        "",
+        "Сначала покажу черновик, сохраню только после подтверждения."
+      ].join("\n"),
       appKeyboard(miniAppUrl, from.id)
     );
   }
@@ -51,19 +62,18 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
 
   const parsed = await expenseParser.parse(text);
   if (parsed.expenses.length === 0) {
-    return sendMessage(token, message.chat.id, "Не нашел сумму. Напиши так: кофе 70 бат.");
+    return sendMessage(token, message.chat.id, "Не нашел сумму. Напиши так: <b>кофе 70 бат</b>.");
   }
 
   const draft = await repository.createDraft(user.id, text, parsed.expenses);
-  return sendMessage(token, message.chat.id, formatDraft(draft.id, parsed.expenses), draftKeyboard(draft.id, miniAppUrl, from.id));
+  return sendMessage(token, message.chat.id, formatDraft(parsed.expenses), draftKeyboard(draft.id, miniAppUrl, from.id));
 }
 
-async function messageText({ message, token, voiceTranscriber }) {
+async function messageText({ message, voiceTranscriber }) {
   if (message.text?.trim()) return message.text.trim();
   if (!message.voice) return null;
-  if (!voiceTranscriber?.isConfigured()) {
-    return null;
-  }
+  if (!voiceTranscriber?.isConfigured()) return null;
+
   try {
     return await voiceTranscriber.transcribeTelegramVoice(message.voice);
   } catch (error) {
@@ -85,7 +95,7 @@ async function handleCallback({ update, repository, token, miniAppUrl }) {
     return sendMessage(
       token,
       callback.message.chat.id,
-      `Записал: ${formatAmount(total)} THB.\nСегодня: ${formatAmount(dashboard.snapshot.today)} THB.\nМесяц: ${formatAmount(dashboard.snapshot.month)} / ${formatAmount(dashboard.snapshot.monthlyBudget)} THB.\nМожно тратить в день: ${formatAmount(dashboard.snapshot.safeToSpendPerDay)} THB.`,
+      formatSavedSummary(total, dashboard.snapshot),
       appKeyboard(miniAppUrl, telegramUserId)
     );
   }
@@ -103,31 +113,55 @@ async function handleCallback({ update, repository, token, miniAppUrl }) {
   }
 
   await answerCallback(token, callback.id, "Открой Mini App для изменения");
-  return sendMessage(token, callback.message.chat.id, "Редактирование будет в Mini App.", appKeyboard(miniAppUrl, telegramUserId));
+  return sendMessage(token, callback.message.chat.id, "Редактирование доступно в Mini App.", appKeyboard(miniAppUrl, telegramUserId));
 }
 
-function formatDraft(draftId, expenses) {
+function formatDraft(expenses) {
   const lines = expenses.map((expense, index) =>
-    `${index + 1}. ${categoryName(expense.category_slug)} - ${expense.description} - ${formatAmount(expense.amount)} ${expense.currency}`
+    `${index + 1}. <b>${escapeHtml(categoryName(expense.category_slug))}</b>\n   ${escapeHtml(expense.description)} — <b>${formatAmount(expense.amount)} ${expense.currency}</b>`
   );
   const total = expenses.reduce((sum, expense) => sum + expense.amount, 0);
   const review = expenses.some((expense) => expense.needs_review)
-    ? "\n\nЕсть сомнительные строки, проверь перед сохранением."
+    ? "\n\n⚠️ Есть сомнительные строки, проверь перед сохранением."
     : "";
-  return `Я понял так:\n\n${lines.join("\n")}\n\nИтого: ${formatAmount(total)} THB.${review}\n\nПодтвердить?`;
+  return `🧾 <b>Я понял так:</b>\n\n${lines.join("\n\n")}\n\n<b>Итого:</b> ${formatAmount(total)} THB.${review}\n\nПодтвердить?`;
+}
+
+function formatSavedSummary(total, snapshot) {
+  return [
+    `✅ <b>Записал:</b> ${formatAmount(total)} THB`,
+    "",
+    `📌 <b>Сегодня:</b> ${formatAmount(snapshot.today)} THB`,
+    `📆 <b>Неделя:</b> ${formatAmount(snapshot.week)} THB`,
+    `📅 <b>Месяц:</b> ${formatAmount(snapshot.month)} / ${formatAmount(snapshot.monthlyBudget)} THB`,
+    `🧾 <b>Плановые:</b> ${formatAmount(snapshot.plannedRemaining)} THB`,
+    `⚡️ <b>Можно в день:</b> ${formatAmount(snapshot.safeToSpendPerDay)} THB`
+  ].join("\n");
 }
 
 function formatTotals(command, snapshot) {
-  if (command === "/today") return `Сегодня: ${formatAmount(snapshot.today)} THB.`;
-  if (command === "/month") return `Месяц: ${formatAmount(snapshot.month)} / ${formatAmount(snapshot.monthlyBudget)} THB.`;
-  return `Бюджет: ${formatAmount(snapshot.monthlyBudget)} THB.\nОсталось: ${formatAmount(snapshot.remaining)} THB.\nМожно тратить в день: ${formatAmount(snapshot.safeToSpendPerDay)} THB.\nСтатус: ${statusLabel(snapshot.status)}.`;
+  if (command === "/today") return `📌 <b>Сегодня:</b> ${formatAmount(snapshot.today)} THB`;
+  if (command === "/month") {
+    return `📅 <b>Месяц:</b> ${formatAmount(snapshot.month)} / ${formatAmount(snapshot.monthlyBudget)} THB`;
+  }
+  return [
+    `💰 <b>Бюджет:</b> ${formatAmount(snapshot.monthlyBudget)} THB`,
+    `📅 <b>Месяц:</b> ${formatAmount(snapshot.month)} THB`,
+    `🧾 <b>Плановые:</b> ${formatAmount(snapshot.plannedRemaining)} THB`,
+    `🟢 <b>Свободно:</b> ${formatAmount(snapshot.freeRemaining)} THB`,
+    `⚡️ <b>Можно в день:</b> ${formatAmount(snapshot.safeToSpendPerDay)} THB`,
+    `Статус: ${escapeHtml(statusLabel(snapshot.status))}`
+  ].join("\n");
 }
 
 function draftKeyboard(draftId, miniAppUrl, telegramUserId) {
   return {
     inline_keyboard: [
       [{ text: "Confirm all", callback_data: `confirm:${draftId}` }],
-      [{ text: "Edit", web_app: { url: `${miniAppUrl}?telegramUserId=${telegramUserId}&draftId=${draftId}` } }, { text: "Cancel", callback_data: `cancel:${draftId}` }],
+      [
+        { text: "Edit", web_app: { url: `${miniAppUrl}?telegramUserId=${telegramUserId}&draftId=${draftId}` } },
+        { text: "Cancel", callback_data: `cancel:${draftId}` }
+      ],
       [{ text: "Move to Inbox", callback_data: `inbox:${draftId}` }],
       [{ text: "Open in Mini App", web_app: { url: `${miniAppUrl}?telegramUserId=${telegramUserId}` } }]
     ]
@@ -148,6 +182,7 @@ async function sendMessage(token, chatId, text, replyMarkup) {
   return telegramRequest(token, "sendMessage", {
     chat_id: chatId,
     text,
+    parse_mode: "HTML",
     reply_markup: replyMarkup
   });
 }
@@ -180,4 +215,11 @@ function statusLabel(status) {
 
 function formatAmount(value) {
   return new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 }).format(Number(value));
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
 }

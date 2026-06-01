@@ -31,6 +31,11 @@ export function localPeriodBounds(date, period, offsetMinutes = DEFAULT_OFFSET_M
   if (period === "today") {
     startLocal = Date.UTC(year, month, day, 0, 0, 0, 0);
     endLocal = Date.UTC(year, month, day + 1, 0, 0, 0, 0);
+  } else if (period === "week") {
+    const dayOfWeek = local.getUTCDay();
+    const daysFromMonday = (dayOfWeek + 6) % 7;
+    startLocal = Date.UTC(year, month, day - daysFromMonday, 0, 0, 0, 0);
+    endLocal = Date.UTC(year, month, day + 1, 0, 0, 0, 0);
   } else if (period === "month") {
     startLocal = Date.UTC(year, month, 1, 0, 0, 0, 0);
     endLocal = Date.UTC(year, month + 1, 1, 0, 0, 0, 0);

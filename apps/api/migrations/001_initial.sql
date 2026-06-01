@@ -38,3 +38,21 @@ CREATE TABLE IF NOT EXISTS expenses (
 
 CREATE INDEX IF NOT EXISTS expenses_user_spent_at_idx ON expenses(user_id, spent_at DESC);
 CREATE INDEX IF NOT EXISTS drafts_user_status_idx ON drafts(user_id, status);
+
+CREATE TABLE IF NOT EXISTS planned_expenses (
+  id BIGSERIAL PRIMARY KEY,
+  user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  amount NUMERIC(14, 2) NOT NULL,
+  currency TEXT NOT NULL DEFAULT 'THB',
+  amount_base NUMERIC(14, 2) NOT NULL,
+  description TEXT NOT NULL,
+  category_slug TEXT NOT NULL DEFAULT 'other',
+  tags TEXT[] NOT NULL DEFAULT '{}',
+  recurrence TEXT NOT NULL CHECK (recurrence IN ('monthly', 'weekly', 'twice_monthly', 'one_off')),
+  due_day INTEGER,
+  due_date DATE,
+  active BOOLEAN NOT NULL DEFAULT true,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS planned_expenses_user_active_idx ON planned_expenses(user_id, active);

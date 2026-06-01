@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Money Flow</title>
-    <link rel="stylesheet" href="/styles.css?v=20260601-editing" />
+    <link rel="stylesheet" href="/styles.css?v=20260601-history-planned" />
   </head>
   <body>
     <main class="shell">
@@ -16,65 +16,111 @@
         <div class="status-pill" id="status">...</div>
       </header>
 
-      <section class="hero-metric">
-        <span>Можно тратить в день</span>
-        <strong id="safeToSpend">...</strong>
+      <nav class="tabs" aria-label="Разделы">
+        <button class="tab-button active" type="button" data-tab="dashboard">Dashboard</button>
+        <button class="tab-button" type="button" data-tab="history">History</button>
+      </nav>
+
+      <section id="dashboardTab">
+        <section class="hero-metric">
+          <span>Можно тратить в день</span>
+          <strong id="safeToSpend">...</strong>
+        </section>
+
+        <section class="metrics-grid" aria-label="Основные показатели">
+          <article class="metric">
+            <span>Сегодня</span>
+            <strong id="today">...</strong>
+          </article>
+          <article class="metric">
+            <span>Неделя</span>
+            <strong id="week">...</strong>
+          </article>
+          <article class="metric">
+            <span>Месяц</span>
+            <strong id="month">...</strong>
+          </article>
+          <article class="metric">
+            <span>Бюджет</span>
+            <strong id="budget">...</strong>
+          </article>
+          <article class="metric">
+            <span>Плановые</span>
+            <strong id="planned">...</strong>
+          </article>
+          <article class="metric">
+            <span>Свободно</span>
+            <strong id="freeRemaining">...</strong>
+          </article>
+        </section>
+
+        <section class="section form-section">
+          <div class="section-heading">
+            <h2>Бюджет</h2>
+          </div>
+          <form class="inline-form" id="budgetForm">
+            <label>
+              <span>Месячный бюджет</span>
+              <input id="budgetInput" name="monthlyBudgetAmount" type="number" min="1" step="1" inputmode="decimal" />
+            </label>
+            <button type="submit">Сохранить</button>
+          </form>
+        </section>
+
+        <section class="section">
+          <div class="section-heading">
+            <h2>Топ категорий</h2>
+          </div>
+          <div class="bar-list" id="topCategories"></div>
+        </section>
+
+        <section class="section form-section">
+          <div class="section-heading">
+            <h2>Плановые траты</h2>
+          </div>
+          <form class="form-stack" id="plannedForm"></form>
+          <div class="expense-list" id="plannedExpenses"></div>
+        </section>
+
+        <section class="section form-section hidden" id="draftEditorSection">
+          <div class="section-heading">
+            <h2>Черновик</h2>
+          </div>
+          <form id="draftForm"></form>
+        </section>
+
+        <section class="section">
+          <div class="section-heading">
+            <h2>Последние расходы</h2>
+          </div>
+          <div class="expense-list" id="latestExpenses"></div>
+        </section>
+
+        <section class="section form-section hidden" id="expenseEditorSection">
+          <div class="section-heading">
+            <h2>Расход</h2>
+          </div>
+          <form id="expenseForm"></form>
+        </section>
       </section>
 
-      <section class="metrics-grid" aria-label="Основные показатели">
-        <article class="metric">
-          <span>Сегодня</span>
-          <strong id="today">...</strong>
-        </article>
-        <article class="metric">
-          <span>Месяц</span>
-          <strong id="month">...</strong>
-        </article>
-        <article class="metric">
-          <span>Бюджет</span>
-          <strong id="budget">...</strong>
-        </article>
-        <article class="metric">
-          <span>Осталось</span>
-          <strong id="remaining">...</strong>
-        </article>
-      </section>
-
-      <section class="section form-section">
-        <div class="section-heading">
-          <h2>Бюджет</h2>
-        </div>
-        <form class="inline-form" id="budgetForm">
-          <label>
-            <span>Месячный бюджет</span>
-            <input id="budgetInput" name="monthlyBudgetAmount" type="number" min="1" step="1" inputmode="decimal" />
-          </label>
-          <button type="submit">Сохранить</button>
-        </form>
-      </section>
-
-      <section class="section form-section hidden" id="draftEditorSection">
-        <div class="section-heading">
-          <h2>Черновик</h2>
-        </div>
-        <form id="draftForm"></form>
-      </section>
-
-      <section class="section">
-        <div class="section-heading">
-          <h2>Последние расходы</h2>
-        </div>
-        <div class="expense-list" id="latestExpenses"></div>
-      </section>
-
-      <section class="section form-section hidden" id="expenseEditorSection">
-        <div class="section-heading">
-          <h2>Расход</h2>
-        </div>
-        <form id="expenseForm"></form>
+      <section id="historyTab" class="hidden">
+        <section class="section form-section">
+          <div class="section-heading">
+            <h2>История</h2>
+          </div>
+          <form class="inline-form" id="historySearchForm">
+            <label>
+              <span>Поиск</span>
+              <input id="historySearch" name="search" placeholder="описание, категория, тег" />
+            </label>
+            <button type="submit">Найти</button>
+          </form>
+          <div class="history-list" id="historyList"></div>
+        </section>
       </section>
     </main>
 
-    <script src="/app.js?v=20260601-editing" type="module"></script>
+    <script src="/app.js?v=20260601-history-planned" type="module"></script>
   </body>
 </html>
