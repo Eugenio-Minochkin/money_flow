@@ -5,13 +5,15 @@ CREATE TABLE IF NOT EXISTS users (
   username TEXT,
   base_currency TEXT NOT NULL DEFAULT 'THB',
   display_currency TEXT NOT NULL DEFAULT 'USD',
-  usd_thb_rate NUMERIC(14, 6) NOT NULL DEFAULT 36,
+  usd_thb_rate NUMERIC(14, 6) NOT NULL DEFAULT 32.65,
   monthly_budget_amount NUMERIC(14, 2) NOT NULL DEFAULT 45000,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 ALTER TABLE users ADD COLUMN IF NOT EXISTS display_currency TEXT NOT NULL DEFAULT 'USD';
-ALTER TABLE users ADD COLUMN IF NOT EXISTS usd_thb_rate NUMERIC(14, 6) NOT NULL DEFAULT 36;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS usd_thb_rate NUMERIC(14, 6) NOT NULL DEFAULT 32.65;
+ALTER TABLE users ALTER COLUMN usd_thb_rate SET DEFAULT 32.65;
+UPDATE users SET usd_thb_rate = 32.65 WHERE usd_thb_rate = 36;
 
 CREATE TABLE IF NOT EXISTS drafts (
   id BIGSERIAL PRIMARY KEY,
@@ -55,20 +57,32 @@ CREATE TABLE IF NOT EXISTS planned_expenses (
   tags TEXT[] NOT NULL DEFAULT '{}',
   recurrence TEXT NOT NULL CHECK (recurrence IN ('monthly', 'weekly', 'twice_monthly', 'one_off')),
   due_day INTEGER,
+  due_days INTEGER[] NOT NULL DEFAULT '{}',
+  weekday INTEGER,
   due_date DATE,
   active BOOLEAN NOT NULL DEFAULT true,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX IF NOT EXISTS planned_expenses_user_active_idx ON planned_expenses(user_id, active);
+ALTER TABLE planned_expenses ADD COLUMN IF NOT EXISTS due_days INTEGER[] NOT NULL DEFAULT '{}';
+ALTER TABLE planned_expenses ADD COLUMN IF NOT EXISTS weekday INTEGER;
+UPDATE planned_expenses SET due_days = ARRAY[due_day] WHERE due_day IS NOT NULL AND cardinality(due_days) = 0;
 
 CREATE TABLE IF NOT EXISTS planned_expense_payments (
   id BIGSERIAL PRIMARY KEY,
   planned_expense_id BIGINT NOT NULL REFERENCES planned_expenses(id) ON DELETE CASCADE,
   expense_id BIGINT NOT NULL REFERENCES expenses(id) ON DELETE CASCADE,
   paid_month TEXT NOT NULL,
+  paid_key TEXT NOT NULL DEFAULT '',
   paid_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE(planned_expense_id, paid_month)
+  UNIQUE(planned_expense_id, paid_key)
 );
 
+ALTER TABLE planned_expense_payments ADD COLUMN IF NOT EXISTS paid_key TEXT;
+UPDATE planned_expense_payments SET paid_key = paid_month WHERE paid_key IS NULL OR paid_key = '';
+ALTER TABLE planned_expense_payments ALTER COLUMN paid_key SET NOT NULL;
+ALTER TABLE planned_expense_payments ALTER COLUMN paid_key SET DEFAULT '';
+ALTER TABLE planned_expense_payments DROP CONSTRAINT IF EXISTS planned_expense_payments_planned_expense_id_paid_month_key;
+CREATE UNIQUE INDEX IF NOT EXISTS planned_expense_payments_key_idx ON planned_expense_payments(planned_expense_id, paid_key);
 CREATE INDEX IF NOT EXISTS planned_expense_payments_month_idx ON planned_expense_payments(planned_expense_id, paid_month);

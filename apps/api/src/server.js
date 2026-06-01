@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 
 import { config, requireRuntimeConfig } from "./config.js";
 import { migrate, pool } from "./db.js";
+import { createExchangeRateProvider } from "./exchangeRates.js";
 import { createExpenseParser } from "./expenseParser.js";
 import { createRepository } from "./repository.js";
 import { createTelegramBot } from "./telegram.js";
@@ -16,7 +17,10 @@ const webRoot = join(root, "apps", "miniapp", "src");
 requireRuntimeConfig();
 await migrate();
 
-const repository = createRepository(pool, { defaultMonthlyBudget: config.defaultMonthlyBudget });
+const repository = createRepository(pool, {
+  defaultMonthlyBudget: config.defaultMonthlyBudget,
+  exchangeRates: createExchangeRateProvider()
+});
 const expenseParser = createExpenseParser({
   apiKey: config.openAiApiKey,
   model: config.openAiModel

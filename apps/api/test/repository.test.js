@@ -175,8 +175,8 @@ test("paying a planned expense creates an expense and records payment month", as
             amount_original: params[1],
             currency_original: params[2],
             amount_base: params[3],
-            description: params[7],
-            category_slug: params[8]
+            description: params[8],
+            category_slug: params[9]
           }]
         };
       }
@@ -197,6 +197,140 @@ test("paying a planned expense creates an expense and records payment month", as
   assert.equal(Number(expense.amount_original), 17000);
   assert.ok(queries.some((query) => String(query.sql).includes("INSERT INTO planned_expense_payments")));
   assert.ok(queries.some((query) => String(query.sql) === "COMMIT"));
+});
+
+test("planned RUB expenses are converted through dated THB rates", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql, params });
+    if (String(sql).startsWith("SELECT * FROM users")) {
+      return {
+        rows: [{
+          id: "1",
+          telegram_user_id: "100",
+          base_currency: "THB",
+          display_currency: "USD",
+          usd_thb_rate: "32.6"
+        }]
+      };
+    }
+    if (String(sql).startsWith("INSERT INTO planned_expenses")) {
+      return {
+        rows: [{
+          id: "8",
+          amount: params[1],
+          currency: params[2],
+          amount_base: params[3],
+          description: params[4]
+        }]
+      };
+    }
+    return { rows: [] };
+  }), {
+    exchangeRates: fixedRates()
+  });
+
+  const planned = await repo.createPlannedExpense(100, {
+    amount: 5000,
+    currency: "RUB",
+    description: "psychologist",
+    category_slug: "health",
+    recurrence: "monthly",
+    due_day: 4
+  });
+
+  assert.equal(Number(planned.amount_base), 1800);
+  assert.equal(queries.find((query) => String(query.sql).startsWith("INSERT INTO planned_expenses")).params[3], 1800);
+});
+
+test("paying weekly planned expenses uses an occurrence key, not one payment per month", async () => {
+  const queries = [];
+  const client = {
+    async query(sql, params = []) {
+      queries.push({ sql, params });
+      if (String(sql).includes("SELECT planned_expenses.*, users.base_currency")) {
+        return {
+          rows: [{
+            id: "5",
+            user_id: "1",
+            amount: "1000",
+            currency: "THB",
+            amount_base: "1000",
+            description: "english",
+            category_slug: "education",
+            tags: [],
+            recurrence: "weekly",
+            weekday: 3,
+            base_currency: "THB",
+            usd_thb_rate: "32.6"
+          }]
+        };
+      }
+      if (String(sql).includes("INSERT INTO expenses")) {
+        return {
+          rows: [{
+            id: "20",
+            amount_original: params[1],
+            currency_original: params[2],
+            amount_base: params[3],
+            converted_amounts: JSON.parse(params[5]),
+            exchange_rate_source: params[7],
+            description: params[8],
+            category_slug: params[9]
+          }]
+        };
+      }
+      if (String(sql).includes("INSERT INTO planned_expense_payments")) return { rows: [{ id: "9" }] };
+      return { rows: [] };
+    },
+    release() {}
+  };
+  const repo = createRepository({
+    async connect() {
+      return client;
+    }
+  }, {
+    exchangeRates: fixedRates()
+  });
+
+  const expense = await repo.payPlannedExpenseForTelegramUser(5, 100, new Date("2026-06-17T09:00:00+07:00"));
+  const paymentQuery = queries.find((query) => String(query.sql).includes("INSERT INTO planned_expense_payments"));
+
+  assert.equal(Number(expense.amount_base), 1000);
+  assert.match(String(paymentQuery.sql), /paid_key/);
+  assert.equal(paymentQuery.params[4], "2026-06:2026-06-17");
+});
+
+test("dashboard keeps unpaid twice-monthly occurrences in planned reserve", async () => {
+  const repo = createRepository(fakePool((sql) => {
+    if (String(sql).startsWith("SELECT * FROM users")) {
+      return { rows: [{ id: "1", telegram_user_id: "100", monthly_budget_amount: "45000" }] };
+    }
+    if (String(sql).includes("planned_expense_payments")) {
+      return {
+        rows: [{
+          id: "5",
+          amount: "2000",
+          amount_base: "2000",
+          currency: "THB",
+          description: "therapy",
+          category_slug: "health",
+          recurrence: "twice_monthly",
+          due_days: [4, 18],
+          paid_count: 1
+        }]
+      };
+    }
+    if (String(sql).includes("COALESCE(SUM(amount_base)")) return { rows: [{ total: 0 }] };
+    if (String(sql).includes("FROM expenses") && String(sql).includes("ORDER BY spent_at")) return { rows: [] };
+    if (String(sql).includes("GROUP BY category_slug")) return { rows: [] };
+    return { rows: [] };
+  }));
+
+  const dashboard = await repo.dashboard(100, new Date("2026-06-10T10:00:00+07:00"));
+
+  assert.equal(dashboard.snapshot.plannedRemaining, 2000);
+  assert.equal(dashboard.snapshot.freeRemaining, 43000);
 });
 
 test("dashboard excludes current-month paid planned expenses from reserve", async () => {
@@ -279,6 +413,19 @@ function fakePool(handler) {
   return {
     async query(sql, params = []) {
       return handler(sql, params);
+    }
+  };
+}
+
+function fixedRates() {
+  return {
+    async ratesFor() {
+      return {
+        source: "test-rates",
+        THB: { THB: 1 },
+        USD: { THB: 32.6 },
+        RUB: { THB: 0.36 }
+      };
     }
   };
 }

@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Money Flow</title>
-    <link rel="stylesheet" href="/styles.css?v=20260601-next-ui" />
+    <link rel="stylesheet" href="/styles.css?v=20260601-plan-currency" />
   </head>
   <body>
     <main class="shell">
@@ -18,6 +18,7 @@
 
       <nav class="tabs" aria-label="Разделы">
         <button class="tab-button active" type="button" data-tab="dashboard">Dashboard</button>
+        <button class="tab-button" type="button" data-tab="plan">Plan</button>
         <button class="tab-button" type="button" data-tab="history">History</button>
         <button class="tab-button" type="button" data-tab="settings">Settings</button>
       </nav>
@@ -54,23 +55,6 @@
 
         <section class="notice hidden" id="plannedNotice"></section>
 
-        <section class="section">
-          <div class="section-heading">
-            <h2>Топ категорий</h2>
-            <span class="eyebrow">месяц</span>
-          </div>
-          <div class="bar-list" id="topCategories"></div>
-        </section>
-
-        <section class="section form-section">
-          <div class="section-heading split-heading">
-            <h2>Плановые траты</h2>
-            <button type="button" id="togglePlannedForm">+ Добавить</button>
-          </div>
-          <form class="form-stack hidden" id="plannedForm"></form>
-          <div class="expense-list" id="plannedExpenses"></div>
-        </section>
-
         <section class="section form-section hidden" id="draftEditorSection">
           <div class="section-heading">
             <h2>Черновик</h2>
@@ -85,11 +69,33 @@
           <div class="expense-list" id="latestExpenses"></div>
         </section>
 
+        <section class="section">
+          <div class="section-heading">
+            <h2>Топ категорий</h2>
+            <span class="eyebrow">месяц</span>
+          </div>
+          <div class="bar-list" id="topCategories"></div>
+        </section>
+
         <section class="section form-section hidden" id="expenseEditorSection">
           <div class="section-heading">
             <h2>Расход</h2>
           </div>
           <form id="expenseForm"></form>
+        </section>
+      </section>
+
+      <section id="planTab" class="hidden">
+        <section class="section form-section">
+          <div class="section-heading split-heading">
+            <div>
+              <h2>Плановые траты</h2>
+              <span class="eyebrow">резерв бюджета</span>
+            </div>
+            <button type="button" id="togglePlannedForm">+ Добавить</button>
+          </div>
+          <form class="form-stack hidden" id="plannedForm"></form>
+          <div class="expense-list" id="plannedExpenses"></div>
         </section>
       </section>
 
@@ -138,10 +144,10 @@
               </label>
             </div>
             <label>
-              <span>USD/THB курс для новых трат</span>
+              <span>USD/THB fallback</span>
               <input id="usdThbRateInput" name="usdThbRate" type="number" min="0.01" step="0.000001" />
             </label>
-            <p class="form-note">Новые расходы сохраняют пересчет на дату траты. Старые расходы без USD используют этот курс как временный fallback.</p>
+            <p class="form-note">Новые расходы берут курс на дату траты автоматически. Это поле используется как fallback для старых записей или если API курса недоступен.</p>
             <div class="button-row">
               <button type="submit">Сохранить</button>
             </div>
@@ -150,6 +156,7 @@
       </section>
     </main>
 
-    <script src="/app.js?v=20260601-next-ui" type="module"></script>
+    <div class="toast hidden" id="toast" role="status" aria-live="polite"></div>
+    <script src="/app.js?v=20260601-plan-currency" type="module"></script>
   </body>
 </html>

@@ -25,6 +25,7 @@ const statusLabels = {
 };
 const screenTitles = {
   dashboard: "Dashboard",
+  plan: "Plan",
   history: "History",
   settings: "Settings"
 };
@@ -89,6 +90,7 @@ async function loadDraft(id) {
 
 function switchTab(tab) {
   document.querySelector("#dashboardTab").classList.toggle("hidden", tab !== "dashboard");
+  document.querySelector("#planTab").classList.toggle("hidden", tab !== "plan");
   document.querySelector("#historyTab").classList.toggle("hidden", tab !== "history");
   document.querySelector("#settingsTab").classList.toggle("hidden", tab !== "settings");
   document.querySelector("#screenTitle").textContent = screenTitles[tab] ?? "Dashboard";
@@ -120,12 +122,12 @@ function renderSettings(user) {
   document.querySelector("#budgetInput").value = Math.round(Number(user.monthly_budget_amount ?? 45000));
   document.querySelector("#baseCurrencyInput").value = user.base_currency ?? "THB";
   document.querySelector("#displayCurrencyInput").value = user.display_currency ?? "USD";
-  document.querySelector("#usdThbRateInput").value = Number(user.usd_thb_rate ?? 36);
+  document.querySelector("#usdThbRateInput").value = Number(user.usd_thb_rate ?? 32.65);
 }
 
 function renderPlannedNotice(items) {
   const notice = document.querySelector("#plannedNotice");
-  const due = items.find((item) => isDueToday(item) && !item.paid_month && !hiddenNoticeIds.has(String(item.id)));
+  const due = items.find((item) => isDueToday(item) && !isPlannedPaid(item) && !hiddenNoticeIds.has(String(item.id)));
   if (!due) {
     notice.classList.add("hidden");
     notice.innerHTML = "";
@@ -233,12 +235,14 @@ function bindExpenseActions(container, expenses) {
       await api(`/api/expenses/${expense.id}`, { method: "DELETE", body: { telegramUserId } });
       await loadDashboard();
       await loadHistory();
+      showToast("Расход удален");
     });
   });
 }
 
 function renderPlannedForm(item = {}) {
   const form = document.querySelector("#plannedForm");
+  const dueDays = Array.isArray(item.due_days) && item.due_days.length ? item.due_days.join(", ") : (item.due_day ?? "");
   form.innerHTML = `
     <div class="field-grid">
       <label>
@@ -270,9 +274,21 @@ function renderPlannedForm(item = {}) {
         <span>Категория</span>
         <select name="planned-category_slug">${categories.map(([slug, label]) => option(slug, item.category_slug, label)).join("")}</select>
       </label>
-      <label>
+      <label data-recurrence-field="monthly">
         <span>День месяца</span>
         <input name="planned-due_day" type="number" min="1" max="31" value="${item.due_day ?? ""}" />
+      </label>
+      <label data-recurrence-field="twice_monthly">
+        <span>Дни месяца</span>
+        <input name="planned-due_days" value="${escapeAttribute(dueDays)}" placeholder="4, 18" />
+      </label>
+      <label data-recurrence-field="weekly">
+        <span>День недели</span>
+        <select name="planned-weekday">${weekdayOptions(item.weekday)}</select>
+      </label>
+      <label data-recurrence-field="one_off">
+        <span>Дата оплаты</span>
+        <input name="planned-due_date" type="date" value="${item.due_date ? String(item.due_date).slice(0, 10) : ""}" />
       </label>
     </div>
     <label>
@@ -282,10 +298,24 @@ function renderPlannedForm(item = {}) {
     <div class="button-row">
       <button type="submit">${item.id ? "Сохранить плановую" : "Добавить плановую"}</button>
       <button type="button" class="ghost-button" id="resetPlannedForm">Очистить</button>
+      <button type="button" class="ghost-button" id="cancelPlannedForm">Закрыть</button>
     </div>
   `;
   form.onsubmit = (event) => savePlanned(event, item.id);
   form.querySelector("#resetPlannedForm").addEventListener("click", () => renderPlannedForm());
+  form.querySelector("#cancelPlannedForm").addEventListener("click", () => {
+    renderPlannedForm();
+    form.classList.add("hidden");
+  });
+  form.querySelector('[name="planned-recurrence"]').addEventListener("change", syncPlannedRecurrenceFields);
+  syncPlannedRecurrenceFields();
+}
+
+function syncPlannedRecurrenceFields() {
+  const recurrence = input("planned-recurrence")?.value ?? "monthly";
+  document.querySelectorAll("[data-recurrence-field]").forEach((field) => {
+    field.classList.toggle("hidden", field.dataset.recurrenceField !== recurrence);
+  });
 }
 
 function renderPlannedExpenses(items) {
@@ -298,14 +328,14 @@ function renderPlannedExpenses(items) {
     <article class="expense-row" style="--category-color: ${categoryColor(item.category_slug)}">
       <div class="expense-main">
         <div class="expense-title">${escapeHtml(item.description)}</div>
-        <div class="expense-meta">${recurrenceLabel(item.recurrence)} · ${escapeHtml(categoryLabel(item.category_slug))}${item.paid_month ? " · оплачено" : ""}</div>
+        <div class="expense-meta">${recurrenceLabel(item)} · ${escapeHtml(categoryLabel(item.category_slug))}${isPlannedPaid(item) ? " · оплачено" : ""}</div>
       </div>
       <div class="expense-actions">
         <div class="expense-amount">${money.format(Number(item.amount))} ${escapeHtml(item.currency)}
           <em>${moneyDisplay(item.display?.amount, item.display?.currency)}</em>
         </div>
         <div class="button-row compact">
-          <button type="button" data-pay-planned="${item.id}"${item.paid_month ? " disabled" : ""}>Оплачено</button>
+          <button type="button" data-pay-planned="${item.id}"${isPlannedPaid(item) ? " disabled" : ""}>Оплачено</button>
           <button type="button" class="ghost-button" data-edit-planned="${item.id}">Изменить</button>
           <button type="button" class="danger-button" data-delete-planned="${item.id}">Отключить</button>
         </div>
@@ -319,6 +349,7 @@ function bindPlannedActions(container, items) {
   container.querySelectorAll("[data-edit-planned]").forEach((button) => {
     button.addEventListener("click", () => {
       const item = items.find((planned) => String(planned.id) === button.dataset.editPlanned);
+      switchTab("plan");
       renderPlannedForm(item);
       document.querySelector("#plannedForm").classList.remove("hidden");
       document.querySelector("#plannedForm").scrollIntoView({ behavior: "smooth", block: "start" });
@@ -329,6 +360,7 @@ function bindPlannedActions(container, items) {
       await api(`/api/planned-expenses/${button.dataset.deletePlanned}`, { method: "DELETE", body: { telegramUserId } });
       renderPlannedForm();
       await loadDashboard();
+      showToast("Плановая трата отключена");
     });
   });
   container.querySelectorAll("[data-pay-planned]").forEach((button) => {
@@ -336,6 +368,7 @@ function bindPlannedActions(container, items) {
       await api(`/api/planned-expenses/${button.dataset.payPlanned}/pay`, { method: "POST", body: { telegramUserId } });
       await loadDashboard();
       await loadHistory();
+      showToast("Оплата записана");
     });
   });
   container.querySelectorAll("[data-hide-notice]").forEach((button) => {
@@ -436,6 +469,7 @@ async function saveSettings(event) {
     }
   });
   await loadDashboard();
+  showToast("Настройки сохранены");
 }
 
 async function saveDraft(event) {
@@ -464,6 +498,7 @@ async function saveExpense(event, expenseId) {
   document.querySelector("#expenseEditorSection").classList.add("hidden");
   await loadDashboard();
   await loadHistory();
+  showToast("Расход сохранен");
 }
 
 async function savePlanned(event, plannedId) {
@@ -474,6 +509,7 @@ async function savePlanned(event, plannedId) {
   renderPlannedForm();
   document.querySelector("#plannedForm").classList.add("hidden");
   await loadDashboard();
+  showToast(plannedId ? "Плановая трата сохранена" : "Плановая трата добавлена");
 }
 
 function collectItem(prefix, original) {
@@ -490,16 +526,29 @@ function collectItem(prefix, original) {
 }
 
 function collectPlanned() {
+  const recurrence = input("planned-recurrence").value;
+  const dueDays = parseDueDays(input("planned-due_days")?.value);
+  const monthlyDay = input("planned-due_day")?.value ? Number(input("planned-due_day").value) : null;
   return {
     amount: Number(input("planned-amount").value),
     currency: input("planned-currency").value,
     description: input("planned-description").value.trim(),
     category_slug: input("planned-category_slug").value,
-    recurrence: input("planned-recurrence").value,
-    due_day: input("planned-due_day").value ? Number(input("planned-due_day").value) : null,
+    recurrence,
+    due_day: recurrence === "monthly" ? monthlyDay : null,
+    due_days: recurrence === "twice_monthly" ? dueDays : (monthlyDay ? [monthlyDay] : []),
+    weekday: recurrence === "weekly" ? Number(input("planned-weekday").value) : null,
+    due_date: recurrence === "one_off" ? input("planned-due_date").value : null,
     tags: input("planned-tags").value.split(",").map((tag) => tag.trim()).filter(Boolean),
     active: true
   };
+}
+
+function parseDueDays(value) {
+  return String(value ?? "")
+    .split(",")
+    .map((day) => Number(day.trim()))
+    .filter((day) => Number.isInteger(day) && day >= 1 && day <= 31);
 }
 
 async function api(path, options = {}) {
@@ -532,7 +581,16 @@ function isDueToday(item) {
   if (item.recurrence === "one_off" && item.due_date) {
     return new Date(item.due_date).toDateString() === today.toDateString();
   }
-  return Number(item.due_day) === today.getDate();
+  if (item.recurrence === "weekly") {
+    const weekday = today.getDay() === 0 ? 7 : today.getDay();
+    return Number(item.weekday) === weekday;
+  }
+  const days = Array.isArray(item.due_days) && item.due_days.length ? item.due_days : [item.due_day];
+  return days.map(Number).includes(today.getDate());
+}
+
+function isPlannedPaid(item) {
+  return Number(item.paid_count ?? (item.paid_month ? 1 : 0)) > 0;
 }
 
 function input(name) {
@@ -551,13 +609,34 @@ function categoryColor(slug) {
   return categories.find(([value]) => value === slug)?.[2] ?? "#756b61";
 }
 
-function recurrenceLabel(value) {
+function recurrenceLabel(item) {
+  const recurrence = typeof item === "string" ? item : item.recurrence;
+  if (recurrence === "weekly") return `каждый ${weekdayName(item.weekday)}`;
+  if (recurrence === "twice_monthly") {
+    const days = Array.isArray(item.due_days) && item.due_days.length ? item.due_days : [item.due_day].filter(Boolean);
+    return days.length ? `${days.join(" и ")} числа` : "2 раза в месяц";
+  }
+  if (recurrence === "monthly") return item.due_day ? `${item.due_day} числа` : "раз в месяц";
+  if (recurrence === "one_off") return item.due_date ? formatDate(item.due_date) : "один раз";
+  return recurrence;
+}
+
+function weekdayOptions(selected) {
+  return [1, 2, 3, 4, 5, 6, 7]
+    .map((weekday) => option(String(weekday), String(selected ?? 1), weekdayName(weekday)))
+    .join("");
+}
+
+function weekdayName(weekday) {
   return {
-    monthly: "раз в месяц",
-    weekly: "раз в неделю",
-    twice_monthly: "2 раза в месяц",
-    one_off: "один раз"
-  }[value] ?? value;
+    1: "понедельник",
+    2: "вторник",
+    3: "среду",
+    4: "четверг",
+    5: "пятницу",
+    6: "субботу",
+    7: "воскресенье"
+  }[Number(weekday)] ?? "понедельник";
 }
 
 function moneyBase(value) {
@@ -577,6 +656,18 @@ function setText(selector, text) {
 
 function showError(error) {
   document.querySelector("#latestExpenses").innerHTML = `<div class="error">${escapeHtml(error.message)}</div>`;
+  showToast(error.message);
+}
+
+function showToast(message) {
+  const toast = document.querySelector("#toast");
+  if (!toast) return;
+  toast.textContent = message;
+  toast.classList.remove("hidden");
+  clearTimeout(showToast.timer);
+  showToast.timer = setTimeout(() => {
+    toast.classList.add("hidden");
+  }, 2200);
 }
 
 function formatDate(value) {
