@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Money Flow</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Money Flow</p>
+          <h1>Dashboard</h1>
+        </div>
+        <div class="status-pill" id="status">...</div>
+      </header>
+
+      <section class="hero-metric">
+        <span>Можно тратить в день</span>
+        <strong id="safeToSpend">...</strong>
+      </section>
+
+      <section class="metrics-grid" aria-label="Основные показатели">
+        <article class="metric">
+          <span>Сегодня</span>
+          <strong id="today">...</strong>
+        </article>
+        <article class="metric">
+          <span>Месяц</span>
+          <strong id="month">...</strong>
+        </article>
+        <article class="metric">
+          <span>Бюджет</span>
+          <strong id="budget">...</strong>
+        </article>
+        <article class="metric">
+          <span>Осталось</span>
+          <strong id="remaining">...</strong>
+        </article>
+      </section>
+
+      <section class="section">
+        <div class="section-heading">
+          <h2>Последние расходы</h2>
+        </div>
+        <div class="expense-list" id="latestExpenses"></div>
+      </section>
+    </main>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>
