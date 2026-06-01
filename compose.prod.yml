@@ -2,6 +2,8 @@ services:
   api:
     build: .
     restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:3000"
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
@@ -21,22 +23,5 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
-  caddy:
-    image: caddy:2-alpine
-    restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
-    environment:
-      APP_DOMAIN: ${APP_DOMAIN}
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
-    depends_on:
-      - api
-
 volumes:
   postgres_data:
-  caddy_data:
-  caddy_config:
