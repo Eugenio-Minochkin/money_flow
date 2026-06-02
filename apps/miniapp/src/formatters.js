@@ -6,8 +6,16 @@ export function moneyBase(value) {
 
 export function moneyDisplay(value, currency = "USD") {
   if (value == null || Number.isNaN(Number(value))) return "";
-  const prefix = currency === "USD" ? "~$" : "";
-  const suffix = currency === "USD" ? "" : ` ${currency}`;
+  const symbols = {
+    USD: "$",
+    EUR: "€",
+    IDR: "Rp ",
+    GEL: "₾",
+    BYN: "Br ",
+    RUB: ""
+  };
+  const prefix = symbols[currency] ? `~${symbols[currency]}` : "";
+  const suffix = symbols[currency] ? "" : ` ${currency}`;
   return `${prefix}${money.format(Number(value))}${suffix}`;
 }
 

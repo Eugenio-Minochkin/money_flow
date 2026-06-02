@@ -236,7 +236,13 @@ async function route(req, res) {
   }
 
   if (req.method === "GET" && url.pathname === "/health") {
-    return sendJson(res, 200, { ok: true });
+    try {
+      const health = await repository.health();
+      return sendJson(res, 200, { ok: true, ...health });
+    } catch (error) {
+      console.error("[health] database check failed", error.message);
+      return sendJson(res, 503, { ok: false, db: false });
+    }
   }
 
   if (req.method === "GET") {

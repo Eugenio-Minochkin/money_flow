@@ -1,4 +1,5 @@
 import { inferCategory, inferTags } from "./categories.js";
+import { normalizeCurrency } from "./currencies.js";
 import { toOffsetIso } from "./time.js";
 
 const CURRENCY_ALIASES = new Map([
@@ -8,10 +9,20 @@ const CURRENCY_ALIASES = new Map([
   ["thb", "THB"],
   ["руб", "RUB"],
   ["рублей", "RUB"],
+  ["рубль", "RUB"],
   ["rub", "RUB"],
   ["доллар", "USD"],
   ["долларов", "USD"],
-  ["usd", "USD"]
+  ["usd", "USD"],
+  ["рупий", "IDR"],
+  ["рупия", "IDR"],
+  ["idr", "IDR"],
+  ["евро", "EUR"],
+  ["eur", "EUR"],
+  ["byn", "BYN"],
+  ["белруб", "BYN"],
+  ["лари", "GEL"],
+  ["gel", "GEL"]
 ]);
 
 export function parseExpenseText(text, options = {}) {
@@ -34,7 +45,7 @@ function parsePart(part, now) {
 
   const amount = Number(match.groups.amount.replace(",", "."));
   const rawCurrency = match.groups.currency?.toLowerCase();
-  const currency = rawCurrency ? CURRENCY_ALIASES.get(rawCurrency) ?? "THB" : "THB";
+  const currency = rawCurrency ? normalizeCurrency(CURRENCY_ALIASES.get(rawCurrency), "THB") : "THB";
   const description = part
     .slice(0, match.index)
     .replace(/\b(сегодня|вчера|позавчера|утром|днем|днём|вечером|ночью)\b/giu, "")

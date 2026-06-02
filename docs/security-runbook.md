@@ -95,6 +95,13 @@ printf 'DROP DATABASE %s;\n' "$restore_db" | docker compose --env-file .env.prod
 
 ```bash
 cd /opt/money-flow
+./scripts/prod-security-check.sh
+```
+
+Manual equivalent:
+
+```bash
+cd /opt/money-flow
 curl -fsS http://127.0.0.1:3000/health
 curl -sS -o /tmp/direct-dashboard.out -w '%{http_code}\n' \
   'http://127.0.0.1:3000/api/dashboard?telegramUserId=100001'

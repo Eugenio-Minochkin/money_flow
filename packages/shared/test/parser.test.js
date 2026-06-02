@@ -30,3 +30,10 @@ test("uses THB when currency is omitted", () => {
   assert.equal(result.expenses[0].currency, "THB");
   assert.equal(result.expenses[0].amount, 180);
 });
+
+test("parses added currency aliases and education category", () => {
+  const result = parseExpenseText("English 1000 евро");
+
+  assert.equal(result.expenses[0].currency, "EUR");
+  assert.equal(result.expenses[0].category_slug, "education");
+});

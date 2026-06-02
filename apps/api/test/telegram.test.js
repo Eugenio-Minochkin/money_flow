@@ -214,7 +214,10 @@ function fakeRepository() {
     updatedItems: null,
     markedReportKey: null,
     async upsertTelegramUser() {
-      return { id: 1 };
+      return { id: 1, interface_language: "ru" };
+    },
+    async getUserByTelegramId() {
+      return { id: 1, interface_language: "ru" };
     },
     async createDraft() {
       return { id: 42 };
@@ -244,7 +247,7 @@ function fakeRepository() {
       return [{ amount_base: 75 }];
     },
     async listUsersPendingWeeklyReport() {
-      return [{ id: 1, telegram_user_id: 100 }];
+      return [{ id: 1, telegram_user_id: 100, interface_language: "ru" }];
     },
     async markWeeklyReportSent(_userId, reportKey) {
       this.markedReportKey = reportKey;

@@ -8,6 +8,7 @@ export const categories = [
   ["gear", "Вещи / экипировка", "#7a6a55"],
   ["travel", "Путешествия", "#1d7f75"],
   ["subscriptions", "Подписки / связь", "#6a62c8"],
+  ["education", "Образование", "#3f7f9f"],
   ["gifts_help", "Подарки / помощь", "#c46a8a"],
   ["entertainment", "Развлечения", "#d87135"],
   ["other", "Другое", "#756b61"]

@@ -46,6 +46,15 @@ test("formats weekly report with top categories", () => {
   assert.match(normalizeSpaces(text), /42 000 THB/);
 });
 
+test("formats saved summary in English when requested", () => {
+  const text = formatSavedSummary(75, snapshot(), { language: "en" });
+
+  assert.match(text, /Saved expense/);
+  assert.match(text, /Today/);
+  assert.match(text, /Month/);
+  assert.doesNotMatch(text, /Записал/);
+});
+
 function snapshot() {
   return {
     today: 75,

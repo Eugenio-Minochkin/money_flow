@@ -8,14 +8,17 @@ CREATE TABLE IF NOT EXISTS users (
   usd_thb_rate NUMERIC(14, 6) NOT NULL DEFAULT 32.65,
   monthly_budget_amount NUMERIC(14, 2) NOT NULL DEFAULT 45000,
   weekly_budget_amount NUMERIC(14, 2),
+  interface_language TEXT NOT NULL DEFAULT 'en',
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 ALTER TABLE users ADD COLUMN IF NOT EXISTS display_currency TEXT NOT NULL DEFAULT 'USD';
 ALTER TABLE users ADD COLUMN IF NOT EXISTS usd_thb_rate NUMERIC(14, 6) NOT NULL DEFAULT 32.65;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS weekly_budget_amount NUMERIC(14, 2);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS interface_language TEXT NOT NULL DEFAULT 'en';
 ALTER TABLE users ALTER COLUMN usd_thb_rate SET DEFAULT 32.65;
 UPDATE users SET usd_thb_rate = 32.65 WHERE usd_thb_rate = 36;
+UPDATE users SET interface_language = 'ru' WHERE telegram_user_id = 428925787;
 
 CREATE TABLE IF NOT EXISTS drafts (
   id BIGSERIAL PRIMARY KEY,
@@ -70,6 +73,8 @@ CREATE INDEX IF NOT EXISTS planned_expenses_user_active_idx ON planned_expenses(
 ALTER TABLE planned_expenses ADD COLUMN IF NOT EXISTS due_days INTEGER[] NOT NULL DEFAULT '{}';
 ALTER TABLE planned_expenses ADD COLUMN IF NOT EXISTS weekday INTEGER;
 UPDATE planned_expenses SET due_days = ARRAY[due_day] WHERE due_day IS NOT NULL AND cardinality(due_days) = 0;
+UPDATE planned_expenses SET category_slug = 'home' WHERE lower(description) LIKE '%квартир%' AND category_slug = 'food_cafe';
+UPDATE planned_expenses SET category_slug = 'education' WHERE lower(description) IN ('english', 'английский') AND category_slug = 'other';
 
 CREATE TABLE IF NOT EXISTS planned_expense_payments (
   id BIGSERIAL PRIMARY KEY,

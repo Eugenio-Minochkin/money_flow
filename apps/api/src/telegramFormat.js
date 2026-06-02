@@ -1,96 +1,181 @@
 import { categoryName } from "../../../packages/shared/src/categories.js";
 
-export function formatDraft(expenses) {
+export function formatDraft(expenses, options = {}) {
+  const language = normalizeLanguage(options.language);
   const lines = expenses.map((expense, index) =>
-    `${index + 1}. <b>${escapeHtml(categoryName(expense.category_slug))}</b>\n   ${escapeHtml(expense.description)} · <b>${formatAmount(expense.amount)} ${expense.currency}</b>`
+    `${index + 1}. <b>${escapeHtml(categoryName(expense.category_slug))}</b>\n   ${escapeHtml(expense.description)} · <b>${formatAmount(expense.amount, language)} ${expense.currency}</b>`
   );
-  const total = expenses.reduce((sum, expense) => sum + expense.amount, 0);
+  const total = expenses.reduce((sum, expense) => sum + Number(expense.amount), 0);
   const review = expenses.some((expense) => expense.needs_review)
-    ? "\n\n⚠️ Есть сомнительные строки, проверь перед сохранением."
+    ? `\n\n⚠️ ${t(language, "draftReview")}`
     : "";
-  return `🧾 <b>Я понял так:</b>\n\n${lines.join("\n\n")}\n\n<b>Итого:</b> ${formatAmount(total)} THB.${review}\n\nВсе верно?`;
+  return [
+    `🧾 <b>${t(language, "draftTitle")}</b>`,
+    "",
+    lines.join("\n\n"),
+    "",
+    `<b>${t(language, "total")}:</b> ${formatAmount(total, language)} THB.${review}`,
+    "",
+    t(language, "isCorrect")
+  ].join("\n");
 }
 
-export function formatSavedSummary(total, snapshot) {
-  const progress = snapshot.budgetProgressPercent == null ? "" : ` (${formatAmount(snapshot.budgetProgressPercent)}%)`;
+export function formatSavedSummary(total, snapshot, options = {}) {
+  const language = normalizeLanguage(options.language);
+  const progress = snapshot.budgetProgressPercent == null ? "" : ` (${formatAmount(snapshot.budgetProgressPercent, language)}%)`;
   const planDeviation = Number(snapshot.planDeviation ?? 0);
   const planLine = planDeviation > 0
-    ? `⚠️ <b>План:</b> выше на ${formatAmount(Math.abs(planDeviation))} THB`
-    : `🟢 <b>План:</b> ниже на ${formatAmount(Math.abs(planDeviation))} THB`;
+    ? `⚠️ <b>${t(language, "plan")}:</b> ${t(language, "aboveBy")} ${formatAmount(Math.abs(planDeviation), language)} THB`
+    : `🟢 <b>${t(language, "plan")}:</b> ${t(language, "belowBy")} ${formatAmount(Math.abs(planDeviation), language)} THB`;
 
   return [
-    "✅ <b>Записал расход</b>",
-    `<b>${formatAmount(total)} THB</b>`,
+    `✅ <b>${t(language, "savedExpense")}</b>`,
+    `<b>${formatAmount(total, language)} THB</b>`,
     "",
-    "<b>Сейчас</b>",
-    `📌 <b>Сегодня:</b> ${formatAmount(snapshot.today)} / ${formatAmount(snapshot.dayPlanLimit ?? snapshot.dailyPlanLimit)} THB`,
-    `📆 <b>Неделя:</b> ${formatAmount(snapshot.week)} / ${formatAmount(snapshot.weekPlanLimit ?? snapshot.weeklyBudget)} THB`,
+    `<b>${t(language, "now")}</b>`,
+    `📌 <b>${t(language, "today")}:</b> ${formatAmount(snapshot.today, language)} / ${formatAmount(snapshot.dayPlanLimit ?? snapshot.dailyPlanLimit, language)} THB`,
+    `📆 <b>${t(language, "week")}:</b> ${formatAmount(snapshot.week, language)} / ${formatAmount(snapshot.weekPlanLimit ?? snapshot.weeklyBudget, language)} THB`,
     "",
-    "<b>Месяц</b>",
-    `📅 <b>Потрачено:</b> ${formatAmount(snapshot.month)} / ${formatAmount(snapshot.monthlyBudget)} THB${progress}`,
-    `🟢 <b>Свободно:</b> ${formatAmount(snapshot.freeRemaining)} THB`,
-    `🧾 <b>Плановые:</b> ${formatAmount(snapshot.plannedRemaining)} THB`,
-    `🔮 <b>Прогноз:</b> ${formatAmount(snapshot.forecastMonthTotal ?? 0)} THB`,
+    `<b>${t(language, "month")}</b>`,
+    `📅 <b>${t(language, "spent")}:</b> ${formatAmount(snapshot.month, language)} / ${formatAmount(snapshot.monthlyBudget, language)} THB${progress}`,
+    `🟢 <b>${t(language, "free")}:</b> ${formatAmount(snapshot.freeRemaining, language)} THB`,
+    `🧾 <b>${t(language, "planned")}:</b> ${formatAmount(snapshot.plannedRemaining, language)} THB`,
+    `🔮 <b>${t(language, "forecast")}:</b> ${formatAmount(snapshot.forecastMonthTotal ?? 0, language)} THB`,
     planLine,
     "",
-    `⚡️ <b>Можно тратить:</b> ${formatAmount(snapshot.safeToSpendPerDay)} THB/день`,
-    "с учетом плановых трат до конца месяца"
+    `⚡️ <b>${t(language, "safeToSpend")}:</b> ${formatAmount(snapshot.safeToSpendPerDay, language)} THB/${t(language, "day")}`,
+    t(language, "withPlanned")
   ].join("\n");
 }
 
-export function formatTotals(command, snapshot) {
+export function formatTotals(command, snapshot, options = {}) {
+  const language = normalizeLanguage(options.language);
   if (command === "/today") {
     return [
-      `📌 <b>Сегодня:</b> ${formatAmount(snapshot.today)} THB`,
-      `⚡️ <b>Можно тратить:</b> ${formatAmount(snapshot.safeToSpendPerDay)} THB/день`
+      `📌 <b>${t(language, "today")}:</b> ${formatAmount(snapshot.today, language)} THB`,
+      `⚡️ <b>${t(language, "safeToSpend")}:</b> ${formatAmount(snapshot.safeToSpendPerDay, language)} THB/${t(language, "day")}`
     ].join("\n");
   }
-  if (command === "/week") return `📆 <b>Неделя:</b> ${formatAmount(snapshot.week)} THB`;
+  if (command === "/week") return `📆 <b>${t(language, "week")}:</b> ${formatAmount(snapshot.week, language)} THB`;
   if (command === "/month") {
-    const progress = snapshot.budgetProgressPercent == null ? "" : ` (${formatAmount(snapshot.budgetProgressPercent)}%)`;
+    const progress = snapshot.budgetProgressPercent == null ? "" : ` (${formatAmount(snapshot.budgetProgressPercent, language)}%)`;
     return [
-      `📅 <b>Месяц:</b> ${formatAmount(snapshot.month)} / ${formatAmount(snapshot.monthlyBudget)} THB${progress}`,
-      `🔮 <b>Прогноз:</b> ${formatAmount(snapshot.forecastMonthTotal ?? 0)} THB`
+      `📅 <b>${t(language, "month")}:</b> ${formatAmount(snapshot.month, language)} / ${formatAmount(snapshot.monthlyBudget, language)} THB${progress}`,
+      `🔮 <b>${t(language, "forecast")}:</b> ${formatAmount(snapshot.forecastMonthTotal ?? 0, language)} THB`
     ].join("\n");
   }
   return [
-    `💰 <b>Бюджет:</b> ${formatAmount(snapshot.monthlyBudget)} THB`,
-    `📅 <b>Месяц:</b> ${formatAmount(snapshot.month)} THB`,
-    `🧾 <b>Плановые:</b> ${formatAmount(snapshot.plannedRemaining)} THB`,
-    `🟢 <b>Свободно:</b> ${formatAmount(snapshot.freeRemaining)} THB`,
-    `⚡️ <b>Можно тратить:</b> ${formatAmount(snapshot.safeToSpendPerDay)} THB/день`,
-    `Статус: ${escapeHtml(statusLabel(snapshot.status))}`
+    `💰 <b>${t(language, "budget")}:</b> ${formatAmount(snapshot.monthlyBudget, language)} THB`,
+    `📅 <b>${t(language, "month")}:</b> ${formatAmount(snapshot.month, language)} THB`,
+    `🧾 <b>${t(language, "planned")}:</b> ${formatAmount(snapshot.plannedRemaining, language)} THB`,
+    `🟢 <b>${t(language, "free")}:</b> ${formatAmount(snapshot.freeRemaining, language)} THB`,
+    `⚡️ <b>${t(language, "safeToSpend")}:</b> ${formatAmount(snapshot.safeToSpendPerDay, language)} THB/${t(language, "day")}`,
+    `${t(language, "status")}: ${escapeHtml(statusLabel(snapshot.status, language))}`
   ].join("\n");
 }
 
-export function formatWeeklyReport(dashboard) {
+export function formatWeeklyReport(dashboard, options = {}) {
+  const language = normalizeLanguage(options.language);
   const snapshot = dashboard.snapshot;
   const top = (dashboard.topCategories ?? [])
     .slice(0, 3)
-    .map((category, index) => `${index + 1}. ${escapeHtml(categoryName(category.category_slug))}: ${formatAmount(category.total)} THB`)
+    .map((category, index) => `${index + 1}. ${escapeHtml(categoryName(category.category_slug))}: ${formatAmount(category.total, language)} THB`)
     .join("\n");
   return [
-    "📊 <b>Еженедельный отчет</b>",
+    `📊 <b>${t(language, "weeklyReport")}</b>`,
     "",
-    `Неделя: <b>${formatAmount(snapshot.week)} THB</b>`,
-    `Месяц: <b>${formatAmount(snapshot.month)} / ${formatAmount(snapshot.monthlyBudget)} THB</b>`,
-    `Можно в день: <b>${formatAmount(snapshot.safeToSpendPerDay)} THB</b>`,
-    `Прогноз месяца: <b>${formatAmount(snapshot.forecastMonthTotal ?? 0)} THB</b>`,
+    `${t(language, "week")}: <b>${formatAmount(snapshot.week, language)} THB</b>`,
+    `${t(language, "month")}: <b>${formatAmount(snapshot.month, language)} / ${formatAmount(snapshot.monthlyBudget, language)} THB</b>`,
+    `${t(language, "safeToSpend")}: <b>${formatAmount(snapshot.safeToSpendPerDay, language)} THB</b>`,
+    `${t(language, "monthForecast")}: <b>${formatAmount(snapshot.forecastMonthTotal ?? 0, language)} THB</b>`,
     "",
-    top ? `<b>Топ категорий:</b>\n${top}` : "Топ категорий пока пуст."
+    top ? `<b>${t(language, "topCategories")}:</b>\n${top}` : t(language, "topCategoriesEmpty")
   ].join("\n");
 }
 
-function statusLabel(status) {
-  return {
-    above_plan: "чуть быстрее плана",
-    below_plan: "ниже плана",
-    on_plan: "в плане"
-  }[status] ?? status;
+export function normalizeLanguage(value) {
+  return value === "en" ? "en" : "ru";
 }
 
-function formatAmount(value) {
-  return new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 }).format(Number(value));
+function statusLabel(status, language) {
+  const labels = {
+    ru: {
+      above_plan: "чуть быстрее плана",
+      below_plan: "ниже плана",
+      on_plan: "в плане"
+    },
+    en: {
+      above_plan: "ahead of plan",
+      below_plan: "below plan",
+      on_plan: "on plan"
+    }
+  };
+  return labels[language][status] ?? status;
+}
+
+const messages = {
+  ru: {
+    aboveBy: "выше на",
+    belowBy: "ниже на",
+    budget: "Бюджет",
+    day: "день",
+    draftReview: "Есть сомнительные строки, проверь перед сохранением.",
+    draftTitle: "Я понял так:",
+    forecast: "Прогноз",
+    free: "Свободно",
+    isCorrect: "Все верно?",
+    month: "Месяц",
+    monthForecast: "Прогноз месяца",
+    now: "Сейчас",
+    plan: "План",
+    planned: "Плановые",
+    safeToSpend: "Можно тратить",
+    savedExpense: "Записал расход",
+    spent: "Потрачено",
+    status: "Статус",
+    today: "Сегодня",
+    topCategories: "Топ категорий",
+    topCategoriesEmpty: "Топ категорий пока пуст.",
+    total: "Итого",
+    week: "Неделя",
+    weeklyReport: "Еженедельный отчет",
+    withPlanned: "с учетом плановых трат до конца месяца"
+  },
+  en: {
+    aboveBy: "above by",
+    belowBy: "below by",
+    budget: "Budget",
+    day: "day",
+    draftReview: "Some lines need review before saving.",
+    draftTitle: "I understood this:",
+    forecast: "Forecast",
+    free: "Free",
+    isCorrect: "Is everything correct?",
+    month: "Month",
+    monthForecast: "Month forecast",
+    now: "Now",
+    plan: "Plan",
+    planned: "Planned",
+    safeToSpend: "Safe to spend",
+    savedExpense: "Saved expense",
+    spent: "Spent",
+    status: "Status",
+    today: "Today",
+    topCategories: "Top categories",
+    topCategoriesEmpty: "Top categories are empty for now.",
+    total: "Total",
+    week: "Week",
+    weeklyReport: "Weekly report",
+    withPlanned: "including planned expenses until the end of the month"
+  }
+};
+
+function t(language, key) {
+  return messages[language][key];
+}
+
+function formatAmount(value, language) {
+  return new Intl.NumberFormat(language === "ru" ? "ru-RU" : "en-US", { maximumFractionDigits: 2 }).format(Number(value));
 }
 
 function escapeHtml(value) {

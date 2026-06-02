@@ -1,5 +1,6 @@
 import { createApiClient } from "./apiClient.js";
 import { categories, categoryColor, categoryLabel } from "./categories.js";
+import { currencyOptions } from "./currencies.js";
 import {
   dateTimeLocal,
   escapeAttribute,
@@ -32,13 +33,6 @@ const statusLabels = {
   on_plan: "в плане"
 };
 const api = createApiClient();
-const screenTitles = {
-  dashboard: "Dashboard",
-  plan: "Plan",
-  history: "History",
-  settings: "Settings"
-};
-
 let dashboardState = null;
 let draftState = null;
 let draftReturnTab = "dashboard";
@@ -46,6 +40,7 @@ let expenseReturnTab = "dashboard";
 let historyState = [];
 let inboxState = [];
 let hiddenNoticeIds = new Set();
+let currentLanguage = "en";
 
 if (window.Telegram?.WebApp) {
   window.Telegram.WebApp.ready();
@@ -227,7 +222,7 @@ function switchTab(tab) {
   document.querySelector("#planTab").classList.toggle("hidden", tab !== "plan");
   document.querySelector("#historyTab").classList.toggle("hidden", tab !== "history");
   document.querySelector("#settingsTab").classList.toggle("hidden", tab !== "settings");
-  document.querySelector("#screenTitle").textContent = screenTitles[tab] ?? "Dashboard";
+  document.querySelector("#screenTitle").textContent = t(`screen.${tab}`);
   document.querySelectorAll("[data-tab]").forEach((button) => {
     button.classList.toggle("active", button.dataset.tab === tab);
   });
@@ -265,10 +260,13 @@ function renderSnapshot(snapshot) {
 }
 
 function renderSettings(user) {
+  currentLanguage = user.interface_language ?? "en";
+  applyLanguage(currentLanguage);
   document.querySelector("#budgetInput").value = Math.round(Number(user.monthly_budget_amount ?? 45000));
   document.querySelector("#weeklyBudgetInput").value = user.weekly_budget_amount == null ? "" : Math.round(Number(user.weekly_budget_amount));
   document.querySelector("#baseCurrencyInput").value = user.base_currency ?? "THB";
   document.querySelector("#displayCurrencyInput").value = user.display_currency ?? "USD";
+  document.querySelector("#interfaceLanguageInput").value = currentLanguage;
   document.querySelector("#usdThbRateInput").value = Number(user.usd_thb_rate ?? 32.65);
 }
 
@@ -492,7 +490,7 @@ function renderPlannedForm(item = {}) {
     <div class="field-grid">
       <label>
         <span>Валюта</span>
-        <select name="planned-currency">${option("THB", item.currency)}${option("USD", item.currency)}${option("RUB", item.currency)}</select>
+        <select name="planned-currency">${currencyOptions(item.currency, option)}</select>
       </label>
       <label>
         <span>Повтор</span>
@@ -690,7 +688,7 @@ function editableItemFields(item, prefix, index) {
         </label>
         <label>
           <span>Валюта</span>
-          <select name="${prefix}-currency">${option("THB", item.currency)}${option("USD", item.currency)}${option("RUB", item.currency)}</select>
+          <select name="${prefix}-currency">${currencyOptions(item.currency, option)}</select>
         </label>
       </div>
       <label>
@@ -720,6 +718,7 @@ async function saveSettings(event) {
         weeklyBudgetAmount: document.querySelector("#weeklyBudgetInput").value.trim(),
         baseCurrency: document.querySelector("#baseCurrencyInput").value,
         displayCurrency: document.querySelector("#displayCurrencyInput").value,
+        interfaceLanguage: document.querySelector("#interfaceLanguageInput").value,
         usdThbRate: Number(document.querySelector("#usdThbRateInput").value)
       }
     }
@@ -811,6 +810,72 @@ function input(name) {
 function option(value, selected, label = value) {
   return `<option value="${value}"${value === selected ? " selected" : ""}>${escapeHtml(label)}</option>`;
 }
+
+function applyLanguage(language) {
+  currentLanguage = language === "ru" ? "ru" : "en";
+  document.documentElement.lang = currentLanguage;
+  document.querySelectorAll("[data-tab]").forEach((button) => {
+    button.textContent = t(`screen.${button.dataset.tab}`);
+  });
+  const active = document.querySelector("[data-tab].active")?.dataset.tab ?? "dashboard";
+  document.querySelector("#screenTitle").textContent = t(`screen.${active}`);
+  setOptionalText("#settingsTab h2", t("settings.title"));
+  const labels = [
+    ["#budgetInput", "settings.monthlyBudget"],
+    ["#weeklyBudgetInput", "settings.weeklyBudget"],
+    ["#baseCurrencyInput", "settings.baseCurrency"],
+    ["#displayCurrencyInput", "settings.displayCurrency"],
+    ["#interfaceLanguageInput", "settings.interfaceLanguage"],
+    ["#usdThbRateInput", "settings.usdThbRate"]
+  ];
+  for (const [selector, key] of labels) {
+    const label = document.querySelector(selector)?.closest("label")?.querySelector("span");
+    if (label) label.textContent = t(key);
+  }
+  const save = document.querySelector("#settingsForm button[type='submit']");
+  if (save) save.textContent = t("actions.save");
+}
+
+function t(key) {
+  return translations[currentLanguage]?.[key] ?? translations.en[key] ?? key;
+}
+
+function setOptionalText(selector, text) {
+  if (text == null) return;
+  const element = document.querySelector(selector);
+  if (element) element.textContent = text;
+}
+
+const translations = {
+  ru: {
+    "actions.save": "Сохранить",
+    "screen.dashboard": "Дашборд",
+    "screen.history": "История",
+    "screen.plan": "План",
+    "screen.settings": "Настройки",
+    "settings.baseCurrency": "Базовая валюта учета",
+    "settings.displayCurrency": "Валюта отображения",
+    "settings.interfaceLanguage": "Язык интерфейса",
+    "settings.monthlyBudget": "Месячный бюджет",
+    "settings.title": "Настройки",
+    "settings.usdThbRate": "USD/THB fallback",
+    "settings.weeklyBudget": "План недели"
+  },
+  en: {
+    "actions.save": "Save",
+    "screen.dashboard": "Dashboard",
+    "screen.history": "History",
+    "screen.plan": "Plan",
+    "screen.settings": "Settings",
+    "settings.baseCurrency": "Base currency",
+    "settings.displayCurrency": "Display currency",
+    "settings.interfaceLanguage": "Interface language",
+    "settings.monthlyBudget": "Monthly budget",
+    "settings.title": "Settings",
+    "settings.usdThbRate": "USD/THB fallback",
+    "settings.weeklyBudget": "Weekly plan"
+  }
+};
 
 function recurrenceLabel(item) {
   return plannedRecurrenceLabel(item, formatDate);

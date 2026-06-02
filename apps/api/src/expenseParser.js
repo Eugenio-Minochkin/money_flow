@@ -1,22 +1,11 @@
 import { parseExpenseText } from "../../../packages/shared/src/parser.js";
+import { SUPPORTED_CURRENCY_CODES, normalizeCurrency } from "../../../packages/shared/src/currencies.js";
+import { CATEGORIES } from "../../../packages/shared/src/categories.js";
 
 const DEFAULT_MODEL = "gpt-4.1-mini";
 const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
-const ALLOWED_CURRENCIES = new Set(["THB", "USD", "RUB"]);
-const ALLOWED_CATEGORIES = new Set([
-  "food_cafe",
-  "groceries",
-  "home",
-  "transport",
-  "health",
-  "sport_activities",
-  "gear",
-  "travel",
-  "subscriptions",
-  "gifts_help",
-  "entertainment",
-  "other"
-]);
+const ALLOWED_CURRENCIES = new Set(SUPPORTED_CURRENCY_CODES);
+const ALLOWED_CATEGORIES = new Set(CATEGORIES.map((category) => category.slug));
 
 export function createExpenseParser(options = {}) {
   const apiKey = options.apiKey;
@@ -90,8 +79,8 @@ function buildSystemPrompt(now) {
     "Return only JSON that matches the schema.",
     "Extract one expense per purchase. Multiple expenses may appear in one message.",
     "Default currency is THB when the user does not specify a currency.",
-    "Supported currencies: THB, USD, RUB.",
-    "Use these category slugs only: food_cafe, groceries, home, transport, health, sport_activities, gear, travel, subscriptions, gifts_help, entertainment, other.",
+    `Supported currencies: ${SUPPORTED_CURRENCY_CODES.join(", ")}.`,
+    `Use these category slugs only: ${[...ALLOWED_CATEGORIES].join(", ")}.`,
     "Category is the type of expense. Tags are context.",
     "If category or description is unclear, set needs_review=true and confidence below 0.7.",
     "For relative dates and times, use the provided current timestamp and timezone.",
@@ -111,7 +100,7 @@ function expenseParseSchema() {
           additionalProperties: false,
           properties: {
             amount: { type: "number" },
-            currency: { type: "string", enum: ["THB", "USD", "RUB"] },
+            currency: { type: "string", enum: SUPPORTED_CURRENCY_CODES },
             description: { type: "string" },
             category_slug: {
               type: "string",
@@ -172,7 +161,7 @@ function normalizeExpense(expense, now) {
   const amount = Number(expense.amount);
   if (!Number.isFinite(amount) || amount <= 0) return null;
 
-  const currency = ALLOWED_CURRENCIES.has(expense.currency) ? expense.currency : "THB";
+  const currency = ALLOWED_CURRENCIES.has(expense.currency) ? expense.currency : normalizeCurrency(expense.currency, "THB");
   const category = ALLOWED_CATEGORIES.has(expense.category_slug) ? expense.category_slug : "other";
   const confidence = clamp(Number(expense.confidence), 0, 1);
 

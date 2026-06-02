@@ -1,4 +1,5 @@
 import { calculateBudgetSnapshot } from "../../../packages/shared/src/budget.js";
+import { SUPPORTED_CURRENCY_CODES, fallbackThbRate, normalizeCurrency } from "../../../packages/shared/src/currencies.js";
 import { localPeriodBounds } from "../../../packages/shared/src/time.js";
 import { createExchangeRateProvider } from "./exchangeRates.js";
 
@@ -7,6 +8,11 @@ export function createRepository(pool, options = {}) {
   const exchangeRates = options.exchangeRates ?? createExchangeRateProvider({ fetchImpl: null });
 
   return {
+    async health() {
+      await pool.query("SELECT 1 AS ok");
+      return { db: true };
+    },
+
     async upsertTelegramUser(profile) {
       const result = await pool.query(
         `INSERT INTO users (telegram_user_id, first_name, username, monthly_budget_amount)
@@ -80,16 +86,18 @@ export function createRepository(pool, options = {}) {
       }
       const baseCurrency = normalizeCurrency(settings.baseCurrency, "THB");
       const displayCurrency = normalizeCurrency(settings.displayCurrency, "USD");
+      const interfaceLanguage = normalizeLanguage(settings.interfaceLanguage);
       const result = await pool.query(
         `UPDATE users
          SET monthly_budget_amount = $1,
              base_currency = $2,
              display_currency = $3,
              usd_thb_rate = $4,
-             weekly_budget_amount = $5
-         WHERE telegram_user_id = $6
+             weekly_budget_amount = $5,
+             interface_language = $6
+         WHERE telegram_user_id = $7
          RETURNING *`,
-        [monthlyBudgetAmount, baseCurrency, displayCurrency, usdThbRate, weeklyBudgetAmount, telegramUserId]
+        [monthlyBudgetAmount, baseCurrency, displayCurrency, usdThbRate, weeklyBudgetAmount, interfaceLanguage, telegramUserId]
       );
       return result.rows[0] ?? null;
     },
@@ -314,7 +322,7 @@ export function createRepository(pool, options = {}) {
          GROUP BY category_slug
          ORDER BY total DESC
          LIMIT 6`,
-        [userId, bounds.start, bounds.end, user.display_currency ?? "USD", Number(user.usd_thb_rate ?? 32.65)]
+        [userId, bounds.start, bounds.end, user.display_currency ?? "USD", displayThbRate(user)]
       );
       return result.rows.map((row) => withDisplayTotal(row, user));
     },
@@ -605,7 +613,7 @@ async function topTagsForMonth(pool, userId, now, user) {
      GROUP BY tag
      ORDER BY total DESC
      LIMIT 8`,
-    [userId, bounds.start, bounds.end, user.display_currency ?? "USD", Number(user.usd_thb_rate ?? 32.65)]
+    [userId, bounds.start, bounds.end, user.display_currency ?? "USD", displayThbRate(user)]
   );
   return result.rows.map((row) => ({
     tag: row.tag,
@@ -718,45 +726,41 @@ function normalizeWeekday(value) {
   return Number.isInteger(weekday) && weekday >= 1 && weekday <= 7 ? weekday : 1;
 }
 
-function normalizeCurrency(value, fallback) {
-  const currency = String(value || fallback).toUpperCase();
-  return ["THB", "USD", "RUB"].includes(currency) ? currency : fallback;
+function normalizeLanguage(value) {
+  return ["en", "ru"].includes(value) ? value : "en";
 }
 
 async function buildMoneyAmounts(exchangeRates, amount, currency, date, user = {}) {
   const rates = await exchangeRates.ratesFor(date);
   const normalizedCurrency = normalizeCurrency(currency, "THB");
-  const usdThbRate = Number(rates.USD?.THB ?? user?.usd_thb_rate ?? 32.65);
-  const rubThbRate = Number(rates.RUB?.THB ?? 0.36);
-  const amountBaseValue = amountBase(amount, normalizedCurrency, usdThbRate, rubThbRate);
+  const amountBaseValue = amountBase(amount, normalizedCurrency, rates);
   return {
     amountBase: amountBaseValue,
-    convertedAmounts: convertedAmounts(amount, normalizedCurrency, user?.base_currency ?? "THB", usdThbRate, rubThbRate),
-    source: rates.source ?? exchangeRateSource(usdThbRate)
+    convertedAmounts: convertedAmounts(amount, normalizedCurrency, user?.base_currency ?? "THB", rates),
+    source: rates.source ?? "manual-fallback"
   };
 }
 
-function amountBase(amount, currency, usdThbRate = 32.65, rubThbRate = 0.36) {
+function amountBase(amount, currency, rates = {}) {
   const numeric = Number(amount);
-  if (currency === "USD") return roundMoney(numeric * Number(usdThbRate || 32.65));
-  if (currency === "RUB") return roundMoney(numeric * Number(rubThbRate || 0.36));
+  if (currency !== "THB") return roundMoney(numeric * currencyThbRate(currency, rates));
   return roundMoney(numeric);
 }
 
-function convertedAmounts(amount, currency, baseCurrency = "THB", usdThbRate = 32.65, rubThbRate = 0.36) {
-  const base = amountBase(amount, currency, usdThbRate, rubThbRate);
-  const usd = currency === "USD" ? Number(amount) : base / Number(usdThbRate || 32.65);
-  const rub = currency === "RUB" ? Number(amount) : base / Number(rubThbRate || 0.36);
-  return {
-    [baseCurrency]: roundMoney(base),
-    THB: roundMoney(base),
-    USD: roundMoney(usd),
-    RUB: roundMoney(rub)
-  };
+function convertedAmounts(amount, currency, baseCurrency = "THB", rates = {}) {
+  const base = amountBase(amount, currency, rates);
+  const converted = {};
+  for (const code of SUPPORTED_CURRENCY_CODES) {
+    converted[code] = code === "THB"
+      ? roundMoney(base)
+      : roundMoney(currency === code ? Number(amount) : base / currencyThbRate(code, rates));
+  }
+  converted[baseCurrency] = converted[normalizeCurrency(baseCurrency, "THB")] ?? roundMoney(base);
+  return converted;
 }
 
-function exchangeRateSource(usdThbRate) {
-  return `manual-usd-thb:${Number(usdThbRate || 32.65)}`;
+function currencyThbRate(currency, rates = {}) {
+  return Number(rates[currency]?.THB ?? fallbackThbRate(currency));
 }
 
 function withDisplay(row, user) {
@@ -801,8 +805,14 @@ function displayAmount(row, user) {
 function displayFromBase(amountBaseValue, user) {
   const currency = user.display_currency ?? "USD";
   if (currency === "THB") return roundMoney(Number(amountBaseValue));
-  if (currency === "RUB") return roundMoney(Number(amountBaseValue) / 0.36);
-  return roundMoney(Number(amountBaseValue) / Number(user.usd_thb_rate ?? 32.65));
+  const thbRate = displayThbRate(user);
+  return roundMoney(Number(amountBaseValue) / thbRate);
+}
+
+function displayThbRate(user) {
+  const currency = user.display_currency ?? "USD";
+  if (currency === "THB") return 1;
+  return currency === "USD" ? Number(user.usd_thb_rate ?? fallbackThbRate("USD")) : fallbackThbRate(currency);
 }
 
 function roundMoney(value) {
@@ -934,7 +944,7 @@ async function totalForPeriod(pool, userId, period, now, user = {}) {
             COALESCE(SUM(COALESCE(NULLIF(converted_amounts->>$4, '')::float, amount_base / NULLIF($5::numeric, 0))), 0)::float AS display_total
      FROM expenses
      WHERE user_id = $1 AND spent_at >= $2 AND spent_at < $3`,
-    [userId, bounds.start, bounds.end, user.display_currency ?? "USD", Number(user.usd_thb_rate ?? 32.65)]
+    [userId, bounds.start, bounds.end, user.display_currency ?? "USD", displayThbRate(user)]
   );
   return {
     total: Number(result.rows[0]?.total ?? 0),

@@ -27,7 +27,8 @@ test("updates user budget and display currency settings", async () => {
         base_currency: params[1],
         display_currency: params[2],
         usd_thb_rate: params[3],
-        weekly_budget_amount: params[4]
+        weekly_budget_amount: params[4],
+        interface_language: params[5]
       }]
     };
   }));
@@ -36,17 +37,29 @@ test("updates user budget and display currency settings", async () => {
     monthlyBudgetAmount: 60000,
     weeklyBudgetAmount: 12000,
     baseCurrency: "THB",
-    displayCurrency: "USD",
-    usdThbRate: 36.5
+    displayCurrency: "GEL",
+    usdThbRate: 36.5,
+    interfaceLanguage: "ru"
   });
 
   assert.equal(Number(user.monthly_budget_amount), 60000);
   assert.equal(Number(user.weekly_budget_amount), 12000);
-  assert.equal(user.display_currency, "USD");
+  assert.equal(user.display_currency, "GEL");
+  assert.equal(user.interface_language, "ru");
   assert.equal(Number(user.usd_thb_rate), 36.5);
   assert.equal(queries[0].params[3], 36.5);
   assert.equal(queries[0].params[4], 12000);
-  assert.equal(queries[0].params[5], 100);
+  assert.equal(queries[0].params[5], "ru");
+  assert.equal(queries[0].params[6], 100);
+});
+
+test("checks database health", async () => {
+  const repo = createRepository(fakePool((sql) => {
+    assert.match(sql, /SELECT 1 AS ok/);
+    return { rows: [{ ok: 1 }] };
+  }));
+
+  assert.deepEqual(await repo.health(), { db: true });
 });
 
 test("returns a draft owned by a Telegram user", async () => {
