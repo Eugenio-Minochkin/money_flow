@@ -21,9 +21,12 @@ test("formats a draft with total and review warning", () => {
 
 test("formats saved summary with budget context", () => {
   const text = formatSavedSummary(75, snapshot());
+  const normalized = normalizeSpaces(text);
 
   assert.match(text, /75 THB/);
-  assert.match(text, /735 \/ 42/);
+  assert.match(normalized, /75 \/ 1 475 THB/);
+  assert.match(normalized, /735 \/ 9 800 THB/);
+  assert.match(normalized, /735 \/ 42/);
   assert.match(text, /1,75%/);
   assert.match(text, /896,38 THB/);
 });
@@ -46,7 +49,9 @@ test("formats weekly report with top categories", () => {
 function snapshot() {
   return {
     today: 75,
+    dayPlanLimit: 1475,
     week: 735,
+    weekPlanLimit: 9800,
     month: 735,
     monthlyBudget: 42000,
     plannedRemaining: 15269.99,

@@ -1,3 +1,15 @@
+import { createApiClient } from "./apiClient.js";
+import {
+  dateTimeLocal,
+  escapeAttribute,
+  escapeHtml,
+  formatDate,
+  formatDateOnly,
+  moneyBase,
+  moneyDisplay,
+  moneyDisplaySigned
+} from "./formatters.js";
+
 const params = new URLSearchParams(window.location.search);
 const telegramUserId = params.get("telegramUserId") || window.Telegram?.WebApp?.initDataUnsafe?.user?.id;
 const draftId = params.get("draftId");
@@ -23,6 +35,7 @@ const statusLabels = {
   below_plan: "ниже плана",
   on_plan: "в плане"
 };
+const api = createApiClient();
 const screenTitles = {
   dashboard: "Dashboard",
   plan: "Plan",
@@ -720,23 +733,6 @@ function parseDueDays(value) {
     .filter((day) => Number.isInteger(day) && day >= 1 && day <= 31);
 }
 
-async function api(path, options = {}) {
-  const initData = window.Telegram?.WebApp?.initData;
-  const response = await fetch(path, {
-    method: options.method ?? "GET",
-    headers: {
-      ...(options.body ? { "content-type": "application/json" } : {}),
-      ...(initData ? { "x-telegram-init-data": initData } : {})
-    },
-    body: options.body ? JSON.stringify(options.body) : undefined
-  });
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({}));
-    throw new Error(body.error ?? "Не удалось выполнить запрос.");
-  }
-  return response.json();
-}
-
 function groupByDay(expenses) {
   const groups = new Map();
   for (const expense of expenses) {
@@ -812,23 +808,6 @@ function weekdayName(weekday) {
   }[Number(weekday)] ?? "понедельник";
 }
 
-function moneyBase(value) {
-  return `${money.format(Number(value ?? 0))} THB`;
-}
-
-function moneyDisplay(value, currency = "USD") {
-  if (value == null || Number.isNaN(Number(value))) return "";
-  const prefix = currency === "USD" ? "~$" : "";
-  const suffix = currency === "USD" ? "" : ` ${currency}`;
-  return `${prefix}${money.format(Number(value))}${suffix}`;
-}
-
-function moneyDisplaySigned(value, currency = "USD") {
-  if (value == null || Number.isNaN(Number(value))) return "";
-  const sign = Number(value) > 0 ? "+" : "";
-  return `${sign}${moneyDisplay(value, currency)}`;
-}
-
 function setText(selector, text) {
   document.querySelector(selector).textContent = text;
 }
@@ -857,37 +836,4 @@ function showToast(message) {
   }, 2200);
 }
 
-function formatDate(value) {
-  return new Intl.DateTimeFormat("ru-RU", {
-    day: "2-digit",
-    month: "short",
-    hour: "2-digit",
-    minute: "2-digit"
-  }).format(new Date(value));
-}
 
-function formatDateOnly(value) {
-  return new Intl.DateTimeFormat("ru-RU", {
-    day: "2-digit",
-    month: "short"
-  }).format(new Date(value));
-}
-
-function dateTimeLocal(value) {
-  const date = new Date(value ?? Date.now());
-  const offsetMs = date.getTimezoneOffset() * 60_000;
-  return new Date(date.getTime() - offsetMs).toISOString().slice(0, 16);
-}
-
-function escapeHtml(value) {
-  return String(value)
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
-}
-
-function escapeAttribute(value) {
-  return escapeHtml(value).replaceAll("\n", " ");
-}
