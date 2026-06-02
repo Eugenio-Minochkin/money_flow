@@ -203,20 +203,20 @@ function renderSnapshot(snapshot) {
   const dayRemaining = snapshot.dayRemaining ?? snapshot.safeToSpendPerDay;
   setText("#safeToSpend", moneyBase(dayRemaining));
   setText("#safeToSpendDisplay", moneyDisplay(snapshot.display?.dayRemaining ?? snapshot.display?.safeToSpendPerDay, snapshot.display?.currency));
-  setText("#today", `${money.format(Number(snapshot.today ?? 0))} / ${money.format(Number(snapshot.dayPlanLimit ?? snapshot.dailyPlanLimit ?? 0))} THB`);
-  setText("#todayDisplay", `${moneyDisplay(snapshot.display?.today, snapshot.display?.currency)} / ${moneyDisplay(snapshot.display?.dayPlanLimit, snapshot.display?.currency)}`);
-  setText("#todayRemaining", `можно еще ${moneyBase(dayRemaining)}`);
+  setText("#today", moneyBase(snapshot.today));
+  setText("#todayDisplay", `план ${moneyBase(snapshot.dayPlanLimit ?? snapshot.dailyPlanLimit ?? 0)}`);
+  setText("#todayRemaining", `еще ${moneyBase(dayRemaining)}`);
   setText("#todayProgressPercent", `${money.format(Number(snapshot.dayProgressPercent ?? 0))}%`);
   setProgress("#todayProgressBar", snapshot.progress?.day ?? { percent: snapshot.dayProgressPercent ?? 0, state: "good" });
 
-  setText("#week", `${money.format(Number(snapshot.week ?? 0))} / ${money.format(Number(snapshot.weekPlanLimit ?? 0))} THB`);
-  setText("#weekDisplay", `${moneyDisplay(snapshot.display?.week, snapshot.display?.currency)} / ${moneyDisplay(snapshot.display?.weekPlanLimit, snapshot.display?.currency)}`);
+  setText("#week", moneyBase(snapshot.week));
+  setText("#weekDisplay", `план ${moneyBase(snapshot.weekPlanLimit ?? 0)}`);
   setText("#weekRemaining", `осталось ${moneyBase(snapshot.weekRemaining)}`);
   setText("#weekProgressPercent", `${money.format(Number(snapshot.weekProgressPercent ?? 0))}%`);
   setProgress("#weekProgressBar", snapshot.progress?.week ?? { percent: snapshot.weekProgressPercent ?? 0, state: "good" });
 
-  setText("#month", `${money.format(Number(snapshot.month ?? 0))} / ${money.format(Number(snapshot.monthlyBudget ?? 0))} THB`);
-  setText("#monthDisplay", `${money.format(Number(snapshot.budgetProgressPercent ?? 0))}% бюджета`);
+  setText("#month", moneyBase(snapshot.month));
+  setText("#monthDisplay", `бюджет ${moneyBase(snapshot.monthlyBudget ?? 0)}`);
   setText("#monthRemaining", `осталось ${moneyBase(snapshot.monthRemaining ?? snapshot.remaining)}`);
   setText("#monthCardProgressPercent", `${money.format(Number(snapshot.budgetProgressPercent ?? 0))}%`);
   setProgress("#monthProgressBar", snapshot.progress?.month ?? { percent: snapshot.budgetProgressPercent ?? 0, state: "good" });

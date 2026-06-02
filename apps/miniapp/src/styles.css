@@ -152,6 +152,12 @@ h2 {
   font-weight: 800;
 }
 
+.metric em {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.25;
+}
+
 .hero-metric em {
   color: var(--hero-muted);
   font-size: 18px;
@@ -180,27 +186,28 @@ h2 {
 
 .metric {
   display: grid;
-  gap: 6px;
-  min-height: 98px;
-  padding: 14px;
+  gap: 5px;
+  min-height: 104px;
+  padding: 12px;
   align-content: center;
 }
 
 .metric strong {
-  font-size: 22px;
+  font-size: clamp(20px, 5.5vw, 24px);
   line-height: 1.1;
   overflow-wrap: anywhere;
 }
 
 .metric small {
   color: var(--muted);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 800;
+  line-height: 1.25;
 }
 
 .metric-progress {
   align-content: start;
-  min-height: 124px;
+  min-height: 136px;
 }
 
 .metric-top {
@@ -212,7 +219,8 @@ h2 {
 
 .metric-top b {
   color: var(--accent);
-  font-size: 12px;
+  font-size: 11px;
+  white-space: nowrap;
 }
 
 .metric-month {
@@ -220,7 +228,7 @@ h2 {
 }
 
 .mini-progress {
-  height: 7px;
+  height: 6px;
   overflow: hidden;
   border-radius: 999px;
   background: #f0e8df;
