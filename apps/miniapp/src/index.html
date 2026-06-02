@@ -55,6 +55,31 @@
 
         <section class="notice hidden" id="plannedNotice"></section>
 
+        <section class="insight-grid" aria-label="Аналитика бюджета">
+          <article class="insight-card">
+            <span>Прогноз месяца</span>
+            <strong id="forecastMonth">...</strong>
+            <em id="forecastMonthDisplay"></em>
+          </article>
+          <article class="insight-card">
+            <span>Отклонение от плана</span>
+            <strong id="planDeviation">...</strong>
+            <em id="planDeviationDisplay"></em>
+          </article>
+          <article class="insight-card">
+            <span>Сегодняшний лимит</span>
+            <strong id="todayLimit">...</strong>
+            <em id="todayLimitDisplay"></em>
+          </article>
+          <article class="insight-card">
+            <span>Неделя vs прошлая</span>
+            <strong id="weekComparison">...</strong>
+            <em id="weekComparisonDisplay"></em>
+          </article>
+        </section>
+
+        <section class="notice hidden" id="otherWarning"></section>
+
         <section class="section form-section hidden" id="draftEditorSection">
           <div class="section-heading">
             <h2>Черновик</h2>
@@ -71,10 +96,34 @@
 
         <section class="section">
           <div class="section-heading">
+            <h2>Крупные траты</h2>
+            <span class="eyebrow">неделя / месяц</span>
+          </div>
+          <div class="expense-list" id="largestExpenses"></div>
+        </section>
+
+        <section class="section">
+          <div class="section-heading">
             <h2>Топ категорий</h2>
             <span class="eyebrow">месяц</span>
           </div>
           <div class="bar-list" id="topCategories"></div>
+        </section>
+
+        <section class="section">
+          <div class="section-heading">
+            <h2>Теги</h2>
+            <span class="eyebrow">месяц</span>
+          </div>
+          <div class="tag-list" id="topTags"></div>
+        </section>
+
+        <section class="section">
+          <div class="section-heading">
+            <h2>Дни месяца</h2>
+            <span class="eyebrow">интенсивность</span>
+          </div>
+          <div class="heatmap" id="dailyHeatmap"></div>
         </section>
 
         <section class="section form-section hidden" id="expenseEditorSection">

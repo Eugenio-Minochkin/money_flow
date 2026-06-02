@@ -411,6 +411,57 @@ test("dashboard returns USD display totals from converted amounts", async () => 
   assert.equal(dashboard.topCategories[0].display.amount, 100);
 });
 
+test("dashboard returns analytics blocks for the mini app", async () => {
+  const repo = createRepository(fakePool((sql, params) => {
+    const query = String(sql);
+    if (query.startsWith("SELECT * FROM users")) {
+      return {
+        rows: [{
+          id: "1",
+          telegram_user_id: "100",
+          monthly_budget_amount: "45000",
+          display_currency: "USD",
+          usd_thb_rate: "32.6"
+        }]
+      };
+    }
+    if (query.includes("planned_expense_payments")) return { rows: [] };
+    if (query.includes("ORDER BY spent_at DESC")) return { rows: [] };
+    if (query.includes("GROUP BY category_slug")) {
+      return {
+        rows: [
+          { category_slug: "other", total: 600, display_total: 18.4 },
+          { category_slug: "food_cafe", total: 2600, display_total: 79.76 }
+        ]
+      };
+    }
+    if (query.includes("ORDER BY amount_base DESC")) {
+      return {
+        rows: [{ id: "9", amount_base: "1500", amount_original: "1500", currency_original: "THB", converted_amounts: { THB: 1500, USD: 46.01 }, description: "dinner", category_slug: "food_cafe", tags: ["date"], spent_at: params[2] }]
+      };
+    }
+    if (query.includes("unnest(tags)")) {
+      return { rows: [{ tag: "date", total: 1500, display_total: 46.01 }] };
+    }
+    if (query.includes("COALESCE(SUM(amount_base)") && query.includes("display_total")) {
+      return { rows: [{ total: 3200, display_total: 98.16 }] };
+    }
+    if (query.includes("EXTRACT(DAY")) {
+      return { rows: [{ day: 1, total: 3200 }] };
+    }
+    return { rows: [] };
+  }));
+
+  const dashboard = await repo.dashboard(100, new Date("2026-06-10T10:00:00+07:00"));
+
+  assert.equal(dashboard.analytics.largestWeek.description, "dinner");
+  assert.equal(dashboard.analytics.largestMonth.description, "dinner");
+  assert.equal(dashboard.analytics.topTags[0].tag, "date");
+  assert.equal(dashboard.analytics.dailyHeatmap[0].day, 1);
+  assert.equal(dashboard.analytics.weekComparison.current, 3200);
+  assert.equal(dashboard.analytics.otherCategoryWarning.active, true);
+});
+
 function fakePool(handler) {
   return {
     async query(sql, params = []) {

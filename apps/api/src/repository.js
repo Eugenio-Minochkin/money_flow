@@ -24,6 +24,30 @@ export function createRepository(pool, options = {}) {
       return result.rows[0] ?? null;
     },
 
+    async listUsersPendingWeeklyReport(reportKey) {
+      const result = await pool.query(
+        `SELECT users.*
+         FROM users
+         WHERE NOT EXISTS (
+           SELECT 1 FROM weekly_reports
+           WHERE weekly_reports.user_id = users.id
+             AND weekly_reports.report_key = $1
+         )
+         ORDER BY users.id`,
+        [reportKey]
+      );
+      return result.rows;
+    },
+
+    async markWeeklyReportSent(userId, reportKey) {
+      await pool.query(
+        `INSERT INTO weekly_reports (user_id, report_key)
+         VALUES ($1, $2)
+         ON CONFLICT (user_id, report_key) DO NOTHING`,
+        [userId, reportKey]
+      );
+    },
+
     async updateMonthlyBudget(telegramUserId, monthlyBudgetAmount) {
       const amount = Number(monthlyBudgetAmount);
       if (!Number.isFinite(amount) || amount <= 0) {
@@ -480,15 +504,114 @@ export function createRepository(pool, options = {}) {
         now
       });
       const topCategories = await this.topCategories(user.id, now);
+      const analytics = await dashboardAnalytics(pool, user, topCategories, snapshot, now);
       return {
         user,
         snapshot,
         latestExpenses: latest.rows.map((row) => withDisplay(row, user)),
         topCategories,
+        analytics,
         plannedExpenses: plannedExpenses.map((row) => withDisplayPlanned(row, user))
       };
     }
   };
+}
+
+async function dashboardAnalytics(pool, user, topCategories, snapshot, now) {
+  const [largestWeek, largestMonth, topTags, dailyHeatmap, previousWeek] = await Promise.all([
+    largestExpenseForPeriod(pool, user.id, "week", now, user),
+    largestExpenseForPeriod(pool, user.id, "month", now, user),
+    topTagsForMonth(pool, user.id, now, user),
+    dailyHeatmapForMonth(pool, user.id, now),
+    totalForPreviousWeek(pool, user.id, now, user)
+  ]);
+  const otherCategory = topCategories.find((category) => category.category_slug === "other");
+  const otherTotal = Number(otherCategory?.total ?? 0);
+  const otherPercent = snapshot.month > 0 ? Math.round((otherTotal / snapshot.month) * 100) : 0;
+
+  return {
+    largestWeek,
+    largestMonth,
+    topTags,
+    dailyHeatmap,
+    weekComparison: {
+      current: snapshot.week,
+      previous: previousWeek.total,
+      delta: roundMoney(snapshot.week - previousWeek.total),
+      display: {
+        currency: user.display_currency ?? "USD",
+        current: snapshot.display.week,
+        previous: previousWeek.displayTotal,
+        delta: roundMoney(snapshot.display.week - previousWeek.displayTotal)
+      }
+    },
+    otherCategoryWarning: {
+      active: otherPercent > 10,
+      percent: otherPercent,
+      total: roundMoney(otherTotal),
+      display: otherCategory?.display ?? { currency: user.display_currency ?? "USD", amount: 0 }
+    }
+  };
+}
+
+async function largestExpenseForPeriod(pool, userId, period, now, user) {
+  const bounds = localPeriodBounds(now, period);
+  const result = await pool.query(
+    `SELECT id, amount_original, currency_original, amount_base, converted_amounts,
+            description, category_slug, tags, spent_at
+     FROM expenses
+     WHERE user_id = $1 AND spent_at >= $2 AND spent_at < $3
+     ORDER BY amount_base DESC, spent_at DESC
+     LIMIT 1`,
+    [userId, bounds.start, bounds.end]
+  );
+  return result.rows[0] ? withDisplay(result.rows[0], user) : null;
+}
+
+async function topTagsForMonth(pool, userId, now, user) {
+  const bounds = localPeriodBounds(now, "month");
+  const result = await pool.query(
+    `SELECT tag,
+            COALESCE(SUM(amount_base), 0)::float AS total,
+            COALESCE(SUM(COALESCE(NULLIF(converted_amounts->>$4, '')::float, amount_base / NULLIF($5::numeric, 0))), 0)::float AS display_total
+     FROM expenses, unnest(tags) AS tag
+     WHERE user_id = $1 AND spent_at >= $2 AND spent_at < $3
+     GROUP BY tag
+     ORDER BY total DESC
+     LIMIT 8`,
+    [userId, bounds.start, bounds.end, user.display_currency ?? "USD", Number(user.usd_thb_rate ?? 32.65)]
+  );
+  return result.rows.map((row) => ({
+    tag: row.tag,
+    total: roundMoney(Number(row.total)),
+    display: {
+      currency: user.display_currency ?? "USD",
+      amount: roundMoney(Number(row.display_total ?? 0))
+    }
+  }));
+}
+
+async function dailyHeatmapForMonth(pool, userId, now) {
+  const bounds = localPeriodBounds(now, "month");
+  const result = await pool.query(
+    `SELECT EXTRACT(DAY FROM (spent_at + interval '7 hours'))::int AS day,
+            COALESCE(SUM(amount_base), 0)::float AS total
+     FROM expenses
+     WHERE user_id = $1 AND spent_at >= $2 AND spent_at < $3
+     GROUP BY day
+     ORDER BY day`,
+    [userId, bounds.start, bounds.end]
+  );
+  return result.rows.map((row) => ({
+    day: Number(row.day),
+    total: roundMoney(Number(row.total))
+  }));
+}
+
+async function totalForPreviousWeek(pool, userId, now, user) {
+  const week = localPeriodBounds(now, "week");
+  const previousNow = new Date(week.start.getTime() - 24 * 60 * 60_000);
+  return totalForPeriod(pool, userId, "week", previousNow, user);
 }
 
 function normalizeDraft(draft) {

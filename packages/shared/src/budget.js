@@ -19,8 +19,17 @@ export function calculateBudgetSnapshot({
     ? 0
     : Math.max(displayFromBase(freeRemaining, monthTotal, monthDisplayTotal), 0);
   const daysLeftInMonth = monthDaysLeft(now);
+  const elapsedDaysInMonth = elapsedMonthDays(now);
+  const daysInMonth = monthDays(now);
+  const dailyPlanLimit = roundMoney(monthlyBudget / daysInMonth);
+  const forecastMonthTotal = roundMoney((monthTotal / elapsedDaysInMonth) * daysInMonth);
+  const plannedSpendToDate = monthlyBudget * (elapsedDaysInMonth / daysInMonth);
+  const planDeviation = roundMoney(monthTotal - plannedSpendToDate);
   const safeToSpendPerDay = roundMoney(Math.max(freeRemaining, 0) / daysLeftInMonth);
   const safeToSpendDisplayPerDay = roundMoney(freeRemainingDisplay / daysLeftInMonth);
+  const dailyPlanDisplayLimit = roundMoney(displayFromBase(dailyPlanLimit, monthTotal, monthDisplayTotal));
+  const forecastDisplayMonthTotal = roundMoney(displayFromBase(forecastMonthTotal, monthTotal, monthDisplayTotal));
+  const planDisplayDeviation = roundMoney(displayFromBase(planDeviation, monthTotal, monthDisplayTotal));
 
   return {
     today: roundMoney(todayTotal),
@@ -30,7 +39,12 @@ export function calculateBudgetSnapshot({
     remaining: roundMoney(remaining),
     plannedRemaining: roundMoney(plannedRemainingTotal),
     freeRemaining: roundMoney(freeRemaining),
+    daysInMonth,
+    elapsedDaysInMonth,
     daysLeftInMonth,
+    dailyPlanLimit,
+    forecastMonthTotal,
+    planDeviation,
     safeToSpendPerDay,
     display: {
       currency: displayCurrency,
@@ -39,6 +53,9 @@ export function calculateBudgetSnapshot({
       month: roundMoney(monthDisplayTotal),
       plannedRemaining: roundMoney(plannedRemainingDisplayTotal),
       freeRemaining: roundMoney(freeRemainingDisplay),
+      dailyPlanLimit: dailyPlanDisplayLimit,
+      forecastMonthTotal: forecastDisplayMonthTotal,
+      planDeviation: planDisplayDeviation,
       safeToSpendPerDay: safeToSpendDisplayPerDay
     },
     status: budgetStatus({ monthTotal, monthlyBudget, now })
@@ -52,11 +69,16 @@ function displayFromBase(value, baseTotal, displayTotal) {
 
 function budgetStatus({ monthTotal, monthlyBudget, now }) {
   const elapsedDays = elapsedMonthDays(now);
-  const daysInMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0)).getUTCDate();
+  const daysInMonth = monthDays(now);
   const plannedSpend = monthlyBudget * (elapsedDays / daysInMonth);
   if (monthTotal > plannedSpend * 1.08) return "above_plan";
   if (monthTotal < plannedSpend * 0.92) return "below_plan";
   return "on_plan";
+}
+
+function monthDays(date) {
+  const local = new Date(date.getTime() + 7 * 60 * 60_000);
+  return new Date(Date.UTC(local.getUTCFullYear(), local.getUTCMonth() + 1, 0)).getUTCDate();
 }
 
 function elapsedMonthDays(date) {

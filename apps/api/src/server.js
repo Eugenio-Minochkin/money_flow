@@ -8,7 +8,7 @@ import { migrate, pool } from "./db.js";
 import { createExchangeRateProvider } from "./exchangeRates.js";
 import { createExpenseParser } from "./expenseParser.js";
 import { createRepository } from "./repository.js";
-import { createTelegramBot } from "./telegram.js";
+import { createTelegramBot, sendWeeklyReports, shouldSendWeeklyReport } from "./telegram.js";
 import { createVoiceTranscriber } from "./voiceTranscriber.js";
 
 const root = resolve(fileURLToPath(new URL("../../..", import.meta.url)));
@@ -36,6 +36,7 @@ const bot = createTelegramBot({
   token: config.telegramBotToken,
   miniAppUrl: config.miniAppUrl
 });
+startWeeklyReportScheduler();
 
 const server = createServer(async (req, res) => {
   try {
@@ -49,6 +50,21 @@ const server = createServer(async (req, res) => {
 server.listen(config.port, () => {
   console.log(`Money Flow API listening on http://localhost:${config.port}`);
 });
+
+function startWeeklyReportScheduler() {
+  if (!config.telegramBotToken) return;
+  const run = async () => {
+    const now = new Date();
+    if (!shouldSendWeeklyReport(now)) return;
+    try {
+      await sendWeeklyReports({ repository, token: config.telegramBotToken, miniAppUrl: config.miniAppUrl, now });
+    } catch (error) {
+      console.error("[weekly-report] failed", error);
+    }
+  };
+  setTimeout(run, 10_000);
+  setInterval(run, 60 * 60_000);
+}
 
 async function route(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);

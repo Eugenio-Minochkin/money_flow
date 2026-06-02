@@ -70,9 +70,97 @@ async function loadDashboard() {
   renderSnapshot(data.snapshot);
   renderSettings(data.user);
   renderPlannedNotice(data.plannedExpenses ?? []);
+  renderAnalytics(data.snapshot, data.analytics ?? {});
   renderTopCategories(data.topCategories ?? [], data.snapshot.month);
   renderPlannedExpenses(data.plannedExpenses ?? []);
   renderLatest(data.latestExpenses ?? []);
+}
+
+function renderAnalytics(snapshot, analytics) {
+  setText("#forecastMonth", moneyBase(snapshot.forecastMonthTotal));
+  setText("#forecastMonthDisplay", moneyDisplay(snapshot.display?.forecastMonthTotal, snapshot.display?.currency));
+  const deviationPrefix = Number(snapshot.planDeviation) > 0 ? "+" : "";
+  setText("#planDeviation", `${deviationPrefix}${moneyBase(snapshot.planDeviation)}`);
+  setText("#planDeviationDisplay", moneyDisplaySigned(snapshot.display?.planDeviation, snapshot.display?.currency));
+  setText("#todayLimit", `${moneyBase(snapshot.today)} / ${moneyBase(snapshot.dailyPlanLimit)}`);
+  setText("#todayLimitDisplay", `${moneyDisplay(snapshot.display?.today, snapshot.display?.currency)} / ${moneyDisplay(snapshot.display?.dailyPlanLimit, snapshot.display?.currency)}`);
+
+  const comparison = analytics.weekComparison ?? {};
+  const weekPrefix = Number(comparison.delta) > 0 ? "+" : "";
+  setText("#weekComparison", `${weekPrefix}${moneyBase(comparison.delta ?? 0)}`);
+  setText("#weekComparisonDisplay", moneyDisplaySigned(comparison.display?.delta, comparison.display?.currency));
+
+  renderOtherWarning(analytics.otherCategoryWarning);
+  renderLargestExpenses(analytics);
+  renderTopTags(analytics.topTags ?? []);
+  renderHeatmap(analytics.dailyHeatmap ?? [], snapshot.daysInMonth ?? 30);
+}
+
+function renderOtherWarning(warning) {
+  const notice = document.querySelector("#otherWarning");
+  if (!warning?.active) {
+    notice.classList.add("hidden");
+    notice.innerHTML = "";
+    return;
+  }
+  notice.classList.remove("hidden");
+  notice.innerHTML = `
+    <div class="notice-title">
+      <span>Категория “Другое” уже ${warning.percent}% месяца</span>
+      <strong>${moneyBase(warning.total)}</strong>
+    </div>
+    <div class="expense-meta">Стоит разобрать эти траты, чтобы статистика была полезнее.</div>
+  `;
+}
+
+function renderLargestExpenses(analytics) {
+  const list = document.querySelector("#largestExpenses");
+  const items = [
+    analytics.largestWeek ? ["Неделя", analytics.largestWeek] : null,
+    analytics.largestMonth ? ["Месяц", analytics.largestMonth] : null
+  ].filter(Boolean);
+  if (!items.length) {
+    list.innerHTML = `<div class="empty">Крупных трат пока нет.</div>`;
+    return;
+  }
+  list.innerHTML = items.map(([label, expense]) => `
+    <article class="expense-row" style="--category-color: ${categoryColor(expense.category_slug)}">
+      <div class="expense-main">
+        <div class="expense-title">${escapeHtml(label)} · ${escapeHtml(expense.description)}</div>
+        <div class="expense-meta">${formatDate(expense.spent_at)} · ${escapeHtml(categoryLabel(expense.category_slug))}</div>
+      </div>
+      <div class="expense-amount">${moneyBase(expense.amount_base)}
+        <em>${moneyDisplay(expense.display?.amount, expense.display?.currency)}</em>
+      </div>
+    </article>
+  `).join("");
+}
+
+function renderTopTags(items) {
+  const list = document.querySelector("#topTags");
+  if (!items.length) {
+    list.innerHTML = `<div class="empty">Тегов пока нет.</div>`;
+    return;
+  }
+  list.innerHTML = items.map((item) => `
+    <div class="tag-chip">
+      <span>#${escapeHtml(item.tag)}</span>
+      <strong>${moneyBase(item.total)}</strong>
+      <em>${moneyDisplay(item.display?.amount, item.display?.currency)}</em>
+    </div>
+  `).join("");
+}
+
+function renderHeatmap(items, daysInMonth) {
+  const grid = document.querySelector("#dailyHeatmap");
+  const byDay = new Map(items.map((item) => [Number(item.day), Number(item.total)]));
+  const max = Math.max(...items.map((item) => Number(item.total)), 1);
+  grid.innerHTML = Array.from({ length: daysInMonth }, (_, index) => {
+    const day = index + 1;
+    const total = byDay.get(day) ?? 0;
+    const intensity = Math.min(total / max, 1);
+    return `<div class="heatmap-day" style="--heat: ${intensity}" title="${day}: ${moneyBase(total)}">${day}</div>`;
+  }).join("");
 }
 
 async function loadHistory() {
@@ -648,6 +736,12 @@ function moneyDisplay(value, currency = "USD") {
   const prefix = currency === "USD" ? "~$" : "";
   const suffix = currency === "USD" ? "" : ` ${currency}`;
   return `${prefix}${money.format(Number(value))}${suffix}`;
+}
+
+function moneyDisplaySigned(value, currency = "USD") {
+  if (value == null || Number.isNaN(Number(value))) return "";
+  const sign = Number(value) > 0 ? "+" : "";
+  return `${sign}${moneyDisplay(value, currency)}`;
 }
 
 function setText(selector, text) {

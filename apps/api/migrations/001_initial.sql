@@ -86,3 +86,11 @@ ALTER TABLE planned_expense_payments ALTER COLUMN paid_key SET DEFAULT '';
 ALTER TABLE planned_expense_payments DROP CONSTRAINT IF EXISTS planned_expense_payments_planned_expense_id_paid_month_key;
 CREATE UNIQUE INDEX IF NOT EXISTS planned_expense_payments_key_idx ON planned_expense_payments(planned_expense_id, paid_key);
 CREATE INDEX IF NOT EXISTS planned_expense_payments_month_idx ON planned_expense_payments(planned_expense_id, paid_month);
+
+CREATE TABLE IF NOT EXISTS weekly_reports (
+  id BIGSERIAL PRIMARY KEY,
+  user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  report_key TEXT NOT NULL,
+  sent_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(user_id, report_key)
+);

@@ -19,7 +19,12 @@ test("calculates month remaining and safe-to-spend", () => {
     remaining: 16500,
     plannedRemaining: 0,
     freeRemaining: 16500,
+    daysInMonth: 30,
+    elapsedDaysInMonth: 7,
     daysLeftInMonth: 24,
+    dailyPlanLimit: 1500,
+    forecastMonthTotal: 122142.86,
+    planDeviation: 18000,
     safeToSpendPerDay: 687.5,
     display: {
       currency: "USD",
@@ -28,6 +33,9 @@ test("calculates month remaining and safe-to-spend", () => {
       month: 0,
       plannedRemaining: 0,
       freeRemaining: 0,
+      dailyPlanLimit: 0,
+      forecastMonthTotal: 0,
+      planDeviation: 0,
       safeToSpendPerDay: 0
     },
     status: "above_plan"
@@ -52,6 +60,9 @@ test("calculates display currency safe-to-spend", () => {
   assert.equal(snapshot.display.month, 100);
   assert.equal(snapshot.display.plannedRemaining, 100);
   assert.equal(snapshot.display.safeToSpendPerDay, 43.75);
+  assert.equal(snapshot.display.dailyPlanLimit, 41.67);
+  assert.equal(snapshot.display.forecastMonthTotal, 428.57);
+  assert.equal(snapshot.display.planDeviation, -191.67);
 });
 
 test("subtracts planned expenses from free-to-spend", () => {
