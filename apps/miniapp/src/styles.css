@@ -687,6 +687,16 @@ button:disabled {
   margin-top: 0;
 }
 
+.inbox-category-row {
+  margin-top: 9px;
+}
+
+.active-chip {
+  border-color: #b9ded8;
+  background: #e8f4f1;
+  color: var(--accent);
+}
+
 .edit-card {
   display: grid;
   gap: 10px;

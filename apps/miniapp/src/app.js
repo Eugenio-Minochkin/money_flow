@@ -11,6 +11,7 @@ import {
   moneyDisplaySigned
 } from "./formatters.js";
 import { groupByDay } from "./history.js";
+import { inboxDraftDescription, inboxDraftTotal, updateFirstInboxItemCategory } from "./inbox.js";
 import {
   isDueToday,
   isPlannedPaid,
@@ -40,6 +41,8 @@ const screenTitles = {
 
 let dashboardState = null;
 let draftState = null;
+let draftReturnTab = "dashboard";
+let expenseReturnTab = "dashboard";
 let historyState = [];
 let inboxState = [];
 let hiddenNoticeIds = new Set();
@@ -212,9 +215,10 @@ async function loadHistory() {
   renderHistory(historyState);
 }
 
-async function loadDraft(id) {
+async function loadDraft(id, options = {}) {
   const data = await api(`/api/drafts/${id}?telegramUserId=${encodeURIComponent(telegramUserId)}`);
   draftState = data.draft;
+  draftReturnTab = options.returnTab ?? "dashboard";
   renderDraftEditor(draftState);
 }
 
@@ -356,17 +360,21 @@ function renderInboxDrafts(drafts) {
   block.classList.remove("hidden");
   title.textContent = `Нужно разобрать: ${drafts.length}`;
   list.innerHTML = drafts.map((draft) => {
-    const total = draft.items.reduce((sum, item) => sum + Number(item.amount ?? 0), 0);
-    const description = draft.items.map((item) => item.description).filter(Boolean).join(", ") || draft.source_text;
+    const total = inboxDraftTotal(draft);
+    const description = inboxDraftDescription(draft);
     return `
       <article class="expense-row" style="--category-color: #b84d7a">
         <div class="expense-main">
           <div class="expense-title">${escapeHtml(description)}</div>
           <div class="expense-meta">${formatDate(draft.created_at)} · ${draft.items.length} строк · ${moneyBase(total)}</div>
+          <div class="button-row inbox-category-row">
+            ${inboxCategoryButtons(draft)}
+          </div>
         </div>
         <div class="expense-actions">
           <div class="button-row compact">
-            <button type="button" data-open-draft="${draft.id}">Открыть</button>
+            <button type="button" data-confirm-draft="${draft.id}">Подтвердить</button>
+            <button type="button" class="ghost-button" data-open-draft="${draft.id}">Открыть</button>
             <button type="button" class="danger-button" data-cancel-draft="${draft.id}">Отменить</button>
           </div>
         </div>
@@ -376,12 +384,47 @@ function renderInboxDrafts(drafts) {
   bindInboxActions(list);
 }
 
+function inboxCategoryButtons(draft) {
+  const first = draft.items?.[0];
+  if (!first) return "";
+  const quickCategories = [
+    ["food_cafe", "Еда"],
+    ["transport", "Транспорт"],
+    ["health", "Здоровье"],
+    ["sport_activities", "Спорт"],
+    ["other", "Другое"]
+  ];
+  return quickCategories.map(([slug, label]) => `
+    <button type="button" class="ghost-button ${first.category_slug === slug ? "active-chip" : ""}" data-inbox-draft="${draft.id}" data-inbox-category="${slug}">
+      ${escapeHtml(label)}
+    </button>
+  `).join("");
+}
+
 function bindInboxActions(container) {
   container.querySelectorAll("[data-open-draft]").forEach((button) => {
     button.addEventListener("click", async () => {
-      await loadDraft(button.dataset.openDraft);
+      await loadDraft(button.dataset.openDraft, { returnTab: "history" });
       switchTab("dashboard");
       document.querySelector("#draftEditorSection").scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  });
+  container.querySelectorAll("[data-confirm-draft]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      await api(`/api/drafts/${button.dataset.confirmDraft}/confirm`, { method: "POST", body: { telegramUserId } });
+      await loadDashboard();
+      await loadHistory();
+      showToast("Черновик подтвержден");
+    });
+  });
+  container.querySelectorAll("[data-inbox-category]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const draft = inboxState.find((item) => String(item.id) === button.dataset.inboxDraft);
+      if (!draft) return;
+      const items = updateFirstInboxItemCategory(draft, button.dataset.inboxCategory);
+      await api(`/api/drafts/${draft.id}`, { method: "PATCH", body: { telegramUserId, items } });
+      await loadHistory();
+      showToast("Категория обновлена");
     });
   });
   container.querySelectorAll("[data-cancel-draft]").forEach((button) => {
@@ -417,7 +460,7 @@ function bindExpenseActions(container, expenses) {
   container.querySelectorAll("[data-edit-expense]").forEach((button) => {
     button.addEventListener("click", () => {
       const expense = expenses.find((item) => String(item.id) === button.dataset.editExpense);
-      renderExpenseEditor(expense);
+      renderExpenseEditor(expense, { returnTab: "history" });
     });
   });
   container.querySelectorAll("[data-delete-expense]").forEach((button) => {
@@ -573,7 +616,9 @@ function bindPlannedActions(container, items) {
 
 function renderDraftEditor(draft) {
   const section = document.querySelector("#draftEditorSection");
+  const title = document.querySelector("#draftEditorTitle");
   const form = document.querySelector("#draftForm");
+  if (title) title.textContent = draft.status === "inbox" ? "Разобрать черновик" : "Черновик";
   section.classList.remove("hidden");
   form.innerHTML = `
     <div class="form-stack">
@@ -581,18 +626,23 @@ function renderDraftEditor(draft) {
       <div class="button-row">
         <button type="submit">Сохранить черновик</button>
         <button type="button" id="confirmDraftButton">Подтвердить</button>
+        <button type="button" class="ghost-button" id="closeDraftButton">Закрыть</button>
       </div>
     </div>
   `;
   form.onsubmit = saveDraft;
   form.querySelector("#confirmDraftButton").addEventListener("click", confirmDraft);
+  form.querySelector("#closeDraftButton").addEventListener("click", closeDraftEditor);
 }
 
-function renderExpenseEditor(expense) {
+function renderExpenseEditor(expense, options = {}) {
   if (!expense) return;
+  expenseReturnTab = options.returnTab ?? "dashboard";
   switchTab("dashboard");
   const section = document.querySelector("#expenseEditorSection");
+  const title = document.querySelector("#expenseEditorTitle");
   const form = document.querySelector("#expenseForm");
+  if (title) title.textContent = `Расход: ${expense.description}`;
   section.classList.remove("hidden");
   form.innerHTML = `
     <div class="form-stack">
@@ -606,11 +656,24 @@ function renderExpenseEditor(expense) {
       }, "expense", 0)}
       <div class="button-row">
         <button type="submit">Сохранить расход</button>
+        <button type="button" class="ghost-button" id="closeExpenseEditorButton">Закрыть</button>
       </div>
     </div>
   `;
   form.onsubmit = (event) => saveExpense(event, expense.id);
+  form.querySelector("#closeExpenseEditorButton").addEventListener("click", closeExpenseEditor);
   section.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function closeDraftEditor() {
+  document.querySelector("#draftEditorSection").classList.add("hidden");
+  draftState = null;
+  switchTab(draftReturnTab);
+}
+
+function closeExpenseEditor() {
+  document.querySelector("#expenseEditorSection").classList.add("hidden");
+  switchTab(expenseReturnTab);
 }
 
 function editableItemFields(item, prefix, index) {
@@ -667,14 +730,15 @@ async function saveSettings(event) {
 
 async function saveDraft(event) {
   event.preventDefault();
-  await saveDraftItems();
+  await saveDraftItems({ showFeedback: true });
 }
 
-async function saveDraftItems() {
+async function saveDraftItems(options = {}) {
   const items = draftState.items.map((item, index) => collectItem(`draft-${index}`, item));
   const data = await api(`/api/drafts/${draftState.id}`, { method: "PATCH", body: { telegramUserId, items } });
   draftState = data.draft;
   renderDraftEditor(draftState);
+  if (options.showFeedback) showToast("Черновик сохранен");
 }
 
 async function confirmDraft() {
@@ -683,6 +747,8 @@ async function confirmDraft() {
   document.querySelector("#draftEditorSection").classList.add("hidden");
   await loadDashboard();
   await loadHistory();
+  showToast("Черновик подтвержден");
+  switchTab(draftReturnTab);
 }
 
 async function saveExpense(event, expenseId) {
@@ -692,6 +758,7 @@ async function saveExpense(event, expenseId) {
   await loadDashboard();
   await loadHistory();
   showToast("Расход сохранен");
+  switchTab(expenseReturnTab);
 }
 
 async function savePlanned(event, plannedId) {

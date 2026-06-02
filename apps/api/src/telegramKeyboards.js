@@ -10,7 +10,12 @@ export function draftKeyboard(draftId, items = [], miniAppUrl, telegramUserId) {
     quickRows.push([
       { text: "Еда", callback_data: `cat:${draftId}:${firstReviewIndex}:food_cafe` },
       { text: "Дом", callback_data: `cat:${draftId}:${firstReviewIndex}:home` },
-      { text: "Здоровье", callback_data: `cat:${draftId}:${firstReviewIndex}:health` }
+      { text: "Транспорт", callback_data: `cat:${draftId}:${firstReviewIndex}:transport` }
+    ]);
+    quickRows.push([
+      { text: "Здоровье", callback_data: `cat:${draftId}:${firstReviewIndex}:health` },
+      { text: "Спорт", callback_data: `cat:${draftId}:${firstReviewIndex}:sport_activities` },
+      { text: "Другое", callback_data: `cat:${draftId}:${firstReviewIndex}:other` }
     ]);
   }
   return {

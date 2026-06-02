@@ -15,6 +15,9 @@ test("draft keyboard includes confirm edit cancel inbox and mini app actions", (
   assert.ok(buttons.some((button) => button.callback_data === "cancel:42"));
   assert.ok(buttons.some((button) => button.callback_data === "inbox:42"));
   assert.ok(buttons.some((button) => button.callback_data === "cat:42:0:food_cafe"));
+  assert.ok(buttons.some((button) => button.callback_data === "cat:42:0:transport"));
+  assert.ok(buttons.some((button) => button.callback_data === "cat:42:0:sport_activities"));
+  assert.ok(buttons.some((button) => button.callback_data === "cat:42:0:other"));
   assert.ok(buttons.some((button) => button.web_app?.url === "http://localhost:3000?telegramUserId=100&draftId=42"));
 });
 
