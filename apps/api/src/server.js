@@ -3,6 +3,7 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { config, requireRuntimeConfig } from "./config.js";
+import { createApiSecurity } from "./apiSecurity.js";
 import { migrate, pool } from "./db.js";
 import { createExchangeRateProvider } from "./exchangeRates.js";
 import { createExpenseParser } from "./expenseParser.js";
@@ -10,13 +11,17 @@ import { createJsonReader, createStaticHandler, sendJson } from "./http.js";
 import { createRateLimiter } from "./rateLimit.js";
 import { createRepository } from "./repository.js";
 import { createTelegramBot, sendWeeklyReports, shouldSendWeeklyReport } from "./telegram.js";
-import { verifyTelegramInitData } from "./telegramAuth.js";
 import { createVoiceTranscriber } from "./voiceTranscriber.js";
 
 const root = resolve(fileURLToPath(new URL("../../..", import.meta.url)));
 const webRoot = join(root, "apps", "miniapp", "src");
 const readJson = createJsonReader({ maxJsonBytes: config.maxJsonBytes });
 const serveStatic = createStaticHandler({ webRoot });
+const apiSecurity = createApiSecurity({
+  telegramBotToken: config.telegramBotToken,
+  requireTelegramInitData: config.requireTelegramInitData,
+  telegramWebhookSecret: config.telegramWebhookSecret
+});
 
 requireRuntimeConfig();
 await migrate();
@@ -86,14 +91,14 @@ async function route(req, res) {
   }
 
   if (req.method === "POST" && url.pathname === "/telegram/webhook") {
-    if (!isValidTelegramWebhook(req)) return sendJson(res, 401, { error: "invalid_webhook_secret" });
+    if (!apiSecurity.isValidTelegramWebhook(req)) return sendJson(res, 401, { error: "invalid_webhook_secret" });
     const update = await readJson(req);
     await bot.handleUpdate(update);
     return sendJson(res, 200, { ok: true });
   }
 
   if (req.method === "GET" && url.pathname === "/api/dashboard") {
-    const auth = resolveTelegramUserId(req, url);
+    const auth = apiSecurity.resolveTelegramUserId(req, url);
     if (auth.error) return sendJson(res, 400, { error: auth.error });
     const telegramUserId = auth.telegramUserId;
     const dashboard = await repository.dashboard(telegramUserId);
@@ -102,7 +107,7 @@ async function route(req, res) {
   }
 
   if (req.method === "GET" && url.pathname === "/api/expenses") {
-    const auth = resolveTelegramUserId(req, url);
+    const auth = apiSecurity.resolveTelegramUserId(req, url);
     if (auth.error) return sendJson(res, 400, { error: auth.error });
     const expenses = await repository.listExpensesForTelegramUser(auth.telegramUserId, {
       period: url.searchParams.get("period") ?? "month",
@@ -112,7 +117,7 @@ async function route(req, res) {
   }
 
   if (req.method === "GET" && url.pathname === "/api/planned-expenses") {
-    const auth = resolveTelegramUserId(req, url);
+    const auth = apiSecurity.resolveTelegramUserId(req, url);
     if (auth.error) return sendJson(res, 400, { error: auth.error });
     const telegramUserId = auth.telegramUserId;
     const plannedExpenses = await repository.listPlannedExpensesForTelegramUser(telegramUserId);
@@ -121,7 +126,7 @@ async function route(req, res) {
 
   if (req.method === "POST" && url.pathname === "/api/planned-expenses") {
     const body = await readJson(req);
-    const auth = resolveTelegramUserId(req, url, body);
+    const auth = apiSecurity.resolveTelegramUserId(req, url, body);
     if (auth.error) return sendJson(res, 400, { error: auth.error });
     const plannedExpense = await repository.createPlannedExpense(auth.telegramUserId, body.plannedExpense);
     if (!plannedExpense) return sendJson(res, 404, { error: "user_not_found" });
@@ -131,7 +136,7 @@ async function route(req, res) {
   const plannedMatch = url.pathname.match(/^\/api\/planned-expenses\/(\d+)$/);
   if (plannedMatch && (req.method === "PATCH" || req.method === "DELETE")) {
     const body = await readJson(req);
-    const auth = resolveTelegramUserId(req, url, body);
+    const auth = apiSecurity.resolveTelegramUserId(req, url, body);
     if (auth.error) return sendJson(res, 400, { error: auth.error });
     const plannedExpense = req.method === "PATCH"
       ? await repository.updatePlannedExpense(auth.telegramUserId, Number(plannedMatch[1]), body.plannedExpense)
@@ -142,7 +147,7 @@ async function route(req, res) {
 
   if (req.method === "PATCH" && url.pathname === "/api/settings/budget") {
     const body = await readJson(req);
-    const auth = resolveTelegramUserId(req, url, body);
+    const auth = apiSecurity.resolveTelegramUserId(req, url, body);
     if (auth.error) return sendJson(res, 400, { error: auth.error });
     const user = await repository.updateMonthlyBudget(auth.telegramUserId, Number(body.monthlyBudgetAmount));
     if (!user) return sendJson(res, 404, { error: "user_not_found" });
@@ -151,7 +156,7 @@ async function route(req, res) {
 
   if (req.method === "PATCH" && url.pathname === "/api/settings") {
     const body = await readJson(req);
-    const auth = resolveTelegramUserId(req, url, body);
+    const auth = apiSecurity.resolveTelegramUserId(req, url, body);
     if (auth.error) return sendJson(res, 400, { error: auth.error });
     const user = await repository.updateUserSettings(auth.telegramUserId, body.settings ?? {});
     if (!user) return sendJson(res, 404, { error: "user_not_found" });
@@ -161,7 +166,7 @@ async function route(req, res) {
   const plannedPayMatch = url.pathname.match(/^\/api\/planned-expenses\/(\d+)\/pay$/);
   if (plannedPayMatch && req.method === "POST") {
     const body = await readJson(req);
-    const auth = resolveTelegramUserId(req, url, body);
+    const auth = apiSecurity.resolveTelegramUserId(req, url, body);
     if (auth.error) return sendJson(res, 400, { error: auth.error });
     const expense = await repository.payPlannedExpenseForTelegramUser(
       Number(plannedPayMatch[1]),
@@ -175,7 +180,7 @@ async function route(req, res) {
   if (draftMatch) {
     const draftId = Number(draftMatch[1]);
     if (req.method === "GET" && !draftMatch[2]) {
-      const auth = resolveTelegramUserId(req, url);
+      const auth = apiSecurity.resolveTelegramUserId(req, url);
       if (auth.error) return sendJson(res, 400, { error: auth.error });
       const telegramUserId = auth.telegramUserId;
       const draft = await repository.getDraftForTelegramUser(draftId, telegramUserId);
@@ -185,7 +190,7 @@ async function route(req, res) {
 
     if (req.method === "PATCH" && !draftMatch[2]) {
       const body = await readJson(req);
-      const auth = resolveTelegramUserId(req, url, body);
+      const auth = apiSecurity.resolveTelegramUserId(req, url, body);
       if (auth.error) return sendJson(res, 400, { error: auth.error });
       const draft = await repository.updateDraftItems(draftId, auth.telegramUserId, body.items ?? []);
       if (!draft) return sendJson(res, 404, { error: "draft_not_found" });
@@ -194,7 +199,7 @@ async function route(req, res) {
 
     if (req.method === "POST" && draftMatch[2]) {
       const body = await readJson(req);
-      const auth = resolveTelegramUserId(req, url, body);
+      const auth = apiSecurity.resolveTelegramUserId(req, url, body);
       if (auth.error) return sendJson(res, 400, { error: auth.error });
       const expenses = await repository.confirmDraft(draftId, auth.telegramUserId);
       return sendJson(res, 200, { expenses });
@@ -204,7 +209,7 @@ async function route(req, res) {
   const expenseMatch = url.pathname.match(/^\/api\/expenses\/(\d+)$/);
   if (expenseMatch && (req.method === "PATCH" || req.method === "DELETE")) {
     const body = await readJson(req);
-    const auth = resolveTelegramUserId(req, url, body);
+    const auth = apiSecurity.resolveTelegramUserId(req, url, body);
     if (auth.error) return sendJson(res, 400, { error: auth.error });
     const expense = req.method === "PATCH"
       ? await repository.updateExpenseForTelegramUser(Number(expenseMatch[1]), auth.telegramUserId, body.expense)
@@ -222,25 +227,4 @@ async function route(req, res) {
   }
 
   sendJson(res, 404, { error: "not_found" });
-}
-
-function isValidTelegramWebhook(req) {
-  if (!config.telegramWebhookSecret) return true;
-  return req.headers["x-telegram-bot-api-secret-token"] === config.telegramWebhookSecret;
-}
-
-function resolveTelegramUserId(req, url, body = {}) {
-  const declaredId = Number(body.telegramUserId ?? url.searchParams.get("telegramUserId"));
-  const initData = req.headers["x-telegram-init-data"];
-
-  if (initData) {
-    const auth = verifyTelegramInitData(initData, config.telegramBotToken);
-    if (!auth.ok) return { error: auth.reason };
-    if (declaredId && declaredId !== auth.telegramUserId) return { error: "telegram_user_mismatch" };
-    return { telegramUserId: auth.telegramUserId };
-  }
-
-  if (config.requireTelegramInitData) return { error: "telegram_init_data_required" };
-  if (!declaredId) return { error: "telegramUserId_required" };
-  return { telegramUserId: declaredId };
 }
