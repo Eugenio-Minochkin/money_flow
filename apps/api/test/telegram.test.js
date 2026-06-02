@@ -30,7 +30,7 @@ test("text message creates a pending draft response", async () => {
   }
 });
 
-test("confirm callback saves draft and returns totals", async () => {
+test("confirm callback saves draft and returns an informative summary", async () => {
   const calls = [];
   const repo = fakeRepository();
   const originalLog = console.log;
@@ -52,8 +52,12 @@ test("confirm callback saves draft and returns totals", async () => {
     });
 
     assert.equal(repo.confirmedDraftId, "42");
-    assert.match(calls[0][1].text, /Записал:<\/b> 70 THB/);
-    assert.match(calls[0][1].text, /Сегодня:<\/b> 70 THB/);
+    assert.match(calls[0][1].text, /Записал расход/);
+    assert.match(calls[0][1].text, /<b>Сейчас<\/b>/);
+    assert.match(calls[0][1].text, /<b>Месяц<\/b>/);
+    assert.match(calls[0][1].text, /Потрачено:<\/b> 735 \/ 42/);
+    assert.match(calls[0][1].text, /1,75%/);
+    assert.match(calls[0][1].text, /с учетом плановых трат/);
   } finally {
     console.log = originalLog;
   }
@@ -156,7 +160,7 @@ test("weekly reports are sent once per pending user", async () => {
     });
 
     assert.equal(repo.markedReportKey, "2026-06-07");
-    assert.match(calls[0][1].text, /Ð•Ð¶ÐµÐ½ÐµÐ´ÐµÐ»ÑŒÐ½Ñ‹Ð¹ Ð¾Ñ‚Ñ‡ÐµÑ‚|Еженедельный отчет/);
+    assert.match(calls[0][1].text, /Еженедельный отчет/);
   } finally {
     console.log = originalLog;
   }
@@ -237,7 +241,7 @@ function fakeRepository() {
     },
     async confirmDraft(draftId) {
       this.confirmedDraftId = draftId;
-      return [{ amount_base: 70 }];
+      return [{ amount_base: 75 }];
     },
     async listUsersPendingWeeklyReport() {
       return [{ id: 1, telegram_user_id: 100 }];
@@ -247,18 +251,19 @@ function fakeRepository() {
     },
     async dashboard() {
       return {
-        topCategories: [{ category_slug: "food_cafe", total: 70 }],
+        topCategories: [{ category_slug: "food_cafe", total: 735 }],
         snapshot: {
-          today: 70,
-          week: 70,
-          month: 70,
-          monthlyBudget: 45000,
-          remaining: 44930,
-          plannedRemaining: 0,
-          freeRemaining: 44930,
-          forecastMonthTotal: 300,
-          planDeviation: -1000,
-          safeToSpendPerDay: 1497.67,
+          today: 75,
+          week: 735,
+          month: 735,
+          monthlyBudget: 42000,
+          remaining: 41265,
+          plannedRemaining: 15269.99,
+          freeRemaining: 25995.01,
+          budgetProgressPercent: 1.75,
+          forecastMonthTotal: 11025,
+          planDeviation: -2065,
+          safeToSpendPerDay: 896.38,
           status: "below_plan"
         }
       };

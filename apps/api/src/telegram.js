@@ -51,7 +51,7 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
     );
   }
 
-  if (text === "/today" || text === "/month" || text === "/budget") {
+  if (text === "/today" || text === "/week" || text === "/month" || text === "/budget") {
     const dashboard = await repository.dashboard(from.id);
     return sendMessage(token, message.chat.id, formatTotals(text, dashboard.snapshot), appKeyboard(miniAppUrl, from.id));
   }
@@ -141,38 +141,63 @@ function updateDraftItem(draft, index, patch) {
 
 function formatDraft(expenses) {
   const lines = expenses.map((expense, index) =>
-    `${index + 1}. <b>${escapeHtml(categoryName(expense.category_slug))}</b>\n   ${escapeHtml(expense.description)} — <b>${formatAmount(expense.amount)} ${expense.currency}</b>`
+    `${index + 1}. <b>${escapeHtml(categoryName(expense.category_slug))}</b>\n   ${escapeHtml(expense.description)} · <b>${formatAmount(expense.amount)} ${expense.currency}</b>`
   );
   const total = expenses.reduce((sum, expense) => sum + expense.amount, 0);
   const review = expenses.some((expense) => expense.needs_review)
     ? "\n\n⚠️ Есть сомнительные строки, проверь перед сохранением."
     : "";
-  return `🧾 <b>Я понял так:</b>\n\n${lines.join("\n\n")}\n\n<b>Итого:</b> ${formatAmount(total)} THB.${review}\n\nПодтвердить?`;
+  return `🧾 <b>Я понял так:</b>\n\n${lines.join("\n\n")}\n\n<b>Итого:</b> ${formatAmount(total)} THB.${review}\n\nВсе верно?`;
 }
 
 function formatSavedSummary(total, snapshot) {
+  const progress = snapshot.budgetProgressPercent == null ? "" : ` (${formatAmount(snapshot.budgetProgressPercent)}%)`;
+  const planDeviation = Number(snapshot.planDeviation ?? 0);
+  const planLine = planDeviation > 0
+    ? `⚠️ <b>План:</b> выше на ${formatAmount(Math.abs(planDeviation))} THB`
+    : `🟢 <b>План:</b> ниже на ${formatAmount(Math.abs(planDeviation))} THB`;
+
   return [
-    `✅ <b>Записал:</b> ${formatAmount(total)} THB`,
+    "✅ <b>Записал расход</b>",
+    `<b>${formatAmount(total)} THB</b>`,
     "",
+    "<b>Сейчас</b>",
     `📌 <b>Сегодня:</b> ${formatAmount(snapshot.today)} THB`,
     `📆 <b>Неделя:</b> ${formatAmount(snapshot.week)} THB`,
-    `📅 <b>Месяц:</b> ${formatAmount(snapshot.month)} / ${formatAmount(snapshot.monthlyBudget)} THB`,
+    "",
+    "<b>Месяц</b>",
+    `📅 <b>Потрачено:</b> ${formatAmount(snapshot.month)} / ${formatAmount(snapshot.monthlyBudget)} THB${progress}`,
+    `🟢 <b>Свободно:</b> ${formatAmount(snapshot.freeRemaining)} THB`,
     `🧾 <b>Плановые:</b> ${formatAmount(snapshot.plannedRemaining)} THB`,
-    `⚡️ <b>Можно в день:</b> ${formatAmount(snapshot.safeToSpendPerDay)} THB`
+    `🔮 <b>Прогноз:</b> ${formatAmount(snapshot.forecastMonthTotal ?? 0)} THB`,
+    planLine,
+    "",
+    `⚡️ <b>Можно тратить:</b> ${formatAmount(snapshot.safeToSpendPerDay)} THB/день`,
+    "с учетом плановых трат до конца месяца"
   ].join("\n");
 }
 
 function formatTotals(command, snapshot) {
-  if (command === "/today") return `📌 <b>Сегодня:</b> ${formatAmount(snapshot.today)} THB`;
+  if (command === "/today") {
+    return [
+      `📌 <b>Сегодня:</b> ${formatAmount(snapshot.today)} THB`,
+      `⚡️ <b>Можно тратить:</b> ${formatAmount(snapshot.safeToSpendPerDay)} THB/день`
+    ].join("\n");
+  }
+  if (command === "/week") return `📆 <b>Неделя:</b> ${formatAmount(snapshot.week)} THB`;
   if (command === "/month") {
-    return `📅 <b>Месяц:</b> ${formatAmount(snapshot.month)} / ${formatAmount(snapshot.monthlyBudget)} THB`;
+    const progress = snapshot.budgetProgressPercent == null ? "" : ` (${formatAmount(snapshot.budgetProgressPercent)}%)`;
+    return [
+      `📅 <b>Месяц:</b> ${formatAmount(snapshot.month)} / ${formatAmount(snapshot.monthlyBudget)} THB${progress}`,
+      `🔮 <b>Прогноз:</b> ${formatAmount(snapshot.forecastMonthTotal ?? 0)} THB`
+    ].join("\n");
   }
   return [
     `💰 <b>Бюджет:</b> ${formatAmount(snapshot.monthlyBudget)} THB`,
     `📅 <b>Месяц:</b> ${formatAmount(snapshot.month)} THB`,
     `🧾 <b>Плановые:</b> ${formatAmount(snapshot.plannedRemaining)} THB`,
     `🟢 <b>Свободно:</b> ${formatAmount(snapshot.freeRemaining)} THB`,
-    `⚡️ <b>Можно в день:</b> ${formatAmount(snapshot.safeToSpendPerDay)} THB`,
+    `⚡️ <b>Можно тратить:</b> ${formatAmount(snapshot.safeToSpendPerDay)} THB/день`,
     `Статус: ${escapeHtml(statusLabel(snapshot.status))}`
   ].join("\n");
 }
@@ -194,21 +219,21 @@ function draftKeyboard(draftId, items = [], miniAppUrl, telegramUserId) {
   }
   return {
     inline_keyboard: [
-      [{ text: "Confirm all", callback_data: `confirm:${draftId}` }],
+      [{ text: "✅ Подтвердить", callback_data: `confirm:${draftId}` }],
       ...quickRows,
       [
-        { text: "Edit", web_app: { url: `${miniAppUrl}?telegramUserId=${telegramUserId}&draftId=${draftId}` } },
-        { text: "Cancel", callback_data: `cancel:${draftId}` }
+        { text: "✏️ Изменить", web_app: { url: `${miniAppUrl}?telegramUserId=${telegramUserId}&draftId=${draftId}` } },
+        { text: "🗑 Отменить", callback_data: `cancel:${draftId}` }
       ],
-      [{ text: "Move to Inbox", callback_data: `inbox:${draftId}` }],
-      [{ text: "Open in Mini App", web_app: { url: `${miniAppUrl}?telegramUserId=${telegramUserId}` } }]
+      [{ text: "📥 Разобрать позже", callback_data: `inbox:${draftId}` }],
+      [{ text: "📱 Mini App", web_app: { url: `${miniAppUrl}?telegramUserId=${telegramUserId}` } }]
     ]
   };
 }
 
 function appKeyboard(miniAppUrl, telegramUserId) {
   return {
-    inline_keyboard: [[{ text: "Open Mini App", web_app: { url: `${miniAppUrl}?telegramUserId=${telegramUserId}` } }]]
+    inline_keyboard: [[{ text: "📱 Открыть Mini App", web_app: { url: `${miniAppUrl}?telegramUserId=${telegramUserId}` } }]]
   };
 }
 
