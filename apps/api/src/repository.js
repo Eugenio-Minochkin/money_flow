@@ -301,7 +301,7 @@ export function createRepository(pool, options = {}) {
            user_id, amount, currency, amount_base, description, category_slug, tags,
            recurrence, due_day, due_days, weekday, due_date, active
          )
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, true)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, true)
          RETURNING *`,
         [
           user.id,

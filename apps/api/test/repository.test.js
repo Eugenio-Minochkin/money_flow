@@ -127,6 +127,8 @@ test("returns top categories", async () => {
 test("creates and lists planned expenses", async () => {
   const repo = createRepository(fakePool((_sql, params) => {
     if (String(_sql).startsWith("INSERT")) {
+      assert.match(String(_sql), /VALUES \(\$1, \$2, \$3, \$4, \$5, \$6, \$7, \$8, \$9, \$10, \$11, \$12, true\)/);
+      assert.equal(params.length, 12);
       return { rows: [{ id: "5", description: params[4], recurrence: params[7] }] };
     }
     return { rows: [{ id: "5", description: "ChatGPT", recurrence: "monthly" }] };
