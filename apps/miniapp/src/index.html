@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Money Flow</title>
-    <link rel="stylesheet" href="/styles.css?v=20260602-compact-cards" />
+    <link rel="stylesheet" href="/styles.css?v=20260602-dashboard-compact-lower" />
   </head>
   <body>
     <main class="shell">
@@ -83,13 +83,6 @@
             <span class="eyebrow">коротко</span>
           </div>
           <div class="plan-summary-body">
-            <div class="plan-progress">
-              <div class="plan-progress-top">
-                <span>Использовано бюджета</span>
-                <strong id="monthProgressPercent">...</strong>
-              </div>
-              <div class="bar-track"><div class="bar-fill" id="monthProgressBarWide"></div></div>
-            </div>
             <div class="plan-row">
               <span>Прогноз, если темп сохранится</span>
               <strong id="forecastMonth">...</strong>
@@ -114,6 +107,7 @@
         </section>
 
         <section class="notice hidden" id="otherWarning"></section>
+        <section class="next-planned hidden" id="nextPlannedSummary"></section>
 
         <section class="section form-section hidden" id="draftEditorSection">
           <div class="section-heading">
@@ -131,34 +125,20 @@
 
         <section class="section">
           <div class="section-heading">
-            <h2>Крупные траты</h2>
-            <span class="eyebrow">неделя / месяц</span>
+            <h2>Разбор месяца</h2>
+            <span class="eyebrow">категории / теги</span>
           </div>
-          <div class="expense-list" id="largestExpenses"></div>
+          <div class="bar-list compact-bars" id="topCategories"></div>
+          <div class="tag-list compact-tags" id="topTags"></div>
         </section>
 
         <section class="section">
           <div class="section-heading">
-            <h2>Топ категорий</h2>
-            <span class="eyebrow">месяц</span>
+            <h2>Активность</h2>
+            <span class="eyebrow">крупное / дни</span>
           </div>
-          <div class="bar-list" id="topCategories"></div>
-        </section>
-
-        <section class="section">
-          <div class="section-heading">
-            <h2>Теги</h2>
-            <span class="eyebrow">месяц</span>
-          </div>
-          <div class="tag-list" id="topTags"></div>
-        </section>
-
-        <section class="section">
-          <div class="section-heading">
-            <h2>Дни месяца</h2>
-            <span class="eyebrow">интенсивность</span>
-          </div>
-          <div class="heatmap" id="dailyHeatmap"></div>
+          <div class="expense-list compact-largest" id="largestExpenses"></div>
+          <div class="heatmap compact-heatmap" id="dailyHeatmap"></div>
         </section>
 
         <section class="section form-section hidden" id="expenseEditorSection">
@@ -245,6 +225,6 @@
     </main>
 
     <div class="toast hidden" id="toast" role="status" aria-live="polite"></div>
-    <script src="/app.js?v=20260602-compact-cards" type="module"></script>
+    <script src="/app.js?v=20260602-dashboard-compact-lower" type="module"></script>
   </body>
 </html>

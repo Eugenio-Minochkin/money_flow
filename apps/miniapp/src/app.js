@@ -70,6 +70,7 @@ async function loadDashboard() {
   renderSnapshot(data.snapshot);
   renderSettings(data.user);
   renderPlannedNotice(data.plannedExpenses ?? []);
+  renderNextPlannedSummary(data.plannedExpenses ?? []);
   renderAnalytics(data.snapshot, data.analytics ?? {});
   renderTopCategories(data.topCategories ?? [], data.snapshot.month);
   renderPlannedExpenses(data.plannedExpenses ?? []);
@@ -77,10 +78,6 @@ async function loadDashboard() {
 }
 
 function renderAnalytics(snapshot, analytics) {
-  const progress = Number(snapshot.budgetProgressPercent ?? 0);
-  setProgress("#monthProgressBarWide", snapshot.progress?.month ?? { percent: progress, state: "good" });
-  setText("#monthProgressPercent", `${money.format(progress)}%`);
-
   setText("#forecastMonth", moneyBase(snapshot.forecastMonthTotal));
   setText("#forecastMonthDisplay", moneyDisplay(snapshot.display?.forecastMonthTotal, snapshot.display?.currency));
 
@@ -122,6 +119,65 @@ function renderOtherWarning(warning) {
     </div>
     <div class="expense-meta">Стоит разобрать эти траты, чтобы статистика была полезнее.</div>
   `;
+}
+
+function renderNextPlannedSummary(items) {
+  const block = document.querySelector("#nextPlannedSummary");
+  const next = nextPlannedItem(items);
+  if (!next) {
+    block.classList.add("hidden");
+    block.innerHTML = "";
+    return;
+  }
+  block.classList.remove("hidden");
+  block.innerHTML = `
+    <div>
+      <span>Следующая плановая</span>
+      <strong>${escapeHtml(next.item.description)}</strong>
+      <em>${formatDateOnly(next.date)} · ${moneyBase(next.item.amount_base ?? next.item.amount)}</em>
+    </div>
+    <button type="button" class="ghost-button" data-open-plan>Plan</button>
+  `;
+  block.querySelector("[data-open-plan]").addEventListener("click", () => switchTab("plan"));
+}
+
+function nextPlannedItem(items) {
+  const now = new Date();
+  return items
+    .map((item) => ({ item, date: nextPlannedDate(item, now) }))
+    .filter((entry) => entry.date)
+    .sort((left, right) => left.date - right.date)[0] ?? null;
+}
+
+function nextPlannedDate(item, now) {
+  const today = new Date(now);
+  today.setHours(0, 0, 0, 0);
+  const candidates = [];
+  const addCandidate = (date) => {
+    if (!date) return;
+    date.setHours(0, 0, 0, 0);
+    if (date >= today) candidates.push(date);
+  };
+
+  if (item.recurrence === "one_off" && item.due_date) {
+    addCandidate(new Date(item.due_date));
+  } else if (item.recurrence === "weekly") {
+    const target = Number(item.weekday ?? 1);
+    const current = today.getDay() === 0 ? 7 : today.getDay();
+    const daysUntil = (target - current + 7) % 7;
+    const date = new Date(today);
+    date.setDate(today.getDate() + daysUntil);
+    addCandidate(date);
+  } else {
+    const days = Array.isArray(item.due_days) && item.due_days.length ? item.due_days : [item.due_day].filter(Boolean);
+    for (const day of days.map(Number)) {
+      const date = new Date(today.getFullYear(), today.getMonth(), day);
+      addCandidate(date);
+      if (date < today) addCandidate(new Date(today.getFullYear(), today.getMonth() + 1, day));
+    }
+  }
+
+  return candidates.sort((left, right) => left - right)[0] ?? null;
 }
 
 function renderLargestExpenses(analytics) {
@@ -803,6 +859,13 @@ function formatDate(value) {
     month: "short",
     hour: "2-digit",
     minute: "2-digit"
+  }).format(new Date(value));
+}
+
+function formatDateOnly(value) {
+  return new Intl.DateTimeFormat("ru-RU", {
+    day: "2-digit",
+    month: "short"
   }).format(new Date(value));
 }
 

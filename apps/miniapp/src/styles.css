@@ -176,6 +176,7 @@ h2 {
 
 .metric,
 .plan-summary,
+.next-planned,
 .section,
 .notice {
   border: 1px solid var(--line);
@@ -355,6 +356,33 @@ h2 {
   font-weight: 900;
 }
 
+.next-planned {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+  padding: 12px 14px;
+}
+
+.next-planned div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.next-planned span,
+.next-planned em {
+  color: var(--muted);
+  font-size: 12px;
+  font-style: normal;
+}
+
+.next-planned strong {
+  overflow-wrap: anywhere;
+  font-size: 15px;
+}
+
 .section {
   margin-top: 12px;
   overflow: hidden;
@@ -406,6 +434,27 @@ h2 {
 
 .tag-chip strong {
   font-size: 14px;
+}
+
+.compact-tags {
+  border-top: 1px solid var(--line);
+  padding: 10px 14px 12px;
+}
+
+.compact-tags .tag-chip {
+  min-width: auto;
+  grid-auto-flow: column;
+  align-items: baseline;
+  gap: 6px;
+  padding: 7px 9px;
+}
+
+.compact-tags .tag-chip em {
+  display: none;
+}
+
+.compact-tags .tag-chip:nth-child(n + 7) {
+  display: none;
 }
 
 .heatmap {
@@ -470,6 +519,40 @@ h2 {
   min-width: 6px;
   border-radius: inherit;
   background: var(--category-color, var(--accent));
+}
+
+.compact-bars .bar-row {
+  gap: 5px;
+  padding: 11px 14px;
+}
+
+.compact-bars .bar-row-display {
+  display: none;
+}
+
+.compact-bars .bar-row:nth-child(n + 4) {
+  display: none;
+}
+
+.compact-bars .bar-track {
+  height: 6px;
+}
+
+.compact-largest .expense-row {
+  padding: 11px 14px;
+}
+
+.compact-largest .expense-row:nth-child(n + 2) {
+  display: none;
+}
+
+.compact-heatmap {
+  border-top: 1px solid var(--line);
+  padding: 12px 14px;
+}
+
+.compact-heatmap .heatmap-day {
+  font-size: 10px;
 }
 
 .history-day {
