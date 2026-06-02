@@ -41,6 +41,7 @@ const screenTitles = {
 let dashboardState = null;
 let draftState = null;
 let historyState = [];
+let inboxState = [];
 let hiddenNoticeIds = new Set();
 
 if (window.Telegram?.WebApp) {
@@ -201,8 +202,13 @@ function renderHeatmap(items, daysInMonth) {
 
 async function loadHistory() {
   const search = document.querySelector("#historySearch").value.trim();
-  const data = await api(`/api/expenses?telegramUserId=${encodeURIComponent(telegramUserId)}&period=month&search=${encodeURIComponent(search)}`);
+  const [data, inbox] = await Promise.all([
+    api(`/api/expenses?telegramUserId=${encodeURIComponent(telegramUserId)}&period=month&search=${encodeURIComponent(search)}`),
+    api(`/api/drafts?telegramUserId=${encodeURIComponent(telegramUserId)}&status=inbox`)
+  ]);
   historyState = data.expenses ?? [];
+  inboxState = inbox.drafts ?? [];
+  renderInboxDrafts(inboxState);
   renderHistory(historyState);
 }
 
@@ -336,6 +342,55 @@ function renderHistory(expenses) {
     </section>
   `).join("");
   bindExpenseActions(list, expenses);
+}
+
+function renderInboxDrafts(drafts) {
+  const block = document.querySelector("#inboxBlock");
+  const list = document.querySelector("#inboxDrafts");
+  const title = document.querySelector("#inboxTitle");
+  if (!drafts.length) {
+    block.classList.add("hidden");
+    list.innerHTML = "";
+    return;
+  }
+  block.classList.remove("hidden");
+  title.textContent = `Нужно разобрать: ${drafts.length}`;
+  list.innerHTML = drafts.map((draft) => {
+    const total = draft.items.reduce((sum, item) => sum + Number(item.amount ?? 0), 0);
+    const description = draft.items.map((item) => item.description).filter(Boolean).join(", ") || draft.source_text;
+    return `
+      <article class="expense-row" style="--category-color: #b84d7a">
+        <div class="expense-main">
+          <div class="expense-title">${escapeHtml(description)}</div>
+          <div class="expense-meta">${formatDate(draft.created_at)} · ${draft.items.length} строк · ${moneyBase(total)}</div>
+        </div>
+        <div class="expense-actions">
+          <div class="button-row compact">
+            <button type="button" data-open-draft="${draft.id}">Открыть</button>
+            <button type="button" class="danger-button" data-cancel-draft="${draft.id}">Отменить</button>
+          </div>
+        </div>
+      </article>
+    `;
+  }).join("");
+  bindInboxActions(list);
+}
+
+function bindInboxActions(container) {
+  container.querySelectorAll("[data-open-draft]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      await loadDraft(button.dataset.openDraft);
+      switchTab("dashboard");
+      document.querySelector("#draftEditorSection").scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  });
+  container.querySelectorAll("[data-cancel-draft]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      await api(`/api/drafts/${button.dataset.cancelDraft}`, { method: "DELETE", body: { telegramUserId } });
+      await loadHistory();
+      showToast("Черновик отменен");
+    });
+  });
 }
 
 function expenseRow(expense) {

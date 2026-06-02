@@ -176,6 +176,12 @@
             </label>
             <button type="submit">Найти</button>
           </form>
+          <section class="inbox-block hidden" id="inboxBlock">
+            <div class="section-heading compact-heading">
+              <h3 id="inboxTitle">Нужно разобрать</h3>
+            </div>
+            <div class="expense-list" id="inboxDrafts"></div>
+          </section>
           <div class="history-list" id="historyList"></div>
         </section>
       </section>
@@ -226,6 +232,6 @@
     </main>
 
     <div class="toast hidden" id="toast" role="status" aria-live="polite"></div>
-    <script src="/app.js?v=20260602-miniapp-modules-smoke" type="module"></script>
+    <script src="/app.js?v=20260602-inbox-drafts" type="module"></script>
   </body>
 </html>

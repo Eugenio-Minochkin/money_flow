@@ -130,6 +130,21 @@ export function createRepository(pool, options = {}) {
       return normalizeDraft(result.rows[0] ?? null);
     },
 
+    async listDraftsForTelegramUser(telegramUserId, options = {}) {
+      const status = ["pending", "inbox"].includes(options.status) ? options.status : "inbox";
+      const result = await pool.query(
+        `SELECT drafts.*
+         FROM drafts
+         JOIN users ON users.id = drafts.user_id
+         WHERE users.telegram_user_id = $1
+           AND drafts.status = $2
+         ORDER BY drafts.created_at DESC
+         LIMIT 20`,
+        [telegramUserId, status]
+      );
+      return result.rows.map(normalizeDraft);
+    },
+
     async confirmDraft(draftId, telegramUserId) {
       const client = await pool.connect();
       try {

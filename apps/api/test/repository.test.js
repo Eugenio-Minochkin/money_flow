@@ -71,6 +71,30 @@ test("updates pending draft items for a Telegram user", async () => {
   assert.equal(draft.items[0].amount, 90);
 });
 
+test("lists inbox drafts for a Telegram user", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql, params });
+    return {
+      rows: [{
+        id: "42",
+        status: "inbox",
+        source_text: "unknown 800",
+        items: [{ amount: 800, currency: "THB", description: "unknown" }],
+        created_at: "2026-06-02T10:00:00.000Z"
+      }]
+    };
+  }));
+
+  const drafts = await repo.listDraftsForTelegramUser(100, { status: "inbox" });
+
+  assert.equal(drafts[0].id, "42");
+  assert.equal(drafts[0].status, "inbox");
+  assert.equal(drafts[0].items[0].amount, 800);
+  assert.equal(queries[0].params[0], 100);
+  assert.equal(queries[0].params[1], "inbox");
+});
+
 test("updates an expense owned by a Telegram user", async () => {
   const repo = createRepository(fakePool((_sql, params) => ({
     rows: [{

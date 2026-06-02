@@ -116,6 +116,15 @@ async function route(req, res) {
     return sendJson(res, 200, { expenses });
   }
 
+  if (req.method === "GET" && url.pathname === "/api/drafts") {
+    const auth = apiSecurity.resolveTelegramUserId(req, url);
+    if (auth.error) return sendJson(res, 400, { error: auth.error });
+    const drafts = await repository.listDraftsForTelegramUser(auth.telegramUserId, {
+      status: url.searchParams.get("status") ?? "inbox"
+    });
+    return sendJson(res, 200, { drafts });
+  }
+
   if (req.method === "GET" && url.pathname === "/api/planned-expenses") {
     const auth = apiSecurity.resolveTelegramUserId(req, url);
     if (auth.error) return sendJson(res, 400, { error: auth.error });
@@ -195,6 +204,14 @@ async function route(req, res) {
       const draft = await repository.updateDraftItems(draftId, auth.telegramUserId, body.items ?? []);
       if (!draft) return sendJson(res, 404, { error: "draft_not_found" });
       return sendJson(res, 200, { draft });
+    }
+
+    if (req.method === "DELETE" && !draftMatch[2]) {
+      const body = await readJson(req);
+      const auth = apiSecurity.resolveTelegramUserId(req, url, body);
+      if (auth.error) return sendJson(res, 400, { error: auth.error });
+      await repository.cancelDraft(draftId, auth.telegramUserId);
+      return sendJson(res, 200, { ok: true });
     }
 
     if (req.method === "POST" && draftMatch[2]) {
