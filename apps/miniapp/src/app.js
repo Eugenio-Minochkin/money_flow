@@ -721,9 +721,13 @@ function parseDueDays(value) {
 }
 
 async function api(path, options = {}) {
+  const initData = window.Telegram?.WebApp?.initData;
   const response = await fetch(path, {
     method: options.method ?? "GET",
-    headers: options.body ? { "content-type": "application/json" } : undefined,
+    headers: {
+      ...(options.body ? { "content-type": "application/json" } : {}),
+      ...(initData ? { "x-telegram-init-data": initData } : {})
+    },
     body: options.body ? JSON.stringify(options.body) : undefined
   });
   if (!response.ok) {

@@ -6,7 +6,12 @@ export const config = {
   defaultMonthlyBudget: Number(process.env.DEFAULT_MONTHLY_BUDGET ?? 45000),
   openAiApiKey: process.env.OPENAI_API_KEY,
   openAiModel: process.env.OPENAI_MODEL ?? "gpt-5-mini",
-  deepgramApiKey: process.env.DEEPGRAM_API_KEY
+  deepgramApiKey: process.env.DEEPGRAM_API_KEY,
+  telegramWebhookSecret: process.env.TELEGRAM_WEBHOOK_SECRET,
+  requireTelegramInitData: process.env.REQUIRE_TELEGRAM_INIT_DATA === "true",
+  rateLimitWindowMs: Number(process.env.RATE_LIMIT_WINDOW_MS ?? 60_000),
+  rateLimitMax: Number(process.env.RATE_LIMIT_MAX ?? 120),
+  maxJsonBytes: Number(process.env.MAX_JSON_BYTES ?? 256_000)
 };
 
 export function requireRuntimeConfig() {
