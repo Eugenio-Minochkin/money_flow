@@ -77,11 +77,24 @@ async function loadDashboard() {
 }
 
 function renderAnalytics(snapshot, analytics) {
+  const progress = Number(snapshot.budgetProgressPercent ?? 0);
+  const progressWidth = Math.max(0, Math.min(progress, 100));
+  document.querySelector("#monthProgressBar").style.width = `${progressWidth}%`;
+  document.querySelector("#monthProgressBarWide").style.width = `${progressWidth}%`;
+  setText("#monthProgressPercent", `${money.format(progress)}%`);
+
   setText("#forecastMonth", moneyBase(snapshot.forecastMonthTotal));
   setText("#forecastMonthDisplay", moneyDisplay(snapshot.display?.forecastMonthTotal, snapshot.display?.currency));
-  const deviationPrefix = Number(snapshot.planDeviation) > 0 ? "+" : "";
-  setText("#planDeviation", `${deviationPrefix}${moneyBase(snapshot.planDeviation)}`);
-  setText("#planDeviationDisplay", moneyDisplaySigned(snapshot.display?.planDeviation, snapshot.display?.currency));
+
+  const deviation = Number(snapshot.planDeviation ?? 0);
+  const deviationRow = document.querySelector("#planDeviation").closest(".plan-row");
+  deviationRow.classList.toggle("good", deviation < 0);
+  deviationRow.classList.toggle("bad", deviation > 0);
+  deviationRow.classList.toggle("neutral", deviation === 0);
+  setText("#planDeviationLabel", deviation > 0 ? "Идешь выше плана" : deviation < 0 ? "Идешь ниже плана" : "Идешь по плану");
+  setText("#planDeviation", deviation === 0 ? moneyBase(0) : `на ${moneyBase(Math.abs(deviation))}`);
+  setText("#planDeviationDisplay", moneyDisplay(Math.abs(snapshot.display?.planDeviation ?? 0), snapshot.display?.currency));
+
   setText("#todayLimit", `${moneyBase(snapshot.today)} / ${moneyBase(snapshot.dailyPlanLimit)}`);
   setText("#todayLimitDisplay", `${moneyDisplay(snapshot.display?.today, snapshot.display?.currency)} / ${moneyDisplay(snapshot.display?.dailyPlanLimit, snapshot.display?.currency)}`);
 
@@ -195,8 +208,8 @@ function renderSnapshot(snapshot) {
   setText("#todayDisplay", moneyDisplay(snapshot.display?.today, snapshot.display?.currency));
   setText("#week", moneyBase(snapshot.week));
   setText("#weekDisplay", moneyDisplay(snapshot.display?.week, snapshot.display?.currency));
-  setText("#month", moneyBase(snapshot.month));
-  setText("#monthDisplay", moneyDisplay(snapshot.display?.month, snapshot.display?.currency));
+  setText("#month", `${money.format(Number(snapshot.month ?? 0))} / ${money.format(Number(snapshot.monthlyBudget ?? 0))} THB`);
+  setText("#monthDisplay", `${money.format(Number(snapshot.budgetProgressPercent ?? 0))}% бюджета`);
   setText("#freeRemaining", moneyBase(snapshot.freeRemaining));
   setText("#freeRemainingDisplay", moneyDisplay(snapshot.display?.freeRemaining, snapshot.display?.currency));
 

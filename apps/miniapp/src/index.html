@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Money Flow</title>
-    <link rel="stylesheet" href="/styles.css?v=20260601-plan-currency" />
+    <link rel="stylesheet" href="/styles.css?v=20260602-dashboard-v3" />
   </head>
   <body>
     <main class="shell">
@@ -25,9 +25,10 @@
 
       <section id="dashboardTab">
         <section class="hero-metric">
-          <span>Можно тратить в день</span>
+          <span>Можно тратить сегодня</span>
           <strong id="safeToSpend">...</strong>
           <em id="safeToSpendDisplay"></em>
+          <small>с учетом бюджета и плановых трат</small>
         </section>
 
         <section class="metrics-grid" aria-label="Основные показатели">
@@ -37,45 +38,61 @@
             <em id="todayDisplay"></em>
           </article>
           <article class="metric">
+            <span>Осталось</span>
+            <strong id="freeRemaining">...</strong>
+            <em id="freeRemainingDisplay"></em>
+          </article>
+          <article class="metric">
             <span>Неделя</span>
             <strong id="week">...</strong>
             <em id="weekDisplay"></em>
           </article>
-          <article class="metric">
+          <article class="metric metric-month">
             <span>Месяц</span>
             <strong id="month">...</strong>
             <em id="monthDisplay"></em>
-          </article>
-          <article class="metric">
-            <span>Свободно</span>
-            <strong id="freeRemaining">...</strong>
-            <em id="freeRemainingDisplay"></em>
+            <div class="mini-progress" aria-hidden="true">
+              <div id="monthProgressBar"></div>
+            </div>
           </article>
         </section>
 
         <section class="notice hidden" id="plannedNotice"></section>
 
-        <section class="insight-grid" aria-label="Аналитика бюджета">
-          <article class="insight-card">
-            <span>Прогноз месяца</span>
-            <strong id="forecastMonth">...</strong>
-            <em id="forecastMonthDisplay"></em>
-          </article>
-          <article class="insight-card">
-            <span>Отклонение от плана</span>
-            <strong id="planDeviation">...</strong>
-            <em id="planDeviationDisplay"></em>
-          </article>
-          <article class="insight-card">
-            <span>Сегодняшний лимит</span>
-            <strong id="todayLimit">...</strong>
-            <em id="todayLimitDisplay"></em>
-          </article>
-          <article class="insight-card">
-            <span>Неделя vs прошлая</span>
-            <strong id="weekComparison">...</strong>
-            <em id="weekComparisonDisplay"></em>
-          </article>
+        <section class="plan-summary" aria-label="План месяца">
+          <div class="section-heading compact-heading">
+            <h2>План месяца</h2>
+            <span class="eyebrow">коротко</span>
+          </div>
+          <div class="plan-summary-body">
+            <div class="plan-progress">
+              <div class="plan-progress-top">
+                <span>Использовано бюджета</span>
+                <strong id="monthProgressPercent">...</strong>
+              </div>
+              <div class="bar-track"><div class="bar-fill" id="monthProgressBarWide"></div></div>
+            </div>
+            <div class="plan-row">
+              <span>Прогноз, если темп сохранится</span>
+              <strong id="forecastMonth">...</strong>
+              <em id="forecastMonthDisplay"></em>
+            </div>
+            <div class="plan-row">
+              <span id="planDeviationLabel">Отклонение от плана</span>
+              <strong id="planDeviation">...</strong>
+              <em id="planDeviationDisplay"></em>
+            </div>
+            <div class="plan-row">
+              <span>Сегодняшний план бюджета</span>
+              <strong id="todayLimit">...</strong>
+              <em id="todayLimitDisplay"></em>
+            </div>
+            <div class="plan-row">
+              <span>Неделя vs прошлая</span>
+              <strong id="weekComparison">...</strong>
+              <em id="weekComparisonDisplay"></em>
+            </div>
+          </div>
         </section>
 
         <section class="notice hidden" id="otherWarning"></section>
@@ -206,6 +223,6 @@
     </main>
 
     <div class="toast hidden" id="toast" role="status" aria-live="polite"></div>
-    <script src="/app.js?v=20260601-plan-currency" type="module"></script>
+    <script src="/app.js?v=20260602-dashboard-v3" type="module"></script>
   </body>
 </html>

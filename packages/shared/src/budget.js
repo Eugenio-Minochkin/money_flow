@@ -14,6 +14,7 @@ export function calculateBudgetSnapshot({
   now
 }) {
   const remaining = monthlyBudget - monthTotal;
+  const budgetProgressPercent = monthlyBudget > 0 ? roundMoney((monthTotal / monthlyBudget) * 100) : 0;
   const freeRemaining = remaining - plannedRemainingTotal;
   const freeRemainingDisplay = Math.max(monthDisplayTotal, 0) === 0 && monthTotal === 0
     ? 0
@@ -39,6 +40,7 @@ export function calculateBudgetSnapshot({
     remaining: roundMoney(remaining),
     plannedRemaining: roundMoney(plannedRemainingTotal),
     freeRemaining: roundMoney(freeRemaining),
+    budgetProgressPercent,
     daysInMonth,
     elapsedDaysInMonth,
     daysLeftInMonth,

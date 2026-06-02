@@ -19,6 +19,7 @@ test("calculates month remaining and safe-to-spend", () => {
     remaining: 16500,
     plannedRemaining: 0,
     freeRemaining: 16500,
+    budgetProgressPercent: 63.33,
     daysInMonth: 30,
     elapsedDaysInMonth: 7,
     daysLeftInMonth: 24,
@@ -40,6 +41,17 @@ test("calculates month remaining and safe-to-spend", () => {
     },
     status: "above_plan"
   });
+});
+
+test("calculates monthly budget progress percent", () => {
+  const snapshot = calculateBudgetSnapshot({
+    todayTotal: 75,
+    monthTotal: 735,
+    monthlyBudget: 45000,
+    now: new Date("2026-06-02T10:00:00+07:00")
+  });
+
+  assert.equal(snapshot.budgetProgressPercent, 1.63);
 });
 
 test("calculates display currency safe-to-spend", () => {
