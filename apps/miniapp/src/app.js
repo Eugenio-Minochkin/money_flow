@@ -1,4 +1,5 @@
 import { createApiClient } from "./apiClient.js";
+import { categories, categoryColor, categoryLabel } from "./categories.js";
 import {
   dateTimeLocal,
   escapeAttribute,
@@ -9,25 +10,19 @@ import {
   moneyDisplay,
   moneyDisplaySigned
 } from "./formatters.js";
+import { groupByDay } from "./history.js";
+import {
+  isDueToday,
+  isPlannedPaid,
+  nextPlannedItem,
+  parseDueDays,
+  recurrenceLabel as plannedRecurrenceLabel,
+  weekdayOptions as plannedWeekdayOptions
+} from "./planned.js";
 
 const params = new URLSearchParams(window.location.search);
 const telegramUserId = params.get("telegramUserId") || window.Telegram?.WebApp?.initDataUnsafe?.user?.id;
 const draftId = params.get("draftId");
-
-const categories = [
-  ["food_cafe", "Еда и кафе", "#d85d35"],
-  ["groceries", "Продукты", "#c28f2c"],
-  ["home", "Дом", "#9a6a30"],
-  ["transport", "Байк / транспорт", "#2f80c0"],
-  ["health", "Тело / здоровье", "#b84d7a"],
-  ["sport_activities", "Спорт / активности", "#4e9b55"],
-  ["gear", "Вещи / экипировка", "#7a6a55"],
-  ["travel", "Путешествия", "#1d7f75"],
-  ["subscriptions", "Подписки / связь", "#6a62c8"],
-  ["gifts_help", "Подарки / помощь", "#c46a8a"],
-  ["entertainment", "Развлечения", "#d87135"],
-  ["other", "Другое", "#756b61"]
-];
 
 const money = new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 });
 const statusLabels = {
@@ -152,45 +147,6 @@ function renderNextPlannedSummary(items) {
     <button type="button" class="ghost-button" data-open-plan>Plan</button>
   `;
   block.querySelector("[data-open-plan]").addEventListener("click", () => switchTab("plan"));
-}
-
-function nextPlannedItem(items) {
-  const now = new Date();
-  return items
-    .map((item) => ({ item, date: nextPlannedDate(item, now) }))
-    .filter((entry) => entry.date)
-    .sort((left, right) => left.date - right.date)[0] ?? null;
-}
-
-function nextPlannedDate(item, now) {
-  const today = new Date(now);
-  today.setHours(0, 0, 0, 0);
-  const candidates = [];
-  const addCandidate = (date) => {
-    if (!date) return;
-    date.setHours(0, 0, 0, 0);
-    if (date >= today) candidates.push(date);
-  };
-
-  if (item.recurrence === "one_off" && item.due_date) {
-    addCandidate(new Date(item.due_date));
-  } else if (item.recurrence === "weekly") {
-    const target = Number(item.weekday ?? 1);
-    const current = today.getDay() === 0 ? 7 : today.getDay();
-    const daysUntil = (target - current + 7) % 7;
-    const date = new Date(today);
-    date.setDate(today.getDate() + daysUntil);
-    addCandidate(date);
-  } else {
-    const days = Array.isArray(item.due_days) && item.due_days.length ? item.due_days : [item.due_day].filter(Boolean);
-    for (const day of days.map(Number)) {
-      const date = new Date(today.getFullYear(), today.getMonth(), day);
-      addCandidate(date);
-      if (date < today) addCandidate(new Date(today.getFullYear(), today.getMonth() + 1, day));
-    }
-  }
-
-  return candidates.sort((left, right) => left - right)[0] ?? null;
 }
 
 function renderLargestExpenses(analytics) {
@@ -726,42 +682,6 @@ function collectPlanned() {
   };
 }
 
-function parseDueDays(value) {
-  return String(value ?? "")
-    .split(",")
-    .map((day) => Number(day.trim()))
-    .filter((day) => Number.isInteger(day) && day >= 1 && day <= 31);
-}
-
-function groupByDay(expenses) {
-  const groups = new Map();
-  for (const expense of expenses) {
-    const label = new Intl.DateTimeFormat("ru-RU", { day: "2-digit", month: "long" }).format(new Date(expense.spent_at));
-    if (!groups.has(label)) groups.set(label, { label, total: 0, items: [] });
-    const group = groups.get(label);
-    group.total += Number(expense.amount_base ?? expense.amount_original);
-    group.items.push(expense);
-  }
-  return [...groups.values()];
-}
-
-function isDueToday(item) {
-  const today = new Date();
-  if (item.recurrence === "one_off" && item.due_date) {
-    return new Date(item.due_date).toDateString() === today.toDateString();
-  }
-  if (item.recurrence === "weekly") {
-    const weekday = today.getDay() === 0 ? 7 : today.getDay();
-    return Number(item.weekday) === weekday;
-  }
-  const days = Array.isArray(item.due_days) && item.due_days.length ? item.due_days : [item.due_day];
-  return days.map(Number).includes(today.getDate());
-}
-
-function isPlannedPaid(item) {
-  return Number(item.paid_count ?? (item.paid_month ? 1 : 0)) > 0;
-}
-
 function input(name) {
   return document.querySelector(`[name="${name}"]`);
 }
@@ -770,44 +690,13 @@ function option(value, selected, label = value) {
   return `<option value="${value}"${value === selected ? " selected" : ""}>${escapeHtml(label)}</option>`;
 }
 
-function categoryLabel(slug) {
-  return categories.find(([value]) => value === slug)?.[1] ?? slug;
-}
-
-function categoryColor(slug) {
-  return categories.find(([value]) => value === slug)?.[2] ?? "#756b61";
-}
-
 function recurrenceLabel(item) {
-  const recurrence = typeof item === "string" ? item : item.recurrence;
-  if (recurrence === "weekly") return `каждый ${weekdayName(item.weekday)}`;
-  if (recurrence === "twice_monthly") {
-    const days = Array.isArray(item.due_days) && item.due_days.length ? item.due_days : [item.due_day].filter(Boolean);
-    return days.length ? `${days.join(" и ")} числа` : "2 раза в месяц";
-  }
-  if (recurrence === "monthly") return item.due_day ? `${item.due_day} числа` : "раз в месяц";
-  if (recurrence === "one_off") return item.due_date ? formatDate(item.due_date) : "один раз";
-  return recurrence;
+  return plannedRecurrenceLabel(item, formatDate);
 }
 
 function weekdayOptions(selected) {
-  return [1, 2, 3, 4, 5, 6, 7]
-    .map((weekday) => option(String(weekday), String(selected ?? 1), weekdayName(weekday)))
-    .join("");
+  return plannedWeekdayOptions(selected, option);
 }
-
-function weekdayName(weekday) {
-  return {
-    1: "понедельник",
-    2: "вторник",
-    3: "среду",
-    4: "четверг",
-    5: "пятницу",
-    6: "субботу",
-    7: "воскресенье"
-  }[Number(weekday)] ?? "понедельник";
-}
-
 function setText(selector, text) {
   document.querySelector(selector).textContent = text;
 }
