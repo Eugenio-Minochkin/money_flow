@@ -26,22 +26,27 @@ test("updates user budget and display currency settings", async () => {
         monthly_budget_amount: params[0],
         base_currency: params[1],
         display_currency: params[2],
-        usd_thb_rate: params[3]
+        usd_thb_rate: params[3],
+        weekly_budget_amount: params[4]
       }]
     };
   }));
 
   const user = await repo.updateUserSettings(100, {
     monthlyBudgetAmount: 60000,
+    weeklyBudgetAmount: 12000,
     baseCurrency: "THB",
     displayCurrency: "USD",
     usdThbRate: 36.5
   });
 
   assert.equal(Number(user.monthly_budget_amount), 60000);
+  assert.equal(Number(user.weekly_budget_amount), 12000);
   assert.equal(user.display_currency, "USD");
   assert.equal(Number(user.usd_thb_rate), 36.5);
-  assert.equal(queries[0].params[4], 100);
+  assert.equal(queries[0].params[3], 36.5);
+  assert.equal(queries[0].params[4], 12000);
+  assert.equal(queries[0].params[5], 100);
 });
 
 test("returns a draft owned by a Telegram user", async () => {
@@ -333,6 +338,52 @@ test("dashboard keeps unpaid twice-monthly occurrences in planned reserve", asyn
 
   assert.equal(dashboard.snapshot.plannedRemaining, 2000);
   assert.equal(dashboard.snapshot.freeRemaining, 43000);
+});
+
+test("dashboard subtracts unpaid planned expenses due this week from weekly remaining", async () => {
+  const repo = createRepository(fakePool((sql) => {
+    const query = String(sql);
+    if (query.startsWith("SELECT * FROM users")) {
+      return {
+        rows: [{
+          id: "1",
+          telegram_user_id: "100",
+          monthly_budget_amount: "45000",
+          weekly_budget_amount: "12000",
+          display_currency: "USD",
+          usd_thb_rate: "30"
+        }]
+      };
+    }
+    if (query.includes("planned_expense_payments")) {
+      return {
+        rows: [{
+          id: "5",
+          amount: "2000",
+          amount_base: "2000",
+          currency: "THB",
+          description: "therapy",
+          category_slug: "health",
+          recurrence: "monthly",
+          due_day: 12,
+          due_days: [12],
+          paid_count: 0
+        }]
+      };
+    }
+    if (query.includes("COALESCE(SUM(amount_base)") && query.includes("display_total")) {
+      return { rows: [{ total: 3000, display_total: 100 }] };
+    }
+    if (query.includes("FROM expenses") && query.includes("ORDER BY spent_at")) return { rows: [] };
+    if (query.includes("GROUP BY category_slug")) return { rows: [] };
+    return { rows: [] };
+  }));
+
+  const dashboard = await repo.dashboard(100, new Date("2026-06-10T10:00:00+07:00"));
+
+  assert.equal(dashboard.snapshot.weekPlanLimit, 12000);
+  assert.equal(dashboard.snapshot.plannedThisWeek, 2000);
+  assert.equal(dashboard.snapshot.weekRemaining, 7000);
 });
 
 test("dashboard excludes current-month paid planned expenses from reserve", async () => {

@@ -7,11 +7,13 @@ CREATE TABLE IF NOT EXISTS users (
   display_currency TEXT NOT NULL DEFAULT 'USD',
   usd_thb_rate NUMERIC(14, 6) NOT NULL DEFAULT 32.65,
   monthly_budget_amount NUMERIC(14, 2) NOT NULL DEFAULT 45000,
+  weekly_budget_amount NUMERIC(14, 2),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 ALTER TABLE users ADD COLUMN IF NOT EXISTS display_currency TEXT NOT NULL DEFAULT 'USD';
 ALTER TABLE users ADD COLUMN IF NOT EXISTS usd_thb_rate NUMERIC(14, 6) NOT NULL DEFAULT 32.65;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS weekly_budget_amount NUMERIC(14, 2);
 ALTER TABLE users ALTER COLUMN usd_thb_rate SET DEFAULT 32.65;
 UPDATE users SET usd_thb_rate = 32.65 WHERE usd_thb_rate = 36;
 

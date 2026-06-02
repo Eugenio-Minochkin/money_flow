@@ -65,9 +65,15 @@ export function createRepository(pool, options = {}) {
 
     async updateUserSettings(telegramUserId, settings) {
       const monthlyBudgetAmount = Number(settings.monthlyBudgetAmount);
+      const weeklyBudgetAmount = settings.weeklyBudgetAmount === "" || settings.weeklyBudgetAmount == null
+        ? null
+        : Number(settings.weeklyBudgetAmount);
       const usdThbRate = Number(settings.usdThbRate ?? 32.65);
       if (!Number.isFinite(monthlyBudgetAmount) || monthlyBudgetAmount <= 0) {
         throw new Error("Monthly budget must be positive");
+      }
+      if (weeklyBudgetAmount != null && (!Number.isFinite(weeklyBudgetAmount) || weeklyBudgetAmount <= 0)) {
+        throw new Error("Weekly budget must be positive");
       }
       if (!Number.isFinite(usdThbRate) || usdThbRate <= 0) {
         throw new Error("USD/THB rate must be positive");
@@ -79,10 +85,11 @@ export function createRepository(pool, options = {}) {
          SET monthly_budget_amount = $1,
              base_currency = $2,
              display_currency = $3,
-             usd_thb_rate = $4
-         WHERE telegram_user_id = $5
+             usd_thb_rate = $4,
+             weekly_budget_amount = $5
+         WHERE telegram_user_id = $6
          RETURNING *`,
-        [monthlyBudgetAmount, baseCurrency, displayCurrency, usdThbRate, telegramUserId]
+        [monthlyBudgetAmount, baseCurrency, displayCurrency, usdThbRate, weeklyBudgetAmount, telegramUserId]
       );
       return result.rows[0] ?? null;
     },
@@ -481,6 +488,7 @@ export function createRepository(pool, options = {}) {
       const totals = await this.totals(user.id, now);
       const plannedExpenses = await listPlannedExpensesForTelegramUserAt(pool, telegramUserId, now);
       const plannedRemainingTotal = calculatePlannedRemaining(plannedExpenses, now);
+      const plannedThisWeekTotal = calculatePlannedThisWeek(plannedExpenses, now);
       const latest = await pool.query(
         `SELECT id, amount_original, currency_original, amount_base, converted_amounts,
                 description, category_slug, tags, spent_at
@@ -499,8 +507,11 @@ export function createRepository(pool, options = {}) {
         monthDisplayTotal: totals.monthDisplay,
         displayCurrency: user.display_currency ?? "USD",
         monthlyBudget: Number(user.monthly_budget_amount),
+        weeklyBudget: user.weekly_budget_amount == null ? null : Number(user.weekly_budget_amount),
         plannedRemainingTotal,
         plannedRemainingDisplayTotal: displayFromBase(plannedRemainingTotal, user),
+        plannedThisWeekTotal,
+        plannedThisWeekDisplayTotal: displayFromBase(plannedThisWeekTotal, user),
         now
       });
       const topCategories = await this.topCategories(user.id, now);
@@ -792,6 +803,36 @@ function calculatePlannedRemaining(plannedExpenses, now) {
   }, 0);
 }
 
+function calculatePlannedThisWeek(plannedExpenses, now) {
+  const bounds = localFullWeekBounds(now);
+  return plannedExpenses.reduce((sum, item) => {
+    const legacyPaid = item.paid_month === monthKey(now) ? 1 : 0;
+    const paidCount = Number(item.paid_count ?? legacyPaid);
+    const dueDates = plannedDueDatesThisMonth(item, now)
+      .filter((date) => date >= bounds.start && date < bounds.end);
+    const unpaidCount = Math.max(dueDates.length - paidCount, 0);
+    return sum + Number(item.amount_base) * unpaidCount;
+  }, 0);
+}
+
+function localFullWeekBounds(now) {
+  const current = localPeriodBounds(now, "week");
+  return {
+    start: current.start,
+    end: new Date(current.start.getTime() + 7 * 24 * 60 * 60_000)
+  };
+}
+
+function plannedDueDatesThisMonth(item, now) {
+  if (item.recurrence === "weekly") return weeklyDueDatesThisMonth(now, Number(item.weekday ?? localWeekday(now)));
+  if (item.recurrence === "one_off") {
+    if (!item.due_date) return [];
+    const dueDate = plannedLocalDate(item.due_date);
+    return monthKey(dueDate) === monthKey(now) ? [dueDate] : [];
+  }
+  return dueDaysInMonthValues(item).map((day) => plannedLocalDateForMonthDay(now, day));
+}
+
 function occurrencesThisMonth(item, now) {
   if (item.recurrence === "weekly") return weekdaysInMonth(now, Number(item.weekday ?? localWeekday(now)));
   if (item.recurrence === "twice_monthly") return dueDaysInMonth(item);
@@ -802,6 +843,11 @@ function occurrencesThisMonth(item, now) {
 function dueDaysInMonth(item) {
   const days = Array.isArray(item.due_days) && item.due_days.length ? item.due_days : [Number(item.due_day ?? 1)];
   return days.filter((day) => Number(day) >= 1 && Number(day) <= 31).length;
+}
+
+function dueDaysInMonthValues(item) {
+  const days = Array.isArray(item.due_days) && item.due_days.length ? item.due_days : [Number(item.due_day ?? 1)];
+  return days.map(Number).filter((day) => day >= 1 && day <= 31);
 }
 
 function weekdaysInMonth(now, weekday) {
@@ -816,6 +862,30 @@ function weekdaysInMonth(now, weekday) {
     if (currentWeekday === weekday) count += 1;
   }
   return count;
+}
+
+function weeklyDueDatesThisMonth(now, weekday) {
+  const local = new Date(now.getTime() + 7 * 60 * 60_000);
+  const year = local.getUTCFullYear();
+  const month = local.getUTCMonth();
+  const daysInMonth = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+  const dates = [];
+  for (let currentDay = 1; currentDay <= daysInMonth; currentDay += 1) {
+    const current = new Date(Date.UTC(year, month, currentDay));
+    const currentWeekday = current.getUTCDay() === 0 ? 7 : current.getUTCDay();
+    if (currentWeekday === weekday) dates.push(plannedLocalDateForMonthDay(now, currentDay));
+  }
+  return dates;
+}
+
+function plannedLocalDate(value) {
+  const [year, month, day] = String(value).slice(0, 10).split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, day) - 7 * 60 * 60_000);
+}
+
+function plannedLocalDateForMonthDay(now, day) {
+  const local = new Date(now.getTime() + 7 * 60 * 60_000);
+  return new Date(Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), day) - 7 * 60 * 60_000);
 }
 
 function localWeekday(now) {

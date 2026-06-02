@@ -12,6 +12,8 @@
   --usd: #7b57b3;
   --red: #b13b46;
   --amber: #b26b16;
+  --green: #1d7f75;
+  --shadow: 0 14px 34px rgb(37 29 24 / 8%);
   --notice-bg: #fff0e8;
   --notice-line: #f0c6b4;
 }
@@ -23,7 +25,9 @@
 body {
   margin: 0;
   min-height: 100vh;
-  background: var(--bg);
+  background:
+    linear-gradient(180deg, #fbf7f1 0, var(--bg) 260px),
+    var(--bg);
   color: var(--ink);
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
@@ -120,11 +124,12 @@ h2 {
   gap: 7px;
   min-height: 132px;
   padding: 22px;
-  border-radius: 12px;
+  border-radius: 14px;
   background: var(--hero);
   color: #fff;
   align-content: center;
   margin-bottom: 12px;
+  box-shadow: 0 18px 38px rgb(30 80 75 / 18%);
 }
 
 .hero-metric span,
@@ -168,22 +173,46 @@ h2 {
 .section,
 .notice {
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: 12px;
   background: var(--panel);
+  box-shadow: var(--shadow);
 }
 
 .metric {
   display: grid;
   gap: 6px;
-  min-height: 92px;
+  min-height: 98px;
   padding: 14px;
   align-content: center;
 }
 
 .metric strong {
-  font-size: 24px;
+  font-size: 22px;
   line-height: 1.1;
   overflow-wrap: anywhere;
+}
+
+.metric small {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.metric-progress {
+  align-content: start;
+  min-height: 124px;
+}
+
+.metric-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.metric-top b {
+  color: var(--accent);
+  font-size: 12px;
 }
 
 .metric-month {
@@ -202,6 +231,21 @@ h2 {
   height: 100%;
   border-radius: inherit;
   background: var(--accent);
+}
+
+.mini-progress div[data-state="warn"],
+.bar-fill[data-state="warn"] {
+  background: var(--amber);
+}
+
+.mini-progress div[data-state="danger"],
+.bar-fill[data-state="danger"] {
+  background: var(--red);
+}
+
+.mini-progress div[data-state="good"],
+.bar-fill[data-state="good"] {
+  background: var(--green);
 }
 
 .plan-summary {

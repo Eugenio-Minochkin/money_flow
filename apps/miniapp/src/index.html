@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Money Flow</title>
-    <link rel="stylesheet" href="/styles.css?v=20260602-dashboard-v3" />
+    <link rel="stylesheet" href="/styles.css?v=20260602-weekly-v1" />
   </head>
   <body>
     <main class="shell">
@@ -25,32 +25,50 @@
 
       <section id="dashboardTab">
         <section class="hero-metric">
-          <span>Можно тратить сегодня</span>
+          <span>Можно еще сегодня</span>
           <strong id="safeToSpend">...</strong>
           <em id="safeToSpendDisplay"></em>
-          <small>с учетом бюджета и плановых трат</small>
+          <small>после бюджета и обязательных трат</small>
         </section>
 
         <section class="metrics-grid" aria-label="Основные показатели">
-          <article class="metric">
-            <span>Сегодня</span>
+          <article class="metric metric-progress" id="todayMetric">
+            <div class="metric-top">
+              <span>Сегодня</span>
+              <b id="todayProgressPercent">...</b>
+            </div>
             <strong id="today">...</strong>
             <em id="todayDisplay"></em>
+            <small id="todayRemaining">...</small>
+            <div class="mini-progress" aria-hidden="true">
+              <div id="todayProgressBar"></div>
+            </div>
+          </article>
+          <article class="metric metric-progress" id="weekMetric">
+            <div class="metric-top">
+              <span>Неделя</span>
+              <b id="weekProgressPercent">...</b>
+            </div>
+            <strong id="week">...</strong>
+            <em id="weekDisplay"></em>
+            <small id="weekRemaining">...</small>
+            <div class="mini-progress" aria-hidden="true">
+              <div id="weekProgressBar"></div>
+            </div>
           </article>
           <article class="metric">
             <span>Осталось</span>
             <strong id="freeRemaining">...</strong>
             <em id="freeRemainingDisplay"></em>
           </article>
-          <article class="metric">
-            <span>Неделя</span>
-            <strong id="week">...</strong>
-            <em id="weekDisplay"></em>
-          </article>
-          <article class="metric metric-month">
-            <span>Месяц</span>
+          <article class="metric metric-progress metric-month" id="monthMetric">
+            <div class="metric-top">
+              <span>Месяц</span>
+              <b id="monthCardProgressPercent">...</b>
+            </div>
             <strong id="month">...</strong>
             <em id="monthDisplay"></em>
+            <small id="monthRemaining">...</small>
             <div class="mini-progress" aria-hidden="true">
               <div id="monthProgressBar"></div>
             </div>
@@ -191,6 +209,10 @@
               <span>Месячный бюджет</span>
               <input id="budgetInput" name="monthlyBudgetAmount" type="number" min="1" step="1" inputmode="decimal" />
             </label>
+            <label>
+              <span>План недели</span>
+              <input id="weeklyBudgetInput" name="weeklyBudgetAmount" type="number" min="1" step="1" inputmode="decimal" placeholder="Автоматически из бюджета" />
+            </label>
             <div class="field-grid">
               <label>
                 <span>Базовая валюта учета</span>
@@ -223,6 +245,6 @@
     </main>
 
     <div class="toast hidden" id="toast" role="status" aria-live="polite"></div>
-    <script src="/app.js?v=20260602-dashboard-v3" type="module"></script>
+    <script src="/app.js?v=20260602-weekly-v1" type="module"></script>
   </body>
 </html>

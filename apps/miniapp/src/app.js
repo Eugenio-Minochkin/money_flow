@@ -78,9 +78,7 @@ async function loadDashboard() {
 
 function renderAnalytics(snapshot, analytics) {
   const progress = Number(snapshot.budgetProgressPercent ?? 0);
-  const progressWidth = Math.max(0, Math.min(progress, 100));
-  document.querySelector("#monthProgressBar").style.width = `${progressWidth}%`;
-  document.querySelector("#monthProgressBarWide").style.width = `${progressWidth}%`;
+  setProgress("#monthProgressBarWide", snapshot.progress?.month ?? { percent: progress, state: "good" });
   setText("#monthProgressPercent", `${money.format(progress)}%`);
 
   setText("#forecastMonth", moneyBase(snapshot.forecastMonthTotal));
@@ -202,14 +200,26 @@ function switchTab(tab) {
 }
 
 function renderSnapshot(snapshot) {
-  setText("#safeToSpend", moneyBase(snapshot.safeToSpendPerDay));
-  setText("#safeToSpendDisplay", moneyDisplay(snapshot.display?.safeToSpendPerDay, snapshot.display?.currency));
-  setText("#today", moneyBase(snapshot.today));
-  setText("#todayDisplay", moneyDisplay(snapshot.display?.today, snapshot.display?.currency));
-  setText("#week", moneyBase(snapshot.week));
-  setText("#weekDisplay", moneyDisplay(snapshot.display?.week, snapshot.display?.currency));
+  const dayRemaining = snapshot.dayRemaining ?? snapshot.safeToSpendPerDay;
+  setText("#safeToSpend", moneyBase(dayRemaining));
+  setText("#safeToSpendDisplay", moneyDisplay(snapshot.display?.dayRemaining ?? snapshot.display?.safeToSpendPerDay, snapshot.display?.currency));
+  setText("#today", `${money.format(Number(snapshot.today ?? 0))} / ${money.format(Number(snapshot.dayPlanLimit ?? snapshot.dailyPlanLimit ?? 0))} THB`);
+  setText("#todayDisplay", `${moneyDisplay(snapshot.display?.today, snapshot.display?.currency)} / ${moneyDisplay(snapshot.display?.dayPlanLimit, snapshot.display?.currency)}`);
+  setText("#todayRemaining", `можно еще ${moneyBase(dayRemaining)}`);
+  setText("#todayProgressPercent", `${money.format(Number(snapshot.dayProgressPercent ?? 0))}%`);
+  setProgress("#todayProgressBar", snapshot.progress?.day ?? { percent: snapshot.dayProgressPercent ?? 0, state: "good" });
+
+  setText("#week", `${money.format(Number(snapshot.week ?? 0))} / ${money.format(Number(snapshot.weekPlanLimit ?? 0))} THB`);
+  setText("#weekDisplay", `${moneyDisplay(snapshot.display?.week, snapshot.display?.currency)} / ${moneyDisplay(snapshot.display?.weekPlanLimit, snapshot.display?.currency)}`);
+  setText("#weekRemaining", `осталось ${moneyBase(snapshot.weekRemaining)}`);
+  setText("#weekProgressPercent", `${money.format(Number(snapshot.weekProgressPercent ?? 0))}%`);
+  setProgress("#weekProgressBar", snapshot.progress?.week ?? { percent: snapshot.weekProgressPercent ?? 0, state: "good" });
+
   setText("#month", `${money.format(Number(snapshot.month ?? 0))} / ${money.format(Number(snapshot.monthlyBudget ?? 0))} THB`);
   setText("#monthDisplay", `${money.format(Number(snapshot.budgetProgressPercent ?? 0))}% бюджета`);
+  setText("#monthRemaining", `осталось ${moneyBase(snapshot.monthRemaining ?? snapshot.remaining)}`);
+  setText("#monthCardProgressPercent", `${money.format(Number(snapshot.budgetProgressPercent ?? 0))}%`);
+  setProgress("#monthProgressBar", snapshot.progress?.month ?? { percent: snapshot.budgetProgressPercent ?? 0, state: "good" });
   setText("#freeRemaining", moneyBase(snapshot.freeRemaining));
   setText("#freeRemainingDisplay", moneyDisplay(snapshot.display?.freeRemaining, snapshot.display?.currency));
 
@@ -221,6 +231,7 @@ function renderSnapshot(snapshot) {
 
 function renderSettings(user) {
   document.querySelector("#budgetInput").value = Math.round(Number(user.monthly_budget_amount ?? 45000));
+  document.querySelector("#weeklyBudgetInput").value = user.weekly_budget_amount == null ? "" : Math.round(Number(user.weekly_budget_amount));
   document.querySelector("#baseCurrencyInput").value = user.base_currency ?? "THB";
   document.querySelector("#displayCurrencyInput").value = user.display_currency ?? "USD";
   document.querySelector("#usdThbRateInput").value = Number(user.usd_thb_rate ?? 32.65);
@@ -563,6 +574,7 @@ async function saveSettings(event) {
       telegramUserId,
       settings: {
         monthlyBudgetAmount: Number(document.querySelector("#budgetInput").value),
+        weeklyBudgetAmount: document.querySelector("#weeklyBudgetInput").value.trim(),
         baseCurrency: document.querySelector("#baseCurrencyInput").value,
         displayCurrency: document.querySelector("#displayCurrencyInput").value,
         usdThbRate: Number(document.querySelector("#usdThbRateInput").value)
@@ -759,6 +771,14 @@ function moneyDisplaySigned(value, currency = "USD") {
 
 function setText(selector, text) {
   document.querySelector(selector).textContent = text;
+}
+
+function setProgress(selector, progress) {
+  const bar = document.querySelector(selector);
+  if (!bar) return;
+  const percent = Math.max(0, Math.min(Number(progress?.percent ?? 0), 100));
+  bar.style.width = `${percent}%`;
+  bar.dataset.state = progress?.state ?? "good";
 }
 
 function showError(error) {
