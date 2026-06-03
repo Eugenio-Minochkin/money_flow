@@ -30,3 +30,12 @@ test("settings keep fallback exchange rate hidden from users", async () => {
   assert.match(html, /id="usdThbRateInput"[^>]+type="hidden"/);
   assert.doesNotMatch(html, /data-i18n="settings.exchangeFallback"/);
 });
+
+test("remaining card caption can wrap independently from metric values", async () => {
+  const html = await readFile(join(miniAppRoot, "index.html"), "utf8");
+  const css = await readFile(join(miniAppRoot, "styles.css"), "utf8");
+
+  assert.match(html, /class="metric-caption"[^>]+data-i18n="dashboard.afterExpensesAndPlanned"/);
+  assert.match(css, /\.metric-value-note\s*{[^}]*white-space:\s*nowrap/s);
+  assert.match(css, /\.metric-caption\s*{[^}]*white-space:\s*normal/s);
+});
