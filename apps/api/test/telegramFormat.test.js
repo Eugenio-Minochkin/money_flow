@@ -28,6 +28,7 @@ test("formats saved summary with budget context", () => {
   assert.match(normalized, /735 \/ 9 800 THB/);
   assert.match(normalized, /735 \/ 42/);
   assert.match(text, /1,75%/);
+  assert.match(text, /Можно в день до конца месяца/);
   assert.match(text, /896,38 THB/);
 });
 

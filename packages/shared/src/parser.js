@@ -46,6 +46,7 @@ function parsePart(part, now) {
   const amount = Number(match.groups.amount.replace(",", "."));
   const rawCurrency = match.groups.currency?.toLowerCase();
   const currency = rawCurrency ? normalizeCurrency(CURRENCY_ALIASES.get(rawCurrency), "THB") : "THB";
+  const spentAt = resolveRelativeDate(part, now);
   const description = part
     .slice(0, match.index)
     .replace(/\b(сегодня|вчера|позавчера|утром|днем|днём|вечером|ночью)\b/giu, "")
@@ -60,8 +61,15 @@ function parsePart(part, now) {
     description,
     category_slug: category,
     tags: inferTags(description),
-    spent_at: toOffsetIso(now),
+    spent_at: toOffsetIso(spentAt),
     confidence: needsReview ? 0.62 : 0.86,
     needs_review: needsReview
   }];
+}
+
+function resolveRelativeDate(part, now) {
+  const lowered = part.toLowerCase();
+  const daysOffset = lowered.includes("позавчера") ? -2 : lowered.includes("вчера") ? -1 : 0;
+  if (!daysOffset) return now;
+  return new Date(now.getTime() + daysOffset * 24 * 60 * 60_000);
 }

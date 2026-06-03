@@ -61,6 +61,7 @@
             <span>Осталось</span>
             <strong id="freeRemaining">...</strong>
             <em id="freeRemainingDisplay"></em>
+            <small>после расходов и плановых оплат</small>
           </article>
           <article class="metric metric-progress metric-month" id="monthMetric">
             <div class="metric-top">
@@ -85,7 +86,7 @@
           </div>
           <div class="plan-summary-body">
             <div class="plan-row">
-              <span>Прогноз, если темп сохранится</span>
+              <span>Прогноз месяца</span>
               <strong id="forecastMonth">...</strong>
               <em id="forecastMonthDisplay"></em>
             </div>
@@ -95,7 +96,7 @@
               <em id="planDeviationDisplay"></em>
             </div>
             <div class="plan-row">
-              <span>Сегодняшний план бюджета</span>
+              <span>Сегодня: потрачено / дневной план</span>
               <strong id="todayLimit">...</strong>
               <em id="todayLimitDisplay"></em>
             </div>
@@ -247,6 +248,6 @@
     </main>
 
     <div class="toast hidden" id="toast" role="status" aria-live="polite"></div>
-    <script src="/app.js?v=20260602-i18n-currencies" type="module"></script>
+    <script src="/app.js?v=20260603-forecast-planned" type="module"></script>
   </body>
 </html>

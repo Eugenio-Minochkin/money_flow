@@ -8,6 +8,7 @@ export function calculateBudgetSnapshot({
   weeklyBudget = null,
   plannedRemainingTotal = 0,
   plannedThisWeekTotal = 0,
+  paidPlannedMonthTotal = 0,
   todayDisplayTotal = 0,
   weekDisplayTotal = 0,
   monthDisplayTotal = 0,
@@ -29,7 +30,8 @@ export function calculateBudgetSnapshot({
   const elapsedDaysInWeek = elapsedWeekDays(now);
   const dailyPlanLimit = roundMoney(monthlyBudget / daysInMonth);
   const resolvedWeeklyBudget = roundMoney(resolveWeeklyBudget({ monthlyBudget, weeklyBudget, daysInMonth }));
-  const forecastMonthTotal = roundMoney((monthTotal / elapsedDaysInMonth) * daysInMonth);
+  const regularMonthTotal = Math.max(monthTotal - paidPlannedMonthTotal, 0);
+  const forecastMonthTotal = roundMoney((regularMonthTotal / elapsedDaysInMonth) * daysInMonth + paidPlannedMonthTotal + plannedRemainingTotal);
   const plannedSpendToDate = monthlyBudget * (elapsedDaysInMonth / daysInMonth);
   const planDeviation = roundMoney(monthTotal - plannedSpendToDate);
   const safeToSpendPerDay = roundMoney(Math.max(freeRemaining, 0) / daysLeftInMonth);

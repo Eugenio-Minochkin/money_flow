@@ -97,7 +97,7 @@ test("calculates display currency safe-to-spend", () => {
   assert.equal(snapshot.display.plannedRemaining, 100);
   assert.equal(snapshot.display.safeToSpendPerDay, 43.75);
   assert.equal(snapshot.display.dailyPlanLimit, 41.67);
-  assert.equal(snapshot.display.forecastMonthTotal, 428.57);
+  assert.equal(snapshot.display.forecastMonthTotal, 528.57);
   assert.equal(snapshot.display.planDeviation, -191.67);
 });
 
@@ -115,6 +115,27 @@ test("subtracts planned expenses from free-to-spend", () => {
   assert.equal(snapshot.plannedRemaining, 23700);
   assert.equal(snapshot.freeRemaining, 11300);
   assert.equal(snapshot.safeToSpendPerDay, 470.83);
+});
+
+test("forecasts regular spending pace plus remaining planned expenses", () => {
+  const beforePayment = calculateBudgetSnapshot({
+    todayTotal: 3472.27,
+    monthTotal: 3772.27,
+    monthlyBudget: 32690,
+    plannedRemainingTotal: 1305.19,
+    now: new Date("2026-06-03T12:00:00+07:00")
+  });
+  const afterPayment = calculateBudgetSnapshot({
+    todayTotal: 4777.46,
+    monthTotal: 5077.46,
+    monthlyBudget: 32690,
+    plannedRemainingTotal: 0,
+    paidPlannedMonthTotal: 1305.19,
+    now: new Date("2026-06-03T12:00:00+07:00")
+  });
+
+  assert.equal(beforePayment.forecastMonthTotal, 39027.89);
+  assert.equal(afterPayment.forecastMonthTotal, 39027.89);
 });
 
 test("calculates day week and month progress controls", () => {

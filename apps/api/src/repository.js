@@ -512,6 +512,7 @@ export function createRepository(pool, options = {}) {
       const plannedExpenses = await listPlannedExpensesForTelegramUserAt(pool, telegramUserId, now);
       const plannedRemainingTotal = calculatePlannedRemaining(plannedExpenses, now);
       const plannedThisWeekTotal = calculatePlannedThisWeek(plannedExpenses, now);
+      const paidPlannedMonthTotal = await paidPlannedTotalForMonth(pool, user.id, now);
       const latest = await pool.query(
         `SELECT id, amount_original, currency_original, amount_base, converted_amounts,
                 description, category_slug, tags, spent_at
@@ -535,6 +536,7 @@ export function createRepository(pool, options = {}) {
         plannedRemainingDisplayTotal: displayFromBase(plannedRemainingTotal, user),
         plannedThisWeekTotal,
         plannedThisWeekDisplayTotal: displayFromBase(plannedThisWeekTotal, user),
+        paidPlannedMonthTotal,
         now
       });
       const topCategories = await this.topCategories(user.id, now);
@@ -646,6 +648,20 @@ async function totalForPreviousWeek(pool, userId, now, user) {
   const week = localPeriodBounds(now, "week");
   const previousNow = new Date(week.start.getTime() - 24 * 60 * 60_000);
   return totalForPeriod(pool, userId, "week", previousNow, user);
+}
+
+async function paidPlannedTotalForMonth(pool, userId, now) {
+  const bounds = localPeriodBounds(now, "month");
+  const result = await pool.query(
+    `SELECT COALESCE(SUM(expenses.amount_base), 0)::float AS total
+     FROM planned_expense_payments
+     JOIN expenses ON expenses.id = planned_expense_payments.expense_id
+     WHERE expenses.user_id = $1
+       AND expenses.spent_at >= $2
+       AND expenses.spent_at < $3`,
+    [userId, bounds.start, bounds.end]
+  );
+  return Number(result.rows[0]?.total ?? 0);
 }
 
 function normalizeDraft(draft) {

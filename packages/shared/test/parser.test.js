@@ -37,3 +37,13 @@ test("parses added currency aliases and education category", () => {
   assert.equal(result.expenses[0].currency, "EUR");
   assert.equal(result.expenses[0].category_slug, "education");
 });
+
+test("applies relative dates per expense segment", () => {
+  const result = parseExpenseText("вчера кофе 200 бат, сегодня шоколадка 100 бат", {
+    now: new Date("2026-06-03T12:00:00+07:00")
+  });
+
+  assert.equal(result.expenses.length, 2);
+  assert.equal(result.expenses[0].spent_at.slice(0, 10), "2026-06-02");
+  assert.equal(result.expenses[1].spent_at.slice(0, 10), "2026-06-03");
+});

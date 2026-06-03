@@ -286,7 +286,7 @@ function renderPlannedNotice(items) {
     </div>
     <div class="expense-meta">${escapeHtml(due.description)} · ${escapeHtml(categoryLabel(due.category_slug))}</div>
     <div class="button-row">
-      <button type="button" data-pay-planned="${due.id}">Оплачено</button>
+      <button type="button" data-pay-planned="${due.id}">Оплатить</button>
       <button type="button" class="ghost-button" data-hide-notice="${due.id}">Позже</button>
       <button type="button" class="ghost-button" data-edit-planned="${due.id}">Изменить</button>
     </div>
@@ -568,7 +568,7 @@ function renderPlannedExpenses(items) {
           <em>${moneyDisplay(item.display?.amount, item.display?.currency)}</em>
         </div>
         <div class="button-row compact">
-          <button type="button" data-pay-planned="${item.id}"${isPlannedPaid(item) ? " disabled" : ""}>Оплачено</button>
+          <button type="button" data-pay-planned="${item.id}"${isPlannedPaid(item) ? " disabled" : ""}>${isPlannedPaid(item) ? "Оплачено" : "Оплатить"}</button>
           <button type="button" class="ghost-button" data-edit-planned="${item.id}">Изменить</button>
           <button type="button" class="danger-button" data-delete-planned="${item.id}">Отключить</button>
         </div>
