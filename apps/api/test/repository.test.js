@@ -157,8 +157,8 @@ test("lists expenses for history", async () => {
   const expenses = await repo.listExpensesForTelegramUser(100, { period: "month", search: "кофе" });
 
   assert.equal(expenses[0].description, "кофе");
-  assert.match(queries.at(-1), /planned_expense_payments/);
-  assert.match(queries.at(-1), /NOT EXISTS/);
+  assert.doesNotMatch(queries.at(-1), /planned_expense_payments/);
+  assert.doesNotMatch(queries.at(-1), /NOT EXISTS/);
 });
 
 test("returns top categories", async () => {
@@ -505,7 +505,7 @@ test("dashboard returns USD display totals from converted amounts", async () => 
   assert.equal(dashboard.snapshot.display.month, 100);
   assert.equal(dashboard.latestExpenses[0].display.amount, 100);
   assert.equal(dashboard.topCategories[0].display.amount, 100);
-  assert.ok(queries.some((query) => query.includes("ORDER BY spent_at") && query.includes("planned_expense_payments")));
+  assert.ok(queries.some((query) => query.includes("ORDER BY spent_at") && !query.includes("planned_expense_payments")));
 });
 
 test("dashboard returns analytics blocks for the mini app", async () => {

@@ -302,10 +302,6 @@ export function createRepository(pool, options = {}) {
                 description, category_slug, tags, spent_at
          FROM expenses
          WHERE user_id = $1 AND spent_at >= $2 AND spent_at < $3
-           AND NOT EXISTS (
-             SELECT 1 FROM planned_expense_payments
-             WHERE planned_expense_payments.expense_id = expenses.id
-           )
          ${searchSql}
          ORDER BY spent_at DESC`,
         params
@@ -522,10 +518,6 @@ export function createRepository(pool, options = {}) {
                 description, category_slug, tags, spent_at
          FROM expenses
          WHERE user_id = $1
-           AND NOT EXISTS (
-             SELECT 1 FROM planned_expense_payments
-             WHERE planned_expense_payments.expense_id = expenses.id
-           )
          ORDER BY spent_at DESC
          LIMIT 5`,
         [user.id]
