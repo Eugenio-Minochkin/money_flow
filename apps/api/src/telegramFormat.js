@@ -3,7 +3,7 @@ import { categoryName } from "../../../packages/shared/src/categories.js";
 export function formatDraft(expenses, options = {}) {
   const language = normalizeLanguage(options.language);
   const lines = expenses.map((expense, index) =>
-    `${index + 1}. <b>${escapeHtml(categoryName(expense.category_slug))}</b>\n   ${escapeHtml(expense.description)} · <b>${formatAmount(expense.amount, language)} ${expense.currency}</b>`
+    `${index + 1}. <b>${escapeHtml(categoryName(expense.category_slug))}</b>\n   🗓 ${formatSpentAt(expense.spent_at, language)}\n   ${escapeHtml(expense.description)} · <b>${formatAmount(expense.amount, language)} ${expense.currency}</b>`
   );
   const total = expenses.reduce((sum, expense) => sum + Number(expense.amount), 0);
   const review = expenses.some((expense) => expense.needs_review)
@@ -126,6 +126,7 @@ const messages = {
     isCorrect: "Все верно?",
     month: "Месяц",
     monthForecast: "Прогноз месяца",
+    noDate: "дата не указана",
     now: "Сейчас",
     plan: "План",
     planned: "Плановые",
@@ -153,6 +154,7 @@ const messages = {
     isCorrect: "Is everything correct?",
     month: "Month",
     monthForecast: "Month forecast",
+    noDate: "date not set",
     now: "Now",
     plan: "Plan",
     planned: "Planned",
@@ -176,6 +178,16 @@ function t(language, key) {
 
 function formatAmount(value, language) {
   return new Intl.NumberFormat(language === "ru" ? "ru-RU" : "en-US", { maximumFractionDigits: 2 }).format(Number(value));
+}
+
+function formatSpentAt(value, language) {
+  if (!value) return t(language, "noDate");
+  return new Intl.DateTimeFormat(language === "ru" ? "ru-RU" : "en-US", {
+    day: "2-digit",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(new Date(value));
 }
 
 function escapeHtml(value) {

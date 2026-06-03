@@ -10,11 +10,13 @@ test("formats a draft with total and review warning", () => {
       currency: "THB",
       description: "coffee",
       category_slug: "food_cafe",
+      spent_at: "2026-06-02T09:30:00+07:00",
       needs_review: true
     }
   ]);
 
   assert.match(text, /coffee/);
+  assert.match(text, /02 июн|Jun 02/);
   assert.match(text, /70 THB/);
   assert.match(text, /<b>/);
 });

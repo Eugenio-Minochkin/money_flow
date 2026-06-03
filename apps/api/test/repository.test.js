@@ -146,13 +146,19 @@ test("deletes an expense owned by a Telegram user", async () => {
 });
 
 test("lists expenses for history", async () => {
-  const repo = createRepository(fakePool(() => ({
+  const queries = [];
+  const repo = createRepository(fakePool((sql) => {
+    queries.push(String(sql));
+    return {
     rows: [{ id: "1", description: "кофе" }]
-  })));
+    };
+  }));
 
   const expenses = await repo.listExpensesForTelegramUser(100, { period: "month", search: "кофе" });
 
   assert.equal(expenses[0].description, "кофе");
+  assert.match(queries.at(-1), /planned_expense_payments/);
+  assert.match(queries.at(-1), /NOT EXISTS/);
 });
 
 test("returns top categories", async () => {
@@ -456,7 +462,9 @@ test("dashboard excludes current-month paid planned expenses from reserve", asyn
 });
 
 test("dashboard returns USD display totals from converted amounts", async () => {
+  const queries = [];
   const repo = createRepository(fakePool((sql) => {
+    queries.push(String(sql));
     if (String(sql).startsWith("SELECT * FROM users")) {
       return {
         rows: [{
@@ -468,8 +476,6 @@ test("dashboard returns USD display totals from converted amounts", async () => 
         }]
       };
     }
-    if (String(sql).includes("planned_expense_payments")) return { rows: [] };
-    if (String(sql).includes("display_total")) return { rows: [{ total: 3600, display_total: 100 }] };
     if (String(sql).includes("FROM expenses") && String(sql).includes("ORDER BY spent_at")) {
       return {
         rows: [{
@@ -485,6 +491,8 @@ test("dashboard returns USD display totals from converted amounts", async () => 
         }]
       };
     }
+    if (String(sql).includes("planned_expense_payments")) return { rows: [] };
+    if (String(sql).includes("display_total")) return { rows: [{ total: 3600, display_total: 100 }] };
     if (String(sql).includes("GROUP BY category_slug")) {
       return { rows: [{ category_slug: "food_cafe", total: 3600, display_total: 100 }] };
     }
@@ -497,6 +505,7 @@ test("dashboard returns USD display totals from converted amounts", async () => 
   assert.equal(dashboard.snapshot.display.month, 100);
   assert.equal(dashboard.latestExpenses[0].display.amount, 100);
   assert.equal(dashboard.topCategories[0].display.amount, 100);
+  assert.ok(queries.some((query) => query.includes("ORDER BY spent_at") && query.includes("planned_expense_payments")));
 });
 
 test("dashboard returns analytics blocks for the mini app", async () => {

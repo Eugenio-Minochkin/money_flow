@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Money Flow</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/styles.css?v=20260602-dashboard-compact-lower" />
+    <link rel="stylesheet" href="/styles.css?v=20260603-settings-details" />
   </head>
   <body>
     <main class="shell">
@@ -205,25 +205,25 @@
               <label>
                 <span data-i18n="settings.baseCurrency">Базовая валюта учета</span>
                 <select id="baseCurrencyInput" name="baseCurrency">
-                  <option value="THB">🇹🇭 THB</option>
-                  <option value="USD">🇺🇸 USD</option>
-                  <option value="RUB">🇷🇺 RUB</option>
-                  <option value="IDR">🇮🇩 IDR</option>
-                  <option value="EUR">🇪🇺 EUR</option>
-                  <option value="BYN">🇧🇾 BYN</option>
-                  <option value="GEL">🇬🇪 GEL</option>
+                  <option value="THB">[TH] THB - Thai baht</option>
+                  <option value="USD">[US] USD - US dollar</option>
+                  <option value="RUB">[RU] RUB - Russian ruble</option>
+                  <option value="IDR">[ID] IDR - Indonesian rupiah</option>
+                  <option value="EUR">[EU] EUR - Euro</option>
+                  <option value="BYN">[BY] BYN - Belarusian ruble</option>
+                  <option value="GEL">[GE] GEL - Georgian lari</option>
                 </select>
               </label>
               <label>
                 <span data-i18n="settings.displayCurrency">Валюта отображения</span>
                 <select id="displayCurrencyInput" name="displayCurrency">
-                  <option value="USD">🇺🇸 USD</option>
-                  <option value="THB">🇹🇭 THB</option>
-                  <option value="RUB">🇷🇺 RUB</option>
-                  <option value="IDR">🇮🇩 IDR</option>
-                  <option value="EUR">🇪🇺 EUR</option>
-                  <option value="BYN">🇧🇾 BYN</option>
-                  <option value="GEL">🇬🇪 GEL</option>
+                  <option value="USD">[US] USD - US dollar</option>
+                  <option value="THB">[TH] THB - Thai baht</option>
+                  <option value="RUB">[RU] RUB - Russian ruble</option>
+                  <option value="IDR">[ID] IDR - Indonesian rupiah</option>
+                  <option value="EUR">[EU] EUR - Euro</option>
+                  <option value="BYN">[BY] BYN - Belarusian ruble</option>
+                  <option value="GEL">[GE] GEL - Georgian lari</option>
                 </select>
               </label>
             </div>
@@ -234,11 +234,14 @@
                 <option value="ru" data-i18n="settings.languageRussian">🇷🇺 Русский</option>
               </select>
             </label>
-            <label>
-              <span data-i18n="settings.usdThbRate">USD/THB fallback</span>
-              <input id="usdThbRateInput" name="usdThbRate" type="number" min="0.01" step="0.000001" />
-            </label>
-            <p class="form-note" data-i18n="settings.formNote">Новые расходы берут курс на дату траты автоматически. Это поле используется как fallback для старых записей или если API курса недоступен.</p>
+            <details class="settings-details">
+              <summary data-i18n="settings.exchangeFallback">Резервный курс</summary>
+              <label>
+                <span data-i18n="settings.usdThbRate">USD/THB fallback</span>
+                <input id="usdThbRateInput" name="usdThbRate" type="number" min="0.01" step="0.000001" />
+              </label>
+              <p class="form-note" data-i18n="settings.formNote">Новые расходы берут курс на дату траты автоматически. Это поле используется как fallback для старых записей или если API курса недоступен.</p>
+            </details>
             <div class="button-row">
               <button type="submit" data-i18n="actions.save">Сохранить</button>
             </div>
@@ -248,6 +251,6 @@
     </main>
 
     <div class="toast hidden" id="toast" role="status" aria-live="polite"></div>
-    <script src="/app.js?v=20260603-i18n-planned-notice" type="module"></script>
+    <script src="/app.js?v=20260603-bot-history-flags" type="module"></script>
   </body>
 </html>

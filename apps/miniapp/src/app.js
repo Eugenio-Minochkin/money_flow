@@ -406,8 +406,11 @@ function bindInboxActions(container) {
   container.querySelectorAll("[data-open-draft]").forEach((button) => {
     button.addEventListener("click", async () => {
       await loadDraft(button.dataset.openDraft, { returnTab: "history" });
-      switchTab("dashboard");
-      document.querySelector("#draftEditorSection").scrollIntoView({ behavior: "smooth", block: "start" });
+      switchTab("history");
+      const row = button.closest(".expense-row");
+      const section = document.querySelector("#draftEditorSection");
+      if (row && section) row.after(section);
+      section?.scrollIntoView({ behavior: "smooth", block: "nearest" });
     });
   });
   container.querySelectorAll("[data-confirm-draft]").forEach((button) => {

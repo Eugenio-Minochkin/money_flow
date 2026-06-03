@@ -716,6 +716,23 @@ button:disabled {
   line-height: 1.45;
 }
 
+.settings-details {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  padding: 10px 12px;
+}
+
+.settings-details summary {
+  color: var(--ink);
+  cursor: pointer;
+  font-weight: 850;
+}
+
+.settings-details label {
+  margin-top: 12px;
+}
+
 .hidden {
   display: none;
 }
