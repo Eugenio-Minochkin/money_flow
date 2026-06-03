@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { isDueToday, isPlannedPaid, nextPlannedItem, parseDueDays } from "../src/planned.js";
+import { isDueToday, isPlannedPaid, nextPlannedItem, nextUnpaidPlannedItem, parseDueDays } from "../src/planned.js";
 
 test("parses due days from comma separated input", () => {
   assert.deepEqual(parseDueDays("4, 18, nope, 40, 0"), [4, 18]);
@@ -25,4 +25,14 @@ test("detects due and paid planned items", () => {
   assert.equal(isDueToday({ recurrence: "weekly", weekday: 2 }, today), true);
   assert.equal(isPlannedPaid({ paid_count: 1 }), true);
   assert.equal(isPlannedPaid({ paid_month: null }), false);
+});
+
+test("finds next unpaid planned item and skips already paid items", () => {
+  const now = new Date("2026-06-03T10:00:00+07:00");
+  const next = nextUnpaidPlannedItem([
+    { id: 1, recurrence: "monthly", due_day: 3, paid_count: 1 },
+    { id: 2, recurrence: "monthly", due_day: 4, paid_count: 0 }
+  ], now);
+
+  assert.equal(next.item.id, 2);
 });

@@ -17,7 +17,7 @@
         <div class="status-pill" id="status">...</div>
       </header>
 
-      <nav class="tabs" aria-label="Разделы">
+      <nav class="tabs" aria-label="Sections" data-i18n-aria-label="navigation.sections">
         <button class="tab-button active" type="button" data-tab="dashboard">Dashboard</button>
         <button class="tab-button" type="button" data-tab="history">History</button>
         <button class="tab-button" type="button" data-tab="plan">Plan</button>
@@ -26,16 +26,16 @@
 
       <section id="dashboardTab">
         <section class="hero-metric">
-          <span>Можно еще сегодня</span>
+          <span data-i18n="dashboard.safeToday">Можно еще сегодня</span>
           <strong id="safeToSpend">...</strong>
           <em id="safeToSpendDisplay"></em>
-          <small>после бюджета и обязательных трат</small>
+          <small data-i18n="dashboard.afterBudgetAndPlanned">после бюджета и обязательных трат</small>
         </section>
 
         <section class="metrics-grid" aria-label="Основные показатели">
           <article class="metric metric-progress" id="todayMetric">
             <div class="metric-top">
-              <span>Сегодня</span>
+              <span data-i18n="dashboard.today">Сегодня</span>
               <b id="todayProgressPercent">...</b>
             </div>
             <strong id="today">...</strong>
@@ -47,7 +47,7 @@
           </article>
           <article class="metric metric-progress" id="weekMetric">
             <div class="metric-top">
-              <span>Неделя</span>
+              <span data-i18n="dashboard.week">Неделя</span>
               <b id="weekProgressPercent">...</b>
             </div>
             <strong id="week">...</strong>
@@ -58,14 +58,14 @@
             </div>
           </article>
           <article class="metric">
-            <span>Осталось</span>
+            <span data-i18n="dashboard.remaining">Осталось</span>
             <strong id="freeRemaining">...</strong>
             <em id="freeRemainingDisplay"></em>
-            <small>после расходов и плановых оплат</small>
+            <small data-i18n="dashboard.afterExpensesAndPlanned">после расходов и плановых оплат</small>
           </article>
           <article class="metric metric-progress metric-month" id="monthMetric">
             <div class="metric-top">
-              <span>Месяц</span>
+              <span data-i18n="dashboard.month">Месяц</span>
               <b id="monthCardProgressPercent">...</b>
             </div>
             <strong id="month">...</strong>
@@ -79,14 +79,14 @@
 
         <section class="notice hidden" id="plannedNotice"></section>
 
-        <section class="plan-summary" aria-label="План месяца">
+        <section class="plan-summary" aria-label="Month plan" data-i18n-aria-label="plan.monthTitle">
           <div class="section-heading compact-heading">
-            <h2>План месяца</h2>
-            <span class="eyebrow">коротко</span>
+            <h2 data-i18n="plan.monthTitle">План месяца</h2>
+            <span class="eyebrow" data-i18n="dashboard.planSummaryHint">коротко</span>
           </div>
           <div class="plan-summary-body">
             <div class="plan-row">
-              <span>Прогноз месяца</span>
+              <span data-i18n="dashboard.forecast">Прогноз месяца</span>
               <strong id="forecastMonth">...</strong>
               <em id="forecastMonthDisplay"></em>
             </div>
@@ -96,12 +96,12 @@
               <em id="planDeviationDisplay"></em>
             </div>
             <div class="plan-row">
-              <span>Сегодня: потрачено / дневной план</span>
+              <span data-i18n="dashboard.todayLimit">Сегодня: потрачено / дневной план</span>
               <strong id="todayLimit">...</strong>
               <em id="todayLimitDisplay"></em>
             </div>
             <div class="plan-row">
-              <span>Неделя vs прошлая</span>
+              <span data-i18n="dashboard.weekVsPrevious">Неделя vs прошлая</span>
               <strong id="weekComparison">...</strong>
               <em id="weekComparisonDisplay"></em>
             </div>
@@ -113,22 +113,22 @@
 
         <section class="section form-section hidden" id="draftEditorSection">
           <div class="section-heading">
-            <h2 id="draftEditorTitle">Черновик</h2>
+            <h2 id="draftEditorTitle">Draft</h2>
           </div>
           <form id="draftForm"></form>
         </section>
 
         <section class="section">
           <div class="section-heading">
-            <h2>Последние расходы</h2>
+            <h2 data-i18n="history.latestExpenses">Последние расходы</h2>
           </div>
           <div class="expense-list" id="latestExpenses"></div>
         </section>
 
         <section class="section">
           <div class="section-heading">
-            <h2>Разбор месяца</h2>
-            <span class="eyebrow">категории / теги</span>
+            <h2 data-i18n="dashboard.breakdown">Разбор месяца</h2>
+            <span class="eyebrow" data-i18n="dashboard.breakdownHint">категории / теги</span>
           </div>
           <div class="bar-list compact-bars" id="topCategories"></div>
           <div class="tag-list compact-tags" id="topTags"></div>
@@ -136,8 +136,8 @@
 
         <section class="section">
           <div class="section-heading">
-            <h2>Активность</h2>
-            <span class="eyebrow">крупное / дни</span>
+            <h2 data-i18n="dashboard.activity">Активность</h2>
+            <span class="eyebrow" data-i18n="dashboard.activityHint">крупное / дни</span>
           </div>
           <div class="expense-list compact-largest" id="largestExpenses"></div>
           <div class="heatmap compact-heatmap" id="dailyHeatmap"></div>
@@ -145,7 +145,7 @@
 
         <section class="section form-section hidden" id="expenseEditorSection">
           <div class="section-heading">
-            <h2 id="expenseEditorTitle">Расход</h2>
+            <h2 id="expenseEditorTitle">Expense</h2>
           </div>
           <form id="expenseForm"></form>
         </section>
@@ -155,10 +155,10 @@
         <section class="section form-section">
           <div class="section-heading split-heading">
             <div>
-              <h2>Плановые траты</h2>
-              <span class="eyebrow">резерв бюджета</span>
+              <h2 data-i18n="plan.plannedExpenses">Плановые траты</h2>
+              <span class="eyebrow" data-i18n="plan.budgetReserve">резерв бюджета</span>
             </div>
-            <button type="button" id="togglePlannedForm">+ Добавить</button>
+            <button type="button" id="togglePlannedForm" data-i18n="plan.addPlanned">+ Добавить</button>
           </div>
           <form class="form-stack hidden" id="plannedForm"></form>
           <div class="expense-list" id="plannedExpenses"></div>
@@ -168,18 +168,18 @@
       <section id="historyTab" class="hidden">
         <section class="section form-section">
           <div class="section-heading">
-            <h2>История</h2>
+            <h2 data-i18n="screen.history">История</h2>
           </div>
           <form class="inline-form" id="historySearchForm">
             <label>
-              <span>Поиск</span>
-              <input id="historySearch" name="search" placeholder="описание, категория, тег" />
+              <span data-i18n="history.search">Поиск</span>
+              <input id="historySearch" name="search" placeholder="описание, категория, тег" data-i18n-placeholder="history.searchPlaceholder" />
             </label>
-            <button type="submit">Найти</button>
+            <button type="submit" data-i18n="actions.find">Найти</button>
           </form>
           <section class="inbox-block hidden" id="inboxBlock">
             <div class="section-heading compact-heading">
-              <h3 id="inboxTitle">Нужно разобрать</h3>
+              <h3 id="inboxTitle">Needs review</h3>
             </div>
             <div class="expense-list" id="inboxDrafts"></div>
           </section>
@@ -190,20 +190,20 @@
       <section id="settingsTab" class="hidden">
         <section class="section form-section">
           <div class="section-heading">
-            <h2>Настройки</h2>
+            <h2 data-i18n="settings.title">Настройки</h2>
           </div>
           <form class="form-stack" id="settingsForm">
             <label>
-              <span>Месячный бюджет</span>
+              <span data-i18n="settings.monthlyBudget">Месячный бюджет</span>
               <input id="budgetInput" name="monthlyBudgetAmount" type="number" min="1" step="1" inputmode="decimal" />
             </label>
             <label>
-              <span>План недели</span>
-              <input id="weeklyBudgetInput" name="weeklyBudgetAmount" type="number" min="1" step="1" inputmode="decimal" placeholder="Автоматически из бюджета" />
+              <span data-i18n="settings.weeklyBudget">План недели</span>
+              <input id="weeklyBudgetInput" name="weeklyBudgetAmount" type="number" min="1" step="1" inputmode="decimal" placeholder="Автоматически из бюджета" data-i18n-placeholder="settings.weeklyBudgetPlaceholder" />
             </label>
             <div class="field-grid">
               <label>
-                <span>Базовая валюта учета</span>
+                <span data-i18n="settings.baseCurrency">Базовая валюта учета</span>
                 <select id="baseCurrencyInput" name="baseCurrency">
                   <option value="THB">🇹🇭 THB</option>
                   <option value="USD">🇺🇸 USD</option>
@@ -215,7 +215,7 @@
                 </select>
               </label>
               <label>
-                <span>Валюта отображения</span>
+                <span data-i18n="settings.displayCurrency">Валюта отображения</span>
                 <select id="displayCurrencyInput" name="displayCurrency">
                   <option value="USD">🇺🇸 USD</option>
                   <option value="THB">🇹🇭 THB</option>
@@ -228,19 +228,19 @@
               </label>
             </div>
             <label>
-              <span>Язык интерфейса</span>
+              <span data-i18n="settings.interfaceLanguage">Язык интерфейса</span>
               <select id="interfaceLanguageInput" name="interfaceLanguage">
-                <option value="en">🇬🇧 English</option>
-                <option value="ru">🇷🇺 Русский</option>
+                <option value="en" data-i18n="settings.languageEnglish">🇬🇧 English</option>
+                <option value="ru" data-i18n="settings.languageRussian">🇷🇺 Русский</option>
               </select>
             </label>
             <label>
-              <span>USD/THB fallback</span>
+              <span data-i18n="settings.usdThbRate">USD/THB fallback</span>
               <input id="usdThbRateInput" name="usdThbRate" type="number" min="0.01" step="0.000001" />
             </label>
-            <p class="form-note">Новые расходы берут курс на дату траты автоматически. Это поле используется как fallback для старых записей или если API курса недоступен.</p>
+            <p class="form-note" data-i18n="settings.formNote">Новые расходы берут курс на дату траты автоматически. Это поле используется как fallback для старых записей или если API курса недоступен.</p>
             <div class="button-row">
-              <button type="submit">Сохранить</button>
+              <button type="submit" data-i18n="actions.save">Сохранить</button>
             </div>
           </form>
         </section>
@@ -248,6 +248,6 @@
     </main>
 
     <div class="toast hidden" id="toast" role="status" aria-live="polite"></div>
-    <script src="/app.js?v=20260603-forecast-planned" type="module"></script>
+    <script src="/app.js?v=20260603-i18n-planned-notice" type="module"></script>
   </body>
 </html>

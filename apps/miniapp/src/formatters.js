@@ -25,8 +25,8 @@ export function moneyDisplaySigned(value, currency = "USD") {
   return `${sign}${moneyDisplay(value, currency)}`;
 }
 
-export function formatDate(value) {
-  return new Intl.DateTimeFormat("ru-RU", {
+export function formatDate(value, language = "ru") {
+  return new Intl.DateTimeFormat(localeFor(language), {
     day: "2-digit",
     month: "short",
     hour: "2-digit",
@@ -34,11 +34,15 @@ export function formatDate(value) {
   }).format(new Date(value));
 }
 
-export function formatDateOnly(value) {
-  return new Intl.DateTimeFormat("ru-RU", {
+export function formatDateOnly(value, language = "ru") {
+  return new Intl.DateTimeFormat(localeFor(language), {
     day: "2-digit",
     month: "short"
   }).format(new Date(value));
+}
+
+function localeFor(language) {
+  return language === "en" ? "en-US" : "ru-RU";
 }
 
 export function dateTimeLocal(value) {
