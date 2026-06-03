@@ -230,13 +230,16 @@ function switchTab(tab) {
 
 function renderSnapshot(snapshot) {
   const dayRemaining = snapshot.dayRemaining ?? snapshot.safeToSpendPerDay;
+  const dayProgress = snapshot.progress?.day ?? { percent: snapshot.dayProgressPercent ?? 0, state: "good" };
+  const hero = document.querySelector(".hero-metric");
+  if (hero) hero.dataset.state = dayProgress.state ?? "good";
   setText("#safeToSpend", moneyBase(dayRemaining));
   setText("#safeToSpendDisplay", moneyDisplay(snapshot.display?.dayRemaining ?? snapshot.display?.safeToSpendPerDay, snapshot.display?.currency));
   setText("#today", moneyBase(snapshot.today));
   setText("#todayDisplay", `${t("dashboard.dayPlan")} ${moneyBase(snapshot.dayPlanLimit ?? snapshot.dailyPlanLimit ?? 0)}`);
   setText("#todayRemaining", `${t("dashboard.remainingPrefix")} ${moneyBase(dayRemaining)}`);
   setText("#todayProgressPercent", `${money.format(Number(snapshot.dayProgressPercent ?? 0))}%`);
-  setProgress("#todayProgressBar", snapshot.progress?.day ?? { percent: snapshot.dayProgressPercent ?? 0, state: "good" });
+  setProgress("#todayProgressBar", dayProgress);
 
   setText("#week", moneyBase(snapshot.week));
   setText("#weekDisplay", `${t("dashboard.plan")} ${moneyBase(snapshot.weekPlanLimit ?? 0)}`);

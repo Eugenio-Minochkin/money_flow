@@ -132,6 +132,16 @@ h2 {
   box-shadow: 0 18px 38px rgb(30 80 75 / 18%);
 }
 
+.hero-metric[data-state="warn"] {
+  background: #9a5c12;
+  box-shadow: 0 18px 38px rgb(154 92 18 / 18%);
+}
+
+.hero-metric[data-state="danger"] {
+  background: #8f2f3a;
+  box-shadow: 0 18px 38px rgb(143 47 58 / 18%);
+}
+
 .hero-metric span,
 .hero-metric small,
 .hero-metric em {
