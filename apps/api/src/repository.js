@@ -87,6 +87,7 @@ export function createRepository(pool, options = {}) {
       const baseCurrency = normalizeCurrency(settings.baseCurrency, "THB");
       const displayCurrency = normalizeCurrency(settings.displayCurrency, "USD");
       const interfaceLanguage = normalizeLanguage(settings.interfaceLanguage);
+      const budgetAdviceEnabled = settings.budgetAdviceEnabled !== false;
       const result = await pool.query(
         `UPDATE users
          SET monthly_budget_amount = $1,
@@ -94,10 +95,11 @@ export function createRepository(pool, options = {}) {
              display_currency = $3,
              usd_thb_rate = $4,
              weekly_budget_amount = $5,
-             interface_language = $6
-         WHERE telegram_user_id = $7
+             interface_language = $6,
+             budget_advice_enabled = $7
+         WHERE telegram_user_id = $8
          RETURNING *`,
-        [monthlyBudgetAmount, baseCurrency, displayCurrency, usdThbRate, weeklyBudgetAmount, interfaceLanguage, telegramUserId]
+        [monthlyBudgetAmount, baseCurrency, displayCurrency, usdThbRate, weeklyBudgetAmount, interfaceLanguage, budgetAdviceEnabled, telegramUserId]
       );
       return result.rows[0] ?? null;
     },
@@ -532,6 +534,7 @@ export function createRepository(pool, options = {}) {
         displayCurrency: user.display_currency ?? "USD",
         monthlyBudget: Number(user.monthly_budget_amount),
         weeklyBudget: user.weekly_budget_amount == null ? null : Number(user.weekly_budget_amount),
+        budgetAdviceEnabled: user.budget_advice_enabled !== false,
         plannedRemainingTotal,
         plannedRemainingDisplayTotal: displayFromBase(plannedRemainingTotal, user),
         plannedThisWeekTotal,

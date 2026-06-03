@@ -38,6 +38,23 @@ test("calculates month remaining and safe-to-spend", () => {
     forecastMonthTotal: 122142.86,
     planDeviation: 18000,
     safeToSpendPerDay: 687.5,
+    recoveryAdvice: {
+      active: true,
+      state: "danger",
+      overPercent: 171.43,
+      forecastOverBudget: 77142.86,
+      requiredPerDay: 687.5,
+      todayTarget: 687.5,
+      display: {
+        currency: "USD",
+        forecastOverBudget: 0,
+        requiredPerDay: 0,
+        todayTarget: 0,
+        today: 0,
+        dayPlanLimit: 0
+      },
+      daysLeftInMonth: 24
+    },
     progress: {
       day: { percent: 54.39, state: "good" },
       week: { percent: 0, state: "good" },
@@ -186,4 +203,36 @@ test("marks progress states by daily threshold and period pace", () => {
   assert.equal(snapshot.progress.day.state, "danger");
   assert.equal(snapshot.progress.week.state, "danger");
   assert.equal(snapshot.progress.month.state, "danger");
+});
+
+test("builds recovery advice when forecast is over budget", () => {
+  const snapshot = calculateBudgetSnapshot({
+    todayTotal: 1415,
+    weekTotal: 4942,
+    monthTotal: 12300,
+    monthDisplayTotal: 377,
+    monthlyBudget: 42000,
+    plannedRemainingTotal: 10800,
+    plannedRemainingDisplayTotal: 331,
+    displayCurrency: "USD",
+    now: new Date("2026-06-03T10:00:00+07:00")
+  });
+
+  assert.equal(snapshot.recoveryAdvice.active, true);
+  assert.equal(snapshot.recoveryAdvice.state, "danger");
+  assert.equal(snapshot.recoveryAdvice.forecastOverBudget, 91800);
+  assert.equal(snapshot.recoveryAdvice.requiredPerDay, 675);
+  assert.equal(snapshot.recoveryAdvice.display.forecastOverBudget, 2813.71);
+});
+
+test("does not build recovery advice when disabled", () => {
+  const snapshot = calculateBudgetSnapshot({
+    todayTotal: 1415,
+    monthTotal: 12300,
+    monthlyBudget: 42000,
+    budgetAdviceEnabled: false,
+    now: new Date("2026-06-03T10:00:00+07:00")
+  });
+
+  assert.equal(snapshot.recoveryAdvice.active, false);
 });

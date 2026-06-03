@@ -27,6 +27,7 @@ export function formatSavedSummary(total, snapshot, options = {}) {
   const planLine = planDeviation > 0
     ? `⚠️ <b>${t(language, "plan")}:</b> ${t(language, "aboveBy")} ${formatAmount(Math.abs(planDeviation), language)} THB`
     : `🟢 <b>${t(language, "plan")}:</b> ${t(language, "belowBy")} ${formatAmount(Math.abs(planDeviation), language)} THB`;
+  const recovery = formatRecoveryAdvice(snapshot, language);
 
   return [
     `✅ <b>${t(language, "savedExpense")}</b>`,
@@ -34,6 +35,7 @@ export function formatSavedSummary(total, snapshot, options = {}) {
     "",
     `<b>${t(language, "now")}</b>`,
     `📌 <b>${t(language, "today")}:</b> ${formatAmount(snapshot.today, language)} / ${formatAmount(snapshot.dayPlanLimit ?? snapshot.dailyPlanLimit, language)} THB`,
+    `⚡️ <b>${t(language, "safeToday")}:</b> ${formatAmount(snapshot.dayRemaining ?? snapshot.safeToSpendPerDay, language)} THB`,
     `📆 <b>${t(language, "week")}:</b> ${formatAmount(snapshot.week, language)} / ${formatAmount(snapshot.weekPlanLimit ?? snapshot.weeklyBudget, language)} THB`,
     "",
     `<b>${t(language, "month")}</b>`,
@@ -42,9 +44,20 @@ export function formatSavedSummary(total, snapshot, options = {}) {
     `🧾 <b>${t(language, "planned")}:</b> ${formatAmount(snapshot.plannedRemaining, language)} THB`,
     `🔮 <b>${t(language, "forecast")}:</b> ${formatAmount(snapshot.forecastMonthTotal ?? 0, language)} THB`,
     planLine,
+    recovery ? `\n${recovery}` : "",
     "",
     `⚡️ <b>${t(language, "safeToSpend")}:</b> ${formatAmount(snapshot.safeToSpendPerDay, language)} THB/${t(language, "day")}`,
     t(language, "withPlanned")
+  ].join("\n");
+}
+
+function formatRecoveryAdvice(snapshot, language) {
+  const advice = snapshot.recoveryAdvice;
+  if (!advice?.active) return "";
+  const icon = advice.state === "danger" ? "🚨" : "⚠️";
+  return [
+    `${icon} <b>${t(language, "returnToBudget")}:</b> ${t(language, "forecastAboveBudget")} ${formatAmount(advice.forecastOverBudget, language)} THB`,
+    `${t(language, "holdPace")} <b>${formatAmount(advice.requiredPerDay, language)} THB/${t(language, "day")}</b>.`
   ].join("\n");
 }
 
@@ -131,9 +144,13 @@ const messages = {
     plan: "План",
     planned: "Плановые",
     safeToSpend: "Можно в день до конца месяца",
+    safeToday: "Можно еще сегодня",
     savedExpense: "Записал расход",
     spent: "Потрачено",
     status: "Статус",
+    returnToBudget: "Вернуться в бюджет",
+    forecastAboveBudget: "прогноз выше бюджета на",
+    holdPace: "Чтобы вернуться в план, держи",
     today: "Сегодня",
     topCategories: "Топ категорий",
     topCategoriesEmpty: "Топ категорий пока пуст.",
@@ -159,9 +176,13 @@ const messages = {
     plan: "Plan",
     planned: "Planned",
     safeToSpend: "Safe per day until month end",
+    safeToday: "Safe left today",
     savedExpense: "Saved expense",
     spent: "Spent",
     status: "Status",
+    returnToBudget: "Return to budget",
+    forecastAboveBudget: "forecast is above budget by",
+    holdPace: "To get back on plan, keep",
     today: "Today",
     topCategories: "Top categories",
     topCategoriesEmpty: "Top categories are empty for now.",

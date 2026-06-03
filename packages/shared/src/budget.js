@@ -15,6 +15,7 @@ export function calculateBudgetSnapshot({
   plannedRemainingDisplayTotal = 0,
   plannedThisWeekDisplayTotal = 0,
   displayCurrency = "USD",
+  budgetAdviceEnabled = true,
   now
 }) {
   const remaining = monthlyBudget - monthTotal;
@@ -58,6 +59,21 @@ export function calculateBudgetSnapshot({
     week: { percent: weekProgressPercent, state: pacedProgressState(weekProgressPercent, elapsedDaysInWeek, daysInWeek) },
     month: { percent: budgetProgressPercent, state: pacedProgressState(budgetProgressPercent, elapsedDaysInMonth, daysInMonth) }
   };
+  const recoveryAdvice = buildRecoveryAdvice({
+    budgetAdviceEnabled,
+    monthlyBudget,
+    monthTotal,
+    monthDisplayTotal,
+    forecastMonthTotal,
+    freeRemaining,
+    safeToSpendPerDay,
+    daysLeftInMonth,
+    todayTotal,
+    todayDisplayTotal,
+    dayPlanLimit,
+    dayDisplayPlanLimit,
+    displayCurrency
+  });
 
   return {
     today: roundMoney(todayTotal),
@@ -86,6 +102,7 @@ export function calculateBudgetSnapshot({
     forecastMonthTotal,
     planDeviation,
     safeToSpendPerDay,
+    recoveryAdvice,
     progress,
     display: {
       currency: displayCurrency,
@@ -123,6 +140,44 @@ function budgetStatus({ monthTotal, monthlyBudget, now }) {
   if (monthTotal > plannedSpend * 1.08) return "above_plan";
   if (monthTotal < plannedSpend * 0.92) return "below_plan";
   return "on_plan";
+}
+
+function buildRecoveryAdvice({
+  budgetAdviceEnabled,
+  monthlyBudget,
+  monthTotal,
+  monthDisplayTotal,
+  forecastMonthTotal,
+  freeRemaining,
+  safeToSpendPerDay,
+  daysLeftInMonth,
+  todayTotal,
+  todayDisplayTotal,
+  dayPlanLimit,
+  dayDisplayPlanLimit,
+  displayCurrency
+}) {
+  const forecastOverBudget = roundMoney(forecastMonthTotal - monthlyBudget);
+  const overPercent = monthlyBudget > 0 ? (forecastOverBudget / monthlyBudget) * 100 : 0;
+  const active = Boolean(budgetAdviceEnabled) && forecastOverBudget > 0 && overPercent >= 5;
+  const state = overPercent >= 15 ? "danger" : overPercent >= 5 ? "warn" : "good";
+  return {
+    active,
+    state,
+    overPercent: roundMoney(Math.max(overPercent, 0)),
+    forecastOverBudget: roundMoney(Math.max(forecastOverBudget, 0)),
+    requiredPerDay: roundMoney(Math.max(safeToSpendPerDay, 0)),
+    todayTarget: roundMoney(Math.max(Math.min(safeToSpendPerDay, freeRemaining), 0)),
+    display: {
+      currency: displayCurrency,
+      forecastOverBudget: roundMoney(Math.max(displayFromBase(forecastOverBudget, monthTotal, monthDisplayTotal), 0)),
+      requiredPerDay: roundMoney(Math.max(displayFromBase(safeToSpendPerDay, monthTotal, monthDisplayTotal), 0)),
+      todayTarget: roundMoney(Math.max(displayFromBase(Math.min(safeToSpendPerDay, freeRemaining), monthTotal, monthDisplayTotal), 0)),
+      today: roundMoney(todayDisplayTotal),
+      dayPlanLimit: roundMoney(dayDisplayPlanLimit)
+    },
+    daysLeftInMonth
+  };
 }
 
 function percent(value, limit) {

@@ -22,7 +22,15 @@ test("formats a draft with total and review warning", () => {
 });
 
 test("formats saved summary with budget context", () => {
-  const text = formatSavedSummary(75, snapshot());
+  const text = formatSavedSummary(75, {
+    ...snapshot(),
+    recoveryAdvice: {
+      active: true,
+      state: "warn",
+      requiredPerDay: 675,
+      forecastOverBudget: 18000
+    }
+  });
   const normalized = normalizeSpaces(text);
 
   assert.match(text, /75 THB/);
@@ -32,6 +40,9 @@ test("formats saved summary with budget context", () => {
   assert.match(text, /1,75%/);
   assert.match(text, /Можно в день до конца месяца/);
   assert.match(text, /896,38 THB/);
+  assert.match(text, /Можно еще сегодня/);
+  assert.match(text, /Вернуться в бюджет/);
+  assert.match(text, /675 THB/);
 });
 
 test("formats command totals for month and budget", () => {

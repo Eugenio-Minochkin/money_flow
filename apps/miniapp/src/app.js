@@ -57,6 +57,8 @@ document.querySelector("#togglePlannedForm").addEventListener("click", () => {
 document.querySelectorAll("[data-tab]").forEach((button) => {
   button.addEventListener("click", () => switchTab(button.dataset.tab));
 });
+document.querySelector("#baseCurrencyInput").addEventListener("change", updateCurrencyFlags);
+document.querySelector("#displayCurrencyInput").addEventListener("change", updateCurrencyFlags);
 
 applyLanguage(currentLanguage);
 load().catch(showError);
@@ -84,6 +86,7 @@ async function loadDashboard() {
 }
 
 function renderAnalytics(snapshot, analytics) {
+  renderRecoveryAdvice(snapshot);
   setText("#forecastMonth", moneyBase(snapshot.forecastMonthTotal));
   setText("#forecastMonthDisplay", moneyDisplay(snapshot.display?.forecastMonthTotal, snapshot.display?.currency));
 
@@ -197,6 +200,32 @@ function renderHeatmap(items, daysInMonth) {
   }).join("");
 }
 
+function renderRecoveryAdvice(snapshot) {
+  const advice = snapshot.recoveryAdvice;
+  const recovery = document.querySelector("#recoveryAdvice");
+  const planSummary = document.querySelector(".plan-summary");
+  if (!advice?.active) {
+    recovery.classList.add("hidden");
+    planSummary.classList.remove("hidden");
+    return;
+  }
+  planSummary.classList.add("hidden");
+  recovery.classList.remove("hidden");
+  recovery.dataset.state = advice.state;
+  setText("#recoveryBadge", advice.state === "danger" ? t("budgetAdvice.dangerBadge") : t("budgetAdvice.warnBadge"));
+  setText("#recoveryRequiredPerDay", `${moneyBase(advice.requiredPerDay)}/${t("dashboard.day")}`);
+  setText("#recoveryRequiredPerDayDisplay", `${moneyDisplay(advice.display?.requiredPerDay, advice.display?.currency)}/${t("dashboard.day")}`);
+  setText("#recoveryMicroAdvice", advice.state === "danger" ? t("budgetAdvice.dangerText", { amount: moneyBase(advice.requiredPerDay) }) : t("budgetAdvice.warnText", { amount: moneyBase(advice.requiredPerDay) }));
+  setText("#recoveryMonthNow", `${moneyBase(snapshot.month)} / ${moneyBase(snapshot.monthlyBudget)}`);
+  setText("#recoveryMonthNowDisplay", `${moneyDisplay(snapshot.display?.month, snapshot.display?.currency)} / ${moneyDisplay(snapshot.display?.monthlyBudget, snapshot.display?.currency)}`);
+  setText("#recoveryForecast", moneyBase(snapshot.forecastMonthTotal));
+  setText("#recoveryForecastDisplay", moneyDisplay(snapshot.display?.forecastMonthTotal, snapshot.display?.currency));
+  setText("#recoveryOverBudget", `${currentLanguage === "ru" ? "на " : ""}${moneyBase(advice.forecastOverBudget)}`);
+  setText("#recoveryOverBudgetDisplay", moneyDisplay(advice.display?.forecastOverBudget, advice.display?.currency));
+  setText("#recoveryToday", `${moneyBase(snapshot.today)} / ${moneyBase(snapshot.dayPlanLimit ?? snapshot.dailyPlanLimit ?? 0)}`);
+  setText("#recoveryTodayDisplay", `${moneyDisplay(snapshot.display?.today, snapshot.display?.currency)} / ${moneyDisplay(snapshot.display?.dayPlanLimit, snapshot.display?.currency)}`);
+}
+
 async function loadHistory() {
   const search = document.querySelector("#historySearch").value.trim();
   const [data, inbox] = await Promise.all([
@@ -274,6 +303,8 @@ function renderSettings(user) {
   document.querySelector("#displayCurrencyInput").value = user.display_currency ?? "USD";
   document.querySelector("#interfaceLanguageInput").value = currentLanguage;
   document.querySelector("#usdThbRateInput").value = Number(user.usd_thb_rate ?? 32.65);
+  document.querySelector("#budgetAdviceInput").checked = user.budget_advice_enabled !== false;
+  updateCurrencyFlags();
 }
 
 function renderPlannedNotice(items) {
@@ -728,6 +759,7 @@ async function saveSettings(event) {
         baseCurrency: document.querySelector("#baseCurrencyInput").value,
         displayCurrency: document.querySelector("#displayCurrencyInput").value,
         interfaceLanguage: document.querySelector("#interfaceLanguageInput").value,
+        budgetAdviceEnabled: document.querySelector("#budgetAdviceInput").checked,
         usdThbRate: Number(document.querySelector("#usdThbRateInput").value)
       }
     }
@@ -814,6 +846,18 @@ function collectPlanned() {
 
 function input(name) {
   return document.querySelector(`[name="${name}"]`);
+}
+
+function updateCurrencyFlags() {
+  const pairs = [
+    ["#baseCurrencyFlag", "#baseCurrencyInput"],
+    ["#displayCurrencyFlag", "#displayCurrencyInput"]
+  ];
+  for (const [flagSelector, inputSelector] of pairs) {
+    const flag = document.querySelector(flagSelector);
+    const select = document.querySelector(inputSelector);
+    if (flag && select) flag.dataset.currency = select.value;
+  }
 }
 
 function option(value, selected, label = value) {

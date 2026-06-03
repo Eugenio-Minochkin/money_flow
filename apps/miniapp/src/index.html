@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Money Flow</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/styles.css?v=20260603-hero-budget-state" />
+    <link rel="stylesheet" href="/styles.css?v=20260603-recovery-advice" />
   </head>
   <body>
     <main class="shell">
@@ -108,6 +108,39 @@
           </div>
         </section>
 
+        <section class="recovery-advice hidden" id="recoveryAdvice" aria-label="Return to budget">
+          <div class="recovery-head">
+            <h2 data-i18n="budgetAdvice.title">Вернуться в бюджет</h2>
+            <span id="recoveryBadge">...</span>
+          </div>
+          <div class="recovery-body">
+            <span data-i18n="budgetAdvice.goal">Чтобы уложиться в бюджет:</span>
+            <strong id="recoveryRequiredPerDay">...</strong>
+            <em id="recoveryRequiredPerDayDisplay"></em>
+            <div class="micro-advice" id="recoveryMicroAdvice">...</div>
+            <div class="plan-row">
+              <span data-i18n="budgetAdvice.monthNow">Месяц сейчас</span>
+              <strong id="recoveryMonthNow">...</strong>
+              <em id="recoveryMonthNowDisplay"></em>
+            </div>
+            <div class="plan-row">
+              <span data-i18n="budgetAdvice.forecast">Прогноз сейчас</span>
+              <strong id="recoveryForecast">...</strong>
+              <em id="recoveryForecastDisplay"></em>
+            </div>
+            <div class="plan-row">
+              <span data-i18n="budgetAdvice.overBudget">Выше бюджета</span>
+              <strong id="recoveryOverBudget">...</strong>
+              <em id="recoveryOverBudgetDisplay"></em>
+            </div>
+            <div class="plan-row">
+              <span data-i18n="budgetAdvice.today">Сегодня</span>
+              <strong id="recoveryToday">...</strong>
+              <em id="recoveryTodayDisplay"></em>
+            </div>
+          </div>
+        </section>
+
         <section class="notice hidden" id="otherWarning"></section>
         <section class="next-planned hidden" id="nextPlannedSummary"></section>
 
@@ -204,7 +237,9 @@
             <div class="field-grid">
               <label>
                 <span data-i18n="settings.baseCurrency">Базовая валюта учета</span>
-                <select id="baseCurrencyInput" name="baseCurrency">
+                <div class="currency-control">
+                  <span class="flag-icon" id="baseCurrencyFlag" aria-hidden="true"></span>
+                  <select id="baseCurrencyInput" name="baseCurrency">
                   <option value="THB">🇹🇭 THB - Thai baht</option>
                   <option value="USD">🇺🇸 USD - US dollar</option>
                   <option value="RUB">🇷🇺 RUB - Russian ruble</option>
@@ -212,11 +247,14 @@
                   <option value="EUR">🇪🇺 EUR - Euro</option>
                   <option value="BYN">🇧🇾 BYN - Belarusian ruble</option>
                   <option value="GEL">🇬🇪 GEL - Georgian lari</option>
-                </select>
+                  </select>
+                </div>
               </label>
               <label>
                 <span data-i18n="settings.displayCurrency">Валюта отображения</span>
-                <select id="displayCurrencyInput" name="displayCurrency">
+                <div class="currency-control">
+                  <span class="flag-icon" id="displayCurrencyFlag" aria-hidden="true"></span>
+                  <select id="displayCurrencyInput" name="displayCurrency">
                   <option value="USD">🇺🇸 USD - US dollar</option>
                   <option value="THB">🇹🇭 THB - Thai baht</option>
                   <option value="RUB">🇷🇺 RUB - Russian ruble</option>
@@ -224,9 +262,17 @@
                   <option value="EUR">🇪🇺 EUR - Euro</option>
                   <option value="BYN">🇧🇾 BYN - Belarusian ruble</option>
                   <option value="GEL">🇬🇪 GEL - Georgian lari</option>
-                </select>
+                  </select>
+                </div>
               </label>
             </div>
+            <label class="toggle-setting">
+              <span>
+                <strong data-i18n="settings.budgetAdvice">Советы по бюджету</strong>
+                <small data-i18n="settings.budgetAdviceHint">Показывать блок “Вернуться в бюджет”</small>
+              </span>
+              <input id="budgetAdviceInput" name="budgetAdviceEnabled" type="checkbox" />
+            </label>
             <label>
               <span data-i18n="settings.interfaceLanguage">Язык интерфейса</span>
               <select id="interfaceLanguageInput" name="interfaceLanguage">
@@ -251,6 +297,6 @@
     </main>
 
     <div class="toast hidden" id="toast" role="status" aria-live="polite"></div>
-    <script src="/app.js?v=20260603-hero-budget-state" type="module"></script>
+    <script src="/app.js?v=20260603-recovery-advice" type="module"></script>
   </body>
 </html>

@@ -272,6 +272,73 @@ h2 {
   overflow: hidden;
 }
 
+.recovery-advice {
+  margin-top: 12px;
+  overflow: hidden;
+  border: 1px solid #e8c99c;
+  border-radius: 12px;
+  background: #fffaf1;
+  box-shadow: var(--shadow);
+}
+
+.recovery-advice[data-state="danger"] {
+  border-color: #edc7cb;
+  background: #fff0f1;
+}
+
+.recovery-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 14px;
+  border-bottom: 1px solid rgb(37 29 24 / 8%);
+}
+
+.recovery-head span {
+  color: var(--amber);
+  font-size: 12px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.recovery-advice[data-state="danger"] .recovery-head span {
+  color: var(--red);
+}
+
+.recovery-body {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+}
+
+.recovery-body > span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.recovery-body > strong {
+  font-size: 24px;
+  line-height: 1.1;
+}
+
+.recovery-body > em,
+.recovery-body .plan-row em {
+  color: var(--usd);
+  font-style: normal;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.micro-advice {
+  border-radius: 8px;
+  background: rgb(255 255 255 / 72%);
+  font-size: 13px;
+  font-weight: 750;
+  line-height: 1.35;
+  padding: 10px;
+}
+
 .compact-heading {
   display: flex;
   align-items: baseline;
@@ -648,6 +715,93 @@ select {
   font: inherit;
   font-size: 15px;
   padding: 9px 10px;
+}
+
+.currency-control {
+  position: relative;
+  display: grid;
+}
+
+.currency-control select {
+  padding-left: 42px;
+}
+
+.flag-icon {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  z-index: 1;
+  width: 22px;
+  height: 15px;
+  border: 1px solid rgb(37 29 24 / 18%);
+  border-radius: 2px;
+  transform: translateY(-50%);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 25%);
+}
+
+.flag-icon[data-currency="THB"] {
+  background: linear-gradient(#c6283c 0 16%, #fff 16% 28%, #243a8f 28% 72%, #fff 72% 84%, #c6283c 84%);
+}
+
+.flag-icon[data-currency="USD"] {
+  background:
+    linear-gradient(90deg, #24468e 0 42%, transparent 42%),
+    repeating-linear-gradient(#b22234 0 8%, #fff 8% 16%);
+}
+
+.flag-icon[data-currency="RUB"] {
+  background: linear-gradient(#fff 0 33%, #1f57a4 33% 66%, #d52b1e 66%);
+}
+
+.flag-icon[data-currency="IDR"] {
+  background: linear-gradient(#ce1126 0 50%, #fff 50%);
+}
+
+.flag-icon[data-currency="EUR"] {
+  background: #1f57a4;
+}
+
+.flag-icon[data-currency="BYN"] {
+  background: linear-gradient(90deg, #fff 0 22%, transparent 22%), linear-gradient(#c8313e 0 68%, #238b45 68%);
+}
+
+.flag-icon[data-currency="GEL"] {
+  background:
+    linear-gradient(90deg, transparent 0 42%, #d52b1e 42% 58%, transparent 58%),
+    linear-gradient(transparent 0 42%, #d52b1e 42% 58%, transparent 58%),
+    #fff;
+}
+
+.toggle-setting {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  padding: 12px;
+}
+
+.toggle-setting span {
+  display: grid;
+  gap: 3px;
+}
+
+.toggle-setting strong {
+  color: var(--ink);
+  font-size: 15px;
+}
+
+.toggle-setting small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.3;
+}
+
+.toggle-setting input {
+  width: 22px;
+  min-height: 22px;
 }
 
 button {

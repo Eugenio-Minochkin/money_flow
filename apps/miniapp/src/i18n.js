@@ -20,6 +20,7 @@ export const translations = {
     "dashboard.breakdown": "Разбор месяца",
     "dashboard.breakdownHint": "категории / теги",
     "dashboard.budget": "бюджет",
+    "dashboard.day": "день",
     "dashboard.dayPlan": "дневной план",
     "dashboard.forecast": "Прогноз месяца",
     "dashboard.largestEmpty": "Крупных трат пока нет.",
@@ -82,6 +83,8 @@ export const translations = {
     "screen.plan": "План",
     "screen.settings": "Настройки",
     "settings.baseCurrency": "Базовая валюта учета",
+    "settings.budgetAdvice": "Советы по бюджету",
+    "settings.budgetAdviceHint": "Показывать блок “Вернуться в бюджет”",
     "settings.displayCurrency": "Валюта отображения",
     "settings.formNote": "Новые расходы берут курс на дату траты автоматически. Это поле используется как fallback для старых записей или если API курса недоступен.",
     "settings.exchangeFallback": "Резервный курс",
@@ -103,7 +106,17 @@ export const translations = {
     "toast.plannedAdded": "Плановая трата добавлена",
     "toast.plannedDisabled": "Плановая трата отключена",
     "toast.plannedSaved": "Плановая трата сохранена",
-    "toast.settingsSaved": "Настройки сохранены"
+    "toast.settingsSaved": "Настройки сохранены",
+    "budgetAdvice.title": "Вернуться в бюджет",
+    "budgetAdvice.goal": "Чтобы уложиться в бюджет:",
+    "budgetAdvice.monthNow": "Месяц сейчас",
+    "budgetAdvice.forecast": "Прогноз сейчас",
+    "budgetAdvice.overBudget": "Выше бюджета",
+    "budgetAdvice.today": "Сегодня",
+    "budgetAdvice.warnBadge": "режим восстановления",
+    "budgetAdvice.dangerBadge": "эконом-режим",
+    "budgetAdvice.warnText": "Сегодня лучше оставить запас: цель — до {amount}.",
+    "budgetAdvice.dangerText": "Сегодня лучше остановиться. Завтра цель — до {amount} и без необязательных покупок."
   },
   en: {
     "actions.add": "Add",
@@ -126,6 +139,7 @@ export const translations = {
     "dashboard.breakdown": "Month breakdown",
     "dashboard.breakdownHint": "categories / tags",
     "dashboard.budget": "budget",
+    "dashboard.day": "day",
     "dashboard.dayPlan": "daily plan",
     "dashboard.forecast": "Month forecast",
     "dashboard.largestEmpty": "No large expenses yet.",
@@ -188,6 +202,8 @@ export const translations = {
     "screen.plan": "Plan",
     "screen.settings": "Settings",
     "settings.baseCurrency": "Base accounting currency",
+    "settings.budgetAdvice": "Budget advice",
+    "settings.budgetAdviceHint": "Show the “Return to budget” block",
     "settings.displayCurrency": "Display currency",
     "settings.formNote": "New expenses use the exchange rate for the expense date automatically. This field is only a fallback for old records or when the exchange-rate API is unavailable.",
     "settings.exchangeFallback": "Exchange-rate fallback",
@@ -209,7 +225,17 @@ export const translations = {
     "toast.plannedAdded": "Planned expense added",
     "toast.plannedDisabled": "Planned expense disabled",
     "toast.plannedSaved": "Planned expense saved",
-    "toast.settingsSaved": "Settings saved"
+    "toast.settingsSaved": "Settings saved",
+    "budgetAdvice.title": "Return to budget",
+    "budgetAdvice.goal": "To stay within budget:",
+    "budgetAdvice.monthNow": "Month now",
+    "budgetAdvice.forecast": "Current forecast",
+    "budgetAdvice.overBudget": "Above budget",
+    "budgetAdvice.today": "Today",
+    "budgetAdvice.warnBadge": "recovery mode",
+    "budgetAdvice.dangerBadge": "economy mode",
+    "budgetAdvice.warnText": "Better keep a buffer today: target up to {amount}.",
+    "budgetAdvice.dangerText": "Better stop for today. Tomorrow target up to {amount}, no optional purchases."
   }
 };
 

@@ -25,7 +25,12 @@ test("Mini App translations cover dashboard, plan, history and settings labels",
     "plan.plannedExpenses",
     "settings.title",
     "settings.formNote",
-    "settings.weeklyBudgetPlaceholder"
+    "settings.weeklyBudgetPlaceholder",
+    "settings.budgetAdvice",
+    "settings.budgetAdviceHint",
+    "budgetAdvice.title",
+    "budgetAdvice.warnText",
+    "budgetAdvice.dangerText"
   ];
 
   for (const language of ["ru", "en"]) {
