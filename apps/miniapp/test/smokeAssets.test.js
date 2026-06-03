@@ -23,3 +23,10 @@ test("Mini App local module imports resolve to files", async () => {
     assert.equal(existsSync(join(miniAppRoot, imported)), true, `${imported} should exist`);
   }
 });
+
+test("settings keep fallback exchange rate hidden from users", async () => {
+  const html = await readFile(join(miniAppRoot, "index.html"), "utf8");
+
+  assert.match(html, /id="usdThbRateInput"[^>]+type="hidden"/);
+  assert.doesNotMatch(html, /data-i18n="settings.exchangeFallback"/);
+});

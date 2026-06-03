@@ -59,6 +59,7 @@ document.querySelectorAll("[data-tab]").forEach((button) => {
 });
 document.querySelector("#baseCurrencyInput").addEventListener("change", updateCurrencyFlags);
 document.querySelector("#displayCurrencyInput").addEventListener("change", updateCurrencyFlags);
+document.querySelector("#interfaceLanguageInput").addEventListener("change", updateCurrencyFlags);
 
 applyLanguage(currentLanguage);
 load().catch(showError);
@@ -265,7 +266,7 @@ function renderSnapshot(snapshot) {
   setText("#safeToSpend", moneyBase(dayRemaining));
   setText("#safeToSpendDisplay", moneyDisplay(snapshot.display?.dayRemaining ?? snapshot.display?.safeToSpendPerDay, snapshot.display?.currency));
   setText("#today", moneyBase(snapshot.today));
-  setText("#todayDisplay", `${t("dashboard.dayPlan")} ${moneyBase(snapshot.dayPlanLimit ?? snapshot.dailyPlanLimit ?? 0)}`);
+  setText("#todayDisplay", `${t("dashboard.plan")} ${moneyBase(snapshot.dayPlanLimit ?? snapshot.dailyPlanLimit ?? 0)}`);
   setText("#todayRemaining", `${t("dashboard.remainingPrefix")} ${moneyBase(dayRemaining)}`);
   setText("#todayProgressPercent", `${money.format(Number(snapshot.dayProgressPercent ?? 0))}%`);
   setProgress("#todayProgressBar", dayProgress);
@@ -850,13 +851,19 @@ function input(name) {
 
 function updateCurrencyFlags() {
   const pairs = [
-    ["#baseCurrencyFlag", "#baseCurrencyInput"],
-    ["#displayCurrencyFlag", "#displayCurrencyInput"]
+    ["#baseCurrencyFlag", "#baseCurrencyInput", "currency"],
+    ["#displayCurrencyFlag", "#displayCurrencyInput", "currency"],
+    ["#interfaceLanguageFlag", "#interfaceLanguageInput", "language"]
   ];
-  for (const [flagSelector, inputSelector] of pairs) {
+  for (const [flagSelector, inputSelector, type] of pairs) {
     const flag = document.querySelector(flagSelector);
     const select = document.querySelector(inputSelector);
-    if (flag && select) flag.dataset.currency = select.value;
+    if (!flag || !select) continue;
+    if (type === "language") {
+      flag.dataset.language = select.value;
+    } else {
+      flag.dataset.currency = select.value;
+    }
   }
 }
 
@@ -888,8 +895,7 @@ function applyLanguage(language) {
     ["#weeklyBudgetInput", "settings.weeklyBudget"],
     ["#baseCurrencyInput", "settings.baseCurrency"],
     ["#displayCurrencyInput", "settings.displayCurrency"],
-    ["#interfaceLanguageInput", "settings.interfaceLanguage"],
-    ["#usdThbRateInput", "settings.usdThbRate"]
+    ["#interfaceLanguageInput", "settings.interfaceLanguage"]
   ];
   for (const [selector, key] of labels) {
     const label = document.querySelector(selector)?.closest("label")?.querySelector("span");

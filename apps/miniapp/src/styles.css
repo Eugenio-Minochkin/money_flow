@@ -214,6 +214,7 @@ h2 {
   font-size: 11px;
   font-weight: 800;
   line-height: 1.25;
+  white-space: nowrap;
 }
 
 .metric-progress {
@@ -772,6 +773,17 @@ select {
     #fff;
 }
 
+.flag-icon[data-language="ru"] {
+  background: linear-gradient(#fff 0 33%, #1f57a4 33% 66%, #d52b1e 66%);
+}
+
+.flag-icon[data-language="en"] {
+  background:
+    linear-gradient(90deg, transparent 0 42%, #c8102e 42% 58%, transparent 58%),
+    linear-gradient(transparent 0 42%, #c8102e 42% 58%, transparent 58%),
+    #012169;
+}
+
 .toggle-setting {
   display: flex;
   align-items: center;
@@ -800,8 +812,39 @@ select {
 }
 
 .toggle-setting input {
+  position: relative;
+  flex: 0 0 auto;
+  width: 48px;
+  min-height: 28px;
+  height: 28px;
+  appearance: none;
+  border: 0;
+  border-radius: 999px;
+  background: #d8d0c6;
+  cursor: pointer;
+  padding: 0;
+  transition: background .18s ease;
+}
+
+.toggle-setting input::after {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 3px;
   width: 22px;
-  min-height: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 2px 6px rgb(37 29 24 / 18%);
+  transition: transform .18s ease;
+}
+
+.toggle-setting input:checked {
+  background: var(--accent);
+}
+
+.toggle-setting input:checked::after {
+  transform: translateX(20px);
 }
 
 button {
