@@ -29,7 +29,8 @@ test("updates user budget and display currency settings", async () => {
         usd_thb_rate: params[3],
         weekly_budget_amount: params[4],
         interface_language: params[5],
-        budget_advice_enabled: params[6]
+        budget_advice_enabled: params[6],
+        interface_theme: params[7]
       }]
     };
   }));
@@ -41,7 +42,8 @@ test("updates user budget and display currency settings", async () => {
     displayCurrency: "GEL",
     usdThbRate: 36.5,
     interfaceLanguage: "ru",
-    budgetAdviceEnabled: false
+    budgetAdviceEnabled: false,
+    interfaceTheme: "light"
   });
 
   assert.equal(Number(user.monthly_budget_amount), 60000);
@@ -49,12 +51,14 @@ test("updates user budget and display currency settings", async () => {
   assert.equal(user.display_currency, "GEL");
   assert.equal(user.interface_language, "ru");
   assert.equal(user.budget_advice_enabled, false);
+  assert.equal(user.interface_theme, "light");
   assert.equal(Number(user.usd_thb_rate), 36.5);
   assert.equal(queries[0].params[3], 36.5);
   assert.equal(queries[0].params[4], 12000);
   assert.equal(queries[0].params[5], "ru");
   assert.equal(queries[0].params[6], false);
-  assert.equal(queries[0].params[7], 100);
+  assert.equal(queries[0].params[7], "light");
+  assert.equal(queries[0].params[8], 100);
 });
 
 test("checks database health", async () => {

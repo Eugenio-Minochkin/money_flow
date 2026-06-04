@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS users (
   monthly_budget_amount NUMERIC(14, 2) NOT NULL DEFAULT 45000,
   weekly_budget_amount NUMERIC(14, 2),
   interface_language TEXT NOT NULL DEFAULT 'en',
+  interface_theme TEXT NOT NULL DEFAULT 'dark',
   budget_advice_enabled BOOLEAN NOT NULL DEFAULT true,
   onboarding_step TEXT NOT NULL DEFAULT 'completed',
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -18,6 +19,7 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS display_currency TEXT NOT NULL DEFAUL
 ALTER TABLE users ADD COLUMN IF NOT EXISTS usd_thb_rate NUMERIC(14, 6) NOT NULL DEFAULT 32.65;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS weekly_budget_amount NUMERIC(14, 2);
 ALTER TABLE users ADD COLUMN IF NOT EXISTS interface_language TEXT NOT NULL DEFAULT 'en';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS interface_theme TEXT NOT NULL DEFAULT 'dark';
 ALTER TABLE users ADD COLUMN IF NOT EXISTS budget_advice_enabled BOOLEAN NOT NULL DEFAULT true;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS onboarding_step TEXT NOT NULL DEFAULT 'completed';
 ALTER TABLE users ALTER COLUMN usd_thb_rate SET DEFAULT 32.65;

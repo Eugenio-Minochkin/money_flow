@@ -5,9 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Money Flow</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/styles.css?v=20260604-limit-labels" />
+    <link rel="stylesheet" href="/styles.css?v=20260604-dark-refactor" />
   </head>
-  <body>
+  <body data-theme="dark">
     <main class="shell">
       <header class="topbar">
         <div>
@@ -17,19 +17,17 @@
         <div class="status-pill" id="status">...</div>
       </header>
 
-      <nav class="tabs" aria-label="Sections" data-i18n-aria-label="navigation.sections">
-        <button class="tab-button active" type="button" data-tab="dashboard">Dashboard</button>
-        <button class="tab-button" type="button" data-tab="history">History</button>
-        <button class="tab-button" type="button" data-tab="plan">Plan</button>
-        <button class="tab-button" type="button" data-tab="settings">Settings</button>
-      </nav>
-
       <section id="dashboardTab">
         <section class="hero-metric">
           <span data-i18n="dashboard.safeToday">Можно еще сегодня</span>
           <strong id="safeToSpend">...</strong>
           <em id="safeToSpendDisplay"></em>
           <small data-i18n="dashboard.afterBudgetAndPlanned">после бюджета и обязательных трат</small>
+        </section>
+
+        <section class="quick-actions" aria-label="Quick actions">
+          <button type="button" id="reviewInboxButton" data-i18n="history.inboxShort">Review</button>
+          <button type="button" class="ghost-button" id="openPlanButton" data-i18n="screen.plan">Plan</button>
         </section>
 
         <section class="metrics-grid" aria-label="Основные показатели">
@@ -291,6 +289,13 @@
                 </select>
               </div>
             </label>
+            <label>
+              <span data-i18n="settings.interfaceTheme">Interface theme</span>
+              <select id="interfaceThemeInput" name="interfaceTheme">
+                <option value="dark" data-i18n="settings.themeDark">Dark</option>
+                <option value="light" data-i18n="settings.themeLight">Light</option>
+              </select>
+            </label>
             <input id="usdThbRateInput" name="usdThbRate" type="hidden" value="32.65" />
             <div class="button-row">
               <button type="submit" data-i18n="actions.save">Сохранить</button>
@@ -300,7 +305,14 @@
       </section>
     </main>
 
+    <nav class="bottom-tabs" aria-label="Sections" data-i18n-aria-label="navigation.sections">
+      <button class="tab-button active" type="button" data-tab="dashboard">Dashboard</button>
+      <button class="tab-button" type="button" data-tab="history">History</button>
+      <button class="tab-button" type="button" data-tab="plan">Plan</button>
+      <button class="tab-button" type="button" data-tab="settings">Settings</button>
+    </nav>
+
     <div class="toast hidden" id="toast" role="status" aria-live="polite"></div>
-    <script src="/app.js?v=20260604-limit-labels" type="module"></script>
+    <script src="/app.js?v=20260604-dark-refactor" type="module"></script>
   </body>
 </html>

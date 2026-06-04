@@ -39,3 +39,22 @@ test("remaining card caption can wrap independently from metric values", async (
   assert.match(css, /\.metric-value-note\s*{[^}]*white-space:\s*nowrap/s);
   assert.match(css, /\.metric-caption\s*{[^}]*white-space:\s*normal/s);
 });
+
+test("dashboard uses refactored action-first layout with bottom navigation", async () => {
+  const html = await readFile(join(miniAppRoot, "index.html"), "utf8");
+  const css = await readFile(join(miniAppRoot, "styles.css"), "utf8");
+
+  assert.match(html, /class="quick-actions"/);
+  assert.match(html, /id="reviewInboxButton"/);
+  assert.match(html, /class="bottom-tabs"/);
+  assert.match(css, /\.bottom-tabs\s*{/);
+  assert.match(css, /body\[data-theme="dark"\]/);
+  assert.match(css, /body\[data-theme="light"\]/);
+});
+
+test("settings expose interface theme without duplicating dashboard structure", async () => {
+  const html = await readFile(join(miniAppRoot, "index.html"), "utf8");
+
+  assert.match(html, /id="interfaceThemeInput"/);
+  assert.match(html, /data-i18n="settings.interfaceTheme"/);
+});

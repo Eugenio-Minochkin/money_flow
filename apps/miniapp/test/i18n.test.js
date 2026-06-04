@@ -30,6 +30,9 @@ test("Mini App translations cover dashboard, plan, history and settings labels",
     "settings.weeklyBudgetPlaceholder",
     "settings.budgetAdvice",
     "settings.budgetAdviceHint",
+    "settings.interfaceTheme",
+    "settings.themeDark",
+    "settings.themeLight",
     "budgetAdvice.title",
     "budgetAdvice.warnText",
     "budgetAdvice.dangerText"
@@ -40,6 +43,15 @@ test("Mini App translations cover dashboard, plan, history and settings labels",
       assert.notEqual(translations[language][key], undefined, `${language}.${key}`);
     }
   }
+});
+
+test("settings translations cover interface themes", () => {
+  assert.equal(createTranslator("ru")("settings.interfaceTheme"), "Тема интерфейса");
+  assert.equal(createTranslator("ru")("settings.themeDark"), "Темная");
+  assert.equal(createTranslator("ru")("settings.themeLight"), "Светлая");
+  assert.equal(createTranslator("en")("settings.interfaceTheme"), "Interface theme");
+  assert.equal(createTranslator("en")("settings.themeDark"), "Dark");
+  assert.equal(createTranslator("en")("settings.themeLight"), "Light");
 });
 
 test("dashboard labels distinguish today's limit from daily budget", () => {

@@ -143,6 +143,7 @@ export function createRepository(pool, options = {}) {
       const baseCurrency = normalizeCurrency(settings.baseCurrency, "THB");
       const displayCurrency = normalizeCurrency(settings.displayCurrency, "USD");
       const interfaceLanguage = normalizeLanguage(settings.interfaceLanguage);
+      const interfaceTheme = normalizeTheme(settings.interfaceTheme);
       const budgetAdviceEnabled = settings.budgetAdviceEnabled !== false;
       const result = await pool.query(
         `UPDATE users
@@ -152,10 +153,11 @@ export function createRepository(pool, options = {}) {
              usd_thb_rate = $4,
              weekly_budget_amount = $5,
              interface_language = $6,
-             budget_advice_enabled = $7
-         WHERE telegram_user_id = $8
+             budget_advice_enabled = $7,
+             interface_theme = $8
+         WHERE telegram_user_id = $9
          RETURNING *`,
-        [monthlyBudgetAmount, baseCurrency, displayCurrency, usdThbRate, weeklyBudgetAmount, interfaceLanguage, budgetAdviceEnabled, telegramUserId]
+        [monthlyBudgetAmount, baseCurrency, displayCurrency, usdThbRate, weeklyBudgetAmount, interfaceLanguage, budgetAdviceEnabled, interfaceTheme, telegramUserId]
       );
       return result.rows[0] ?? null;
     },
@@ -911,6 +913,10 @@ function normalizeWeekday(value) {
 
 function normalizeLanguage(value) {
   return ["en", "ru"].includes(value) ? value : "en";
+}
+
+function normalizeTheme(value) {
+  return ["dark", "light"].includes(value) ? value : "dark";
 }
 
 async function buildMoneyAmounts(exchangeRates, amount, currency, date, user = {}) {
