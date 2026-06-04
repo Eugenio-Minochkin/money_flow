@@ -276,13 +276,13 @@ function renderSnapshot(snapshot) {
   setText("#safeToSpend", moneyBase(dayRemaining));
   setText("#safeToSpendDisplay", moneyDisplay(snapshot.display?.dayRemaining ?? snapshot.display?.safeToSpendPerDay, snapshot.display?.currency));
   setText("#today", moneyBase(snapshot.today));
-  setText("#todayDisplay", `${t("dashboard.plan")} ${moneyBase(snapshot.dayPlanLimit ?? snapshot.dailyPlanLimit ?? 0)}`);
-  setText("#todayRemaining", `${t("dashboard.remainingPrefix")} ${moneyBase(dayRemaining)}`);
+  setText("#todayDisplay", `${t("dashboard.limitPrefix")} ${moneyBase(snapshot.dayPlanLimit ?? snapshot.dailyPlanLimit ?? 0)}`);
+  setText("#todayRemaining", `${t("dashboard.leftTodayPrefix")} ${moneyBase(dayRemaining)}`);
   setText("#todayProgressPercent", `${money.format(Number(snapshot.dayProgressPercent ?? 0))}%`);
   setProgress("#todayProgressBar", dayProgress);
 
   setText("#week", moneyBase(snapshot.week));
-  setText("#weekDisplay", `${t("dashboard.plan")} ${moneyBase(snapshot.weekPlanLimit ?? 0)}`);
+  setText("#weekDisplay", `${t("dashboard.limitPrefix")} ${moneyBase(snapshot.weekPlanLimit ?? 0)}`);
   setText("#weekRemaining", `${t("dashboard.remainingPrefix")} ${moneyBase(snapshot.weekRemaining)}`);
   setText("#weekProgressPercent", `${money.format(Number(snapshot.weekProgressPercent ?? 0))}%`);
   setProgress("#weekProgressBar", snapshot.progress?.week ?? { percent: snapshot.weekProgressPercent ?? 0, state: "good" });

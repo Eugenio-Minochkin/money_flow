@@ -17,6 +17,8 @@ test("Mini App translations cover dashboard, plan, history and settings labels",
     "dashboard.week",
     "dashboard.remaining",
     "dashboard.month",
+    "dashboard.limitPrefix",
+    "dashboard.leftTodayPrefix",
     "history.latestExpenses",
     "history.search",
     "plan.monthTitle",
@@ -38,6 +40,13 @@ test("Mini App translations cover dashboard, plan, history and settings labels",
       assert.notEqual(translations[language][key], undefined, `${language}.${key}`);
     }
   }
+});
+
+test("dashboard labels distinguish today's limit from daily budget", () => {
+  assert.equal(createTranslator("ru")("dashboard.limitPrefix"), "лимит");
+  assert.equal(createTranslator("ru")("dashboard.leftTodayPrefix"), "можно еще");
+  assert.equal(createTranslator("en")("dashboard.limitPrefix"), "limit");
+  assert.equal(createTranslator("en")("dashboard.leftTodayPrefix"), "left today");
 });
 
 test("translator falls back to English and formats count labels", () => {
