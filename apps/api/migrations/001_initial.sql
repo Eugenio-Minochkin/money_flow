@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS users (
   weekly_budget_amount NUMERIC(14, 2),
   interface_language TEXT NOT NULL DEFAULT 'en',
   budget_advice_enabled BOOLEAN NOT NULL DEFAULT true,
+  onboarding_step TEXT NOT NULL DEFAULT 'completed',
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -18,6 +19,7 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS usd_thb_rate NUMERIC(14, 6) NOT NULL 
 ALTER TABLE users ADD COLUMN IF NOT EXISTS weekly_budget_amount NUMERIC(14, 2);
 ALTER TABLE users ADD COLUMN IF NOT EXISTS interface_language TEXT NOT NULL DEFAULT 'en';
 ALTER TABLE users ADD COLUMN IF NOT EXISTS budget_advice_enabled BOOLEAN NOT NULL DEFAULT true;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS onboarding_step TEXT NOT NULL DEFAULT 'completed';
 ALTER TABLE users ALTER COLUMN usd_thb_rate SET DEFAULT 32.65;
 UPDATE users SET usd_thb_rate = 32.65 WHERE usd_thb_rate = 36;
 UPDATE users SET interface_language = 'ru' WHERE telegram_user_id = 428925787;
@@ -52,6 +54,17 @@ CREATE TABLE IF NOT EXISTS expenses (
 
 CREATE INDEX IF NOT EXISTS expenses_user_spent_at_idx ON expenses(user_id, spent_at DESC);
 CREATE INDEX IF NOT EXISTS drafts_user_status_idx ON drafts(user_id, status);
+
+CREATE TABLE IF NOT EXISTS month_baselines (
+  id BIGSERIAL PRIMARY KEY,
+  user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  month_key TEXT NOT NULL,
+  amount_base NUMERIC(14, 2) NOT NULL DEFAULT 0,
+  source_text TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(user_id, month_key)
+);
 
 UPDATE expenses
 SET amount_base = NULLIF(converted_amounts->>base_currency, '')::numeric
@@ -90,6 +103,18 @@ FROM users
 WHERE users.id = planned_expenses.user_id
   AND users.base_currency = planned_expenses.currency
   AND users.base_currency <> 'THB';
+
+CREATE TABLE IF NOT EXISTS planned_drafts (
+  id BIGSERIAL PRIMARY KEY,
+  user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  status TEXT NOT NULL CHECK (status IN ('pending', 'confirmed', 'cancelled')),
+  source_text TEXT NOT NULL,
+  item JSONB NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  confirmed_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS planned_drafts_user_status_idx ON planned_drafts(user_id, status);
 
 CREATE TABLE IF NOT EXISTS planned_expense_payments (
   id BIGSERIAL PRIMARY KEY,

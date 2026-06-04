@@ -113,6 +113,35 @@ export function formatWeeklyReport(dashboard, options = {}) {
   ].join("\n");
 }
 
+export function formatPlannedDraft(item, options = {}) {
+  const language = normalizeLanguage(options.language);
+  const labels = {
+    ru: {
+      title: "Плановая трата",
+      repeat: "Повтор",
+      category: "Категория",
+      question: "Добавить в план?"
+    },
+    en: {
+      title: "Planned expense",
+      repeat: "Repeat",
+      category: "Category",
+      question: "Add it to the plan?"
+    }
+  };
+  const text = labels[language];
+  return [
+    `🧾 <b>${text.title}</b>`,
+    "",
+    `<b>${escapeHtml(item.description)}</b>`,
+    `${formatMoney(item.amount, item.currency, language)}`,
+    `${text.repeat}: ${escapeHtml(formatRecurrence(item, language))}`,
+    `${text.category}: ${escapeHtml(categoryName(item.category_slug))}`,
+    "",
+    text.question
+  ].join("\n");
+}
+
 export function normalizeLanguage(value) {
   return value === "en" ? "en" : "ru";
 }
@@ -202,6 +231,22 @@ const messages = {
 
 function t(language, key) {
   return messages[language][key];
+}
+
+function formatRecurrence(item, language) {
+  if (item.recurrence === "weekly") {
+    const names = {
+      ru: ["", "понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"],
+      en: ["", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+    };
+    return language === "ru" ? `каждый ${names.ru[item.weekday] ?? names.ru[1]}` : `every ${names.en[item.weekday] ?? names.en[1]}`;
+  }
+  if (item.recurrence === "twice_monthly") {
+    const days = Array.isArray(item.due_days) ? item.due_days.join(", ") : item.due_day;
+    return language === "ru" ? `2 раза в месяц: ${days}` : `twice a month: ${days}`;
+  }
+  const day = item.due_day ?? item.due_days?.[0] ?? 1;
+  return language === "ru" ? `каждый месяц, ${day} числа` : `monthly, day ${day}`;
 }
 
 function formatMoney(value, currency, language) {

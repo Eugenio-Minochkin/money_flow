@@ -15,11 +15,11 @@ export function createRepository(pool, options = {}) {
 
     async upsertTelegramUser(profile) {
       const result = await pool.query(
-        `INSERT INTO users (telegram_user_id, first_name, username, monthly_budget_amount)
-         VALUES ($1, $2, $3, $4)
+        `INSERT INTO users (telegram_user_id, first_name, username, monthly_budget_amount, onboarding_step)
+         VALUES ($1, $2, $3, $4, 'base_currency')
          ON CONFLICT (telegram_user_id)
          DO UPDATE SET first_name = EXCLUDED.first_name, username = EXCLUDED.username
-         RETURNING *`,
+         RETURNING *, (xmax = 0) AS is_new`,
         [profile.id, profile.firstName ?? null, profile.username ?? null, defaultMonthlyBudget]
       );
       return result.rows[0];
@@ -27,6 +27,62 @@ export function createRepository(pool, options = {}) {
 
     async getUserByTelegramId(telegramUserId) {
       const result = await pool.query("SELECT * FROM users WHERE telegram_user_id = $1", [telegramUserId]);
+      return result.rows[0] ?? null;
+    },
+
+    async setOnboardingStep(telegramUserId, step) {
+      const safeStep = ["base_currency", "monthly_budget", "month_opening_spend", "completed"].includes(step) ? step : "completed";
+      const result = await pool.query(
+        "UPDATE users SET onboarding_step = $1 WHERE telegram_user_id = $2 RETURNING *",
+        [safeStep, telegramUserId]
+      );
+      return result.rows[0] ?? null;
+    },
+
+    async updateOnboardingBaseCurrency(telegramUserId, currency) {
+      const baseCurrency = normalizeCurrency(currency, "THB");
+      const result = await pool.query(
+        `UPDATE users
+         SET base_currency = $1,
+             onboarding_step = 'monthly_budget'
+         WHERE telegram_user_id = $2
+         RETURNING *`,
+        [baseCurrency, telegramUserId]
+      );
+      return result.rows[0] ?? null;
+    },
+
+    async updateOnboardingMonthlyBudget(telegramUserId, amount, nextStep = "month_opening_spend") {
+      const monthlyBudgetAmount = Number(amount);
+      if (!Number.isFinite(monthlyBudgetAmount) || monthlyBudgetAmount <= 0) {
+        throw new Error("Monthly budget must be positive");
+      }
+      const result = await pool.query(
+        `UPDATE users
+         SET monthly_budget_amount = $1,
+             onboarding_step = $2
+         WHERE telegram_user_id = $3
+         RETURNING *`,
+        [monthlyBudgetAmount, nextStep, telegramUserId]
+      );
+      return result.rows[0] ?? null;
+    },
+
+    async setMonthBaseline(telegramUserId, input, now = new Date()) {
+      const user = await this.getUserByTelegramId(telegramUserId);
+      if (!user) return null;
+      const moneyAmounts = await buildMoneyAmounts(exchangeRates, input.amount, input.currency ?? user.base_currency, now, user);
+      const result = await pool.query(
+        `INSERT INTO month_baselines (user_id, month_key, amount_base, source_text, updated_at)
+         VALUES ($1, $2, $3, $4, now())
+         ON CONFLICT (user_id, month_key)
+         DO UPDATE SET amount_base = EXCLUDED.amount_base,
+                       source_text = EXCLUDED.source_text,
+                       updated_at = now()
+         RETURNING *`,
+        [user.id, monthKey(now), moneyAmounts.amountBase, input.sourceText ?? null]
+      );
+      await this.setOnboardingStep(telegramUserId, "completed");
       return result.rows[0] ?? null;
     },
 
@@ -113,6 +169,80 @@ export function createRepository(pool, options = {}) {
         [userId, status, sourceText, JSON.stringify(items)]
       );
       return result.rows[0];
+    },
+
+    async createPlannedDraft(userId, sourceText, item) {
+      const planned = normalizePlannedExpense(item);
+      const result = await pool.query(
+        `INSERT INTO planned_drafts (user_id, status, source_text, item)
+         VALUES ($1, 'pending', $2, $3)
+         RETURNING *`,
+        [userId, sourceText, JSON.stringify(planned)]
+      );
+      return normalizePlannedDraft(result.rows[0]);
+    },
+
+    async confirmPlannedDraft(plannedDraftId, telegramUserId) {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        const draftResult = await client.query(
+          `SELECT planned_drafts.*, users.base_currency, users.usd_thb_rate
+           FROM planned_drafts
+           JOIN users ON users.id = planned_drafts.user_id
+           WHERE planned_drafts.id = $1
+             AND users.telegram_user_id = $2
+           FOR UPDATE`,
+          [plannedDraftId, telegramUserId]
+        );
+        const draft = normalizePlannedDraft(draftResult.rows[0] ?? null);
+        if (!draft) throw new Error("Planned draft not found");
+        if (draft.status !== "pending") throw new Error("Planned draft is already closed");
+        const planned = normalizePlannedExpense(draft.item);
+        const moneyAmounts = await buildMoneyAmounts(exchangeRates, planned.amount, planned.currency, new Date(), draft);
+        const result = await client.query(
+          `INSERT INTO planned_expenses (
+             user_id, amount, currency, amount_base, description, category_slug, tags,
+             recurrence, due_day, due_days, weekday, due_date, active
+           )
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, true)
+           RETURNING *`,
+          [
+            draft.user_id,
+            planned.amount,
+            planned.currency,
+            moneyAmounts.amountBase,
+            planned.description,
+            planned.category_slug,
+            planned.tags,
+            planned.recurrence,
+            planned.due_day,
+            planned.due_days,
+            planned.weekday,
+            planned.due_date
+          ]
+        );
+        await client.query(
+          "UPDATE planned_drafts SET status = 'confirmed', confirmed_at = now() WHERE id = $1",
+          [draft.id]
+        );
+        await client.query("COMMIT");
+        return result.rows[0] ?? null;
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
+    },
+
+    async cancelPlannedDraft(plannedDraftId, telegramUserId) {
+      await pool.query(
+        `UPDATE planned_drafts
+         SET status = 'cancelled'
+         WHERE id = $1 AND user_id = (SELECT id FROM users WHERE telegram_user_id = $2)`,
+        [plannedDraftId, telegramUserId]
+      );
     },
 
     async getDraftForTelegramUser(draftId, telegramUserId) {
@@ -511,6 +641,9 @@ export function createRepository(pool, options = {}) {
       const user = await this.getUserByTelegramId(telegramUserId);
       if (!user) return null;
       const totals = await this.totals(user.id, now);
+      const monthBaseline = await monthBaselineTotal(pool, user.id, now);
+      totals.month += monthBaseline;
+      totals.monthDisplay += displayFromBase(monthBaseline, user);
       const plannedExpenses = await listPlannedExpensesForTelegramUserAt(pool, telegramUserId, now);
       const plannedRemainingTotal = calculatePlannedRemaining(plannedExpenses, now);
       const plannedThisWeekTotal = calculatePlannedThisWeek(plannedExpenses, now);
@@ -674,6 +807,24 @@ function normalizeDraft(draft) {
     ...draft,
     items: Array.isArray(draft.items) ? draft.items : JSON.parse(draft.items)
   };
+}
+
+function normalizePlannedDraft(draft) {
+  if (!draft) return null;
+  return {
+    ...draft,
+    item: typeof draft.item === "string" ? JSON.parse(draft.item) : draft.item
+  };
+}
+
+async function monthBaselineTotal(pool, userId, now) {
+  const result = await pool.query(
+    `SELECT COALESCE(amount_base, 0)::float AS total
+     FROM month_baselines
+     WHERE user_id = $1 AND month_key = $2`,
+    [userId, monthKey(now)]
+  );
+  return Number(result.rows[0]?.total ?? 0);
 }
 
 async function listPlannedExpensesForTelegramUserAt(pool, telegramUserId, now) {

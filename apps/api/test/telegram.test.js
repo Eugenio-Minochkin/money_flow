@@ -142,6 +142,101 @@ test("text parsing uses user's base currency as default", async () => {
   assert.equal(seenOptions[0].defaultCurrency, "IDR");
 });
 
+test("new user onboarding asks currency, budget, and opening spend in order", async () => {
+  const calls = [];
+  const repo = fakeRepository();
+  repo.user = { id: 1, interface_language: "en", base_currency: "THB", onboarding_step: "base_currency" };
+  const originalLog = console.log;
+  console.log = (...args) => calls.push(args);
+  try {
+    const bot = createTelegramBot({
+      token: "",
+      miniAppUrl: "http://localhost:3000",
+      repository: repo
+    });
+
+    await bot.handleUpdate({
+      message: {
+        chat: { id: 10 },
+        from: { id: 100, first_name: "M" },
+        text: "/start"
+      }
+    });
+    await bot.handleUpdate({
+      message: {
+        chat: { id: 10 },
+        from: { id: 100, first_name: "M" },
+        text: "IDR"
+      }
+    });
+    await bot.handleUpdate({
+      message: {
+        chat: { id: 10 },
+        from: { id: 100, first_name: "M" },
+        text: "20k"
+      }
+    });
+    await bot.handleUpdate({
+      message: {
+        chat: { id: 10 },
+        from: { id: 100, first_name: "M" },
+        text: "1500"
+      }
+    });
+  } finally {
+    console.log = originalLog;
+  }
+
+  assert.match(calls[0][1].text, /base currency/i);
+  assert.match(calls[1][1].text, /monthly budget/i);
+  assert.match(calls[2][1].text, /spent from the 1st/i);
+  assert.match(calls[3][1].text, /setup is complete/i);
+  assert.equal(repo.settings.baseCurrency, "IDR");
+  assert.equal(repo.settings.monthlyBudgetAmount, 20000);
+  assert.equal(repo.monthBaseline.amount, 1500);
+});
+
+test("recurring planned text creates a planned draft before saving", async () => {
+  const calls = [];
+  const repo = fakeRepository();
+  repo.user = { id: 1, interface_language: "en", base_currency: "THB", onboarding_step: "completed" };
+  const originalLog = console.log;
+  console.log = (...args) => calls.push(args);
+  try {
+    const bot = createTelegramBot({
+      token: "",
+      miniAppUrl: "http://localhost:3000",
+      repository: repo
+    });
+
+    await bot.handleUpdate({
+      message: {
+        chat: { id: 10 },
+        from: { id: 100, first_name: "M" },
+        text: "every Tuesday psychologist 5000 rub"
+      }
+    });
+
+    await bot.handleUpdate({
+      callback_query: {
+        id: "callback-plan",
+        data: "plan_confirm:77",
+        from: { id: 100 },
+        message: { chat: { id: 10 } }
+      }
+    });
+  } finally {
+    console.log = originalLog;
+  }
+
+  assert.equal(repo.plannedDraft.item.recurrence, "weekly");
+  assert.equal(repo.plannedDraft.item.weekday, 2);
+  assert.equal(repo.plannedDraft.item.currency, "RUB");
+  assert.match(calls[0][1].text, /Planned expense/i);
+  assert.equal(calls[0][1].replyMarkup.inline_keyboard[0][0].callback_data, "plan_confirm:77");
+  assert.equal(repo.confirmedPlannedDraftId, "77");
+});
+
 test("category callback updates the first draft item", async () => {
   const repo = fakeRepository();
   const originalLog = console.log;
@@ -258,14 +353,50 @@ test("unclear draft includes category quick actions", async () => {
 
 function fakeRepository() {
   return {
+    user: { id: 1, interface_language: "ru", onboarding_step: "completed" },
     confirmedDraftId: null,
+    confirmedPlannedDraftId: null,
     updatedItems: null,
     markedReportKey: null,
+    settings: {},
+    monthBaseline: null,
+    plannedDraft: null,
     async upsertTelegramUser() {
-      return { id: 1, interface_language: "ru" };
+      return this.user;
     },
     async getUserByTelegramId() {
-      return { id: 1, interface_language: "ru" };
+      return this.user;
+    },
+    async updateUserSettings(_telegramUserId, settings) {
+      this.settings = { ...this.settings, ...settings };
+      this.user = {
+        ...this.user,
+        base_currency: settings.baseCurrency ?? this.user.base_currency,
+        monthly_budget_amount: settings.monthlyBudgetAmount ?? this.user.monthly_budget_amount,
+        display_currency: settings.displayCurrency ?? this.user.display_currency,
+        interface_language: settings.interfaceLanguage ?? this.user.interface_language,
+        onboarding_step: settings.onboardingStep ?? this.user.onboarding_step
+      };
+      return this.user;
+    },
+    async setOnboardingStep(_telegramUserId, step) {
+      this.user = { ...this.user, onboarding_step: step };
+      return this.user;
+    },
+    async setMonthBaseline(_telegramUserId, baseline) {
+      this.monthBaseline = baseline;
+      return baseline;
+    },
+    async createPlannedDraft(_userId, _sourceText, item) {
+      this.plannedDraft = { id: 77, item };
+      return this.plannedDraft;
+    },
+    async confirmPlannedDraft(draftId) {
+      this.confirmedPlannedDraftId = draftId;
+      return { id: 88, ...this.plannedDraft.item };
+    },
+    async cancelPlannedDraft() {
+      return null;
     },
     async createDraft() {
       return { id: 42 };
