@@ -9,7 +9,8 @@ import {
   formatDateOnly,
   moneyBase,
   moneyDisplay,
-  moneyDisplaySigned
+  moneyDisplaySigned,
+  setBaseCurrency
 } from "./formatters.js";
 import { groupByDay } from "./history.js";
 import { createTranslator } from "./i18n.js";
@@ -75,6 +76,7 @@ async function load() {
 async function loadDashboard() {
   const data = await api(`/api/dashboard?telegramUserId=${encodeURIComponent(telegramUserId)}`);
   dashboardState = data;
+  setBaseCurrency(data.user?.base_currency ?? data.snapshot?.baseCurrency ?? "THB");
   renderSettings(data.user);
   renderPlannedForm();
   renderSnapshot(data.snapshot);
@@ -259,6 +261,7 @@ function switchTab(tab) {
 }
 
 function renderSnapshot(snapshot) {
+  setBaseCurrency(snapshot.baseCurrency ?? dashboardState?.user?.base_currency ?? "THB");
   const dayRemaining = snapshot.dayRemaining ?? snapshot.safeToSpendPerDay;
   const dayProgress = snapshot.progress?.day ?? { percent: snapshot.dayProgressPercent ?? 0, state: "good" };
   const hero = document.querySelector(".hero-metric");
@@ -297,6 +300,7 @@ function renderSnapshot(snapshot) {
 
 function renderSettings(user) {
   currentLanguage = user.interface_language ?? "en";
+  setBaseCurrency(user.base_currency ?? "THB");
   applyLanguage(currentLanguage);
   document.querySelector("#budgetInput").value = Math.round(Number(user.monthly_budget_amount ?? 45000));
   document.querySelector("#weeklyBudgetInput").value = user.weekly_budget_amount == null ? "" : Math.round(Number(user.weekly_budget_amount));

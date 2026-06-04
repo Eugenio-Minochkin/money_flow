@@ -15,6 +15,7 @@ test("calculates month remaining and safe-to-spend", () => {
     today: 820,
     week: 0,
     month: 28500,
+    baseCurrency: "THB",
     monthlyBudget: 45000,
     remaining: 16500,
     plannedRemaining: 0,
@@ -93,6 +94,18 @@ test("calculates monthly budget progress percent", () => {
   });
 
   assert.equal(snapshot.budgetProgressPercent, 1.63);
+});
+
+test("returns configured base currency", () => {
+  const snapshot = calculateBudgetSnapshot({
+    todayTotal: 14000,
+    monthTotal: 14000,
+    monthlyBudget: 5000000,
+    baseCurrency: "IDR",
+    now: new Date("2026-06-07T10:00:00+07:00")
+  });
+
+  assert.equal(snapshot.baseCurrency, "IDR");
 });
 
 test("calculates display currency safe-to-spend", () => {

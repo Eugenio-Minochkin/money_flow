@@ -14,16 +14,17 @@ export function createExpenseParser(options = {}) {
   const now = options.now ?? (() => new Date());
 
   return {
-    async parse(text) {
+    async parse(text, parseOptions = {}) {
+      const defaultCurrency = normalizeCurrency(parseOptions.defaultCurrency, "THB");
       if (!apiKey || !fetchImpl) {
-        return parseExpenseText(text, { now: now() });
+        return parseExpenseText(text, { now: now(), defaultCurrency });
       }
 
       try {
-        return await parseWithOpenAI({ text, apiKey, model, fetchImpl, now: now() });
+        return await parseWithOpenAI({ text, apiKey, model, fetchImpl, now: now(), defaultCurrency });
       } catch (error) {
         console.error("[expense-parser] OpenAI parser failed, using local parser", error.message);
-        const fallback = parseExpenseText(text, { now: now() });
+        const fallback = parseExpenseText(text, { now: now(), defaultCurrency });
         return {
           ...fallback,
           notes: [...fallback.notes, "AI parser unavailable, used local parser."]
@@ -33,7 +34,7 @@ export function createExpenseParser(options = {}) {
   };
 }
 
-async function parseWithOpenAI({ text, apiKey, model, fetchImpl, now }) {
+async function parseWithOpenAI({ text, apiKey, model, fetchImpl, now, defaultCurrency }) {
   const response = await fetchImpl(OPENAI_RESPONSES_URL, {
     method: "POST",
     headers: {
@@ -45,7 +46,7 @@ async function parseWithOpenAI({ text, apiKey, model, fetchImpl, now }) {
       input: [
         {
           role: "system",
-          content: buildSystemPrompt(now)
+          content: buildSystemPrompt(now, defaultCurrency)
         },
         {
           role: "user",
@@ -70,15 +71,16 @@ async function parseWithOpenAI({ text, apiKey, model, fetchImpl, now }) {
   const body = await response.json();
   const outputText = extractOutputText(body);
   if (!outputText) throw new Error("OpenAI response did not include output text");
-  return normalizeParseResult(JSON.parse(outputText), now);
+  return normalizeParseResult(JSON.parse(outputText), now, defaultCurrency);
 }
 
-function buildSystemPrompt(now) {
+function buildSystemPrompt(now, defaultCurrency = "THB") {
   return [
     "You are an expense parser for a personal finance Telegram bot.",
     "Return only JSON that matches the schema.",
     "Extract one expense per purchase. Multiple expenses may appear in one message.",
-    "Default currency is THB when the user does not specify a currency.",
+    `Default currency is ${defaultCurrency} when the user does not specify a currency.`,
+    "Understand compact thousands notation: 14k, 14к, 14 000 and 14000 all mean 14000.",
     `Supported currencies: ${SUPPORTED_CURRENCY_CODES.join(", ")}.`,
     `Use these category slugs only: ${[...ALLOWED_CATEGORIES].join(", ")}.`,
     "Category is the type of expense. Tags are context.",
@@ -149,19 +151,19 @@ function extractOutputText(body) {
   return textParts.join("");
 }
 
-function normalizeParseResult(result, now) {
+function normalizeParseResult(result, now, defaultCurrency = "THB") {
   const expenses = Array.isArray(result.expenses) ? result.expenses : [];
   return {
-    expenses: expenses.map((expense) => normalizeExpense(expense, now)).filter(Boolean),
+    expenses: expenses.map((expense) => normalizeExpense(expense, now, defaultCurrency)).filter(Boolean),
     notes: Array.isArray(result.notes) ? result.notes.map(String) : []
   };
 }
 
-function normalizeExpense(expense, now) {
+function normalizeExpense(expense, now, defaultCurrency = "THB") {
   const amount = Number(expense.amount);
   if (!Number.isFinite(amount) || amount <= 0) return null;
 
-  const currency = ALLOWED_CURRENCIES.has(expense.currency) ? expense.currency : normalizeCurrency(expense.currency, "THB");
+  const currency = ALLOWED_CURRENCIES.has(expense.currency) ? expense.currency : normalizeCurrency(expense.currency, defaultCurrency);
   const category = ALLOWED_CATEGORIES.has(expense.category_slug) ? expense.category_slug : "other";
   const confidence = clamp(Number(expense.confidence), 0, 1);
 

@@ -13,6 +13,7 @@ import {
 
 test("formats base and display money", () => {
   assert.equal(normalizeSpaces(moneyBase(15269.99)), "15 269,99 THB");
+  assert.equal(normalizeSpaces(moneyBase(14000, "IDR")), "14 000 IDR");
   assert.equal(moneyDisplay(69.44, "USD"), "~$69,44");
   assert.equal(normalizeSpaces(moneyDisplay(5000, "RUB")), "5 000 RUB");
   assert.equal(moneyDisplay(null, "USD"), "");

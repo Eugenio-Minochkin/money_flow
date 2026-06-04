@@ -48,13 +48,13 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
     return sendMessage(token, message.chat.id, botText(language, "openMiniApp"), appKeyboard(miniAppUrl, from.id));
   }
 
-  const parsed = await expenseParser.parse(text);
+  const parsed = await expenseParser.parse(text, { defaultCurrency: user.base_currency ?? "THB" });
   if (parsed.expenses.length === 0) {
     return sendMessage(token, message.chat.id, botText(language, "amountNotFound"));
   }
 
   const draft = await repository.createDraft(user.id, text, parsed.expenses);
-  return sendMessage(token, message.chat.id, formatDraft(parsed.expenses, { language }), draftKeyboard(draft.id, parsed.expenses, miniAppUrl, from.id));
+  return sendMessage(token, message.chat.id, formatDraft(parsed.expenses, { language, baseCurrency: user.base_currency ?? "THB" }), draftKeyboard(draft.id, parsed.expenses, miniAppUrl, from.id));
 }
 
 async function messageText({ message, voiceTranscriber }) {
@@ -82,7 +82,7 @@ async function handleCallback({ update, repository, token, miniAppUrl }) {
     const items = updateDraftItem(draft, Number(itemIndex), { category_slug: value, needs_review: false, confidence: 0.9 });
     const updated = await repository.updateDraftItems(draftId, telegramUserId, items);
     await answerCallback(token, callback.id, botText(language, "categoryUpdatedCallback"));
-    return sendMessage(token, callback.message.chat.id, formatDraft(updated.items, { language }), draftKeyboard(updated.id, updated.items, miniAppUrl, telegramUserId));
+    return sendMessage(token, callback.message.chat.id, formatDraft(updated.items, { language, baseCurrency: user?.base_currency ?? "THB" }), draftKeyboard(updated.id, updated.items, miniAppUrl, telegramUserId));
   }
 
   if (action === "amount") {
@@ -92,7 +92,7 @@ async function handleCallback({ update, repository, token, miniAppUrl }) {
     const items = updateDraftItem(draft, Number(itemIndex), { amount });
     const updated = await repository.updateDraftItems(draftId, telegramUserId, items);
     await answerCallback(token, callback.id, botText(language, "amountUpdatedCallback"));
-    return sendMessage(token, callback.message.chat.id, formatDraft(updated.items, { language }), draftKeyboard(updated.id, updated.items, miniAppUrl, telegramUserId));
+    return sendMessage(token, callback.message.chat.id, formatDraft(updated.items, { language, baseCurrency: user?.base_currency ?? "THB" }), draftKeyboard(updated.id, updated.items, miniAppUrl, telegramUserId));
   }
 
   if (action === "confirm") {

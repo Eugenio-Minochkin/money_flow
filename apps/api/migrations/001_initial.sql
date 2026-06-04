@@ -53,6 +53,12 @@ CREATE TABLE IF NOT EXISTS expenses (
 CREATE INDEX IF NOT EXISTS expenses_user_spent_at_idx ON expenses(user_id, spent_at DESC);
 CREATE INDEX IF NOT EXISTS drafts_user_status_idx ON drafts(user_id, status);
 
+UPDATE expenses
+SET amount_base = NULLIF(converted_amounts->>base_currency, '')::numeric
+WHERE base_currency <> 'THB'
+  AND converted_amounts ? base_currency
+  AND NULLIF(converted_amounts->>base_currency, '') IS NOT NULL;
+
 CREATE TABLE IF NOT EXISTS planned_expenses (
   id BIGSERIAL PRIMARY KEY,
   user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -77,6 +83,13 @@ ALTER TABLE planned_expenses ADD COLUMN IF NOT EXISTS weekday INTEGER;
 UPDATE planned_expenses SET due_days = ARRAY[due_day] WHERE due_day IS NOT NULL AND cardinality(due_days) = 0;
 UPDATE planned_expenses SET category_slug = 'home' WHERE lower(description) LIKE '%квартир%' AND category_slug = 'food_cafe';
 UPDATE planned_expenses SET category_slug = 'education' WHERE lower(description) IN ('english', 'английский') AND category_slug = 'other';
+
+UPDATE planned_expenses
+SET amount_base = planned_expenses.amount
+FROM users
+WHERE users.id = planned_expenses.user_id
+  AND users.base_currency = planned_expenses.currency
+  AND users.base_currency <> 'THB';
 
 CREATE TABLE IF NOT EXISTS planned_expense_payments (
   id BIGSERIAL PRIMARY KEY,

@@ -1,7 +1,12 @@
 const money = new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 });
+let baseCurrency = "THB";
 
-export function moneyBase(value) {
-  return `${money.format(Number(value ?? 0))} THB`;
+export function setBaseCurrency(currency = "THB") {
+  baseCurrency = currency || "THB";
+}
+
+export function moneyBase(value, currency = baseCurrency) {
+  return `${money.format(Number(value ?? 0))} ${currency}`;
 }
 
 export function moneyDisplay(value, currency = "USD") {

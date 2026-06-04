@@ -14,6 +14,7 @@ export function calculateBudgetSnapshot({
   monthDisplayTotal = 0,
   plannedRemainingDisplayTotal = 0,
   plannedThisWeekDisplayTotal = 0,
+  baseCurrency = "THB",
   displayCurrency = "USD",
   budgetAdviceEnabled = true,
   now
@@ -79,6 +80,7 @@ export function calculateBudgetSnapshot({
     today: roundMoney(todayTotal),
     week: roundMoney(weekTotal),
     month: roundMoney(monthTotal),
+    baseCurrency,
     monthlyBudget: roundMoney(monthlyBudget),
     remaining: roundMoney(remaining),
     plannedRemaining: roundMoney(plannedRemainingTotal),

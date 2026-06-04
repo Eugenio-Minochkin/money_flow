@@ -297,6 +297,47 @@ test("planned RUB expenses are converted through dated THB rates", async () => {
   assert.equal(queries.find((query) => String(query.sql).startsWith("INSERT INTO planned_expenses")).params[3], 1800);
 });
 
+test("IDR base users store amount_base in IDR", async () => {
+  const repo = createRepository(fakePool((sql, params) => {
+    const query = String(sql);
+    if (query.startsWith("SELECT * FROM users")) {
+      return {
+        rows: [{
+          id: "1",
+          telegram_user_id: "100",
+          base_currency: "IDR",
+          display_currency: "USD",
+          usd_thb_rate: "32.6"
+        }]
+      };
+    }
+    if (query.startsWith("INSERT INTO planned_expenses")) {
+      return {
+        rows: [{
+          id: "9",
+          amount: params[1],
+          currency: params[2],
+          amount_base: params[3]
+        }]
+      };
+    }
+    return { rows: [] };
+  }), {
+    exchangeRates: fixedRates()
+  });
+
+  const planned = await repo.createPlannedExpense(100, {
+    amount: 1,
+    currency: "USD",
+    description: "test",
+    category_slug: "other",
+    recurrence: "one_off",
+    due_date: "2026-06-10"
+  });
+
+  assert.equal(Number(planned.amount_base), 16200);
+});
+
 test("paying weekly planned expenses uses an occurrence key, not one payment per month", async () => {
   const queries = [];
   const client = {
@@ -578,7 +619,8 @@ function fixedRates() {
         source: "test-rates",
         THB: { THB: 1 },
         USD: { THB: 32.6 },
-        RUB: { THB: 0.36 }
+        RUB: { THB: 0.36 },
+        IDR: { THB: 32.6 / 16200 }
       };
     }
   };

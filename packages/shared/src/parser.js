@@ -27,25 +27,26 @@ const CURRENCY_ALIASES = new Map([
 
 export function parseExpenseText(text, options = {}) {
   const now = options.now ?? new Date();
+  const defaultCurrency = normalizeCurrency(options.defaultCurrency, "THB");
   const parts = text
     .split(/[,;\n]+|\s+и\s+/iu)
     .map((part) => part.trim())
     .filter(Boolean);
 
-  const expenses = parts.flatMap((part) => parsePart(part, now));
+  const expenses = parts.flatMap((part) => parsePart(part, now, defaultCurrency));
   return {
     expenses,
     notes: expenses.length === 0 ? ["Не удалось найти сумму расхода."] : []
   };
 }
 
-function parsePart(part, now) {
-  const match = part.match(/(?<amount>\d+(?:[.,]\d{1,2})?)\s*(?<currency>[A-Za-zА-Яа-я]+)?/u);
+function parsePart(part, now, defaultCurrency) {
+  const match = part.match(/(?<amount>\d+(?:[\s\u00a0]\d{3})*(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?)\s*(?<multiplier>[kк])?\s*(?<currency>[A-Za-zА-Яа-я]+)?/u);
   if (!match?.groups) return [];
 
-  const amount = Number(match.groups.amount.replace(",", "."));
+  const amount = normalizeAmount(match.groups.amount, match.groups.multiplier);
   const rawCurrency = match.groups.currency?.toLowerCase();
-  const currency = rawCurrency ? normalizeCurrency(CURRENCY_ALIASES.get(rawCurrency), "THB") : "THB";
+  const currency = rawCurrency ? normalizeCurrency(CURRENCY_ALIASES.get(rawCurrency), defaultCurrency) : defaultCurrency;
   const spentAt = resolveRelativeDate(part, now);
   const description = part
     .slice(0, match.index)
@@ -65,6 +66,11 @@ function parsePart(part, now) {
     confidence: needsReview ? 0.62 : 0.86,
     needs_review: needsReview
   }];
+}
+
+function normalizeAmount(value, multiplier) {
+  const numeric = Number(String(value).replace(/[\s\u00a0]/g, "").replace(",", "."));
+  return multiplier ? numeric * 1000 : numeric;
 }
 
 function resolveRelativeDate(part, now) {

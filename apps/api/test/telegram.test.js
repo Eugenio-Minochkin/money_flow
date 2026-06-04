@@ -94,6 +94,54 @@ test("voice message is transcribed and creates a draft response", async () => {
   }
 });
 
+test("text parsing uses user's base currency as default", async () => {
+  const seenOptions = [];
+  const repository = {
+    ...fakeRepository(),
+    async upsertTelegramUser() {
+      return { id: 1, interface_language: "en", base_currency: "IDR" };
+    }
+  };
+  const originalLog = console.log;
+  console.log = () => {};
+  try {
+    const bot = createTelegramBot({
+      token: "",
+      miniAppUrl: "http://localhost:3000",
+      repository,
+      expenseParser: {
+        async parse(_text, options) {
+          seenOptions.push(options);
+          return {
+            expenses: [{
+              amount: 14000,
+              currency: options.defaultCurrency,
+              description: "coffee",
+              category_slug: "food_cafe",
+              tags: [],
+              spent_at: "2026-06-02T10:00:00+07:00",
+              confidence: 0.9,
+              needs_review: false
+            }]
+          };
+        }
+      }
+    });
+
+    await bot.handleUpdate({
+      message: {
+        chat: { id: 10 },
+        from: { id: 100, first_name: "M" },
+        text: "coffee 14k"
+      }
+    });
+  } finally {
+    console.log = originalLog;
+  }
+
+  assert.equal(seenOptions[0].defaultCurrency, "IDR");
+});
+
 test("category callback updates the first draft item", async () => {
   const repo = fakeRepository();
   const originalLog = console.log;

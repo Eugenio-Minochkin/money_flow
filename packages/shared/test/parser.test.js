@@ -31,6 +31,26 @@ test("uses THB when currency is omitted", () => {
   assert.equal(result.expenses[0].amount, 180);
 });
 
+test("uses provided default currency when currency is omitted", () => {
+  const result = parseExpenseText("coffee 14000", {
+    defaultCurrency: "IDR",
+    now: new Date("2026-06-01T12:30:00+07:00")
+  });
+
+  assert.equal(result.expenses[0].currency, "IDR");
+  assert.equal(result.expenses[0].amount, 14000);
+});
+
+test("parses compact thousands notation", () => {
+  const compact = parseExpenseText("coffee 14k", { defaultCurrency: "IDR" });
+  const compactCyrillic = parseExpenseText("coffee 14к", { defaultCurrency: "IDR" });
+  const spaced = parseExpenseText("coffee 14 000", { defaultCurrency: "IDR" });
+
+  assert.equal(compact.expenses[0].amount, 14000);
+  assert.equal(compactCyrillic.expenses[0].amount, 14000);
+  assert.equal(spaced.expenses[0].amount, 14000);
+});
+
 test("parses added currency aliases and education category", () => {
   const result = parseExpenseText("English 1000 евро");
 

@@ -540,6 +540,7 @@ export function createRepository(pool, options = {}) {
         plannedThisWeekTotal,
         plannedThisWeekDisplayTotal: displayFromBase(plannedThisWeekTotal, user),
         paidPlannedMonthTotal,
+        baseCurrency: user.base_currency ?? "THB",
         now
       });
       const topCategories = await this.topCategories(user.id, now);
@@ -752,10 +753,11 @@ function normalizeLanguage(value) {
 async function buildMoneyAmounts(exchangeRates, amount, currency, date, user = {}) {
   const rates = await exchangeRates.ratesFor(date);
   const normalizedCurrency = normalizeCurrency(currency, "THB");
-  const amountBaseValue = amountBase(amount, normalizedCurrency, rates);
+  const baseCurrency = normalizeCurrency(user?.base_currency, "THB");
+  const amounts = convertedAmounts(amount, normalizedCurrency, baseCurrency, rates);
   return {
-    amountBase: amountBaseValue,
-    convertedAmounts: convertedAmounts(amount, normalizedCurrency, user?.base_currency ?? "THB", rates),
+    amountBase: amounts[baseCurrency],
+    convertedAmounts: amounts,
     source: rates.source ?? "manual-fallback"
   };
 }
@@ -823,15 +825,18 @@ function displayAmount(row, user) {
 
 function displayFromBase(amountBaseValue, user) {
   const currency = user.display_currency ?? "USD";
-  if (currency === "THB") return roundMoney(Number(amountBaseValue));
-  const thbRate = displayThbRate(user);
-  return roundMoney(Number(amountBaseValue) / thbRate);
+  const baseCurrency = normalizeCurrency(user.base_currency, "THB");
+  const numeric = Number(amountBaseValue);
+  if (currency === baseCurrency) return roundMoney(numeric);
+  const thbAmount = baseCurrency === "THB" ? numeric : numeric * currencyThbRate(baseCurrency);
+  if (currency === "THB") return roundMoney(thbAmount);
+  return roundMoney(thbAmount / displayThbRate(user));
 }
 
 function displayThbRate(user) {
   const currency = user.display_currency ?? "USD";
   if (currency === "THB") return 1;
-  return currency === "USD" ? Number(user.usd_thb_rate ?? fallbackThbRate("USD")) : fallbackThbRate(currency);
+  return currency === "USD" ? Number(user.usd_thb_rate ?? fallbackThbRate("USD")) : currencyThbRate(currency);
 }
 
 function roundMoney(value) {
