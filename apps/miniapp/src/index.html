@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Money Flow</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/styles.css?v=20260604-light-compact" />
+    <link rel="stylesheet" href="/styles.css?v=20260604-hero-polish" />
   </head>
   <body data-theme="light">
     <main class="shell">
@@ -13,7 +13,6 @@
         <div>
           <p class="eyebrow">Money Flow</p>
         </div>
-        <button type="button" class="theme-toggle" id="themeToggleButton" aria-label="Toggle theme">☾</button>
       </header>
 
       <section id="dashboardTab">
@@ -36,6 +35,7 @@
             <strong id="today">...</strong>
             <em id="todayDisplay"></em>
             <small class="metric-value-note" id="todayRemaining">...</small>
+            <div class="metric-spacer"></div>
             <div class="mini-progress" aria-hidden="true">
               <div id="todayProgressBar"></div>
             </div>
@@ -48,15 +48,23 @@
             <strong id="week">...</strong>
             <em id="weekDisplay"></em>
             <small class="metric-value-note" id="weekRemaining">...</small>
+            <div class="metric-spacer"></div>
             <div class="mini-progress" aria-hidden="true">
               <div id="weekProgressBar"></div>
             </div>
           </article>
           <article class="metric">
-            <span data-i18n="dashboard.remaining">Осталось</span>
+            <div class="metric-top">
+              <span data-i18n="dashboard.remaining">Осталось</span>
+              <b>&nbsp;</b>
+            </div>
             <strong id="freeRemaining">...</strong>
             <em id="freeRemainingDisplay"></em>
             <small class="metric-caption" data-i18n="dashboard.afterExpensesAndPlanned">после расходов и плановых оплат</small>
+            <div class="metric-spacer"></div>
+            <div class="mini-progress is-hidden" aria-hidden="true">
+              <div></div>
+            </div>
           </article>
           <article class="metric metric-progress metric-month" id="monthMetric">
             <div class="metric-top">
@@ -66,6 +74,7 @@
             <strong id="month">...</strong>
             <em id="monthDisplay"></em>
             <small class="metric-value-note" id="monthRemaining">...</small>
+            <div class="metric-spacer"></div>
             <div class="mini-progress" aria-hidden="true">
               <div id="monthProgressBar"></div>
             </div>
@@ -286,13 +295,7 @@
                 </select>
               </div>
             </label>
-            <label>
-              <span data-i18n="settings.interfaceTheme">Interface theme</span>
-              <select id="interfaceThemeInput" name="interfaceTheme">
-                <option value="dark" data-i18n="settings.themeDark">Dark</option>
-                <option value="light" data-i18n="settings.themeLight">Light</option>
-              </select>
-            </label>
+            <input id="interfaceThemeInput" name="interfaceTheme" type="hidden" value="light" />
             <input id="usdThbRateInput" name="usdThbRate" type="hidden" value="32.65" />
             <div class="button-row">
               <button type="submit" data-i18n="actions.save">Сохранить</button>
@@ -310,6 +313,6 @@
     </nav>
 
     <div class="toast hidden" id="toast" role="status" aria-live="polite"></div>
-    <script src="/app.js?v=20260604-light-compact" type="module"></script>
+    <script src="/app.js?v=20260604-hero-polish" type="module"></script>
   </body>
 </html>

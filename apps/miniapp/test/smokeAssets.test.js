@@ -46,18 +46,19 @@ test("dashboard uses compact header, inbox before month plan, and bottom navigat
 
   assert.match(html, /<body data-theme="light">/);
   assert.doesNotMatch(html, /class="quick-actions"/);
-  assert.match(html, /id="themeToggleButton"/);
+  assert.doesNotMatch(html, /id="themeToggleButton"/);
   assert.match(html, /id="heroStatus"/);
   assert.ok(html.indexOf('id="dashboardInboxBlock"') < html.indexOf('class="plan-summary"'));
   assert.match(html, /class="bottom-tabs"/);
   assert.match(css, /\.bottom-tabs\s*{/);
+  assert.match(css, /\.metric\s*{[^}]*grid-template-rows:/s);
   assert.match(css, /body\[data-theme="dark"\]/);
   assert.match(css, /body\[data-theme="light"\]/);
 });
 
-test("settings expose interface theme without duplicating dashboard structure", async () => {
+test("settings keep interface theme switching hidden", async () => {
   const html = await readFile(join(miniAppRoot, "index.html"), "utf8");
 
-  assert.match(html, /id="interfaceThemeInput"/);
-  assert.match(html, /data-i18n="settings.interfaceTheme"/);
+  assert.match(html, /id="interfaceThemeInput"[^>]+type="hidden"/);
+  assert.doesNotMatch(html, /data-i18n="settings.interfaceTheme"/);
 });

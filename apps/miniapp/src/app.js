@@ -63,13 +63,7 @@ document.querySelectorAll("[data-tab]").forEach((button) => {
 document.querySelector("#baseCurrencyInput").addEventListener("change", updateCurrencyFlags);
 document.querySelector("#displayCurrencyInput").addEventListener("change", updateCurrencyFlags);
 document.querySelector("#interfaceLanguageInput").addEventListener("change", updateCurrencyFlags);
-document.querySelector("#interfaceThemeInput").addEventListener("change", (event) => applyTheme(event.target.value));
 document.querySelector("#openHistoryInboxButton")?.addEventListener("click", () => switchTab("history"));
-document.querySelector("#themeToggleButton")?.addEventListener("click", () => {
-  const nextTheme = currentTheme === "dark" ? "light" : "dark";
-  applyTheme(nextTheme);
-  document.querySelector("#interfaceThemeInput").value = nextTheme;
-});
 
 applyLanguage(currentLanguage);
 load().catch(showError);
@@ -282,22 +276,27 @@ function renderSnapshot(snapshot) {
   setText("#safeToSpend", moneyBase(dayRemaining));
   setText("#safeToSpendDisplay", moneyDisplay(snapshot.display?.dayRemaining ?? snapshot.display?.safeToSpendPerDay, snapshot.display?.currency));
   setText("#today", moneyBase(snapshot.today));
-  setText("#todayDisplay", `${t("dashboard.limitPrefix")} ${moneyBase(snapshot.dayPlanLimit ?? snapshot.dailyPlanLimit ?? 0)}`);
-  setText("#todayRemaining", `${t("dashboard.leftTodayPrefix")} ${moneyBase(dayRemaining)}`);
+  setMetricLine("#todayDisplay", t("dashboard.limitPrefix"), moneyBase(snapshot.dayPlanLimit ?? snapshot.dailyPlanLimit ?? 0));
+  setMetricLine("#todayRemaining", t("dashboard.leftTodayPrefix"), moneyBase(dayRemaining), dayProgress.state);
   setText("#todayProgressPercent", `${money.format(Number(snapshot.dayProgressPercent ?? 0))}%`);
+  setProgressState("#todayProgressPercent", dayProgress.state);
   setProgress("#todayProgressBar", dayProgress);
 
   setText("#week", moneyBase(snapshot.week));
-  setText("#weekDisplay", `${t("dashboard.limitPrefix")} ${moneyBase(snapshot.weekPlanLimit ?? 0)}`);
-  setText("#weekRemaining", `${t("dashboard.remainingPrefix")} ${moneyBase(snapshot.weekRemaining)}`);
+  const weekProgress = snapshot.progress?.week ?? { percent: snapshot.weekProgressPercent ?? 0, state: "good" };
+  setMetricLine("#weekDisplay", t("dashboard.limitPrefix"), moneyBase(snapshot.weekPlanLimit ?? 0));
+  setMetricLine("#weekRemaining", t("dashboard.remainingPrefix"), moneyBase(snapshot.weekRemaining), weekProgress.state);
   setText("#weekProgressPercent", `${money.format(Number(snapshot.weekProgressPercent ?? 0))}%`);
-  setProgress("#weekProgressBar", snapshot.progress?.week ?? { percent: snapshot.weekProgressPercent ?? 0, state: "good" });
+  setProgressState("#weekProgressPercent", weekProgress.state);
+  setProgress("#weekProgressBar", weekProgress);
 
   setText("#month", moneyBase(snapshot.month));
-  setText("#monthDisplay", `${t("dashboard.budget")} ${moneyBase(snapshot.monthlyBudget ?? 0)}`);
-  setText("#monthRemaining", `${t("dashboard.remainingPrefix")} ${moneyBase(snapshot.monthRemaining ?? snapshot.remaining)}`);
+  const monthProgress = snapshot.progress?.month ?? { percent: snapshot.budgetProgressPercent ?? 0, state: "good" };
+  setMetricLine("#monthDisplay", t("dashboard.budget"), moneyBase(snapshot.monthlyBudget ?? 0));
+  setMetricLine("#monthRemaining", t("dashboard.remainingPrefix"), moneyBase(snapshot.monthRemaining ?? snapshot.remaining), monthProgress.state);
   setText("#monthCardProgressPercent", `${money.format(Number(snapshot.budgetProgressPercent ?? 0))}%`);
-  setProgress("#monthProgressBar", snapshot.progress?.month ?? { percent: snapshot.budgetProgressPercent ?? 0, state: "good" });
+  setProgressState("#monthCardProgressPercent", monthProgress.state);
+  setProgress("#monthProgressBar", monthProgress);
   setText("#freeRemaining", moneyBase(snapshot.freeRemaining));
   setText("#freeRemainingDisplay", moneyDisplay(snapshot.display?.freeRemaining, snapshot.display?.currency));
 
@@ -313,7 +312,7 @@ function renderSnapshot(snapshot) {
 
 function renderSettings(user) {
   currentLanguage = user.interface_language ?? "en";
-  applyTheme(user.interface_theme ?? "light");
+  applyTheme("light");
   setBaseCurrency(user.base_currency ?? "THB");
   applyLanguage(currentLanguage);
   document.querySelector("#budgetInput").value = Math.round(Number(user.monthly_budget_amount ?? 45000));
@@ -321,7 +320,7 @@ function renderSettings(user) {
   document.querySelector("#baseCurrencyInput").value = user.base_currency ?? "THB";
   document.querySelector("#displayCurrencyInput").value = user.display_currency ?? "USD";
   document.querySelector("#interfaceLanguageInput").value = currentLanguage;
-  document.querySelector("#interfaceThemeInput").value = user.interface_theme ?? "light";
+  document.querySelector("#interfaceThemeInput").value = "light";
   document.querySelector("#usdThbRateInput").value = Number(user.usd_thb_rate ?? 32.65);
   document.querySelector("#budgetAdviceInput").checked = user.budget_advice_enabled !== false;
   updateCurrencyFlags();
@@ -826,7 +825,7 @@ async function saveSettings(event) {
         baseCurrency: document.querySelector("#baseCurrencyInput").value,
         displayCurrency: document.querySelector("#displayCurrencyInput").value,
         interfaceLanguage: document.querySelector("#interfaceLanguageInput").value,
-        interfaceTheme: document.querySelector("#interfaceThemeInput").value,
+        interfaceTheme: "light",
         budgetAdviceEnabled: document.querySelector("#budgetAdviceInput").checked,
         usdThbRate: Number(document.querySelector("#usdThbRateInput").value)
       }
@@ -960,8 +959,7 @@ function applyLanguage(language) {
     ["#weeklyBudgetInput", "settings.weeklyBudget"],
     ["#baseCurrencyInput", "settings.baseCurrency"],
     ["#displayCurrencyInput", "settings.displayCurrency"],
-    ["#interfaceLanguageInput", "settings.interfaceLanguage"],
-    ["#interfaceThemeInput", "settings.interfaceTheme"]
+    ["#interfaceLanguageInput", "settings.interfaceLanguage"]
   ];
   for (const [selector, key] of labels) {
     const label = document.querySelector(selector)?.closest("label")?.querySelector("span");
@@ -974,11 +972,6 @@ function applyLanguage(language) {
 function applyTheme(theme) {
   currentTheme = theme === "dark" ? "dark" : "light";
   document.body.dataset.theme = currentTheme;
-  const toggle = document.querySelector("#themeToggleButton");
-  if (toggle) {
-    toggle.textContent = currentTheme === "dark" ? "☀" : "☾";
-    toggle.setAttribute("aria-label", currentTheme === "dark" ? "Switch to light theme" : "Switch to dark theme");
-  }
 }
 
 function t(key, values = {}) {
@@ -1002,12 +995,25 @@ function setText(selector, text) {
   document.querySelector(selector).textContent = text;
 }
 
+function setMetricLine(selector, label, amount, state = "") {
+  const element = document.querySelector(selector);
+  if (!element) return;
+  const stateClass = state === "warn" || state === "danger" || state === "good" ? ` class="${state}"` : "";
+  element.innerHTML = `${escapeHtml(label)} <b${stateClass}>${escapeHtml(amount)}</b>`;
+}
+
 function setProgress(selector, progress) {
   const bar = document.querySelector(selector);
   if (!bar) return;
   const percent = Math.max(0, Math.min(Number(progress?.percent ?? 0), 100));
   bar.style.width = `${percent}%`;
   bar.dataset.state = progress?.state ?? "good";
+}
+
+function setProgressState(selector, state) {
+  const element = document.querySelector(selector);
+  if (!element) return;
+  element.dataset.state = state ?? "good";
 }
 
 function showError(error) {
