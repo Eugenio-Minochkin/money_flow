@@ -42,6 +42,12 @@ test("dashboard metric text can wrap instead of causing horizontal overflow", as
   assert.match(css, /\.metric-caption\s*{[^}]*white-space:\s*normal/s);
 });
 
+test("dashboard metric display currency uses the purple accent", async () => {
+  const css = await readFile(join(miniAppRoot, "styles.css"), "utf8");
+
+  assert.match(css, /\.metric em\s*{[^}]*color:\s*var\(--usd\)/s);
+});
+
 test("dashboard uses compact header, inbox before month plan, and bottom navigation", async () => {
   const html = await readFile(join(miniAppRoot, "index.html"), "utf8");
   const css = await readFile(join(miniAppRoot, "styles.css"), "utf8");

@@ -257,7 +257,7 @@ h2 {
 }
 
 .metric em {
-  color: var(--muted);
+  color: var(--usd);
   font-size: 12px;
   line-height: 1.25;
 }
