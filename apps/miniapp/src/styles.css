@@ -296,6 +296,7 @@ h2 {
   min-height: 164px;
   padding: 18px;
   align-content: stretch;
+  overflow: hidden;
 }
 
 body[data-theme="dark"] .metric,
@@ -310,20 +311,20 @@ body[data-theme="dark"] .recovery-advice {
 
 .metric strong {
   color: #11100f;
-  font-size: clamp(25px, 6.5vw, 30px);
+  font-size: clamp(20px, 5vw, 28px);
   line-height: 1.1;
   overflow-wrap: anywhere;
 }
 
 .metric small {
   color: #6f6258;
-  font-size: 15px;
+  font-size: clamp(12px, 2.9vw, 15px);
   font-weight: 800;
   line-height: 1.25;
 }
 
 .metric-value-note {
-  white-space: nowrap;
+  white-space: normal;
 }
 
 .metric-caption {
