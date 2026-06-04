@@ -54,6 +54,16 @@ export function appKeyboard(miniAppUrl, telegramUserId, language = "ru") {
   };
 }
 
+export function inboxDraftKeyboard(miniAppUrl, telegramUserId, draftId, language = "ru") {
+  const text = keyboardText(language);
+  return {
+    inline_keyboard: [
+      [{ text: `📥 ${text.openDraft}`, web_app: { url: `${miniAppUrl}?telegramUserId=${telegramUserId}&draftId=${draftId}` } }],
+      [{ text: `📱 ${text.openApp}`, web_app: { url: `${miniAppUrl}?telegramUserId=${telegramUserId}` } }]
+    ]
+  };
+}
+
 function keyboardText(language) {
   if (language === "en") {
     return {
@@ -66,6 +76,7 @@ function keyboardText(language) {
       home: "Home",
       later: "Review later",
       openApp: "Open Mini App",
+      openDraft: "Open this draft",
       other: "Other",
       sport: "Sport",
       transport: "Transport"
@@ -81,6 +92,7 @@ function keyboardText(language) {
     home: "Дом",
     later: "Разобрать позже",
     openApp: "Открыть Mini App",
+    openDraft: "Открыть этот черновик",
     other: "Другое",
     sport: "Спорт",
     transport: "Транспорт"

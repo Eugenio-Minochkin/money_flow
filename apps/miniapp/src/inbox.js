@@ -15,3 +15,7 @@ export function updateFirstInboxItemCategory(draft, categorySlug) {
     ? { ...item, category_slug: categorySlug, needs_review: false, confidence: 0.9 }
     : { ...item });
 }
+
+export function shouldShowInboxOnDashboard(drafts) {
+  return Array.isArray(drafts) && drafts.length > 0;
+}

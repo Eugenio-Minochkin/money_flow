@@ -1,7 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { inboxDraftDescription, inboxDraftTotal, updateFirstInboxItemCategory } from "../src/inbox.js";
+import {
+  inboxDraftDescription,
+  inboxDraftTotal,
+  shouldShowInboxOnDashboard,
+  updateFirstInboxItemCategory
+} from "../src/inbox.js";
 
 test("formats inbox draft description and total", () => {
   const draft = {
@@ -31,4 +36,9 @@ test("updates first inbox item category and marks it reviewed", () => {
   assert.equal(items[0].confidence, 0.9);
   assert.equal(items[1].category_slug, "transport");
   assert.notEqual(items, draft.items);
+});
+
+test("shows dashboard inbox when there are drafts to review", () => {
+  assert.equal(shouldShowInboxOnDashboard([]), false);
+  assert.equal(shouldShowInboxOnDashboard([{ id: 1, status: "inbox" }]), true);
 });

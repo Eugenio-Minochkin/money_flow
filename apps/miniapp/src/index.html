@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Money Flow</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/styles.css?v=20260603-settings-ui-fixes" />
+    <link rel="stylesheet" href="/styles.css?v=20260604-inbox-ux" />
   </head>
   <body>
     <main class="shell">
@@ -78,6 +78,14 @@
         </section>
 
         <section class="notice hidden" id="plannedNotice"></section>
+
+        <section class="inbox-block dashboard-inbox hidden" id="dashboardInboxBlock">
+          <div class="section-heading compact-heading">
+            <h3 id="dashboardInboxTitle">Needs review</h3>
+            <button type="button" class="ghost-button" id="openHistoryInboxButton" data-i18n="actions.open">Open</button>
+          </div>
+          <div class="expense-list" id="dashboardInboxDrafts"></div>
+        </section>
 
         <section class="plan-summary" aria-label="Month plan" data-i18n-aria-label="plan.monthTitle">
           <div class="section-heading compact-heading">
@@ -293,6 +301,6 @@
     </main>
 
     <div class="toast hidden" id="toast" role="status" aria-live="polite"></div>
-    <script src="/app.js?v=20260603-settings-ui-fixes" type="module"></script>
+    <script src="/app.js?v=20260604-inbox-ux" type="module"></script>
   </body>
 </html>

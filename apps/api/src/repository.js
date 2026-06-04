@@ -272,6 +272,7 @@ export function createRepository(pool, options = {}) {
 
     async listDraftsForTelegramUser(telegramUserId, options = {}) {
       const status = ["pending", "inbox"].includes(options.status) ? options.status : "inbox";
+      await moveExpiredPendingDraftsToInbox(pool, telegramUserId, options.expireAfterMinutes ?? 30);
       const result = await pool.query(
         `SELECT drafts.*
          FROM drafts
@@ -825,6 +826,17 @@ async function monthBaselineTotal(pool, userId, now) {
     [userId, monthKey(now)]
   );
   return Number(result.rows[0]?.total ?? 0);
+}
+
+async function moveExpiredPendingDraftsToInbox(pool, telegramUserId, expireAfterMinutes) {
+  await pool.query(
+    `UPDATE drafts
+     SET status = 'inbox'
+     WHERE status = 'pending'
+       AND created_at < now() - ($2 * interval '1 minute')
+       AND user_id = (SELECT id FROM users WHERE telegram_user_id = $1)`,
+    [telegramUserId, expireAfterMinutes]
+  );
 }
 
 async function listPlannedExpensesForTelegramUserAt(pool, telegramUserId, now) {

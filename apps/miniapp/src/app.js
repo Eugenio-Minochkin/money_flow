@@ -14,7 +14,7 @@ import {
 } from "./formatters.js";
 import { groupByDay } from "./history.js";
 import { createTranslator } from "./i18n.js";
-import { inboxDraftDescription, inboxDraftTotal, updateFirstInboxItemCategory } from "./inbox.js";
+import { inboxDraftDescription, inboxDraftTotal, shouldShowInboxOnDashboard, updateFirstInboxItemCategory } from "./inbox.js";
 import {
   isDueToday,
   isPlannedPaid,
@@ -61,6 +61,7 @@ document.querySelectorAll("[data-tab]").forEach((button) => {
 document.querySelector("#baseCurrencyInput").addEventListener("change", updateCurrencyFlags);
 document.querySelector("#displayCurrencyInput").addEventListener("change", updateCurrencyFlags);
 document.querySelector("#interfaceLanguageInput").addEventListener("change", updateCurrencyFlags);
+document.querySelector("#openHistoryInboxButton")?.addEventListener("click", () => switchTab("history"));
 
 applyLanguage(currentLanguage);
 load().catch(showError);
@@ -70,7 +71,11 @@ async function load() {
   renderPlannedForm();
   await loadDashboard();
   await loadHistory();
-  if (draftId) await loadDraft(draftId);
+  if (draftId) await openDraftInline(draftId, {
+    returnTab: "dashboard",
+    row: document.querySelector(`[data-inbox-location="dashboard"][data-draft-row="${draftId}"]`)
+      ?? document.querySelector(`[data-draft-row="${draftId}"]`)
+  });
 }
 
 async function loadDashboard() {
@@ -237,6 +242,7 @@ async function loadHistory() {
   ]);
   historyState = data.expenses ?? [];
   inboxState = inbox.drafts ?? [];
+  renderDashboardInboxDrafts(inboxState);
   renderInboxDrafts(inboxState);
   renderHistory(historyState);
 }
@@ -424,6 +430,42 @@ function renderInboxDrafts(drafts) {
   bindInboxActions(list);
 }
 
+function renderDashboardInboxDrafts(drafts) {
+  const block = document.querySelector("#dashboardInboxBlock");
+  const list = document.querySelector("#dashboardInboxDrafts");
+  const title = document.querySelector("#dashboardInboxTitle");
+  if (!shouldShowInboxOnDashboard(drafts)) {
+    block.classList.add("hidden");
+    list.innerHTML = "";
+    return;
+  }
+  block.classList.remove("hidden");
+  title.textContent = t("history.inboxCount", { count: drafts.length });
+  list.innerHTML = drafts.slice(0, 2).map((draft) => {
+    const total = inboxDraftTotal(draft);
+    const description = inboxDraftDescription(draft);
+    return `
+      <article class="expense-row inbox-draft-row" data-inbox-location="dashboard" data-draft-row="${draft.id}" style="--category-color: #b84d7a">
+        <div class="expense-main">
+          <div class="expense-title">${escapeHtml(description)}</div>
+          <div class="expense-meta">${formatDate(draft.created_at, currentLanguage)} · ${draft.items.length} ${t("history.rows")} · ${moneyBase(total)}</div>
+          <div class="button-row inbox-category-row">
+            ${inboxCategoryButtons(draft)}
+          </div>
+        </div>
+        <div class="expense-actions">
+          <div class="button-row compact">
+            <button type="button" data-confirm-draft="${draft.id}">${t("actions.confirm")}</button>
+            <button type="button" class="ghost-button" data-open-draft="${draft.id}">${t("actions.open")}</button>
+            <button type="button" class="danger-button" data-cancel-draft="${draft.id}">${t("actions.cancel")}</button>
+          </div>
+        </div>
+      </article>
+    `;
+  }).join("");
+  bindInboxActions(list);
+}
+
 function inboxCategoryButtons(draft) {
   const first = draft.items?.[0];
   if (!first) return "";
@@ -444,12 +486,11 @@ function inboxCategoryButtons(draft) {
 function bindInboxActions(container) {
   container.querySelectorAll("[data-open-draft]").forEach((button) => {
     button.addEventListener("click", async () => {
-      await loadDraft(button.dataset.openDraft, { returnTab: "history" });
-      switchTab("history");
       const row = button.closest(".expense-row");
-      const section = document.querySelector("#draftEditorSection");
-      if (row && section) row.after(section);
-      section?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      await openDraftInline(button.dataset.openDraft, {
+        returnTab: row?.dataset.inboxLocation ?? "history",
+        row
+      });
     });
   });
   container.querySelectorAll("[data-confirm-draft]").forEach((button) => {
@@ -477,6 +518,17 @@ function bindInboxActions(container) {
       showToast(t("toast.draftCanceled"));
     });
   });
+}
+
+async function openDraftInline(id, options = {}) {
+  await loadDraft(id, { returnTab: options.returnTab ?? "dashboard" });
+  const section = document.querySelector("#draftEditorSection");
+  const row = options.row ?? document.querySelector(`[data-draft-row="${id}"]`);
+  if (row && section) {
+    row.after(section);
+    section.dataset.inlineDraftId = String(id);
+  }
+  section?.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
 function expenseRow(expense) {

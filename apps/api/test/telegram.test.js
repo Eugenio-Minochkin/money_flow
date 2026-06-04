@@ -351,6 +351,34 @@ test("unclear draft includes category quick actions", async () => {
   }
 });
 
+test("move to inbox callback returns a direct mini app draft link", async () => {
+  const calls = [];
+  const repo = fakeRepository();
+  const originalLog = console.log;
+  console.log = (...args) => calls.push(args);
+  try {
+    const bot = createTelegramBot({
+      token: "",
+      miniAppUrl: "http://localhost:3000",
+      repository: repo
+    });
+
+    await bot.handleUpdate({
+      callback_query: {
+        id: "callback-inbox",
+        data: "inbox:42",
+        from: { id: 100 },
+        message: { chat: { id: 10 } }
+      }
+    });
+  } finally {
+    console.log = originalLog;
+  }
+
+  const keyboard = calls[0][1].replyMarkup.inline_keyboard.flat();
+  assert.ok(keyboard.some((button) => button.web_app?.url === "http://localhost:3000?telegramUserId=100&draftId=42"));
+});
+
 function fakeRepository() {
   return {
     user: { id: 1, interface_language: "ru", onboarding_step: "completed" },
@@ -424,6 +452,9 @@ function fakeRepository() {
     async confirmDraft(draftId) {
       this.confirmedDraftId = draftId;
       return [{ amount_base: 75 }];
+    },
+    async moveDraftToInbox() {
+      return null;
     },
     async listUsersPendingWeeklyReport() {
       return [{ id: 1, telegram_user_id: 100, interface_language: "ru" }];

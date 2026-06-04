@@ -436,6 +436,20 @@ h2 {
   background: var(--notice-bg);
 }
 
+.dashboard-inbox {
+  margin-top: 12px;
+  border-color: #edc7d1;
+  background: #fff7f8;
+}
+
+.dashboard-inbox .section-heading {
+  background: #fff7f8;
+}
+
+.inbox-draft-row {
+  background: var(--panel);
+}
+
 .notice-title {
   display: flex;
   justify-content: space-between;

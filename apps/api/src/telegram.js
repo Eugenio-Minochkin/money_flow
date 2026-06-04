@@ -3,7 +3,7 @@ import { parseExpenseText } from "../../../packages/shared/src/parser.js";
 import { parsePlannedExpenseText } from "../../../packages/shared/src/plannedParser.js";
 import { normalizeCurrency, SUPPORTED_CURRENCY_CODES } from "../../../packages/shared/src/currencies.js";
 import { formatDraft, formatPlannedDraft, formatSavedSummary, formatTotals, formatWeeklyReport } from "./telegramFormat.js";
-import { appKeyboard, draftKeyboard, plannedDraftKeyboard } from "./telegramKeyboards.js";
+import { appKeyboard, draftKeyboard, inboxDraftKeyboard, plannedDraftKeyboard } from "./telegramKeyboards.js";
 
 export function createTelegramBot({
   repository,
@@ -247,7 +247,7 @@ async function handleCallback({ update, repository, token, miniAppUrl }) {
   if (action === "inbox") {
     await repository.moveDraftToInbox(draftId, telegramUserId);
     await answerCallback(token, callback.id, botText(language, "movedCallback"));
-    return sendMessage(token, callback.message.chat.id, botText(language, "movedToInbox"));
+    return sendMessage(token, callback.message.chat.id, botText(language, "movedToInbox"), inboxDraftKeyboard(miniAppUrl, telegramUserId, draftId, language));
   }
 
   await answerCallback(token, callback.id, botText(language, "openMiniAppCallback"));

@@ -108,8 +108,24 @@ test("lists inbox drafts for a Telegram user", async () => {
   assert.equal(drafts[0].id, "42");
   assert.equal(drafts[0].status, "inbox");
   assert.equal(drafts[0].items[0].amount, 800);
+  assert.equal(queries[1].params[0], 100);
+  assert.equal(queries[1].params[1], "inbox");
+});
+
+test("moves stale pending drafts into inbox before listing drafts", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql: String(sql), params });
+    if (String(sql).startsWith("UPDATE drafts")) return { rows: [] };
+    return { rows: [] };
+  }));
+
+  await repo.listDraftsForTelegramUser(100, { status: "inbox" });
+
+  assert.match(queries[0].sql, /SET status = 'inbox'/);
+  assert.match(queries[0].sql, /created_at < now\(\) - \(\$2 \* interval '1 minute'\)/);
   assert.equal(queries[0].params[0], 100);
-  assert.equal(queries[0].params[1], "inbox");
+  assert.equal(queries[0].params[1], 30);
 });
 
 test("updates an expense owned by a Telegram user", async () => {
