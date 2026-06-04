@@ -1,10 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { isDueToday, isPlannedPaid, nextPlannedItem, nextUnpaidPlannedItem, parseDueDays } from "../src/planned.js";
+import { defaultPlannedCurrency, isDueToday, isPlannedPaid, nextPlannedItem, nextUnpaidPlannedItem, parseDueDays } from "../src/planned.js";
 
 test("parses due days from comma separated input", () => {
   assert.deepEqual(parseDueDays("4, 18, nope, 40, 0"), [4, 18]);
+});
+
+test("defaults planned currency to user base currency", () => {
+  assert.equal(defaultPlannedCurrency({}, "IDR"), "IDR");
+  assert.equal(defaultPlannedCurrency({ currency: "USD" }, "IDR"), "USD");
 });
 
 test("finds the next planned item across recurrence types", () => {

@@ -35,14 +35,16 @@ export function formatDate(value, language = "ru") {
     day: "2-digit",
     month: "short",
     hour: "2-digit",
-    minute: "2-digit"
+    minute: "2-digit",
+    timeZone: "Asia/Bangkok"
   }).format(new Date(value));
 }
 
 export function formatDateOnly(value, language = "ru") {
   return new Intl.DateTimeFormat(localeFor(language), {
     day: "2-digit",
-    month: "short"
+    month: "short",
+    timeZone: "Asia/Bangkok"
   }).format(new Date(value));
 }
 
@@ -52,8 +54,7 @@ function localeFor(language) {
 
 export function dateTimeLocal(value) {
   const date = new Date(value ?? Date.now());
-  const offsetMs = date.getTimezoneOffset() * 60_000;
-  return new Date(date.getTime() - offsetMs).toISOString().slice(0, 16);
+  return new Date(date.getTime() + 7 * 60 * 60_000).toISOString().slice(0, 16);
 }
 
 export function escapeHtml(value) {

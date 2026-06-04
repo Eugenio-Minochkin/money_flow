@@ -263,7 +263,8 @@ function formatSpentAt(value, language) {
     day: "2-digit",
     month: "short",
     hour: "2-digit",
-    minute: "2-digit"
+    minute: "2-digit",
+    timeZone: "Asia/Bangkok"
   }).format(new Date(value));
 }
 

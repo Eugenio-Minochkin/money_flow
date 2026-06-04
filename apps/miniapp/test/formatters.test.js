@@ -5,6 +5,7 @@ import {
   dateTimeLocal,
   escapeAttribute,
   escapeHtml,
+  formatDate,
   formatDateOnly,
   moneyBase,
   moneyDisplay,
@@ -32,6 +33,11 @@ test("escapes html and attributes", () => {
 test("formats dates for UI", () => {
   assert.equal(dateTimeLocal("2026-06-02T10:30:00Z").length, 16);
   assert.match(formatDateOnly("2026-06-02T10:30:00Z"), /02/);
+});
+
+test("formats dates in Bangkok timezone", () => {
+  assert.match(formatDate("2026-05-31T17:00:00.000Z", "ru"), /01 июн|01 Ð¸ÑŽÐ½/);
+  assert.equal(dateTimeLocal("2026-05-31T17:00:00.000Z"), "2026-06-01T00:00");
 });
 
 function normalizeSpaces(value) {

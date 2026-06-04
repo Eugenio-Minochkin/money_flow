@@ -10,6 +10,7 @@ import { createExpenseParser } from "./expenseParser.js";
 import { createJsonReader, createStaticHandler, sendJson } from "./http.js";
 import { createRateLimiter } from "./rateLimit.js";
 import { createRepository } from "./repository.js";
+import { shouldRateLimitRequest } from "./routing.js";
 import { createTelegramBot, sendWeeklyReports, shouldSendWeeklyReport } from "./telegram.js";
 import { createVoiceTranscriber } from "./voiceTranscriber.js";
 
@@ -84,10 +85,12 @@ function startWeeklyReportScheduler() {
 
 async function route(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);
-  const rate = rateLimiter.check(req.socket.remoteAddress ?? "unknown");
-  if (!rate.allowed) {
-    res.setHeader("retry-after", String(rate.retryAfterSeconds));
-    return sendJson(res, 429, { error: "rate_limited", retryAfterSeconds: rate.retryAfterSeconds });
+  if (shouldRateLimitRequest(req, url)) {
+    const rate = rateLimiter.check(req.socket.remoteAddress ?? "unknown");
+    if (!rate.allowed) {
+      res.setHeader("retry-after", String(rate.retryAfterSeconds));
+      return sendJson(res, 429, { error: "rate_limited", retryAfterSeconds: rate.retryAfterSeconds });
+    }
   }
 
   if (req.method === "POST" && url.pathname === "/telegram/webhook") {

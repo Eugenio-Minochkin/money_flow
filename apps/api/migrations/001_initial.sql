@@ -104,6 +104,35 @@ WHERE users.id = planned_expenses.user_id
   AND users.base_currency = planned_expenses.currency
   AND users.base_currency <> 'THB';
 
+UPDATE planned_expenses
+SET amount_base = ROUND(
+  planned_expenses.amount
+  * CASE planned_expenses.currency
+      WHEN 'THB' THEN 1
+      WHEN 'USD' THEN 32.65
+      WHEN 'RUB' THEN 32.65 / 71.8
+      WHEN 'IDR' THEN 32.65 / 16200
+      WHEN 'EUR' THEN 32.65 / 0.88
+      WHEN 'BYN' THEN 32.65 / 3.25
+      WHEN 'GEL' THEN 32.65 / 2.7
+      ELSE 1
+    END
+  / CASE users.base_currency
+      WHEN 'THB' THEN 1
+      WHEN 'USD' THEN 32.65
+      WHEN 'RUB' THEN 32.65 / 71.8
+      WHEN 'IDR' THEN 32.65 / 16200
+      WHEN 'EUR' THEN 32.65 / 0.88
+      WHEN 'BYN' THEN 32.65 / 3.25
+      WHEN 'GEL' THEN 32.65 / 2.7
+      ELSE 1
+    END,
+  2
+)
+FROM users
+WHERE users.id = planned_expenses.user_id
+  AND users.base_currency <> planned_expenses.currency;
+
 CREATE TABLE IF NOT EXISTS planned_drafts (
   id BIGSERIAL PRIMARY KEY,
   user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,

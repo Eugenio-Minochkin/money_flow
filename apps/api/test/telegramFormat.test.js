@@ -21,6 +21,21 @@ test("formats a draft with total and review warning", () => {
   assert.match(text, /<b>/);
 });
 
+test("formats draft dates in Bangkok timezone", () => {
+  const text = formatDraft([{
+    amount: 40000,
+    currency: "IDR",
+    description: "Shopee",
+    category_slug: "other",
+    spent_at: "2026-05-31T17:00:00.000Z",
+    needs_review: false
+  }], { language: "ru" });
+
+  assert.match(text, /01 июн|01 Ð¸ÑŽÐ½/);
+  assert.doesNotMatch(text, /31 мая|31 Ð¼Ð°Ñ/);
+});
+
+
 test("formats saved summary with budget context", () => {
   const text = formatSavedSummary(75, {
     ...snapshot(),

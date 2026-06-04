@@ -5,6 +5,10 @@ export function nextPlannedItem(items, now = new Date()) {
     .sort((left, right) => left.date - right.date)[0] ?? null;
 }
 
+export function defaultPlannedCurrency(item = {}, baseCurrency = "THB") {
+  return item.currency || baseCurrency || "THB";
+}
+
 export function nextUnpaidPlannedItem(items, now = new Date()) {
   return nextPlannedItem(items.filter((item) => !isPlannedPaid(item)), now);
 }

@@ -16,6 +16,7 @@ import { groupByDay } from "./history.js";
 import { createTranslator } from "./i18n.js";
 import { inboxDraftDescription, inboxDraftTotal, shouldShowInboxOnDashboard, updateFirstInboxItemCategory } from "./inbox.js";
 import {
+  defaultPlannedCurrency,
   isDueToday,
   isPlannedPaid,
   nextUnpaidPlannedItem,
@@ -573,6 +574,7 @@ function bindExpenseActions(container, expenses) {
 function renderPlannedForm(item = {}) {
   const form = document.querySelector("#plannedForm");
   const dueDays = Array.isArray(item.due_days) && item.due_days.length ? item.due_days.join(", ") : (item.due_day ?? "");
+  const plannedCurrency = defaultPlannedCurrency(item, dashboardState?.user?.base_currency ?? "THB");
   form.innerHTML = `
     <div class="field-grid">
       <label>
@@ -587,7 +589,7 @@ function renderPlannedForm(item = {}) {
     <div class="field-grid">
       <label>
         <span>${t("forms.currency")}</span>
-        <select name="planned-currency">${currencyOptions(item.currency, option)}</select>
+        <select name="planned-currency">${currencyOptions(plannedCurrency, option)}</select>
       </label>
       <label>
         <span>${t("plan.recurrence")}</span>

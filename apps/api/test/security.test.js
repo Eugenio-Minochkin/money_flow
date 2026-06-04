@@ -4,6 +4,7 @@ import crypto from "node:crypto";
 
 import { createApiSecurity } from "../src/apiSecurity.js";
 import { createRateLimiter } from "../src/rateLimit.js";
+import { shouldRateLimitRequest } from "../src/routing.js";
 import { verifyTelegramInitData } from "../src/telegramAuth.js";
 
 test("verifies Telegram Mini App init data and returns the user id", () => {
@@ -39,6 +40,13 @@ test("rate limiter allows requests until the limit and then blocks", () => {
   assert.equal(blocked.allowed, false);
   assert.equal(blocked.retryAfterSeconds, 1);
   assert.equal(limiter.check("user:1", 1200).allowed, true);
+});
+
+test("rate limiter applies to API and webhook but not Mini App static files", () => {
+  assert.equal(shouldRateLimitRequest({ method: "GET" }, new URL("http://localhost/")), false);
+  assert.equal(shouldRateLimitRequest({ method: "GET" }, new URL("http://localhost/app.js")), false);
+  assert.equal(shouldRateLimitRequest({ method: "GET" }, new URL("http://localhost/api/dashboard")), true);
+  assert.equal(shouldRateLimitRequest({ method: "POST" }, new URL("http://localhost/telegram/webhook")), true);
 });
 
 test("API security rejects direct Mini App user ids when strict auth is enabled", () => {
