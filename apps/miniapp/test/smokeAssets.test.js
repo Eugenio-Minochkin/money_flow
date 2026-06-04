@@ -40,12 +40,15 @@ test("remaining card caption can wrap independently from metric values", async (
   assert.match(css, /\.metric-caption\s*{[^}]*white-space:\s*normal/s);
 });
 
-test("dashboard uses refactored action-first layout with bottom navigation", async () => {
+test("dashboard uses compact header, inbox before month plan, and bottom navigation", async () => {
   const html = await readFile(join(miniAppRoot, "index.html"), "utf8");
   const css = await readFile(join(miniAppRoot, "styles.css"), "utf8");
 
-  assert.match(html, /class="quick-actions"/);
-  assert.match(html, /id="reviewInboxButton"/);
+  assert.match(html, /<body data-theme="light">/);
+  assert.doesNotMatch(html, /class="quick-actions"/);
+  assert.match(html, /id="themeToggleButton"/);
+  assert.match(html, /id="heroStatus"/);
+  assert.ok(html.indexOf('id="dashboardInboxBlock"') < html.indexOf('class="plan-summary"'));
   assert.match(html, /class="bottom-tabs"/);
   assert.match(css, /\.bottom-tabs\s*{/);
   assert.match(css, /body\[data-theme="dark"\]/);

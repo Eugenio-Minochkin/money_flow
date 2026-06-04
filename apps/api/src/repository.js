@@ -916,7 +916,7 @@ function normalizeLanguage(value) {
 }
 
 function normalizeTheme(value) {
-  return ["dark", "light"].includes(value) ? value : "dark";
+  return ["dark", "light"].includes(value) ? value : "light";
 }
 
 async function buildMoneyAmounts(exchangeRates, amount, currency, date, user = {}) {

@@ -5,29 +5,26 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Money Flow</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/styles.css?v=20260604-dark-refactor" />
+    <link rel="stylesheet" href="/styles.css?v=20260604-light-compact" />
   </head>
-  <body data-theme="dark">
+  <body data-theme="light">
     <main class="shell">
       <header class="topbar">
         <div>
           <p class="eyebrow">Money Flow</p>
-          <h1 id="screenTitle">Dashboard</h1>
         </div>
-        <div class="status-pill" id="status">...</div>
+        <button type="button" class="theme-toggle" id="themeToggleButton" aria-label="Toggle theme">☾</button>
       </header>
 
       <section id="dashboardTab">
         <section class="hero-metric">
-          <span data-i18n="dashboard.safeToday">Можно еще сегодня</span>
+          <div class="hero-topline">
+            <span data-i18n="dashboard.safeToday">Можно еще сегодня</span>
+            <b class="status-pill" id="heroStatus">...</b>
+          </div>
           <strong id="safeToSpend">...</strong>
           <em id="safeToSpendDisplay"></em>
           <small data-i18n="dashboard.afterBudgetAndPlanned">после бюджета и обязательных трат</small>
-        </section>
-
-        <section class="quick-actions" aria-label="Quick actions">
-          <button type="button" id="reviewInboxButton" data-i18n="history.inboxShort">Review</button>
-          <button type="button" class="ghost-button" id="openPlanButton" data-i18n="screen.plan">Plan</button>
         </section>
 
         <section class="metrics-grid" aria-label="Основные показатели">
@@ -313,6 +310,6 @@
     </nav>
 
     <div class="toast hidden" id="toast" role="status" aria-live="polite"></div>
-    <script src="/app.js?v=20260604-dark-refactor" type="module"></script>
+    <script src="/app.js?v=20260604-light-compact" type="module"></script>
   </body>
 </html>

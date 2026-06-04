@@ -40,6 +40,7 @@ let inboxState = [];
 let hiddenNoticeIds = new Set();
 let currentLanguage = "en";
 let translate = createTranslator(currentLanguage);
+let currentTheme = "light";
 
 if (window.Telegram?.WebApp) {
   window.Telegram.WebApp.ready();
@@ -64,8 +65,11 @@ document.querySelector("#displayCurrencyInput").addEventListener("change", updat
 document.querySelector("#interfaceLanguageInput").addEventListener("change", updateCurrencyFlags);
 document.querySelector("#interfaceThemeInput").addEventListener("change", (event) => applyTheme(event.target.value));
 document.querySelector("#openHistoryInboxButton")?.addEventListener("click", () => switchTab("history"));
-document.querySelector("#reviewInboxButton")?.addEventListener("click", () => switchTab("history"));
-document.querySelector("#openPlanButton")?.addEventListener("click", () => switchTab("plan"));
+document.querySelector("#themeToggleButton")?.addEventListener("click", () => {
+  const nextTheme = currentTheme === "dark" ? "light" : "dark";
+  applyTheme(nextTheme);
+  document.querySelector("#interfaceThemeInput").value = nextTheme;
+});
 
 applyLanguage(currentLanguage);
 load().catch(showError);
@@ -263,7 +267,6 @@ function switchTab(tab) {
   document.querySelector("#planTab").classList.toggle("hidden", tab !== "plan");
   document.querySelector("#historyTab").classList.toggle("hidden", tab !== "history");
   document.querySelector("#settingsTab").classList.toggle("hidden", tab !== "settings");
-  document.querySelector("#screenTitle").textContent = t(`screen.${tab}`);
   document.querySelectorAll("[data-tab]").forEach((button) => {
     button.classList.toggle("active", button.dataset.tab === tab);
   });
@@ -298,7 +301,7 @@ function renderSnapshot(snapshot) {
   setText("#freeRemaining", moneyBase(snapshot.freeRemaining));
   setText("#freeRemainingDisplay", moneyDisplay(snapshot.display?.freeRemaining, snapshot.display?.currency));
 
-  const status = document.querySelector("#status");
+  const status = document.querySelector("#heroStatus");
   status.textContent = {
     above_plan: t("dashboard.abovePlan"),
     below_plan: t("dashboard.belowPlan"),
@@ -310,7 +313,7 @@ function renderSnapshot(snapshot) {
 
 function renderSettings(user) {
   currentLanguage = user.interface_language ?? "en";
-  applyTheme(user.interface_theme ?? "dark");
+  applyTheme(user.interface_theme ?? "light");
   setBaseCurrency(user.base_currency ?? "THB");
   applyLanguage(currentLanguage);
   document.querySelector("#budgetInput").value = Math.round(Number(user.monthly_budget_amount ?? 45000));
@@ -318,7 +321,7 @@ function renderSettings(user) {
   document.querySelector("#baseCurrencyInput").value = user.base_currency ?? "THB";
   document.querySelector("#displayCurrencyInput").value = user.display_currency ?? "USD";
   document.querySelector("#interfaceLanguageInput").value = currentLanguage;
-  document.querySelector("#interfaceThemeInput").value = user.interface_theme ?? "dark";
+  document.querySelector("#interfaceThemeInput").value = user.interface_theme ?? "light";
   document.querySelector("#usdThbRateInput").value = Number(user.usd_thb_rate ?? 32.65);
   document.querySelector("#budgetAdviceInput").checked = user.budget_advice_enabled !== false;
   updateCurrencyFlags();
@@ -951,8 +954,6 @@ function applyLanguage(language) {
   document.querySelectorAll("[data-tab]").forEach((button) => {
     button.textContent = t(`screen.${button.dataset.tab}`);
   });
-  const active = document.querySelector("[data-tab].active")?.dataset.tab ?? "dashboard";
-  document.querySelector("#screenTitle").textContent = t(`screen.${active}`);
   setOptionalText("#settingsTab h2", t("settings.title"));
   const labels = [
     ["#budgetInput", "settings.monthlyBudget"],
@@ -971,7 +972,13 @@ function applyLanguage(language) {
 }
 
 function applyTheme(theme) {
-  document.body.dataset.theme = theme === "light" ? "light" : "dark";
+  currentTheme = theme === "dark" ? "dark" : "light";
+  document.body.dataset.theme = currentTheme;
+  const toggle = document.querySelector("#themeToggleButton");
+  if (toggle) {
+    toggle.textContent = currentTheme === "dark" ? "☀" : "☾";
+    toggle.setAttribute("aria-label", currentTheme === "dark" ? "Switch to light theme" : "Switch to dark theme");
+  }
 }
 
 function t(key, values = {}) {

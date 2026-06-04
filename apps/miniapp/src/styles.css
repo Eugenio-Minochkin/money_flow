@@ -71,15 +71,15 @@ body {
 .shell {
   width: min(100%, 760px);
   margin: 0 auto;
-  padding: 20px 16px 96px;
+  padding: 12px 16px 96px;
 }
 
 .topbar {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 16px;
-  margin-bottom: 18px;
+  margin-bottom: 8px;
 }
 
 .eyebrow,
@@ -123,6 +123,32 @@ h2 {
   color: var(--accent);
   font-size: 13px;
   font-weight: 800;
+  text-align: right;
+}
+
+.theme-toggle {
+  width: 42px;
+  min-height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--panel);
+  color: var(--accent);
+  padding: 0;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.hero-topline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.hero-topline .status-pill {
+  max-width: 44%;
+  padding: 7px 9px;
+  font-size: 12px;
   text-align: right;
 }
 
@@ -192,18 +218,6 @@ h2 {
   border-color: var(--accent);
   background: var(--accent-soft);
   color: var(--accent);
-}
-
-.quick-actions {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 9px;
-  margin: 0 0 12px;
-}
-
-.quick-actions button {
-  min-height: 44px;
-  border-radius: 13px;
 }
 
 .hero-metric {
