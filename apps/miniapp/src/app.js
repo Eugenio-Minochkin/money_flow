@@ -277,7 +277,7 @@ function renderSnapshot(snapshot) {
   setText("#safeToSpendDisplay", moneyDisplay(snapshot.display?.dayRemaining ?? snapshot.display?.safeToSpendPerDay, snapshot.display?.currency));
   setText("#today", moneyBase(snapshot.today));
   setMetricLine("#todayDisplay", t("dashboard.limitPrefix"), moneyBase(snapshot.dayPlanLimit ?? snapshot.dailyPlanLimit ?? 0));
-  setMetricLine("#todayRemaining", t("dashboard.leftTodayPrefix"), moneyBase(dayRemaining), dayProgress.state);
+  setMetricLine("#todayRemaining", t("dashboard.remainingPrefix"), moneyBase(dayRemaining), dayProgress.state);
   setText("#todayProgressPercent", `${money.format(Number(snapshot.dayProgressPercent ?? 0))}%`);
   setProgressState("#todayProgressPercent", dayProgress.state);
   setProgress("#todayProgressBar", dayProgress);

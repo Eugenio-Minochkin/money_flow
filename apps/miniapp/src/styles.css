@@ -257,12 +257,14 @@ h2 {
 
 .metric em {
   color: #6f6258;
+  font-style: normal;
   font-size: 12px;
   line-height: 1.25;
 }
 
 .metric .display-currency {
   color: var(--usd);
+  font-style: normal;
   font-size: 12px;
   line-height: 1.25;
 }
@@ -348,6 +350,13 @@ body[data-theme="dark"] .recovery-advice {
   align-items: baseline;
   justify-content: space-between;
   gap: 8px;
+}
+
+.metric-top span {
+  color: #4f453e;
+  font-size: 17px;
+  font-weight: 820;
+  line-height: 1.15;
 }
 
 .metric-top b {

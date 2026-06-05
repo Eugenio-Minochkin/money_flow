@@ -47,17 +47,26 @@ test("dashboard metric display currency uses the purple accent", async () => {
   const css = await readFile(join(miniAppRoot, "styles.css"), "utf8");
 
   assert.match(html, /class="display-currency"[^>]+id="freeRemainingDisplay"/);
-  assert.match(css, /\.metric em\s*{[^}]*color:\s*#6f6258/s);
+  assert.match(css, /\.metric em\s*{[^}]*color:\s*#6f6258[^}]*font-style:\s*normal/s);
   assert.match(css, /\.metric \.display-currency\s*{[^}]*color:\s*var\(--usd\)/s);
   assert.match(css, /\.metric em b,\s*\.metric small b\s*{[^}]*color:\s*#11100f/s);
 });
 
 test("dashboard card secondary lines prioritize remaining before limits", async () => {
   const html = await readFile(join(miniAppRoot, "index.html"), "utf8");
+  const app = await readFile(join(miniAppRoot, "app.js"), "utf8");
 
   assert.ok(html.indexOf('id="todayRemaining"') < html.indexOf('id="todayDisplay"'));
   assert.ok(html.indexOf('id="weekRemaining"') < html.indexOf('id="weekDisplay"'));
   assert.ok(html.indexOf('id="monthRemaining"') < html.indexOf('id="monthDisplay"'));
+  assert.match(app, /setMetricLine\("#todayRemaining",\s*t\("dashboard\.remainingPrefix"\)/);
+  assert.doesNotMatch(app, /setMetricLine\("#todayRemaining",\s*t\("dashboard\.leftTodayPrefix"\)/);
+});
+
+test("dashboard card titles use the approved visible typography", async () => {
+  const css = await readFile(join(miniAppRoot, "styles.css"), "utf8");
+
+  assert.match(css, /\.metric-top span\s*{[^}]*color:\s*#4f453e[^}]*font-size:\s*17px[^}]*font-weight:\s*820/s);
 });
 
 test("dashboard uses compact header, inbox before month plan, and bottom navigation", async () => {
