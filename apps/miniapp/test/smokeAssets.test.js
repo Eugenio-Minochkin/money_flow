@@ -43,9 +43,21 @@ test("dashboard metric text can wrap instead of causing horizontal overflow", as
 });
 
 test("dashboard metric display currency uses the purple accent", async () => {
+  const html = await readFile(join(miniAppRoot, "index.html"), "utf8");
   const css = await readFile(join(miniAppRoot, "styles.css"), "utf8");
 
-  assert.match(css, /\.metric em\s*{[^}]*color:\s*var\(--usd\)/s);
+  assert.match(html, /class="display-currency"[^>]+id="freeRemainingDisplay"/);
+  assert.match(css, /\.metric em\s*{[^}]*color:\s*#6f6258/s);
+  assert.match(css, /\.metric \.display-currency\s*{[^}]*color:\s*var\(--usd\)/s);
+  assert.match(css, /\.metric em b,\s*\.metric small b\s*{[^}]*color:\s*#11100f/s);
+});
+
+test("dashboard card secondary lines prioritize remaining before limits", async () => {
+  const html = await readFile(join(miniAppRoot, "index.html"), "utf8");
+
+  assert.ok(html.indexOf('id="todayRemaining"') < html.indexOf('id="todayDisplay"'));
+  assert.ok(html.indexOf('id="weekRemaining"') < html.indexOf('id="weekDisplay"'));
+  assert.ok(html.indexOf('id="monthRemaining"') < html.indexOf('id="monthDisplay"'));
 });
 
 test("dashboard uses compact header, inbox before month plan, and bottom navigation", async () => {

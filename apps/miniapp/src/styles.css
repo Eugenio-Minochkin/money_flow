@@ -249,7 +249,6 @@ h2 {
 }
 
 .hero-metric em,
-.metric em,
 .expense-amount em {
   color: var(--usd);
   font-style: normal;
@@ -257,6 +256,12 @@ h2 {
 }
 
 .metric em {
+  color: #6f6258;
+  font-size: 12px;
+  line-height: 1.25;
+}
+
+.metric .display-currency {
   color: var(--usd);
   font-size: 12px;
   line-height: 1.25;
@@ -365,23 +370,23 @@ body[data-theme="dark"] .recovery-advice {
 
 .metric em b,
 .metric small b {
-  color: #6f6258;
+  color: #11100f;
   font-weight: 900;
 }
 
 .metric em b.good,
 .metric small b.good {
-  color: var(--green);
+  color: #11100f;
 }
 
 .metric em b.warn,
 .metric small b.warn {
-  color: var(--amber);
+  color: #11100f;
 }
 
 .metric em b.danger,
 .metric small b.danger {
-  color: var(--red);
+  color: #11100f;
 }
 
 .metric-spacer {
