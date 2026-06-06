@@ -50,7 +50,7 @@ test("formats saved summary with budget context", () => {
 
   assert.match(text, /75 THB/);
   assert.match(text, /Обычные/);
-  assert.match(normalized, /75 \/ 896,38 THB/);
+  assert.match(normalized, /75 \/ 1 475 THB/);
   assert.match(normalized, /735 \/ 42/);
   assert.match(text, /1,75%/);
   assert.match(text, /Плановые сегодня/);
@@ -58,6 +58,23 @@ test("formats saved summary with budget context", () => {
   assert.match(text, /Всего за день/);
   assert.match(text, /Вернуться в бюджет/);
   assert.match(text, /675 THB/);
+});
+
+test("formats saved summary with planned and large daily aggregates", () => {
+  const text = formatSavedSummary(80, {
+    ...snapshot(),
+    today: 802,
+    dayPlanLimit: 615,
+    plannedToday: 1000,
+    largeToday: 2000
+  });
+  const normalized = normalizeSpaces(text);
+
+  assert.match(normalized, /Обычные: <b>802 \/ 615 THB<\/b>/);
+  assert.match(normalized, /Перерасход: <b>187 THB<\/b>/);
+  assert.match(normalized, /Плановые сегодня: <b>1 000 THB<\/b>/);
+  assert.match(normalized, /Крупные сегодня: <b>2 000 THB<\/b>/);
+  assert.match(normalized, /Всего за день: <b>3 802 THB<\/b>/);
 });
 
 test("formats command totals for month and budget", () => {

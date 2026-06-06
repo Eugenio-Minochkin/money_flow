@@ -44,7 +44,7 @@ test("builds dashboard cards with remaining before limit and budget lines", () =
 
   assert.equal(cards.length, 4);
   assert.deepEqual(cards[0].lines.map((line) => line.label), ["осталось", "бюджет"]);
-  assert.deepEqual(cards[0].lines.map((line) => line.amount), ["550 THB", "650 THB"]);
+  assert.deepEqual(cards[0].lines.map((line) => line.amount), ["650 THB", "750 THB"]);
   assert.deepEqual(cards[1].lines.map((line) => line.label), ["осталось", "лимит"]);
   assert.deepEqual(cards[3].lines.map((line) => line.label), ["осталось", "бюджет"]);
 });
@@ -52,7 +52,9 @@ test("builds dashboard cards with remaining before limit and budget lines", () =
 test("builds today's card as overrun when regular spend exceeds today's budget", () => {
   const cards = buildDashboardCards({
     today: 802,
-    dayRemaining: 615,
+    dayRemaining: 0,
+    dayOverrun: 187,
+    dayPlanLimit: 615,
     dayProgressPercent: 130.41
   }, helpers);
 

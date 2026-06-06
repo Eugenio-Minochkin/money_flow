@@ -56,8 +56,20 @@ CREATE TABLE IF NOT EXISTS expenses (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+ALTER TABLE expenses ADD COLUMN IF NOT EXISTS budget_impact TEXT NOT NULL DEFAULT 'regular';
+
 CREATE INDEX IF NOT EXISTS expenses_user_spent_at_idx ON expenses(user_id, spent_at DESC);
 CREATE INDEX IF NOT EXISTS drafts_user_status_idx ON drafts(user_id, status);
+
+CREATE TABLE IF NOT EXISTS daily_budget_snapshots (
+  id BIGSERIAL PRIMARY KEY,
+  user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  day_key TEXT NOT NULL,
+  budget_amount_base NUMERIC(14, 2) NOT NULL,
+  budget_display_amount NUMERIC(14, 2) NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(user_id, day_key)
+);
 
 CREATE TABLE IF NOT EXISTS month_baselines (
   id BIGSERIAL PRIMARY KEY,
@@ -166,6 +178,10 @@ ALTER TABLE planned_expense_payments ALTER COLUMN paid_key SET DEFAULT '';
 ALTER TABLE planned_expense_payments DROP CONSTRAINT IF EXISTS planned_expense_payments_planned_expense_id_paid_month_key;
 CREATE UNIQUE INDEX IF NOT EXISTS planned_expense_payments_key_idx ON planned_expense_payments(planned_expense_id, paid_key);
 CREATE INDEX IF NOT EXISTS planned_expense_payments_month_idx ON planned_expense_payments(planned_expense_id, paid_month);
+
+UPDATE expenses SET budget_impact = 'planned'
+WHERE id IN (SELECT expense_id FROM planned_expense_payments)
+  AND budget_impact = 'regular';
 
 CREATE TABLE IF NOT EXISTS weekly_reports (
   id BIGSERIAL PRIMARY KEY,

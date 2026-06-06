@@ -51,6 +51,16 @@ test("parses compact thousands notation", () => {
   assert.equal(spaced.expenses[0].amount, 14000);
 });
 
+test("marks explicitly large one-off expenses as non-daily impact", () => {
+  const result = parseExpenseText("крупная разовая покупка продукты 2000 бат", {
+    now: new Date("2026-06-06T10:00:00+07:00")
+  });
+
+  assert.equal(result.expenses[0].amount, 2000);
+  assert.equal(result.expenses[0].category_slug, "groceries");
+  assert.equal(result.expenses[0].budget_impact, "large_oneoff");
+});
+
 test("parses added currency aliases and education category", () => {
   const result = parseExpenseText("English 1000 евро");
 

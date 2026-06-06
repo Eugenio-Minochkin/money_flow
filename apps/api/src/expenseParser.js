@@ -84,6 +84,7 @@ function buildSystemPrompt(now, defaultCurrency = "THB") {
     `Supported currencies: ${SUPPORTED_CURRENCY_CODES.join(", ")}.`,
     `Use these category slugs only: ${[...ALLOWED_CATEGORIES].join(", ")}.`,
     "Category is the type of expense. Tags are context.",
+    "Set budget_impact to large_oneoff only when the user explicitly says this is a large/big one-off purchase or expense. Otherwise use regular.",
     "If category or description is unclear, set needs_review=true and confidence below 0.7.",
     "For relative dates and times, use the provided current timestamp and timezone.",
     `Current timestamp: ${now.toISOString()}. User timezone for expense timestamps: +07:00.`
@@ -113,6 +114,7 @@ function expenseParseSchema() {
               items: { type: "string" }
             },
             spent_at: { type: "string" },
+            budget_impact: { type: "string", enum: ["regular", "planned", "large_oneoff"] },
             confidence: { type: "number" },
             needs_review: { type: "boolean" }
           },
@@ -123,6 +125,7 @@ function expenseParseSchema() {
             "category_slug",
             "tags",
             "spent_at",
+            "budget_impact",
             "confidence",
             "needs_review"
           ]
@@ -174,6 +177,7 @@ function normalizeExpense(expense, now, defaultCurrency = "THB") {
     category_slug: category,
     tags: Array.isArray(expense.tags) ? expense.tags.map(String).filter(Boolean) : [],
     spent_at: normalizeSpentAt(expense.spent_at, now),
+    budget_impact: ["regular", "planned", "large_oneoff"].includes(expense.budget_impact) ? expense.budget_impact : "regular",
     confidence,
     needs_review: Boolean(expense.needs_review) || category === "other" || confidence < 0.7
   };

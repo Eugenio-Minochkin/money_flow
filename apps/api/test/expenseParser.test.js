@@ -50,6 +50,41 @@ test("uses OpenAI structured output when API key is configured", async () => {
   assert.equal(parsed.expenses[1].amount, 180);
 });
 
+test("OpenAI parser accepts budget impact for large one-off expenses", async () => {
+  const parser = createExpenseParser({
+    apiKey: "test-key",
+    now: () => new Date("2026-06-01T10:00:00+07:00"),
+    fetchImpl: async (_url, request) => {
+      const body = JSON.parse(request.body);
+      const expenseSchema = body.text.format.schema.properties.expenses.items;
+      assert.deepEqual(expenseSchema.properties.budget_impact.enum, ["regular", "planned", "large_oneoff"]);
+      assert.ok(expenseSchema.required.includes("budget_impact"));
+
+      return jsonResponse({
+        output_text: JSON.stringify({
+          expenses: [{
+            amount: 2000,
+            currency: "THB",
+            description: "продукты",
+            category_slug: "groceries",
+            tags: [],
+            spent_at: "2026-06-01T10:00:00.000+07:00",
+            budget_impact: "large_oneoff",
+            confidence: 0.9,
+            needs_review: false
+          }],
+          notes: []
+        })
+      });
+    }
+  });
+
+  const parsed = await parser.parse("крупная разовая покупка продукты 2000 бат");
+
+  assert.equal(parsed.expenses[0].budget_impact, "large_oneoff");
+  assert.deepEqual(parsed.notes, []);
+});
+
 test("falls back to the local parser when OpenAI is not configured", async () => {
   const parser = createExpenseParser({
     now: () => new Date("2026-06-01T10:00:00+07:00")

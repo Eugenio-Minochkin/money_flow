@@ -48,15 +48,18 @@ function parsePart(part, now, defaultCurrency) {
   const rawCurrency = match.groups.currency?.toLowerCase();
   const currency = rawCurrency ? normalizeCurrency(CURRENCY_ALIASES.get(rawCurrency), defaultCurrency) : defaultCurrency;
   const spentAt = resolveRelativeDate(part, now);
+  const budgetImpact = detectBudgetImpact(part);
   const description = part
     .slice(0, match.index)
     .replace(/\b(сегодня|вчера|позавчера|утром|днем|днём|вечером|ночью)\b/giu, "")
+    .replace(/\b(крупн(?:ая|ую|ое|ый)|больш(?:ая|ую|ое|ой))\s+разов(?:ая|ую|ое|ой)?\s+(покупк[аиу]?|трат[ау])?\b/giu, "")
+    .replace(/\bразов(?:ая|ую|ое|ой)\s+(крупн(?:ая|ую|ое|ый)|больш(?:ая|ую|ое|ой))\s+(покупк[аиу]?|трат[ау])?\b/giu, "")
     .trim()
     || "расход";
   const category = inferCategory(description);
   const needsReview = category === "other";
 
-  return [{
+  const expense = {
     amount,
     currency,
     description,
@@ -65,7 +68,17 @@ function parsePart(part, now, defaultCurrency) {
     spent_at: toOffsetIso(spentAt),
     confidence: needsReview ? 0.62 : 0.86,
     needs_review: needsReview
-  }];
+  };
+  if (budgetImpact !== "regular") expense.budget_impact = budgetImpact;
+  return [expense];
+}
+
+function detectBudgetImpact(part) {
+  return /(крупн(?:ая|ую|ое|ый)|больш(?:ая|ую|ое|ой))\s+разов(?:ая|ую|ое|ой)?(?:\s+(покупк[аиу]?|трат[ау]))?/iu.test(part)
+    || /разов(?:ая|ую|ое|ой)\s+(крупн(?:ая|ую|ое|ый)|больш(?:ая|ую|ое|ой))(?:\s+(покупк[аиу]?|трат[ау]))?/iu.test(part)
+    || /\b(large|big)\s+one[-\s]?off\s+(purchase|expense)?\b/iu.test(part)
+    ? "large_oneoff"
+    : "regular";
 }
 
 function normalizeAmount(value, multiplier) {

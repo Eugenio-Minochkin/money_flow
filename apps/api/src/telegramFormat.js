@@ -27,10 +27,10 @@ export function formatSavedSummary(total, snapshot, options = {}) {
   const language = normalizeLanguage(options.language);
   const currency = snapshot.baseCurrency ?? "THB";
   const progress = snapshot.budgetProgressPercent == null ? "" : ` (${formatAmount(snapshot.budgetProgressPercent, language)}%)`;
-  const todayBudget = Number(snapshot.dayRemaining ?? snapshot.safeToSpendPerDay ?? 0);
+  const todayBudget = Number(snapshot.dayPlanLimit ?? snapshot.dailyPlanLimit ?? 0);
   const todayTotal = Number(snapshot.today ?? 0);
-  const todayOverrun = Math.max(todayTotal - todayBudget, 0);
-  const todayLeft = Math.max(todayBudget - todayTotal, 0);
+  const todayOverrun = Number(snapshot.dayOverrun ?? Math.max(todayTotal - todayBudget, 0));
+  const todayLeft = Number(snapshot.dayRemaining ?? Math.max(todayBudget - todayTotal, 0));
   const plannedToday = Number(snapshot.plannedToday ?? snapshot.plannedTodayTotal ?? 0);
   const largeToday = Number(snapshot.largeToday ?? snapshot.largeTodayTotal ?? 0);
   const totalToday = todayTotal + plannedToday + largeToday;

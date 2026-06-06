@@ -250,7 +250,8 @@ test("paying a planned expense creates an expense and records payment month", as
             currency_original: params[2],
             amount_base: params[3],
             description: params[8],
-            category_slug: params[9]
+            category_slug: params[9],
+            budget_impact: params[12]
           }]
         };
       }
@@ -269,6 +270,9 @@ test("paying a planned expense creates an expense and records payment month", as
 
   assert.equal(expense.description, "квартира");
   assert.equal(Number(expense.amount_original), 17000);
+  const expenseInsert = queries.find((query) => String(query.sql).includes("INSERT INTO expenses"));
+  assert.match(String(expenseInsert.sql), /budget_impact/);
+  assert.equal(expenseInsert.params.at(-1), "planned");
   assert.ok(queries.some((query) => String(query.sql).includes("INSERT INTO planned_expense_payments")));
   assert.ok(queries.some((query) => String(query.sql) === "COMMIT"));
 });
@@ -571,6 +575,50 @@ test("dashboard returns USD display totals from converted amounts", async () => 
   assert.equal(dashboard.latestExpenses[0].display.amount, 100);
   assert.equal(dashboard.topCategories[0].display.amount, 100);
   assert.ok(queries.some((query) => query.includes("ORDER BY spent_at") && !query.includes("planned_expense_payments")));
+});
+
+test("dashboard separates regular, planned and large one-off daily totals", async () => {
+  const repo = createRepository(fakePool((sql, params) => {
+    const query = String(sql);
+    if (query.startsWith("SELECT * FROM users")) {
+      return {
+        rows: [{
+          id: "1",
+          telegram_user_id: "100",
+          monthly_budget_amount: "42000",
+          display_currency: "USD",
+          usd_thb_rate: "32.6"
+        }]
+      };
+    }
+    if (query.includes("FROM daily_budget_snapshots")) {
+      return { rows: [{ budget_amount_base: "1417.2", budget_display_amount: "43.47" }] };
+    }
+    if (query.includes("COALESCE(SUM(amount_base)") && query.includes("FILTER")) {
+      const period = params[3];
+      if (period === "today") {
+        return { rows: [{ total: 3802, regular_total: 802, planned_total: 1000, large_oneoff_total: 2000, display_total: 116.63, regular_display_total: 24.6, planned_display_total: 30.67, large_oneoff_display_total: 61.35 }] };
+      }
+      if (period === "week") {
+        return { rows: [{ total: 9472.25, regular_total: 6472.25, planned_total: 1000, large_oneoff_total: 2000, display_total: 290.56, regular_display_total: 198.54, planned_display_total: 30.67, large_oneoff_display_total: 61.35 }] };
+      }
+      return { rows: [{ total: 9772.25, regular_total: 6772.25, planned_total: 1000, large_oneoff_total: 2000, display_total: 299.76, regular_display_total: 207.74, planned_display_total: 30.67, large_oneoff_display_total: 61.35 }] };
+    }
+    if (query.includes("planned_expense_payments")) return { rows: [] };
+    if (query.includes("FROM expenses") && query.includes("ORDER BY spent_at")) return { rows: [] };
+    if (query.includes("GROUP BY category_slug")) return { rows: [] };
+    return { rows: [] };
+  }));
+
+  const dashboard = await repo.dashboard(100, new Date("2026-06-06T20:00:00+07:00"));
+
+  assert.equal(dashboard.snapshot.today, 802);
+  assert.equal(dashboard.snapshot.todayTotal, 3802);
+  assert.equal(dashboard.snapshot.plannedToday, 1000);
+  assert.equal(dashboard.snapshot.largeToday, 2000);
+  assert.equal(dashboard.snapshot.dayPlanLimit, 1417.2);
+  assert.equal(dashboard.snapshot.dayRemaining, 615.2);
+  assert.equal(dashboard.snapshot.month, 9772.25);
 });
 
 test("dashboard returns analytics blocks for the mini app", async () => {

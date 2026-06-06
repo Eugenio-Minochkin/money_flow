@@ -312,9 +312,9 @@ export function createRepository(pool, options = {}) {
           const result = await client.query(
             `INSERT INTO expenses (
                user_id, draft_id, amount_original, currency_original, amount_base, base_currency,
-               converted_amounts, exchange_rate_date, exchange_rate_source, description, category_slug, tags, spent_at
+               converted_amounts, exchange_rate_date, exchange_rate_source, description, category_slug, tags, spent_at, budget_impact
              )
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
              RETURNING *`,
             [
               draft.user_id,
@@ -329,7 +329,8 @@ export function createRepository(pool, options = {}) {
               item.description,
               item.category_slug,
               item.tags ?? [],
-              spentAt
+              spentAt,
+              item.budget_impact ?? "regular"
             ]
           );
           inserted.push(result.rows[0]);
@@ -584,9 +585,9 @@ export function createRepository(pool, options = {}) {
         const expenseResult = await client.query(
           `INSERT INTO expenses (
              user_id, draft_id, amount_original, currency_original, amount_base, base_currency,
-             converted_amounts, exchange_rate_date, exchange_rate_source, description, category_slug, tags, spent_at
+             converted_amounts, exchange_rate_date, exchange_rate_source, description, category_slug, tags, spent_at, budget_impact
            )
-           VALUES ($1, NULL, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+           VALUES ($1, NULL, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
            RETURNING *`,
           [
             planned.user_id,
@@ -600,7 +601,8 @@ export function createRepository(pool, options = {}) {
             planned.description,
             planned.category_slug,
             planned.tags ?? [],
-            paidAt
+            paidAt,
+            "planned"
           ]
         );
         const expense = expenseResult.rows[0];
@@ -631,12 +633,26 @@ export function createRepository(pool, options = {}) {
         totalForPeriod(pool, userId, "month", now, user)
       ]);
       return {
-        today: today.total,
+        today: today.regularTotal,
+        todayTotal: today.total,
+        plannedToday: today.plannedTotal,
+        largeToday: today.largeOneOffTotal,
         week: week.total,
         month: month.total,
-        todayDisplay: today.displayTotal,
+        regularWeek: week.regularTotal,
+        regularMonth: month.regularTotal,
+        plannedMonth: month.plannedTotal,
+        largeMonth: month.largeOneOffTotal,
+        todayDisplay: today.regularDisplayTotal,
+        todayDisplayTotal: today.displayTotal,
+        plannedTodayDisplay: today.plannedDisplayTotal,
+        largeTodayDisplay: today.largeOneOffDisplayTotal,
         weekDisplay: week.displayTotal,
-        monthDisplay: month.displayTotal
+        regularWeekDisplay: week.regularDisplayTotal,
+        monthDisplay: month.displayTotal,
+        regularMonthDisplay: month.regularDisplayTotal,
+        plannedMonthDisplay: month.plannedDisplayTotal,
+        largeMonthDisplay: month.largeOneOffDisplayTotal
       };
     },
 
@@ -647,12 +663,31 @@ export function createRepository(pool, options = {}) {
       const monthBaseline = await monthBaselineTotal(pool, user.id, now);
       totals.month += monthBaseline;
       totals.monthDisplay += displayFromBase(monthBaseline, user);
+      totals.regularMonth += monthBaseline;
+      totals.regularMonthDisplay += displayFromBase(monthBaseline, user);
       const plannedExpenses = await listPlannedExpensesForTelegramUserAt(pool, telegramUserId, now);
       const plannedRemainingTotal = calculatePlannedRemaining(plannedExpenses, now);
       const plannedThisWeekTotal = calculatePlannedThisWeek(plannedExpenses, now);
       const paidPlannedMonthTotal = await paidPlannedTotalForMonth(pool, user.id, now);
+      const dayBudgetSnapshot = await getOrCreateDailyBudgetSnapshot(pool, user, now, {
+        todayTotal: totals.today,
+        monthTotal: totals.month,
+        todayDisplayTotal: totals.todayDisplay,
+        monthDisplayTotal: totals.monthDisplay,
+        monthlyBudget: Number(user.monthly_budget_amount),
+        weeklyBudget: user.weekly_budget_amount == null ? null : Number(user.weekly_budget_amount),
+        plannedRemainingTotal,
+        plannedRemainingDisplayTotal: displayFromBase(plannedRemainingTotal, user),
+        plannedThisWeekTotal,
+        plannedThisWeekDisplayTotal: displayFromBase(plannedThisWeekTotal, user),
+        paidPlannedMonthTotal,
+        largeOneOffMonthTotal: totals.largeMonth,
+        baseCurrency: user.base_currency ?? "THB",
+        displayCurrency: user.display_currency ?? "USD",
+        budgetAdviceEnabled: user.budget_advice_enabled !== false
+      });
       const latest = await pool.query(
-        `SELECT id, amount_original, currency_original, amount_base, converted_amounts,
+        `SELECT id, amount_original, currency_original, amount_base, converted_amounts, budget_impact,
                 description, category_slug, tags, spent_at
          FROM expenses
          WHERE user_id = $1
@@ -676,9 +711,18 @@ export function createRepository(pool, options = {}) {
         plannedThisWeekTotal,
         plannedThisWeekDisplayTotal: displayFromBase(plannedThisWeekTotal, user),
         paidPlannedMonthTotal,
+        largeOneOffMonthTotal: totals.largeMonth,
+        dayPlanLimit: dayBudgetSnapshot.budgetAmountBase,
+        dayDisplayPlanLimit: dayBudgetSnapshot.budgetDisplayAmount,
         baseCurrency: user.base_currency ?? "THB",
         now
       });
+      snapshot.todayTotal = roundMoney(totals.todayTotal);
+      snapshot.plannedToday = roundMoney(totals.plannedToday);
+      snapshot.largeToday = roundMoney(totals.largeToday);
+      snapshot.display.todayTotal = roundMoney(totals.todayDisplayTotal);
+      snapshot.display.plannedToday = roundMoney(totals.plannedTodayDisplay);
+      snapshot.display.largeToday = roundMoney(totals.largeTodayDisplay);
       const topCategories = await this.topCategories(user.id, now);
       const analytics = await dashboardAnalytics(pool, user, topCategories, snapshot, now);
       return {
@@ -804,6 +848,40 @@ async function paidPlannedTotalForMonth(pool, userId, now) {
   return Number(result.rows[0]?.total ?? 0);
 }
 
+async function getOrCreateDailyBudgetSnapshot(pool, user, now, input) {
+  const dayKey = localDayKey(now);
+  const existing = await pool.query(
+    `SELECT budget_amount_base, budget_display_amount
+     FROM daily_budget_snapshots
+     WHERE user_id = $1 AND day_key = $2`,
+    [user.id, dayKey]
+  );
+  const row = existing.rows[0];
+  if (row) {
+    return {
+      budgetAmountBase: Number(row.budget_amount_base ?? 0),
+      budgetDisplayAmount: Number(row.budget_display_amount ?? 0)
+    };
+  }
+
+  const snapshot = calculateBudgetSnapshot({
+    ...input,
+    now
+  });
+  const inserted = await pool.query(
+    `INSERT INTO daily_budget_snapshots (user_id, day_key, budget_amount_base, budget_display_amount)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (user_id, day_key)
+     DO UPDATE SET budget_amount_base = daily_budget_snapshots.budget_amount_base
+     RETURNING budget_amount_base, budget_display_amount`,
+    [user.id, dayKey, snapshot.dayPlanLimit, snapshot.display.dayPlanLimit]
+  );
+  return {
+    budgetAmountBase: Number(inserted.rows[0]?.budget_amount_base ?? snapshot.dayPlanLimit),
+    budgetDisplayAmount: Number(inserted.rows[0]?.budget_display_amount ?? snapshot.display.dayPlanLimit)
+  };
+}
+
 function normalizeDraft(draft) {
   if (!draft) return null;
   return {
@@ -871,6 +949,7 @@ function normalizeDraftItem(item) {
     category_slug: item.category_slug || "other",
     tags: Array.isArray(item.tags) ? item.tags.map(String).filter(Boolean) : [],
     spent_at: item.spent_at || new Date().toISOString(),
+    budget_impact: ["regular", "planned", "large_oneoff"].includes(item.budget_impact) ? item.budget_impact : "regular",
     confidence: Number.isFinite(Number(item.confidence)) ? Number(item.confidence) : 1,
     needs_review: Boolean(item.needs_review)
   };
@@ -1123,6 +1202,13 @@ function monthKey(now) {
   return `${local.getUTCFullYear()}-${month}`;
 }
 
+function localDayKey(now) {
+  const local = new Date(now.getTime() + 7 * 60 * 60_000);
+  const month = String(local.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(local.getUTCDate()).padStart(2, "0");
+  return `${local.getUTCFullYear()}-${month}-${day}`;
+}
+
 function plannedPaymentKey(planned, paidAt) {
   if (planned.recurrence === "weekly" || planned.recurrence === "twice_monthly") {
     return `${monthKey(paidAt)}:${paidAt.toISOString().slice(0, 10)}`;
@@ -1134,13 +1220,25 @@ async function totalForPeriod(pool, userId, period, now, user = {}) {
   const bounds = localPeriodBounds(now, period);
   const result = await pool.query(
     `SELECT COALESCE(SUM(amount_base), 0)::float AS total,
-            COALESCE(SUM(COALESCE(NULLIF(converted_amounts->>$4, '')::float, amount_base / NULLIF($5::numeric, 0))), 0)::float AS display_total
+            COALESCE(SUM(amount_base) FILTER (WHERE budget_impact = 'regular'), 0)::float AS regular_total,
+            COALESCE(SUM(amount_base) FILTER (WHERE budget_impact = 'planned'), 0)::float AS planned_total,
+            COALESCE(SUM(amount_base) FILTER (WHERE budget_impact = 'large_oneoff'), 0)::float AS large_oneoff_total,
+            COALESCE(SUM(COALESCE(NULLIF(converted_amounts->>$5, '')::float, amount_base / NULLIF($6::numeric, 0))), 0)::float AS display_total,
+            COALESCE(SUM(COALESCE(NULLIF(converted_amounts->>$5, '')::float, amount_base / NULLIF($6::numeric, 0))) FILTER (WHERE budget_impact = 'regular'), 0)::float AS regular_display_total,
+            COALESCE(SUM(COALESCE(NULLIF(converted_amounts->>$5, '')::float, amount_base / NULLIF($6::numeric, 0))) FILTER (WHERE budget_impact = 'planned'), 0)::float AS planned_display_total,
+            COALESCE(SUM(COALESCE(NULLIF(converted_amounts->>$5, '')::float, amount_base / NULLIF($6::numeric, 0))) FILTER (WHERE budget_impact = 'large_oneoff'), 0)::float AS large_oneoff_display_total
      FROM expenses
      WHERE user_id = $1 AND spent_at >= $2 AND spent_at < $3`,
-    [userId, bounds.start, bounds.end, user.display_currency ?? "USD", displayThbRate(user)]
+    [userId, bounds.start, bounds.end, period, user.display_currency ?? "USD", displayThbRate(user)]
   );
   return {
     total: Number(result.rows[0]?.total ?? 0),
-    displayTotal: Number(result.rows[0]?.display_total ?? 0)
+    regularTotal: Number(result.rows[0]?.regular_total ?? result.rows[0]?.total ?? 0),
+    plannedTotal: Number(result.rows[0]?.planned_total ?? 0),
+    largeOneOffTotal: Number(result.rows[0]?.large_oneoff_total ?? 0),
+    displayTotal: Number(result.rows[0]?.display_total ?? 0),
+    regularDisplayTotal: Number(result.rows[0]?.regular_display_total ?? result.rows[0]?.display_total ?? 0),
+    plannedDisplayTotal: Number(result.rows[0]?.planned_display_total ?? 0),
+    largeOneOffDisplayTotal: Number(result.rows[0]?.large_oneoff_display_total ?? 0)
   };
 }

@@ -13,10 +13,10 @@ export function budgetLine(label, amount) {
 }
 
 export function buildDashboardCards(snapshot, helpers) {
-  const todayBudget = Number(snapshot.dayRemaining ?? snapshot.safeToSpendPerDay ?? 0);
+  const todayBudget = Number(snapshot.dayPlanLimit ?? snapshot.dailyPlanLimit ?? 0);
   const todayTotal = Number(snapshot.today ?? 0);
-  const todayOverrun = todayTotal > todayBudget ? todayTotal - todayBudget : 0;
-  const todayLeft = Math.max(todayBudget - todayTotal, 0);
+  const todayOverrun = Number(snapshot.dayOverrun ?? Math.max(todayTotal - todayBudget, 0));
+  const todayLeft = Number(snapshot.dayRemaining ?? Math.max(todayBudget - todayTotal, 0));
   const dayProgress = snapshot.progress?.day ?? { percent: snapshot.dayProgressPercent ?? 0, state: "good" };
   const weekProgress = snapshot.progress?.week ?? { percent: snapshot.weekProgressPercent ?? 0, state: "good" };
   const monthProgress = snapshot.progress?.month ?? { percent: snapshot.budgetProgressPercent ?? 0, state: "good" };

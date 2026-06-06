@@ -29,6 +29,7 @@ test("calculates month remaining and safe-to-spend", () => {
     dailyPlanLimit: 1500,
     dayPlanLimit: 1507.5,
     dayRemaining: 687.5,
+    dayOverrun: 0,
     dayProgressPercent: 54.39,
     weeklyBudget: 10500,
     weekPlanLimit: 10500,
@@ -72,6 +73,7 @@ test("calculates month remaining and safe-to-spend", () => {
       dailyPlanLimit: 0,
       dayPlanLimit: 0,
       dayRemaining: 0,
+      dayOverrun: 0,
       weeklyBudget: 0,
       weekPlanLimit: 0,
       plannedThisWeek: 0,
@@ -166,6 +168,38 @@ test("forecasts regular spending pace plus remaining planned expenses", () => {
 
   assert.equal(beforePayment.forecastMonthTotal, 39027.89);
   assert.equal(afterPayment.forecastMonthTotal, 39027.89);
+});
+
+test("keeps fixed daily budget and excludes non-daily impacts from pace", () => {
+  const snapshot = calculateBudgetSnapshot({
+    todayTotal: 802,
+    monthTotal: 12802,
+    monthlyBudget: 42000,
+    plannedRemainingTotal: 10000,
+    paidPlannedMonthTotal: 1000,
+    largeOneOffMonthTotal: 2000,
+    dayPlanLimit: 1417.2,
+    now: new Date("2026-06-06T20:00:00+07:00")
+  });
+
+  assert.equal(snapshot.dayPlanLimit, 1417.2);
+  assert.equal(snapshot.dayRemaining, 615.2);
+  assert.equal(snapshot.dayOverrun, 0);
+  assert.equal(snapshot.forecastMonthTotal, 62010);
+});
+
+test("reports daily overrun against fixed daily budget", () => {
+  const snapshot = calculateBudgetSnapshot({
+    todayTotal: 802,
+    monthTotal: 12802,
+    monthlyBudget: 42000,
+    dayPlanLimit: 615,
+    now: new Date("2026-06-06T20:00:00+07:00")
+  });
+
+  assert.equal(snapshot.dayRemaining, 0);
+  assert.equal(snapshot.dayOverrun, 187);
+  assert.equal(snapshot.dayProgressPercent, 130.41);
 });
 
 test("calculates day week and month progress controls", () => {
