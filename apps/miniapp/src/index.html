@@ -26,60 +26,7 @@
           <small data-i18n="dashboard.afterBudgetAndPlanned">после бюджета и обязательных трат</small>
         </section>
 
-        <section class="metrics-grid" aria-label="Основные показатели">
-          <article class="metric metric-progress" id="todayMetric">
-            <div class="metric-top">
-              <span data-i18n="dashboard.today">Сегодня</span>
-              <b id="todayProgressPercent">...</b>
-            </div>
-            <strong id="today">...</strong>
-            <small class="metric-value-note" id="todayRemaining">...</small>
-            <em class="metric-line" id="todayDisplay"></em>
-            <div class="metric-spacer"></div>
-            <div class="mini-progress" aria-hidden="true">
-              <div id="todayProgressBar"></div>
-            </div>
-          </article>
-          <article class="metric metric-progress" id="weekMetric">
-            <div class="metric-top">
-              <span data-i18n="dashboard.week">Неделя</span>
-              <b id="weekProgressPercent">...</b>
-            </div>
-            <strong id="week">...</strong>
-            <small class="metric-value-note" id="weekRemaining">...</small>
-            <em class="metric-line" id="weekDisplay"></em>
-            <div class="metric-spacer"></div>
-            <div class="mini-progress" aria-hidden="true">
-              <div id="weekProgressBar"></div>
-            </div>
-          </article>
-          <article class="metric">
-            <div class="metric-top">
-              <span data-i18n="dashboard.remaining">Осталось</span>
-              <b>&nbsp;</b>
-            </div>
-            <strong id="freeRemaining">...</strong>
-            <em class="display-currency" id="freeRemainingDisplay"></em>
-            <small class="metric-caption" data-i18n="dashboard.afterExpensesAndPlanned">после расходов и плановых оплат</small>
-            <div class="metric-spacer"></div>
-            <div class="mini-progress is-hidden" aria-hidden="true">
-              <div></div>
-            </div>
-          </article>
-          <article class="metric metric-progress metric-month" id="monthMetric">
-            <div class="metric-top">
-              <span data-i18n="dashboard.month">Месяц</span>
-              <b id="monthCardProgressPercent">...</b>
-            </div>
-            <strong id="month">...</strong>
-            <small class="metric-value-note" id="monthRemaining">...</small>
-            <em class="metric-line" id="monthDisplay"></em>
-            <div class="metric-spacer"></div>
-            <div class="mini-progress" aria-hidden="true">
-              <div id="monthProgressBar"></div>
-            </div>
-          </article>
-        </section>
+        <section class="metrics-grid" id="dashboardCards" aria-label="Основные показатели"></section>
 
         <section class="notice hidden" id="plannedNotice"></section>
 

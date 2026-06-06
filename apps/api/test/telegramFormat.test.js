@@ -49,13 +49,13 @@ test("formats saved summary with budget context", () => {
   const normalized = normalizeSpaces(text);
 
   assert.match(text, /75 THB/);
-  assert.match(normalized, /75 \/ 1 475 THB/);
-  assert.match(normalized, /735 \/ 9 800 THB/);
+  assert.match(text, /Обычные/);
+  assert.match(normalized, /75 \/ 896,38 THB/);
   assert.match(normalized, /735 \/ 42/);
   assert.match(text, /1,75%/);
-  assert.match(text, /Можно в день до конца месяца/);
-  assert.match(text, /896,38 THB/);
-  assert.match(text, /Можно еще сегодня/);
+  assert.match(text, /Плановые сегодня/);
+  assert.match(text, /Крупные сегодня/);
+  assert.match(text, /Всего за день/);
   assert.match(text, /Вернуться в бюджет/);
   assert.match(text, /675 THB/);
 });
@@ -78,7 +78,7 @@ test("formats weekly report with top categories", () => {
 test("formats saved summary in English when requested", () => {
   const text = formatSavedSummary(75, snapshot(), { language: "en" });
 
-  assert.match(text, /Saved expense/);
+  assert.match(text, /Saved/);
   assert.match(text, /Today/);
   assert.match(text, /Month/);
   assert.doesNotMatch(text, /Записал/);

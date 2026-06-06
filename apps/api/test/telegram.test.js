@@ -52,12 +52,12 @@ test("confirm callback saves draft and returns an informative summary", async ()
     });
 
     assert.equal(repo.confirmedDraftId, "42");
-    assert.match(calls[0][1].text, /Записал расход/);
-    assert.match(calls[0][1].text, /<b>Сейчас<\/b>/);
+    assert.match(calls[0][1].text, /Записал/);
+    assert.match(calls[0][1].text, /<b>Сегодня<\/b>/);
     assert.match(calls[0][1].text, /<b>Месяц<\/b>/);
     assert.match(calls[0][1].text, /Потрачено:<\/b> 735 \/ 42/);
     assert.match(calls[0][1].text, /1,75%/);
-    assert.match(calls[0][1].text, /с учетом плановых трат/);
+    assert.match(calls[0][1].text, /Плановые сегодня/);
   } finally {
     console.log = originalLog;
   }

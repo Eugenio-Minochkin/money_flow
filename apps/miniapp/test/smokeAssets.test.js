@@ -35,38 +35,76 @@ test("dashboard metric text can wrap instead of causing horizontal overflow", as
   const html = await readFile(join(miniAppRoot, "index.html"), "utf8");
   const css = await readFile(join(miniAppRoot, "styles.css"), "utf8");
 
-  assert.match(html, /class="metric-caption"[^>]+data-i18n="dashboard.afterExpensesAndPlanned"/);
-  assert.match(css, /\.metric\s*{[^}]*overflow:\s*hidden/s);
-  assert.match(css, /\.metric strong\s*{[^}]*font-size:\s*clamp\(20px,\s*5vw,\s*28px\)/s);
-  assert.match(css, /\.metric-value-note\s*{[^}]*white-space:\s*normal/s);
-  assert.match(css, /\.metric-caption\s*{[^}]*white-space:\s*normal/s);
+  assert.match(html, /id="dashboardCards"/);
+  assert.match(css, /\.dashboard-card\s*{[^}]*overflow:\s*hidden/s);
+  assert.match(css, /\.dashboard-card__amount\s*{[^}]*font-size:\s*clamp\(34px,\s*5\.2vw,\s*46px\)/s);
+  assert.match(css, /\.dashboard-card__line\s*{[^}]*white-space:\s*normal/s);
+  assert.match(css, /\.dashboard-card__caption\s*{[^}]*white-space:\s*normal/s);
 });
 
 test("dashboard metric display currency uses the purple accent", async () => {
   const html = await readFile(join(miniAppRoot, "index.html"), "utf8");
   const css = await readFile(join(miniAppRoot, "styles.css"), "utf8");
 
-  assert.match(html, /class="display-currency"[^>]+id="freeRemainingDisplay"/);
-  assert.match(css, /\.metric em\s*{[^}]*color:\s*#6f6258[^}]*font-style:\s*normal/s);
-  assert.match(css, /\.metric \.display-currency\s*{[^}]*color:\s*var\(--usd\)/s);
-  assert.match(css, /\.metric em b,\s*\.metric small b\s*{[^}]*color:\s*#11100f/s);
+  assert.match(html, /id="dashboardCards"/);
+  assert.match(css, /\.dashboard-card__display\s*{[^}]*color:\s*var\(--usd\)/s);
+  assert.match(css, /\.dashboard-card__label\s*{[^}]*color:\s*#6f6258/s);
+  assert.match(css, /\.dashboard-card__value\s*{[^}]*color:\s*#11100f/s);
 });
 
-test("dashboard card secondary lines prioritize remaining before limits", async () => {
+test("dashboard cards render through the shared renderer", async () => {
   const html = await readFile(join(miniAppRoot, "index.html"), "utf8");
   const app = await readFile(join(miniAppRoot, "app.js"), "utf8");
+  const rendererExists = existsSync(join(miniAppRoot, "dashboardCards.js"));
 
-  assert.ok(html.indexOf('id="todayRemaining"') < html.indexOf('id="todayDisplay"'));
-  assert.ok(html.indexOf('id="weekRemaining"') < html.indexOf('id="weekDisplay"'));
-  assert.ok(html.indexOf('id="monthRemaining"') < html.indexOf('id="monthDisplay"'));
-  assert.match(app, /setMetricLine\("#todayRemaining",\s*t\("dashboard\.remainingPrefix"\)/);
-  assert.doesNotMatch(app, /setMetricLine\("#todayRemaining",\s*t\("dashboard\.leftTodayPrefix"\)/);
+  assert.equal(rendererExists, true);
+  assert.match(html, /<section class="metrics-grid" id="dashboardCards"/);
+  assert.doesNotMatch(html, /id="todayRemaining"/);
+  assert.doesNotMatch(html, /id="weekRemaining"/);
+  assert.doesNotMatch(html, /id="monthRemaining"/);
+  assert.match(app, /import\s*{[^}]*renderDashboardCards[^}]*}\s*from "\.\/dashboardCards\.js"/);
+  assert.match(app, /renderDashboardCards\(document\.querySelector\("#dashboardCards"\),/);
+  assert.doesNotMatch(app, /setMetricLine\("#todayRemaining"/);
+});
+
+test("dashboard card renderer keeps remaining before limits and budgets", async () => {
+  const renderer = await readFile(join(miniAppRoot, "dashboardCards.js"), "utf8");
+
+  assert.match(renderer, /lines:\s*\[\s*remainingLine\(/s);
+  assert.match(renderer, /remainingLine\([^]*budgetLine\(/);
+  assert.match(renderer, /remainingLine\([^]*budgetLine\(/);
 });
 
 test("dashboard card titles use the approved visible typography", async () => {
   const css = await readFile(join(miniAppRoot, "styles.css"), "utf8");
 
-  assert.match(css, /\.metric-top span\s*{[^}]*color:\s*#4f453e[^}]*font-size:\s*17px[^}]*font-weight:\s*820/s);
+  assert.match(css, /\.dashboard-card__title\s*{[^}]*color:\s*#4f453e[^}]*font-size:\s*25px[^}]*font-weight:\s*820/s);
+});
+
+test("dashboard cards match the rounded reference layout with stateful progress colors", async () => {
+  const css = await readFile(join(miniAppRoot, "styles.css"), "utf8");
+  const app = await readFile(join(miniAppRoot, "app.js"), "utf8");
+
+  assert.match(css, /\.shell\s*{[^}]*width:\s*min\(100%,\s*812px\)/s);
+  assert.match(css, /\.hero-metric\s*{[^}]*min-height:\s*346px[^}]*border-radius:\s*34px/s);
+  assert.match(css, /\.hero-metric strong\s*{[^}]*font-size:\s*clamp\(58px,\s*10vw,\s*94px\)/s);
+  assert.match(css, /\.metrics-grid\s*{[^}]*gap:\s*22px/s);
+  assert.match(css, /\.dashboard-card\s*{[^}]*border-radius:\s*24px/s);
+  assert.match(css, /\.dashboard-card\s*{[^}]*min-height:\s*256px/s);
+  assert.match(css, /\.dashboard-card__amount\s*{[^}]*font-size:\s*clamp\(34px,\s*5\.2vw,\s*46px\)/s);
+  assert.match(css, /\.dashboard-card__progress\s*{[^}]*height:\s*10px/s);
+  assert.match(css, /\.dashboard-card__progress-fill\[data-state="warn"\][^{]*{[^}]*background:\s*var\(--amber\)/s);
+  assert.match(css, /\.dashboard-card__progress-fill\[data-state="danger"\][^{]*{[^}]*background:\s*var\(--red\)/s);
+  assert.match(css, /\.dashboard-card__progress-fill\[data-state="good"\][^{]*{[^}]*background:\s*var\(--green\)/s);
+  assert.match(app, /buildDashboardCards\(snapshot/);
+  assert.match(app, /renderDashboardCards\(document\.querySelector\("#dashboardCards"\),/);
+});
+
+test("dashboard card CSS does not rely on broad tag selectors", async () => {
+  const css = await readFile(join(miniAppRoot, "styles.css"), "utf8");
+
+  assert.doesNotMatch(css, /\.metric\s+(em|small|strong)\s*{/);
+  assert.doesNotMatch(css, /\.metric-top\s+(span|b)\s*{/);
 });
 
 test("dashboard uses compact header, inbox before month plan, and bottom navigation", async () => {
@@ -80,7 +118,7 @@ test("dashboard uses compact header, inbox before month plan, and bottom navigat
   assert.ok(html.indexOf('id="dashboardInboxBlock"') < html.indexOf('class="plan-summary"'));
   assert.match(html, /class="bottom-tabs"/);
   assert.match(css, /\.bottom-tabs\s*{/);
-  assert.match(css, /\.metric\s*{[^}]*grid-template-rows:/s);
+  assert.match(css, /\.dashboard-card\s*{[^}]*grid-template-rows:/s);
   assert.match(css, /body\[data-theme="dark"\]/);
   assert.match(css, /body\[data-theme="light"\]/);
 });

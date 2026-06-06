@@ -1,6 +1,7 @@
 import { createApiClient } from "./apiClient.js";
 import { categories, categoryColor, categoryLabel } from "./categories.js";
 import { currencyOptions } from "./currencies.js";
+import { buildDashboardCards, renderDashboardCards } from "./dashboardCards.js";
 import {
   dateTimeLocal,
   escapeAttribute,
@@ -275,30 +276,12 @@ function renderSnapshot(snapshot) {
   if (hero) hero.dataset.state = dayProgress.state ?? "good";
   setText("#safeToSpend", moneyBase(dayRemaining));
   setText("#safeToSpendDisplay", moneyDisplay(snapshot.display?.dayRemaining ?? snapshot.display?.safeToSpendPerDay, snapshot.display?.currency));
-  setText("#today", moneyBase(snapshot.today));
-  setMetricLine("#todayDisplay", t("dashboard.limitPrefix"), moneyBase(snapshot.dayPlanLimit ?? snapshot.dailyPlanLimit ?? 0));
-  setMetricLine("#todayRemaining", t("dashboard.remainingPrefix"), moneyBase(dayRemaining), dayProgress.state);
-  setText("#todayProgressPercent", `${money.format(Number(snapshot.dayProgressPercent ?? 0))}%`);
-  setProgressState("#todayProgressPercent", dayProgress.state);
-  setProgress("#todayProgressBar", dayProgress);
-
-  setText("#week", moneyBase(snapshot.week));
-  const weekProgress = snapshot.progress?.week ?? { percent: snapshot.weekProgressPercent ?? 0, state: "good" };
-  setMetricLine("#weekDisplay", t("dashboard.limitPrefix"), moneyBase(snapshot.weekPlanLimit ?? 0));
-  setMetricLine("#weekRemaining", t("dashboard.remainingPrefix"), moneyBase(snapshot.weekRemaining), weekProgress.state);
-  setText("#weekProgressPercent", `${money.format(Number(snapshot.weekProgressPercent ?? 0))}%`);
-  setProgressState("#weekProgressPercent", weekProgress.state);
-  setProgress("#weekProgressBar", weekProgress);
-
-  setText("#month", moneyBase(snapshot.month));
-  const monthProgress = snapshot.progress?.month ?? { percent: snapshot.budgetProgressPercent ?? 0, state: "good" };
-  setMetricLine("#monthDisplay", t("dashboard.budget"), moneyBase(snapshot.monthlyBudget ?? 0));
-  setMetricLine("#monthRemaining", t("dashboard.remainingPrefix"), moneyBase(snapshot.monthRemaining ?? snapshot.remaining), monthProgress.state);
-  setText("#monthCardProgressPercent", `${money.format(Number(snapshot.budgetProgressPercent ?? 0))}%`);
-  setProgressState("#monthCardProgressPercent", monthProgress.state);
-  setProgress("#monthProgressBar", monthProgress);
-  setText("#freeRemaining", moneyBase(snapshot.freeRemaining));
-  setText("#freeRemainingDisplay", moneyDisplay(snapshot.display?.freeRemaining, snapshot.display?.currency));
+  renderDashboardCards(document.querySelector("#dashboardCards"), buildDashboardCards(snapshot, {
+    t,
+    moneyBase,
+    moneyDisplay,
+    percent: (value) => `${money.format(Number(value ?? 0))}%`
+  }));
 
   const status = document.querySelector("#heroStatus");
   status.textContent = {
@@ -993,27 +976,6 @@ function weekdayOptions(selected) {
 }
 function setText(selector, text) {
   document.querySelector(selector).textContent = text;
-}
-
-function setMetricLine(selector, label, amount, state = "") {
-  const element = document.querySelector(selector);
-  if (!element) return;
-  const stateClass = state === "warn" || state === "danger" || state === "good" ? ` class="${state}"` : "";
-  element.innerHTML = `${escapeHtml(label)} <b${stateClass}>${escapeHtml(amount)}</b>`;
-}
-
-function setProgress(selector, progress) {
-  const bar = document.querySelector(selector);
-  if (!bar) return;
-  const percent = Math.max(0, Math.min(Number(progress?.percent ?? 0), 100));
-  bar.style.width = `${percent}%`;
-  bar.dataset.state = progress?.state ?? "good";
-}
-
-function setProgressState(selector, state) {
-  const element = document.querySelector(selector);
-  if (!element) return;
-  element.dataset.state = state ?? "good";
 }
 
 function showError(error) {

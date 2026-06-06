@@ -27,32 +27,42 @@ export function formatSavedSummary(total, snapshot, options = {}) {
   const language = normalizeLanguage(options.language);
   const currency = snapshot.baseCurrency ?? "THB";
   const progress = snapshot.budgetProgressPercent == null ? "" : ` (${formatAmount(snapshot.budgetProgressPercent, language)}%)`;
+  const todayBudget = Number(snapshot.dayRemaining ?? snapshot.safeToSpendPerDay ?? 0);
+  const todayTotal = Number(snapshot.today ?? 0);
+  const todayOverrun = Math.max(todayTotal - todayBudget, 0);
+  const todayLeft = Math.max(todayBudget - todayTotal, 0);
+  const plannedToday = Number(snapshot.plannedToday ?? snapshot.plannedTodayTotal ?? 0);
+  const largeToday = Number(snapshot.largeToday ?? snapshot.largeTodayTotal ?? 0);
+  const totalToday = todayTotal + plannedToday + largeToday;
   const planDeviation = Number(snapshot.planDeviation ?? 0);
   const planLine = planDeviation > 0
     ? `⚠️ <b>${t(language, "plan")}:</b> ${t(language, "aboveBy")} ${formatMoney(Math.abs(planDeviation), currency, language)}`
     : `🟢 <b>${t(language, "plan")}:</b> ${t(language, "belowBy")} ${formatMoney(Math.abs(planDeviation), currency, language)}`;
   const recovery = formatRecoveryAdvice(snapshot, language);
+  const todayStatusLine = todayOverrun > 0
+    ? `${t(language, "overrun")}: <b>${formatMoney(todayOverrun, currency, language)}</b>`
+    : `${t(language, "remainingToday")}: <b>${formatMoney(todayLeft, currency, language)}</b>`;
 
-  return [
-    `✅ <b>${t(language, "savedExpense")}</b>`,
-    `<b>${formatMoney(total, currency, language)}</b>`,
+  const lines = [
+    `✅ <b>${t(language, "savedExpense")}:</b> ${formatMoney(total, currency, language)}`,
     "",
-    `<b>${t(language, "now")}</b>`,
-    `📌 <b>${t(language, "today")}:</b> ${formatAmount(snapshot.today, language)} / ${formatMoney(snapshot.dayPlanLimit ?? snapshot.dailyPlanLimit, currency, language)}`,
-    `⚡️ <b>${t(language, "safeToday")}:</b> ${formatMoney(snapshot.dayRemaining ?? snapshot.safeToSpendPerDay, currency, language)}`,
-    `📆 <b>${t(language, "week")}:</b> ${formatAmount(snapshot.week, language)} / ${formatMoney(snapshot.weekPlanLimit ?? snapshot.weeklyBudget, currency, language)}`,
+    `📌 <b>${t(language, "today")}</b>`,
+    `${t(language, "regular")}: <b>${formatAmount(snapshot.today, language)} / ${formatMoney(todayBudget, currency, language)}</b>`,
+    todayStatusLine,
+    "",
+    `🧾 ${t(language, "plannedToday")}: <b>${formatMoney(plannedToday, currency, language)}</b>`,
+    `📦 ${t(language, "largeToday")}: <b>${formatMoney(largeToday, currency, language)}</b>`,
+    `${t(language, "totalToday")}: <b>${formatMoney(totalToday, currency, language)}</b>`,
     "",
     `<b>${t(language, "month")}</b>`,
     `📅 <b>${t(language, "spent")}:</b> ${formatAmount(snapshot.month, language)} / ${formatMoney(snapshot.monthlyBudget, currency, language)}${progress}`,
     `🟢 <b>${t(language, "free")}:</b> ${formatMoney(snapshot.freeRemaining, currency, language)}`,
     `🧾 <b>${t(language, "planned")}:</b> ${formatMoney(snapshot.plannedRemaining, currency, language)}`,
     `🔮 <b>${t(language, "forecast")}:</b> ${formatMoney(snapshot.forecastMonthTotal ?? 0, currency, language)}`,
-    planLine,
-    recovery ? `\n${recovery}` : "",
-    "",
-    `⚡️ <b>${t(language, "safeToSpend")}:</b> ${formatMoney(snapshot.safeToSpendPerDay, currency, language)}/${t(language, "day")}`,
-    t(language, "withPlanned")
-  ].join("\n");
+    planLine
+  ];
+  if (recovery) lines.push("", recovery);
+  return lines.join("\n");
 }
 
 function formatRecoveryAdvice(snapshot, language) {
@@ -172,6 +182,7 @@ const messages = {
     draftTitle: "Я понял так:",
     forecast: "Прогноз",
     free: "Осталось",
+    largeToday: "Крупные сегодня",
     isCorrect: "Все верно?",
     month: "Месяц",
     monthForecast: "Прогноз месяца",
@@ -179,9 +190,13 @@ const messages = {
     now: "Сейчас",
     plan: "План",
     planned: "Плановые",
+    plannedToday: "Плановые сегодня",
+    overrun: "Перерасход",
+    regular: "Обычные",
+    remainingToday: "Осталось",
     safeToSpend: "Можно в день до конца месяца",
     safeToday: "Можно еще сегодня",
-    savedExpense: "Записал расход",
+    savedExpense: "Записал",
     spent: "Потрачено",
     status: "Статус",
     returnToBudget: "Вернуться в бюджет",
@@ -191,6 +206,7 @@ const messages = {
     topCategories: "Топ категорий",
     topCategoriesEmpty: "Топ категорий пока пуст.",
     total: "Итого",
+    totalToday: "Всего за день",
     week: "Неделя",
     weeklyReport: "Еженедельный отчет",
     withPlanned: "с учетом плановых трат до конца месяца"
@@ -204,6 +220,7 @@ const messages = {
     draftTitle: "I understood this:",
     forecast: "Forecast",
     free: "Remaining",
+    largeToday: "Large today",
     isCorrect: "Is everything correct?",
     month: "Month",
     monthForecast: "Month forecast",
@@ -211,9 +228,13 @@ const messages = {
     now: "Now",
     plan: "Plan",
     planned: "Planned",
+    plannedToday: "Planned today",
+    overrun: "Overrun",
+    regular: "Regular",
+    remainingToday: "Remaining",
     safeToSpend: "Safe per day until month end",
     safeToday: "Safe left today",
-    savedExpense: "Saved expense",
+    savedExpense: "Saved",
     spent: "Spent",
     status: "Status",
     returnToBudget: "Return to budget",
@@ -223,6 +244,7 @@ const messages = {
     topCategories: "Top categories",
     topCategoriesEmpty: "Top categories are empty for now.",
     total: "Total",
+    totalToday: "Total today",
     week: "Week",
     weeklyReport: "Weekly report",
     withPlanned: "including planned expenses until the end of the month"
