@@ -37,7 +37,7 @@ test("dashboard metric text can wrap instead of causing horizontal overflow", as
 
   assert.match(html, /id="dashboardCards"/);
   assert.match(css, /\.dashboard-card\s*{[^}]*overflow:\s*hidden/s);
-  assert.match(css, /\.dashboard-card__amount\s*{[^}]*font-size:\s*clamp\(34px,\s*5\.2vw,\s*46px\)/s);
+  assert.match(css, /\.dashboard-card__amount\s*{[^}]*font-size:\s*clamp\(32px,\s*5vw,\s*40px\)/s);
   assert.match(css, /\.dashboard-card__line\s*{[^}]*white-space:\s*normal/s);
   assert.match(css, /\.dashboard-card__caption\s*{[^}]*white-space:\s*normal/s);
 });
@@ -78,7 +78,7 @@ test("dashboard card renderer keeps remaining before limits and budgets", async 
 test("dashboard card titles use the approved visible typography", async () => {
   const css = await readFile(join(miniAppRoot, "styles.css"), "utf8");
 
-  assert.match(css, /\.dashboard-card__title\s*{[^}]*color:\s*#4f453e[^}]*font-size:\s*25px[^}]*font-weight:\s*820/s);
+  assert.match(css, /\.dashboard-card__title\s*{[^}]*color:\s*#4f453e[^}]*font-size:\s*22px[^}]*font-weight:\s*820/s);
 });
 
 test("dashboard cards match the rounded reference layout with stateful progress colors", async () => {
@@ -90,9 +90,9 @@ test("dashboard cards match the rounded reference layout with stateful progress 
   assert.match(css, /\.hero-metric strong\s*{[^}]*font-size:\s*clamp\(58px,\s*10vw,\s*94px\)/s);
   assert.match(css, /\.metrics-grid\s*{[^}]*gap:\s*22px/s);
   assert.match(css, /\.dashboard-card\s*{[^}]*border-radius:\s*24px/s);
-  assert.match(css, /\.dashboard-card\s*{[^}]*min-height:\s*256px/s);
-  assert.match(css, /\.dashboard-card__amount\s*{[^}]*font-size:\s*clamp\(34px,\s*5\.2vw,\s*46px\)/s);
-  assert.match(css, /\.dashboard-card__progress\s*{[^}]*height:\s*10px/s);
+  assert.match(css, /\.dashboard-card\s*{[^}]*min-height:\s*214px/s);
+  assert.match(css, /\.dashboard-card__amount\s*{[^}]*font-size:\s*clamp\(32px,\s*5vw,\s*40px\)/s);
+  assert.match(css, /\.dashboard-card__progress\s*{[^}]*height:\s*9px/s);
   assert.match(css, /\.dashboard-card__progress-fill\[data-state="warn"\][^{]*{[^}]*background:\s*var\(--amber\)/s);
   assert.match(css, /\.dashboard-card__progress-fill\[data-state="danger"\][^{]*{[^}]*background:\s*var\(--red\)/s);
   assert.match(css, /\.dashboard-card__progress-fill\[data-state="good"\][^{]*{[^}]*background:\s*var\(--green\)/s);

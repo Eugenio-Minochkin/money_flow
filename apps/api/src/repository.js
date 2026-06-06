@@ -1223,13 +1223,13 @@ async function totalForPeriod(pool, userId, period, now, user = {}) {
             COALESCE(SUM(amount_base) FILTER (WHERE budget_impact = 'regular'), 0)::float AS regular_total,
             COALESCE(SUM(amount_base) FILTER (WHERE budget_impact = 'planned'), 0)::float AS planned_total,
             COALESCE(SUM(amount_base) FILTER (WHERE budget_impact = 'large_oneoff'), 0)::float AS large_oneoff_total,
-            COALESCE(SUM(COALESCE(NULLIF(converted_amounts->>$5, '')::float, amount_base / NULLIF($6::numeric, 0))), 0)::float AS display_total,
-            COALESCE(SUM(COALESCE(NULLIF(converted_amounts->>$5, '')::float, amount_base / NULLIF($6::numeric, 0))) FILTER (WHERE budget_impact = 'regular'), 0)::float AS regular_display_total,
-            COALESCE(SUM(COALESCE(NULLIF(converted_amounts->>$5, '')::float, amount_base / NULLIF($6::numeric, 0))) FILTER (WHERE budget_impact = 'planned'), 0)::float AS planned_display_total,
-            COALESCE(SUM(COALESCE(NULLIF(converted_amounts->>$5, '')::float, amount_base / NULLIF($6::numeric, 0))) FILTER (WHERE budget_impact = 'large_oneoff'), 0)::float AS large_oneoff_display_total
+            COALESCE(SUM(COALESCE(NULLIF(converted_amounts->>$4, '')::float, amount_base / NULLIF($5::numeric, 0))), 0)::float AS display_total,
+            COALESCE(SUM(COALESCE(NULLIF(converted_amounts->>$4, '')::float, amount_base / NULLIF($5::numeric, 0))) FILTER (WHERE budget_impact = 'regular'), 0)::float AS regular_display_total,
+            COALESCE(SUM(COALESCE(NULLIF(converted_amounts->>$4, '')::float, amount_base / NULLIF($5::numeric, 0))) FILTER (WHERE budget_impact = 'planned'), 0)::float AS planned_display_total,
+            COALESCE(SUM(COALESCE(NULLIF(converted_amounts->>$4, '')::float, amount_base / NULLIF($5::numeric, 0))) FILTER (WHERE budget_impact = 'large_oneoff'), 0)::float AS large_oneoff_display_total
      FROM expenses
      WHERE user_id = $1 AND spent_at >= $2 AND spent_at < $3`,
-    [userId, bounds.start, bounds.end, period, user.display_currency ?? "USD", displayThbRate(user)]
+    [userId, bounds.start, bounds.end, user.display_currency ?? "USD", displayThbRate(user)]
   );
   return {
     total: Number(result.rows[0]?.total ?? 0),

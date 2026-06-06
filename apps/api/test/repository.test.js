@@ -578,6 +578,7 @@ test("dashboard returns USD display totals from converted amounts", async () => 
 });
 
 test("dashboard separates regular, planned and large one-off daily totals", async () => {
+  let totalsCall = 0;
   const repo = createRepository(fakePool((sql, params) => {
     const query = String(sql);
     if (query.startsWith("SELECT * FROM users")) {
@@ -595,11 +596,12 @@ test("dashboard separates regular, planned and large one-off daily totals", asyn
       return { rows: [{ budget_amount_base: "1417.2", budget_display_amount: "43.47" }] };
     }
     if (query.includes("COALESCE(SUM(amount_base)") && query.includes("FILTER")) {
-      const period = params[3];
-      if (period === "today") {
+      assert.equal(params.length, 5);
+      totalsCall += 1;
+      if (totalsCall === 1) {
         return { rows: [{ total: 3802, regular_total: 802, planned_total: 1000, large_oneoff_total: 2000, display_total: 116.63, regular_display_total: 24.6, planned_display_total: 30.67, large_oneoff_display_total: 61.35 }] };
       }
-      if (period === "week") {
+      if (totalsCall === 2) {
         return { rows: [{ total: 9472.25, regular_total: 6472.25, planned_total: 1000, large_oneoff_total: 2000, display_total: 290.56, regular_display_total: 198.54, planned_display_total: 30.67, large_oneoff_display_total: 61.35 }] };
       }
       return { rows: [{ total: 9772.25, regular_total: 6772.25, planned_total: 1000, large_oneoff_total: 2000, display_total: 299.76, regular_display_total: 207.74, planned_display_total: 30.67, large_oneoff_display_total: 61.35 }] };
