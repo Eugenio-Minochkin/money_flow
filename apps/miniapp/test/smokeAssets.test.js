@@ -100,6 +100,17 @@ test("dashboard cards match the rounded reference layout with stateful progress 
   assert.match(app, /renderDashboardCards\(document\.querySelector\("#dashboardCards"\),/);
 });
 
+test("dashboard uses compact iPhone card sizing", async () => {
+  const css = await readFile(join(miniAppRoot, "styles.css"), "utf8");
+
+  assert.match(css, /@media \(max-width:\s*640px\)\s*{[^}]*\.shell\s*{[^}]*padding:\s*14px 16px 88px/s);
+  assert.match(css, /@media \(max-width:\s*640px\)[^]*\.hero-metric\s*{[^}]*min-height:\s*218px[^}]*padding:\s*24px 26px/s);
+  assert.match(css, /@media \(max-width:\s*640px\)[^]*\.dashboard-card,\s*\.dashboard-card--progress\s*{[^}]*min-height:\s*140px/s);
+  assert.match(css, /@media \(max-width:\s*640px\)[^]*\.dashboard-card\s*{[^}]*gap:\s*5px[^}]*padding:\s*12px/s);
+  assert.match(css, /@media \(max-width:\s*640px\)[^]*\.dashboard-card__amount\s*{[^}]*font-size:\s*clamp\(23px,\s*6\.5vw,\s*27px\)/s);
+  assert.match(css, /@media \(max-width:\s*640px\)[^]*\.dashboard-card__progress\s*{[^}]*height:\s*6px/s);
+});
+
 test("dashboard card CSS does not rely on broad tag selectors", async () => {
   const css = await readFile(join(miniAppRoot, "styles.css"), "utf8");
 

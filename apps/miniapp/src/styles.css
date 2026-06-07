@@ -1135,7 +1135,11 @@ button:disabled {
   color: var(--red);
 }
 
-@media (max-width: 460px) {
+@media (max-width: 640px) {
+  .shell {
+    padding: 14px 16px 88px;
+  }
+
   .tabs {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -1153,30 +1157,85 @@ button:disabled {
     max-width: 52%;
   }
 
+  .hero-metric {
+    min-height: 218px;
+    gap: 10px;
+    margin-bottom: 18px;
+    padding: 24px 26px;
+    border-radius: 26px;
+  }
+
+  .hero-metric span {
+    font-size: 18px;
+  }
+
+  .hero-metric strong {
+    font-size: clamp(42px, 12.2vw, 54px);
+  }
+
+  .hero-metric em {
+    font-size: 22px;
+  }
+
+  .hero-metric small {
+    font-size: 14px;
+  }
+
   .metrics-grid {
     gap: 10px;
   }
 
   .dashboard-card,
   .dashboard-card--progress {
-    min-height: 170px;
+    min-height: 140px;
   }
 
   .dashboard-card {
-    gap: 8px;
-    padding: 18px;
+    gap: 5px;
+    padding: 12px;
+    border-radius: 17px;
   }
 
   .dashboard-card__amount {
-    font-size: clamp(24px, 7.2vw, 32px);
+    font-size: clamp(23px, 6.5vw, 27px);
+    line-height: 1.05;
   }
 
   .dashboard-card__title {
-    font-size: 17px;
+    font-size: 15px;
   }
 
   .dashboard-card__percent {
-    font-size: 14px;
+    font-size: 12px;
+  }
+
+  .dashboard-card__line {
+    font-size: 12px;
+    line-height: 1.15;
+  }
+
+  .dashboard-card__caption {
+    font-size: 11px;
+    line-height: 1.18;
+  }
+
+  .dashboard-card__display {
+    font-size: 11px;
+  }
+
+  .dashboard-card__progress {
+    height: 6px;
+  }
+
+  .bottom-tabs {
+    bottom: 12px;
+    gap: 6px;
+    padding: 6px;
+  }
+
+  .bottom-tabs .tab-button {
+    min-height: 36px;
+    font-size: 11px;
   }
 
   .expense-row {
