@@ -8,6 +8,7 @@ import { migrate, pool } from "./db.js";
 import { createExchangeRateProvider } from "./exchangeRates.js";
 import { createExpenseParser } from "./expenseParser.js";
 import { createJsonReader, createStaticHandler, sendJson } from "./http.js";
+import { handleDevRoute } from "./devRoutes.js";
 import { createRateLimiter } from "./rateLimit.js";
 import { createRepository } from "./repository.js";
 import { shouldRateLimitRequest } from "./routing.js";
@@ -39,13 +40,17 @@ const voiceTranscriber = createVoiceTranscriber({
   telegramBotToken: config.telegramBotToken,
   deepgramApiKey: config.deepgramApiKey
 });
-const bot = createTelegramBot({
-  repository,
-  expenseParser,
-  voiceTranscriber,
-  token: config.telegramBotToken,
-  miniAppUrl: config.miniAppUrl
-});
+function createBot(telegramClient) {
+  return createTelegramBot({
+    repository,
+    expenseParser,
+    voiceTranscriber,
+    token: config.telegramBotToken,
+    miniAppUrl: config.miniAppUrl,
+    telegramClient
+  });
+}
+const bot = createBot();
 const rateLimiter = createRateLimiter({
   limit: config.rateLimitMax,
   windowMs: config.rateLimitWindowMs
@@ -85,6 +90,10 @@ function startWeeklyReportScheduler() {
 
 async function route(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);
+  if (await handleDevRoute({ req, res, url, readJson, repository, createBot, serveStatic })) {
+    return;
+  }
+
   if (shouldRateLimitRequest(req, url)) {
     const rate = rateLimiter.check(req.socket.remoteAddress ?? "unknown");
     if (!rate.allowed) {

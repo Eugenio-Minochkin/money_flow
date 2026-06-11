@@ -8,6 +8,10 @@
     "packages/*"
   ],
   "scripts": {
+    "dev": "node -e \"console.log('1. docker compose up -d postgres\\n2. npm run dev:reset\\n3. npm run dev:api\\n4. open http://localhost:3000/dev')\"",
+    "dev:api": "node --env-file=.env apps/api/src/server.js",
+    "dev:reset": "node --env-file=.env apps/api/scripts/dev-reset.js",
+    "dev:sandbox": "node -e \"console.log('Open http://localhost:3000/dev after running npm run dev:api')\"",
     "test": "node --test",
     "start:api": "node --env-file=.env apps/api/src/server.js"
   },
