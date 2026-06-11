@@ -1,0 +1,94 @@
+name: CI and Deploy
+
+on:
+  push:
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref to deploy. Leave empty to deploy the selected branch commit.
+        required: false
+        type: string
+
+concurrency:
+  group: money-flow-deploy
+  cancel-in-progress: false
+
+jobs:
+  ci:
+    name: Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+  deploy:
+    name: Deploy production
+    runs-on: ubuntu-latest
+    needs: ci
+    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/master'
+    environment: production
+
+    steps:
+      - name: Configure SSH
+        env:
+          PROD_SSH_HOST: ${{ secrets.PROD_SSH_HOST }}
+          PROD_SSH_USER: ${{ secrets.PROD_SSH_USER }}
+          PROD_SSH_KEY: ${{ secrets.PROD_SSH_KEY }}
+          PROD_SSH_PORT: ${{ secrets.PROD_SSH_PORT || '22' }}
+          PROD_SSH_KNOWN_HOSTS: ${{ secrets.PROD_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+
+          test -n "$PROD_SSH_HOST"
+          test -n "$PROD_SSH_USER"
+          test -n "$PROD_SSH_KEY"
+
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$PROD_SSH_KEY" > ~/.ssh/money_flow_deploy
+          chmod 600 ~/.ssh/money_flow_deploy
+
+          if [ -n "$PROD_SSH_KNOWN_HOSTS" ]; then
+            printf '%s\n' "$PROD_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          else
+            ssh-keyscan -p "$PROD_SSH_PORT" "$PROD_SSH_HOST" > ~/.ssh/known_hosts
+          fi
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Deploy over SSH
+        env:
+          PROD_SSH_HOST: ${{ secrets.PROD_SSH_HOST }}
+          PROD_SSH_USER: ${{ secrets.PROD_SSH_USER }}
+          PROD_SSH_PORT: ${{ secrets.PROD_SSH_PORT || '22' }}
+          PROD_APP_DIR: ${{ secrets.PROD_APP_DIR || '/opt/money-flow' }}
+          DEPLOY_REF: ${{ github.event.inputs.ref || github.sha }}
+        run: |
+          set -euo pipefail
+
+          ssh -i ~/.ssh/money_flow_deploy \
+            -p "$PROD_SSH_PORT" \
+            "$PROD_SSH_USER@$PROD_SSH_HOST" \
+            "APP_DIR='$PROD_APP_DIR' DEPLOY_REF='$DEPLOY_REF' bash -s" <<'REMOTE'
+          set -euo pipefail
+
+          cd "$APP_DIR"
+          git fetch origin --prune --tags
+          git checkout --force "$DEPLOY_REF"
+          docker compose --env-file .env.production -f compose.prod.yml up -d --build
+          ./scripts/prod-security-check.sh
+          REMOTE
