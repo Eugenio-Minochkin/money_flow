@@ -289,6 +289,47 @@ test("amount callback updates the first draft item amount", async () => {
   }
 });
 
+test("impact callback updates the draft item and edits the existing Telegram message", async () => {
+  const requests = [];
+  const repo = fakeRepository();
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, request) => {
+    requests.push({ url: String(url), body: JSON.parse(request.body) });
+    return {
+      ok: true,
+      async json() {
+        return { ok: true };
+      }
+    };
+  };
+  try {
+    const bot = createTelegramBot({
+      token: "test-token",
+      miniAppUrl: "http://localhost:3000",
+      repository: repo
+    });
+
+    await bot.handleUpdate({
+      callback_query: {
+        id: "callback-impact",
+        data: "impact:42:0:large_oneoff",
+        from: { id: 100 },
+        message: { chat: { id: 10 }, message_id: 99 }
+      }
+    });
+
+    assert.equal(repo.updatedItems[0].budget_impact, "large_oneoff");
+    assert.ok(requests.some((request) => request.url.endsWith("/answerCallbackQuery")));
+    const edit = requests.find((request) => request.url.endsWith("/editMessageText"));
+    assert.ok(edit);
+    assert.equal(edit.body.chat_id, 10);
+    assert.equal(edit.body.message_id, 99);
+    assert.ok(edit.body.reply_markup.inline_keyboard.flat().some((button) => button.text === "☑️ Крупная"));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("weekly reports are sent once per pending user", async () => {
   const calls = [];
   const repo = fakeRepository();

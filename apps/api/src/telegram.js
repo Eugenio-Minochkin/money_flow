@@ -230,6 +230,20 @@ async function handleCallback({ update, repository, token, miniAppUrl }) {
     return sendMessage(token, callback.message.chat.id, formatDraft(updated.items, { language, baseCurrency: user?.base_currency ?? "THB" }), draftKeyboard(updated.id, updated.items, miniAppUrl, telegramUserId, language));
   }
 
+  if (action === "impact") {
+    const impact = normalizeBudgetImpact(value);
+    const draft = await repository.getDraftForTelegramUser(draftId, telegramUserId);
+    const items = updateDraftItem(draft, Number(itemIndex), { budget_impact: impact });
+    const updated = await repository.updateDraftItems(draftId, telegramUserId, items);
+    await answerCallback(token, callback.id, language === "ru" ? "Тип обновлен" : "Type updated");
+    const text = formatDraft(updated.items, { language, baseCurrency: user?.base_currency ?? "THB" });
+    const replyMarkup = draftKeyboard(updated.id, updated.items, miniAppUrl, telegramUserId, language);
+    if (callback.message?.message_id) {
+      return editMessageText(token, callback.message.chat.id, callback.message.message_id, text, replyMarkup);
+    }
+    return sendMessage(token, callback.message.chat.id, text, replyMarkup);
+  }
+
   if (action === "confirm") {
     const expenses = await repository.confirmDraft(draftId, telegramUserId);
     const dashboard = await repository.dashboard(telegramUserId);
@@ -257,6 +271,10 @@ async function handleCallback({ update, repository, token, miniAppUrl }) {
 function updateDraftItem(draft, index, patch) {
   if (!draft?.items?.[index]) throw new Error("Draft item not found");
   return draft.items.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item);
+}
+
+function normalizeBudgetImpact(value) {
+  return ["regular", "planned", "large_oneoff"].includes(value) ? value : "regular";
 }
 
 export async function sendWeeklyReports({ repository, token, miniAppUrl, now = new Date() }) {
@@ -294,6 +312,20 @@ async function sendMessage(token, chatId, text, replyMarkup) {
   }
   return telegramRequest(token, "sendMessage", {
     chat_id: chatId,
+    text,
+    parse_mode: "HTML",
+    reply_markup: replyMarkup
+  });
+}
+
+async function editMessageText(token, chatId, messageId, text, replyMarkup) {
+  if (!token) {
+    console.log("[telegram:editMessageText]", { chatId, messageId, text, replyMarkup });
+    return { ok: true };
+  }
+  return telegramRequest(token, "editMessageText", {
+    chat_id: chatId,
+    message_id: messageId,
     text,
     parse_mode: "HTML",
     reply_markup: replyMarkup

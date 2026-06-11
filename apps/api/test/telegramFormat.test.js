@@ -36,6 +36,38 @@ test("formats draft dates in Bangkok timezone", () => {
 });
 
 
+test("formats draft budget impact markers for planned and large expenses", () => {
+  const text = formatDraft([
+    {
+      amount: 70,
+      currency: "THB",
+      description: "coffee",
+      category_slug: "food_cafe",
+      spent_at: "2026-06-02T09:30:00+07:00",
+      budget_impact: "regular"
+    },
+    {
+      amount: 1000,
+      currency: "THB",
+      description: "rent",
+      category_slug: "home",
+      spent_at: "2026-06-02T09:30:00+07:00",
+      budget_impact: "planned"
+    },
+    {
+      amount: 5000,
+      currency: "THB",
+      description: "phone",
+      category_slug: "other",
+      spent_at: "2026-06-02T09:30:00+07:00",
+      budget_impact: "large_oneoff"
+    }
+  ], { language: "ru" });
+
+  assert.match(text, /🧾 Плановая/);
+  assert.match(text, /📦 Крупная/);
+});
+
 test("formats saved summary with budget context", () => {
   const text = formatSavedSummary(75, {
     ...snapshot(),

@@ -133,7 +133,10 @@ test("moves stale pending drafts into inbox before listing drafts", async () => 
 });
 
 test("updates an expense owned by a Telegram user", async () => {
-  const repo = createRepository(fakePool((_sql, params) => ({
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql, params });
+    return {
     rows: [{
       id: "7",
       amount_original: params[0],
@@ -142,9 +145,11 @@ test("updates an expense owned by a Telegram user", async () => {
       description: params[6],
       category_slug: params[7],
       tags: params[8],
-      spent_at: params[9]
+      spent_at: params[9],
+      budget_impact: params[10]
     }]
-  })));
+    };
+  }));
 
   const expense = await repo.updateExpenseForTelegramUser(7, 100, {
     amount: 120,
@@ -152,10 +157,13 @@ test("updates an expense owned by a Telegram user", async () => {
     description: "завтрак",
     category_slug: "food_cafe",
     tags: ["еда"],
-    spent_at: "2026-06-01T10:00:00+07:00"
+    spent_at: "2026-06-01T10:00:00+07:00",
+    budget_impact: "planned"
   });
 
   assert.equal(Number(expense.amount_original), 120);
+  assert.equal(expense.budget_impact, "planned");
+  assert.match(String(queries.find((query) => String(query.sql).startsWith("UPDATE expenses")).sql), /budget_impact/);
   assert.equal(expense.description, "завтрак");
 });
 

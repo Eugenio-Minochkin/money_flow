@@ -1,10 +1,13 @@
 export function draftKeyboard(draftId, items = [], miniAppUrl, telegramUserId, language = "ru") {
   const text = keyboardText(language);
   const firstReviewIndex = items.findIndex((item) => item.needs_review || item.category_slug === "other");
+  const impactIndex = firstReviewIndex >= 0 ? firstReviewIndex : 0;
+  const impactValue = items[impactIndex]?.budget_impact ?? "regular";
   const quickRows = [
     [
-      { text: "-10", callback_data: `amount:${draftId}:0:-10` },
-      { text: "+10", callback_data: `amount:${draftId}:0:10` }
+      impactButton(text.regular, "regular", impactValue, draftId, impactIndex),
+      impactButton(text.planned, "planned", impactValue, draftId, impactIndex),
+      impactButton(text.large, "large_oneoff", impactValue, draftId, impactIndex)
     ]
   ];
   if (firstReviewIndex >= 0) {
@@ -31,6 +34,21 @@ export function draftKeyboard(draftId, items = [], miniAppUrl, telegramUserId, l
       [{ text: "📱 Mini App", web_app: { url: `${miniAppUrl}?telegramUserId=${telegramUserId}` } }]
     ]
   };
+}
+
+function impactButton(label, value, activeValue, draftId, itemIndex) {
+  return {
+    text: `${activeValue === value ? "☑️" : "⬜"} ${label ?? impactFallbackLabel(value)}`,
+    callback_data: `impact:${draftId}:${itemIndex}:${value}`
+  };
+}
+
+function impactFallbackLabel(value) {
+  return {
+    regular: "Обычная",
+    planned: "Плановая",
+    large_oneoff: "Крупная"
+  }[value] ?? value;
 }
 
 export function plannedDraftKeyboard(plannedDraftId, miniAppUrl, telegramUserId, language = "ru") {
@@ -75,9 +93,12 @@ function keyboardText(language) {
       health: "Health",
       home: "Home",
       later: "Review later",
+      large: "Large",
       openApp: "Open Mini App",
       openDraft: "Open this draft",
       other: "Other",
+      planned: "Planned",
+      regular: "Regular",
       sport: "Sport",
       transport: "Transport"
     };

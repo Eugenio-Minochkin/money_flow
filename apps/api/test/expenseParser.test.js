@@ -85,6 +85,42 @@ test("OpenAI parser accepts budget impact for large one-off expenses", async () 
   assert.deepEqual(parsed.notes, []);
 });
 
+test("OpenAI parser prompt describes planned and large one-off budget impact rules", async () => {
+  const parser = createExpenseParser({
+    apiKey: "test-key",
+    now: () => new Date("2026-06-01T10:00:00+07:00"),
+    fetchImpl: async (_url, request) => {
+      const body = JSON.parse(request.body);
+      const prompt = body.input[0].content;
+      assert.match(prompt, /planned/);
+      assert.match(prompt, /large_oneoff/);
+      assert.match(prompt, /плановая/);
+      assert.match(prompt, /крупная/);
+
+      return jsonResponse({
+        output_text: JSON.stringify({
+          expenses: [{
+            amount: 2000,
+            currency: "THB",
+            description: "rent",
+            category_slug: "home",
+            tags: [],
+            spent_at: "2026-06-01T10:00:00.000+07:00",
+            budget_impact: "planned",
+            confidence: 0.9,
+            needs_review: false
+          }],
+          notes: []
+        })
+      });
+    }
+  });
+
+  const parsed = await parser.parse("плановая аренда 2000 бат");
+
+  assert.equal(parsed.expenses[0].budget_impact, "planned");
+});
+
 test("falls back to the local parser when OpenAI is not configured", async () => {
   const parser = createExpenseParser({
     now: () => new Date("2026-06-01T10:00:00+07:00")
