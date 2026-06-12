@@ -8,6 +8,7 @@ import {
   escapeHtml,
   formatDate,
   formatDateOnly,
+  formatMoney,
   moneyBase,
   moneyDisplay,
   moneyDisplaySigned,
@@ -30,7 +31,7 @@ const params = new URLSearchParams(window.location.search);
 const telegramUserId = params.get("telegramUserId") || window.Telegram?.WebApp?.initDataUnsafe?.user?.id;
 const draftId = params.get("draftId");
 
-const money = new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 });
+const percentNumber = new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 });
 const api = createApiClient();
 let dashboardState = null;
 let draftState = null;
@@ -280,7 +281,7 @@ function renderSnapshot(snapshot) {
     t,
     moneyBase,
     moneyDisplay,
-    percent: (value) => `${money.format(Number(value ?? 0))}%`
+    percent: (value) => `${percentNumber.format(Number(value ?? 0))}%`
   }));
 
   const status = document.querySelector("#heroStatus");
@@ -530,7 +531,7 @@ function expenseRow(expense) {
         <div class="expense-meta">${formatDate(expense.spent_at, currentLanguage)} · ${escapeHtml(categoryLabel(expense.category_slug, currentLanguage))}</div>
       </div>
       <div class="expense-actions">
-        <div class="expense-amount">${money.format(Number(expense.amount_original))} ${escapeHtml(expense.currency_original)}
+        <div class="expense-amount">${formatMoney(expense.amount_original, expense.currency_original)}
           <em>${moneyDisplay(expense.display?.amount, expense.display?.currency)}</em>
         </div>
         <div class="button-row compact">
@@ -653,7 +654,7 @@ function renderPlannedExpenses(items) {
         <div class="expense-meta">${recurrenceLabel(item)} · ${escapeHtml(categoryLabel(item.category_slug, currentLanguage))}${isPlannedPaid(item) ? ` · ${t("plan.paidSuffix")}` : ""}</div>
       </div>
       <div class="expense-actions">
-        <div class="expense-amount">${money.format(Number(item.amount))} ${escapeHtml(item.currency)}
+        <div class="expense-amount">${formatMoney(item.amount, item.currency)}
           <em>${moneyDisplay(item.display?.amount, item.display?.currency)}</em>
         </div>
         <div class="button-row compact">

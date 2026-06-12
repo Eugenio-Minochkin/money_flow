@@ -5,6 +5,7 @@ import {
   dateTimeLocal,
   escapeAttribute,
   escapeHtml,
+  formatMoney,
   formatDate,
   formatDateOnly,
   moneyBase,
@@ -13,16 +14,28 @@ import {
 } from "../src/formatters.js";
 
 test("formats base and display money", () => {
-  assert.equal(normalizeSpaces(moneyBase(15269.99)), "15 269,99 THB");
+  assert.equal(normalizeSpaces(moneyBase(15269.99)), "15 270 THB");
   assert.equal(normalizeSpaces(moneyBase(14000, "IDR")), "14 000 IDR");
   assert.equal(moneyDisplay(69.44, "USD"), "~$69,44");
   assert.equal(normalizeSpaces(moneyDisplay(5000, "RUB")), "5 000 RUB");
   assert.equal(moneyDisplay(null, "USD"), "");
 });
 
+test("formats money with currency-specific display decimals", () => {
+  assert.equal(normalizeSpaces(formatMoney(8720.81, "THB")), "8 721 THB");
+  assert.equal(normalizeSpaces(formatMoney(12500.75, "RUB")), "12 501 RUB");
+  assert.equal(normalizeSpaces(formatMoney(1500000.55, "IDR")), "1 500 001 IDR");
+  assert.equal(normalizeSpaces(formatMoney(1234.56, "BYN")), "1 235 BYN");
+  assert.equal(normalizeSpaces(formatMoney(266.58, "USD")), "266,58 USD");
+  assert.equal(normalizeSpaces(formatMoney(45.2, "EUR")), "45,20 EUR");
+  assert.equal(normalizeSpaces(formatMoney(120.5, "GEL")), "120,50 GEL");
+  assert.equal(normalizeSpaces(formatMoney(7, "XYZ")), "7,00 XYZ");
+  assert.equal(normalizeSpaces(formatMoney(Number.NaN, "USD")), "0,00 USD");
+});
+
 test("formats signed display money", () => {
-  assert.equal(moneyDisplaySigned(12.5, "USD"), "+~$12,5");
-  assert.equal(moneyDisplaySigned(-12.5, "USD"), "~$-12,5");
+  assert.equal(moneyDisplaySigned(12.5, "USD"), "+~$12,50");
+  assert.equal(moneyDisplaySigned(-12.5, "USD"), "~$-12,50");
 });
 
 test("escapes html and attributes", () => {

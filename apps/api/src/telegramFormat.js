@@ -47,7 +47,7 @@ export function formatSavedSummary(total, snapshot, options = {}) {
     `✅ <b>${t(language, "savedExpense")}:</b> ${formatMoney(total, currency, language)}`,
     "",
     `📌 <b>${t(language, "today")}</b>`,
-    `${t(language, "regular")}: <b>${formatAmount(snapshot.today, language)} / ${formatMoney(todayBudget, currency, language)}</b>`,
+    `${t(language, "regular")}: <b>${formatMoney(snapshot.today, currency, language)} / ${formatMoney(todayBudget, currency, language)}</b>`,
     todayStatusLine,
     "",
     `🧾 ${t(language, "plannedToday")}: <b>${formatMoney(plannedToday, currency, language)}</b>`,
@@ -55,7 +55,7 @@ export function formatSavedSummary(total, snapshot, options = {}) {
     `${t(language, "totalToday")}: <b>${formatMoney(totalToday, currency, language)}</b>`,
     "",
     `<b>${t(language, "month")}</b>`,
-    `📅 <b>${t(language, "spent")}:</b> ${formatAmount(snapshot.month, language)} / ${formatMoney(snapshot.monthlyBudget, currency, language)}${progress}`,
+    `📅 <b>${t(language, "spent")}:</b> ${formatMoney(snapshot.month, currency, language)} / ${formatMoney(snapshot.monthlyBudget, currency, language)}${progress}`,
     `🟢 <b>${t(language, "free")}:</b> ${formatMoney(snapshot.freeRemaining, currency, language)}`,
     `🧾 <b>${t(language, "planned")}:</b> ${formatMoney(snapshot.plannedRemaining, currency, language)}`,
     `🔮 <b>${t(language, "forecast")}:</b> ${formatMoney(snapshot.forecastMonthTotal ?? 0, currency, language)}`,
@@ -89,7 +89,7 @@ export function formatTotals(command, snapshot, options = {}) {
   if (command === "/month") {
     const progress = snapshot.budgetProgressPercent == null ? "" : ` (${formatAmount(snapshot.budgetProgressPercent, language)}%)`;
     return [
-      `📅 <b>${t(language, "month")}:</b> ${formatAmount(snapshot.month, language)} / ${formatMoney(snapshot.monthlyBudget, currency, language)}${progress}`,
+      `📅 <b>${t(language, "month")}:</b> ${formatMoney(snapshot.month, currency, language)} / ${formatMoney(snapshot.monthlyBudget, currency, language)}${progress}`,
       `🔮 <b>${t(language, "forecast")}:</b> ${formatMoney(snapshot.forecastMonthTotal ?? 0, currency, language)}`
     ].join("\n");
   }
@@ -115,7 +115,7 @@ export function formatWeeklyReport(dashboard, options = {}) {
     `📊 <b>${t(language, "weeklyReport")}</b>`,
     "",
     `${t(language, "week")}: <b>${formatMoney(snapshot.week, currency, language)}</b>`,
-    `${t(language, "month")}: <b>${formatAmount(snapshot.month, language)} / ${formatMoney(snapshot.monthlyBudget, currency, language)}</b>`,
+    `${t(language, "month")}: <b>${formatMoney(snapshot.month, currency, language)} / ${formatMoney(snapshot.monthlyBudget, currency, language)}</b>`,
     `${t(language, "safeToSpend")}: <b>${formatMoney(snapshot.safeToSpendPerDay, currency, language)}</b>`,
     `${t(language, "monthForecast")}: <b>${formatMoney(snapshot.forecastMonthTotal ?? 0, currency, language)}</b>`,
     "",
@@ -271,12 +271,37 @@ function formatRecurrence(item, language) {
   return language === "ru" ? `каждый месяц, ${day} числа` : `monthly, day ${day}`;
 }
 
+const ZERO_DECIMAL_DISPLAY_CURRENCIES = ["THB", "RUB", "IDR", "BYN"];
+const TWO_DECIMAL_DISPLAY_CURRENCIES = ["USD", "EUR", "GEL"];
+
 function formatMoney(value, currency, language) {
-  return `${formatAmount(value, language)} ${currency}`;
+  const normalizedCurrency = String(currency || "THB").toUpperCase();
+  return `${formatMoneyAmount(value, normalizedCurrency, language)} ${normalizedCurrency}`;
+}
+
+function formatMoneyAmount(value, currency, language) {
+  const decimals = displayDecimalsForCurrency(currency);
+  const numeric = safeMoneyNumber(value);
+  const displayValue = decimals === 0 ? Math.round(numeric) : numeric;
+  return new Intl.NumberFormat(language === "ru" ? "ru-RU" : "en-US", {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals
+  }).format(displayValue);
 }
 
 function formatAmount(value, language) {
-  return new Intl.NumberFormat(language === "ru" ? "ru-RU" : "en-US", { maximumFractionDigits: 2 }).format(Number(value));
+  return new Intl.NumberFormat(language === "ru" ? "ru-RU" : "en-US", { maximumFractionDigits: 2 }).format(safeMoneyNumber(value));
+}
+
+function displayDecimalsForCurrency(currency) {
+  if (ZERO_DECIMAL_DISPLAY_CURRENCIES.includes(currency)) return 0;
+  if (TWO_DECIMAL_DISPLAY_CURRENCIES.includes(currency)) return 2;
+  return 2;
+}
+
+function safeMoneyNumber(value) {
+  const numeric = Number(value ?? 0);
+  return Number.isFinite(numeric) ? numeric : 0;
 }
 
 function formatSpentAt(value, language) {
