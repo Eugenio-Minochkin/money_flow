@@ -20,6 +20,11 @@ export function createCapturedTelegramClient() {
       const answer = { method: "answerCallbackQuery", callbackQueryId, text };
       callbackAnswers.push(answer);
       return { ok: true, result: answer };
+    },
+    async deleteMessage({ chatId, messageId }) {
+      const message = { method: "deleteMessage", chatId, messageId };
+      messages.push(message);
+      return { ok: true, result: message };
     }
   };
 }
