@@ -8,9 +8,22 @@ set -a
 . ./.env.production
 set +a
 
-health="$(curl -fsS http://127.0.0.1:3000/health)"
-echo "$health" | grep -q '"ok":true'
-echo "$health" | grep -q '"db":true'
+health=""
+for attempt in {1..30}; do
+  echo "Waiting for API health... attempt $attempt/30"
+  if health="$(curl -fsS http://127.0.0.1:3000/health 2>/dev/null)" \
+    && echo "$health" | grep -q '"ok":true' \
+    && echo "$health" | grep -q '"db":true'; then
+    break
+  fi
+
+  if [ "$attempt" = "30" ]; then
+    echo "API health check failed after 60 seconds" >&2
+    exit 1
+  fi
+
+  sleep 2
+done
 
 direct_code="$(curl -sS -o /tmp/money-flow-direct-dashboard.out -w '%{http_code}' 'http://127.0.0.1:3000/api/dashboard?telegramUserId=100001')"
 test "$direct_code" = "400"
