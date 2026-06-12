@@ -27,6 +27,9 @@ test("Mini App translations cover dashboard, plan, history and settings labels",
     "plan.plannedExpenses",
     "settings.title",
     "settings.formNote",
+    "settings.currentMonthBudget",
+    "settings.currentMonthBudgetHint",
+    "settings.editCurrentMonthBudget",
     "settings.weeklyBudgetPlaceholder",
     "settings.budgetAdvice",
     "settings.budgetAdviceHint",
@@ -52,6 +55,11 @@ test("settings translations cover interface themes", () => {
   assert.equal(createTranslator("en")("settings.interfaceTheme"), "Interface theme");
   assert.equal(createTranslator("en")("settings.themeDark"), "Dark");
   assert.equal(createTranslator("en")("settings.themeLight"), "Light");
+});
+
+test("settings translations distinguish regular and current month budgets", () => {
+  assert.equal(createTranslator("ru")("settings.editCurrentMonthBudget"), "Изменить бюджет на этот месяц");
+  assert.equal(createTranslator("en")("settings.editCurrentMonthBudget"), "Edit this month’s budget");
 });
 
 test("dashboard labels distinguish today's limit from daily budget", () => {

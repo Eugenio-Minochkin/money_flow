@@ -175,6 +175,20 @@ async function route(req, res) {
     return sendJson(res, 200, { user });
   }
 
+  if (req.method === "PATCH" && url.pathname === "/api/settings/current-month-budget") {
+    const body = await readJson(req);
+    const auth = apiSecurity.resolveTelegramUserId(req, url, body);
+    if (auth.error) return sendJson(res, 400, { error: auth.error });
+    const currentMonthBudget = await repository.setCurrentMonthBudget(auth.telegramUserId, {
+      amount: Number(body.currentMonthBudgetAmount),
+      currency: body.currency,
+      source: "manual",
+      isPartialMonth: true
+    });
+    if (!currentMonthBudget) return sendJson(res, 404, { error: "user_not_found" });
+    return sendJson(res, 200, { currentMonthBudget });
+  }
+
   if (req.method === "PATCH" && url.pathname === "/api/settings") {
     const body = await readJson(req);
     const auth = apiSecurity.resolveTelegramUserId(req, url, body);

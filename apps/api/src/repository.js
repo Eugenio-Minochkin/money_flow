@@ -31,7 +31,7 @@ export function createRepository(pool, options = {}) {
     },
 
     async setOnboardingStep(telegramUserId, step) {
-      const safeStep = ["base_currency", "monthly_budget", "month_opening_spend", "completed"].includes(step) ? step : "completed";
+      const safeStep = ["base_currency", "monthly_budget", "current_month_budget", "month_opening_spend", "completed"].includes(step) ? step : "completed";
       const result = await pool.query(
         "UPDATE users SET onboarding_step = $1 WHERE telegram_user_id = $2 RETURNING *",
         [safeStep, telegramUserId]
@@ -52,7 +52,7 @@ export function createRepository(pool, options = {}) {
       return result.rows[0] ?? null;
     },
 
-    async updateOnboardingMonthlyBudget(telegramUserId, amount, nextStep = "month_opening_spend") {
+    async updateOnboardingMonthlyBudget(telegramUserId, amount, nextStep = "current_month_budget") {
       const monthlyBudgetAmount = Number(amount);
       if (!Number.isFinite(monthlyBudgetAmount) || monthlyBudgetAmount <= 0) {
         throw new Error("Monthly budget must be positive");
@@ -65,6 +65,31 @@ export function createRepository(pool, options = {}) {
          RETURNING *`,
         [monthlyBudgetAmount, nextStep, telegramUserId]
       );
+      return result.rows[0] ?? null;
+    },
+
+    async setCurrentMonthBudget(telegramUserId, input, now = new Date()) {
+      const user = await this.getUserByTelegramId(telegramUserId);
+      if (!user) return null;
+      const amount = Number(input.amount);
+      if (!Number.isFinite(amount) || amount <= 0) {
+        throw new Error("Current month budget must be positive");
+      }
+      const moneyAmounts = await buildMoneyAmounts(exchangeRates, amount, input.currency ?? user.base_currency, now, user);
+      const result = await pool.query(
+        `INSERT INTO monthly_budget_overrides (
+           user_id, month_key, budget_amount_base, source, is_partial_month, updated_at
+         )
+         VALUES ($1, $2, $3, $4, $5, now())
+         ON CONFLICT (user_id, month_key)
+         DO UPDATE SET budget_amount_base = EXCLUDED.budget_amount_base,
+                       source = EXCLUDED.source,
+                       is_partial_month = EXCLUDED.is_partial_month,
+                       updated_at = now()
+         RETURNING *`,
+        [user.id, monthKey(now), moneyAmounts.amountBase, input.source ?? "manual", input.isPartialMonth === true]
+      );
+      if (input.completeOnboarding) await this.setOnboardingStep(telegramUserId, "completed");
       return result.rows[0] ?? null;
     },
 
@@ -659,6 +684,7 @@ export function createRepository(pool, options = {}) {
     async dashboard(telegramUserId, now = new Date()) {
       const user = await this.getUserByTelegramId(telegramUserId);
       if (!user) return null;
+      const currentBudget = await currentMonthBudget(pool, user, now);
       const totals = await this.totals(user.id, now);
       const monthBaseline = await monthBaselineTotal(pool, user.id, now);
       totals.month += monthBaseline;
@@ -674,7 +700,7 @@ export function createRepository(pool, options = {}) {
         monthTotal: totals.month,
         todayDisplayTotal: totals.todayDisplay,
         monthDisplayTotal: totals.monthDisplay,
-        monthlyBudget: Number(user.monthly_budget_amount),
+        monthlyBudget: currentBudget.amount,
         weeklyBudget: user.weekly_budget_amount == null ? null : Number(user.weekly_budget_amount),
         plannedRemainingTotal,
         plannedRemainingDisplayTotal: displayFromBase(plannedRemainingTotal, user),
@@ -703,7 +729,7 @@ export function createRepository(pool, options = {}) {
         weekDisplayTotal: totals.weekDisplay,
         monthDisplayTotal: totals.monthDisplay,
         displayCurrency: user.display_currency ?? "USD",
-        monthlyBudget: Number(user.monthly_budget_amount),
+        monthlyBudget: currentBudget.amount,
         weeklyBudget: user.weekly_budget_amount == null ? null : Number(user.weekly_budget_amount),
         budgetAdviceEnabled: user.budget_advice_enabled !== false,
         plannedRemainingTotal,
@@ -727,6 +753,7 @@ export function createRepository(pool, options = {}) {
       const analytics = await dashboardAnalytics(pool, user, topCategories, snapshot, now);
       return {
         user,
+        currentMonthBudget: currentBudget,
         snapshot,
         latestExpenses: latest.rows.map((row) => withDisplay(row, user)),
         topCategories,
@@ -906,6 +933,30 @@ async function monthBaselineTotal(pool, userId, now) {
     [userId, monthKey(now)]
   );
   return Number(result.rows[0]?.total ?? 0);
+}
+
+async function currentMonthBudget(pool, user, now) {
+  const regularAmount = roundMoney(Number(user.monthly_budget_amount ?? 0));
+  const result = await pool.query(
+    `SELECT COALESCE(budget_amount_base, 0)::float AS budget_amount_base,
+            is_partial_month
+     FROM monthly_budget_overrides
+     WHERE user_id = $1 AND month_key = $2`,
+    [user.id, monthKey(now)]
+  );
+  const override = result.rows[0];
+  const amount = override ? roundMoney(Number(override.budget_amount_base ?? 0)) : regularAmount;
+  return {
+    monthKey: monthKey(now),
+    amount,
+    regularMonthlyBudget: regularAmount,
+    isPartialMonth: Boolean(override?.is_partial_month),
+    hasOverride: Boolean(override),
+    display: {
+      currency: user.display_currency ?? "USD",
+      amount: displayFromBase(amount, user)
+    }
+  };
 }
 
 async function moveExpiredPendingDraftsToInbox(pool, telegramUserId, expireAfterMinutes) {

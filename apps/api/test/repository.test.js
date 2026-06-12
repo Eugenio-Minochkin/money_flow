@@ -61,6 +61,38 @@ test("updates user budget and display currency settings", async () => {
   assert.equal(queries[0].params[8], 100);
 });
 
+test("updates only the current month budget override for a Telegram user", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql: String(sql), params });
+    if (String(sql).startsWith("SELECT * FROM users")) {
+      return { rows: [{ id: "1", telegram_user_id: "100", base_currency: "THB" }] };
+    }
+    if (String(sql).startsWith("INSERT INTO monthly_budget_overrides")) {
+      return {
+        rows: [{
+          user_id: params[0],
+          month_key: params[1],
+          budget_amount_base: params[2],
+          is_partial_month: params[4]
+        }]
+      };
+    }
+    return { rows: [] };
+  }));
+
+  const override = await repo.setCurrentMonthBudget(100, {
+    amount: 12000,
+    currency: "THB",
+    isPartialMonth: true
+  }, new Date("2026-06-12T10:00:00+07:00"));
+
+  assert.equal(Number(override.budget_amount_base), 12000);
+  assert.equal(override.month_key, "2026-06");
+  assert.equal(override.is_partial_month, true);
+  assert.ok(!queries.some((query) => /UPDATE users\s+SET monthly_budget_amount/i.test(query.sql)));
+});
+
 test("checks database health", async () => {
   const repo = createRepository(fakePool((sql) => {
     assert.match(sql, /SELECT 1 AS ok/);
@@ -450,6 +482,45 @@ test("dashboard keeps unpaid twice-monthly occurrences in planned reserve", asyn
 
   assert.equal(dashboard.snapshot.plannedRemaining, 2000);
   assert.equal(dashboard.snapshot.freeRemaining, 43000);
+});
+
+test("dashboard uses current month override only for the matching calendar month", async () => {
+  const repo = createRepository(fakePool((sql, params) => {
+    const query = String(sql);
+    if (query.startsWith("SELECT * FROM users")) {
+      return {
+        rows: [{
+          id: "1",
+          telegram_user_id: "100",
+          monthly_budget_amount: "45000",
+          display_currency: "USD",
+          usd_thb_rate: "30"
+        }]
+      };
+    }
+    if (query.includes("FROM monthly_budget_overrides")) {
+      return params[1] === "2026-06"
+        ? { rows: [{ budget_amount_base: "12000", is_partial_month: true }] }
+        : { rows: [] };
+    }
+    if (query.includes("planned_expense_payments")) return { rows: [] };
+    if (query.includes("COALESCE(SUM(amount_base)") && query.includes("display_total")) {
+      return { rows: [{ total: 3000, display_total: 100 }] };
+    }
+    if (query.includes("FROM expenses") && query.includes("ORDER BY spent_at")) return { rows: [] };
+    if (query.includes("GROUP BY category_slug")) return { rows: [] };
+    return { rows: [] };
+  }));
+
+  const june = await repo.dashboard(100, new Date("2026-06-12T10:00:00+07:00"));
+  const july = await repo.dashboard(100, new Date("2026-07-01T10:00:00+07:00"));
+
+  assert.equal(june.snapshot.monthlyBudget, 12000);
+  assert.equal(june.currentMonthBudget.amount, 12000);
+  assert.equal(june.currentMonthBudget.isPartialMonth, true);
+  assert.equal(july.snapshot.monthlyBudget, 45000);
+  assert.equal(july.currentMonthBudget.amount, 45000);
+  assert.equal(july.currentMonthBudget.isPartialMonth, false);
 });
 
 test("dashboard subtracts unpaid planned expenses due this week from weekly remaining", async () => {

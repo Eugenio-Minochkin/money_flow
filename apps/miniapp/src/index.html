@@ -189,6 +189,16 @@
               <span data-i18n="settings.monthlyBudget">Месячный бюджет</span>
               <input id="budgetInput" name="monthlyBudgetAmount" type="number" min="1" step="1" inputmode="decimal" />
             </label>
+            <div class="form-stack nested-form" id="currentMonthBudgetForm">
+              <label>
+                <span data-i18n="settings.currentMonthBudget">Бюджет на этот месяц</span>
+                <input id="currentMonthBudgetInput" name="currentMonthBudgetAmount" type="number" min="1" step="1" inputmode="decimal" />
+              </label>
+              <small data-i18n="settings.currentMonthBudgetHint">Меняет только лимит текущего месяца. Обычный месячный бюджет не изменится.</small>
+              <div class="button-row">
+                <button type="button" id="saveCurrentMonthBudgetButton" class="ghost-button" data-i18n="settings.editCurrentMonthBudget">Изменить бюджет на этот месяц</button>
+              </div>
+            </div>
             <label>
               <span data-i18n="settings.weeklyBudget">План недели</span>
               <input id="weeklyBudgetInput" name="weeklyBudgetAmount" type="number" min="1" step="1" inputmode="decimal" placeholder="Автоматически из бюджета" data-i18n-placeholder="settings.weeklyBudgetPlaceholder" />

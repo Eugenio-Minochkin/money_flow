@@ -49,6 +49,7 @@ if (window.Telegram?.WebApp) {
 }
 
 document.querySelector("#settingsForm").addEventListener("submit", saveSettings);
+document.querySelector("#saveCurrentMonthBudgetButton")?.addEventListener("click", saveCurrentMonthBudget);
 document.querySelector("#historySearchForm").addEventListener("submit", (event) => {
   event.preventDefault();
   loadHistory();
@@ -299,6 +300,7 @@ function renderSettings(user) {
   setBaseCurrency(user.base_currency ?? "THB");
   applyLanguage(currentLanguage);
   document.querySelector("#budgetInput").value = Math.round(Number(user.monthly_budget_amount ?? 45000));
+  document.querySelector("#currentMonthBudgetInput").value = Math.round(Number(dashboardState?.currentMonthBudget?.amount ?? user.monthly_budget_amount ?? 45000));
   document.querySelector("#weeklyBudgetInput").value = user.weekly_budget_amount == null ? "" : Math.round(Number(user.weekly_budget_amount));
   document.querySelector("#baseCurrencyInput").value = user.base_currency ?? "THB";
   document.querySelector("#displayCurrencyInput").value = user.display_currency ?? "USD";
@@ -818,6 +820,19 @@ async function saveSettings(event) {
   showToast(t("toast.settingsSaved"));
 }
 
+async function saveCurrentMonthBudget() {
+  await api("/api/settings/current-month-budget", {
+    method: "PATCH",
+    body: {
+      telegramUserId,
+      currentMonthBudgetAmount: Number(document.querySelector("#currentMonthBudgetInput").value),
+      currency: dashboardState?.user?.base_currency ?? dashboardState?.snapshot?.baseCurrency ?? "THB"
+    }
+  });
+  await loadDashboard();
+  showToast(t("toast.settingsSaved"));
+}
+
 async function saveDraft(event) {
   event.preventDefault();
   await saveDraftItems({ showFeedback: true });
@@ -939,6 +954,7 @@ function applyLanguage(language) {
   setOptionalText("#settingsTab h2", t("settings.title"));
   const labels = [
     ["#budgetInput", "settings.monthlyBudget"],
+    ["#currentMonthBudgetInput", "settings.currentMonthBudget"],
     ["#weeklyBudgetInput", "settings.weeklyBudget"],
     ["#baseCurrencyInput", "settings.baseCurrency"],
     ["#displayCurrencyInput", "settings.displayCurrency"],
