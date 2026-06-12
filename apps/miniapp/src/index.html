@@ -145,12 +145,19 @@
 
       <section id="planTab" class="hidden">
         <section class="section form-section">
-          <div class="section-heading split-heading">
-            <div>
-              <h2 data-i18n="plan.plannedExpenses">Плановые траты</h2>
-              <span class="eyebrow" data-i18n="plan.budgetReserve">резерв бюджета</span>
+          <div class="section-heading planned-header planned-header--compact">
+            <div class="planned-header__top">
+              <div class="planned-header__title">
+                <h2 data-i18n="plan.plannedExpenses">Плановые траты</h2>
+                <span class="eyebrow" data-i18n="plan.budgetReserve">Резерв месяца</span>
+              </div>
+              <button type="button" id="togglePlannedForm" data-i18n="plan.addPlanned">+ Добавить</button>
             </div>
-            <button type="button" id="togglePlannedForm" data-i18n="plan.addPlanned">+ Добавить</button>
+
+            <div class="planned-header__summary">
+              <strong id="plannedReserveTotal">...</strong>
+              <span id="plannedReservePaidRemaining">...</span>
+            </div>
           </div>
           <form class="form-stack hidden" id="plannedForm"></form>
           <div class="expense-list" id="plannedExpenses"></div>

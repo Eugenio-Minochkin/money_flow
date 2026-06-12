@@ -17,6 +17,7 @@ import { groupByDay } from "./history.js";
 import { createTranslator } from "./i18n.js";
 import { inboxDraftDescription, inboxDraftTotal, shouldShowInboxOnDashboard, updateFirstInboxItemCategory } from "./inbox.js";
 import {
+  calculatePlannedMonthSummary,
   defaultPlannedCurrency,
   isDueToday,
   isPlannedPaid,
@@ -92,6 +93,7 @@ async function loadDashboard() {
   renderNextPlannedSummary(data.plannedExpenses ?? []);
   renderAnalytics(data.snapshot, data.analytics ?? {});
   renderTopCategories(data.topCategories ?? [], data.snapshot.month);
+  renderPlannedMonthSummary(data.plannedExpenses ?? []);
   renderPlannedExpenses(data.plannedExpenses ?? []);
   renderLatest(data.latestExpenses ?? []);
 }
@@ -307,6 +309,32 @@ function renderSettings(user) {
   document.querySelector("#usdThbRateInput").value = Number(user.usd_thb_rate ?? 32.65);
   document.querySelector("#budgetAdviceInput").checked = user.budget_advice_enabled !== false;
   updateCurrencyFlags();
+}
+
+function renderPlannedMonthSummary(items) {
+  const summary = calculatePlannedMonthSummary(items);
+  const baseCurrency = dashboardState?.user?.base_currency ?? dashboardState?.snapshot?.baseCurrency ?? "THB";
+  const total = plannedSummaryMoneyParts(summary.total, baseCurrency, summary.display.total, summary.display.currency);
+  const paid = plannedSummaryMoneyParts(summary.paid, baseCurrency, summary.display.paid, summary.display.currency);
+  const remaining = plannedSummaryMoneyParts(summary.remaining, baseCurrency, summary.display.remaining, summary.display.currency);
+
+  setHtml("#plannedReserveTotal", plannedSummaryMoneyHtml(total));
+  setHtml("#plannedReservePaidRemaining", currentLanguage === "ru"
+    ? `Оплачено ${plannedSummaryMoneyHtml(paid)} · осталось ${plannedSummaryMoneyHtml(remaining)}`
+    : `Paid ${plannedSummaryMoneyHtml(paid)} · remaining ${plannedSummaryMoneyHtml(remaining)}`);
+}
+
+function plannedSummaryMoneyParts(baseAmount, baseCurrency, displayAmount, displayCurrency) {
+  return {
+    base: moneyBase(baseAmount, baseCurrency),
+    display: displayCurrency && displayCurrency !== baseCurrency
+      ? moneyDisplay(displayAmount, displayCurrency)
+      : ""
+  };
+}
+
+function plannedSummaryMoneyHtml(parts) {
+  return parts.display ? `${parts.base} <em>· ${parts.display}</em>` : parts.base;
 }
 
 function renderPlannedNotice(items) {
@@ -976,6 +1004,10 @@ function weekdayOptions(selected) {
 }
 function setText(selector, text) {
   document.querySelector(selector).textContent = text;
+}
+
+function setHtml(selector, html) {
+  document.querySelector(selector).innerHTML = html;
 }
 
 function showError(error) {
