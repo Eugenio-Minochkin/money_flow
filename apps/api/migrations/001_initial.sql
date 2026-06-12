@@ -82,6 +82,18 @@ CREATE TABLE IF NOT EXISTS month_baselines (
   UNIQUE(user_id, month_key)
 );
 
+CREATE TABLE IF NOT EXISTS monthly_budget_overrides (
+  id BIGSERIAL PRIMARY KEY,
+  user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  month_key TEXT NOT NULL,
+  budget_amount_base NUMERIC(14, 2) NOT NULL,
+  is_partial_month BOOLEAN NOT NULL DEFAULT false,
+  source TEXT NOT NULL DEFAULT 'manual',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(user_id, month_key)
+);
+
 UPDATE expenses
 SET amount_base = NULLIF(converted_amounts->>base_currency, '')::numeric
 WHERE base_currency <> 'THB'

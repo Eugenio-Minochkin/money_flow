@@ -142,7 +142,7 @@ test("text parsing uses user's base currency as default", async () => {
   assert.equal(seenOptions[0].defaultCurrency, "IDR");
 });
 
-test("new user onboarding asks currency, budget, and opening spend in order", async () => {
+test("new user onboarding from the 1st to 5th asks only for regular monthly budget", async () => {
   const calls = [];
   const repo = fakeRepository();
   repo.user = { id: 1, interface_language: "en", base_currency: "THB", onboarding_step: "base_currency" };
@@ -152,7 +152,55 @@ test("new user onboarding asks currency, budget, and opening spend in order", as
     const bot = createTelegramBot({
       token: "",
       miniAppUrl: "http://localhost:3000",
-      repository: repo
+      repository: repo,
+      now: () => new Date("2026-06-05T10:00:00+07:00")
+    });
+
+    await bot.handleUpdate({
+      message: {
+        chat: { id: 10 },
+        from: { id: 100, first_name: "M" },
+        text: "/start"
+      }
+    });
+    await bot.handleUpdate({
+      message: {
+        chat: { id: 10 },
+        from: { id: 100, first_name: "M" },
+        text: "IDR"
+      }
+    });
+    await bot.handleUpdate({
+      message: {
+        chat: { id: 10 },
+        from: { id: 100, first_name: "M" },
+        text: "20k"
+      }
+    });
+  } finally {
+    console.log = originalLog;
+  }
+
+  assert.match(calls[0][1].text, /base currency/i);
+  assert.match(calls[1][1].text, /plan to spend per month/i);
+  assert.match(calls[2][1].text, /setup is complete/i);
+  assert.equal(repo.settings.baseCurrency, "IDR");
+  assert.equal(repo.settings.monthlyBudgetAmount, 20000);
+  assert.equal(repo.currentMonthBudget, null);
+});
+
+test("new user onboarding after the 5th asks for a current month budget", async () => {
+  const calls = [];
+  const repo = fakeRepository();
+  repo.user = { id: 1, interface_language: "en", base_currency: "THB", onboarding_step: "base_currency" };
+  const originalLog = console.log;
+  console.log = (...args) => calls.push(args);
+  try {
+    const bot = createTelegramBot({
+      token: "",
+      miniAppUrl: "http://localhost:3000",
+      repository: repo,
+      now: () => new Date("2026-06-12T10:00:00+07:00")
     });
 
     await bot.handleUpdate({
@@ -180,20 +228,19 @@ test("new user onboarding asks currency, budget, and opening spend in order", as
       message: {
         chat: { id: 10 },
         from: { id: 100, first_name: "M" },
-        text: "1500"
+        text: "8000"
       }
     });
   } finally {
     console.log = originalLog;
   }
 
-  assert.match(calls[0][1].text, /base currency/i);
-  assert.match(calls[1][1].text, /monthly budget/i);
-  assert.match(calls[2][1].text, /spent from the 1st/i);
+  assert.match(calls[2][1].text, /The month has already started/);
+  assert.match(calls[2][1].text, /until the end of this month/);
   assert.match(calls[3][1].text, /setup is complete/i);
-  assert.equal(repo.settings.baseCurrency, "IDR");
   assert.equal(repo.settings.monthlyBudgetAmount, 20000);
-  assert.equal(repo.monthBaseline.amount, 1500);
+  assert.equal(repo.currentMonthBudget.amount, 8000);
+  assert.equal(repo.currentMonthBudget.isPartialMonth, true);
 });
 
 test("recurring planned text creates a planned draft before saving", async () => {
@@ -429,6 +476,7 @@ function fakeRepository() {
     markedReportKey: null,
     settings: {},
     monthBaseline: null,
+    currentMonthBudget: null,
     plannedDraft: null,
     async upsertTelegramUser() {
       return this.user;
@@ -455,6 +503,11 @@ function fakeRepository() {
     async setMonthBaseline(_telegramUserId, baseline) {
       this.monthBaseline = baseline;
       return baseline;
+    },
+    async setCurrentMonthBudget(_telegramUserId, budget) {
+      this.currentMonthBudget = budget;
+      this.user = { ...this.user, onboarding_step: "completed" };
+      return budget;
     },
     async createPlannedDraft(_userId, _sourceText, item) {
       this.plannedDraft = { id: 77, item };
