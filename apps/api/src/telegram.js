@@ -269,7 +269,13 @@ async function handleCallback({ update, repository, token, miniAppUrl, telegramC
   if (action === "cancel") {
     await repository.cancelDraft(draftId, telegramUserId);
     await answerCallback(token, callback.id, botText(language, "cancelledCallback"), telegramClient);
-    return sendMessage(token, callback.message.chat.id, botText(language, "draftCancelled"), null, telegramClient);
+    const chatId = callback.message.chat.id;
+    const messageId = callback.message.message_id;
+    try {
+      return await deleteMessage(token, chatId, messageId, telegramClient);
+    } catch {
+      return editMessageText(token, chatId, messageId, botText(language, "cancelledCallback"), { inline_keyboard: [] }, telegramClient);
+    }
   }
 
   if (action === "inbox") {
@@ -349,6 +355,20 @@ async function editMessageText(token, chatId, messageId, text, replyMarkup, tele
     text,
     parse_mode: "HTML",
     reply_markup: replyMarkup
+  });
+}
+
+async function deleteMessage(token, chatId, messageId, telegramClient) {
+  if (telegramClient) {
+    return telegramClient.deleteMessage({ chatId, messageId });
+  }
+  if (!token) {
+    console.log("[telegram:deleteMessage]", { chatId, messageId });
+    return { ok: true };
+  }
+  return telegramRequest(token, "deleteMessage", {
+    chat_id: chatId,
+    message_id: messageId
   });
 }
 
