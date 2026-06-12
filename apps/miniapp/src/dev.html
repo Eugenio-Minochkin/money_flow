@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Money Flow acceptance sandbox</title>
+    <link rel="stylesheet" href="/dev.css">
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Local acceptance sandbox</p>
+          <h1>Money Flow demo user</h1>
+        </div>
+        <a class="primary" href="/?telegramUserId=100001">Open Mini App as demo user</a>
+      </header>
+
+      <section class="status-grid">
+        <article>
+          <span>Today</span>
+          <strong id="today">...</strong>
+        </article>
+        <article>
+          <span>Month</span>
+          <strong id="month">...</strong>
+        </article>
+        <article>
+          <span>Budget</span>
+          <strong id="budget">...</strong>
+        </article>
+        <article>
+          <span>Free after planned</span>
+          <strong id="free">...</strong>
+        </article>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <h2>Telegram simulator</h2>
+            <p>Uses the real bot parser, repository, keyboards, and callbacks.</p>
+          </div>
+          <button id="refresh" type="button">Refresh state</button>
+        </div>
+        <form id="message-form" class="composer">
+          <input id="message-input" name="message" autocomplete="off" placeholder="coffee 70 baht">
+          <button type="submit">Send</button>
+        </form>
+        <div class="quick" id="quick-messages"></div>
+        <div class="response">
+          <h3>Bot response</h3>
+          <pre id="bot-text">No message yet.</pre>
+          <div id="keyboard" class="keyboard"></div>
+        </div>
+      </section>
+
+      <section class="columns">
+        <article class="panel">
+          <h2>Recent expenses</h2>
+          <div id="expenses" class="list"></div>
+        </article>
+        <article class="panel">
+          <h2>Drafts</h2>
+          <div id="drafts" class="list"></div>
+        </article>
+        <article class="panel">
+          <h2>Planned expenses</h2>
+          <div id="planned" class="list"></div>
+        </article>
+      </section>
+
+      <section class="panel">
+        <h2>Reset demo data</h2>
+        <code>npm run dev:reset</code>
+      </section>
+    </main>
+    <script type="module" src="/devSandbox.js"></script>
+  </body>
+</html>

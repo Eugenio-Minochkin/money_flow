@@ -39,6 +39,138 @@ Implemented MVP slice:
 
 The API listens on `http://localhost:3000`. The Mini App is served from the same origin.
 
+## Local acceptance sandbox
+
+Use this flow before marking a feature PR ready for merge or deploy. It uses only local/dev data and the demo Telegram user `100001`.
+
+1. Copy env:
+
+   ```powershell
+   Copy-Item .env.example .env
+   ```
+
+2. Start Postgres:
+
+   ```powershell
+   docker compose up -d postgres
+   ```
+
+3. Install dependencies:
+
+   ```powershell
+   npm.cmd install
+   ```
+
+4. Reset and seed the local database:
+
+   ```powershell
+   npm.cmd run dev:reset
+   ```
+
+5. Start API + Mini App static server:
+
+   ```powershell
+   npm.cmd run dev:api
+   ```
+
+6. Open the sandbox:
+
+   ```text
+   http://localhost:3000/dev
+   ```
+
+7. Open the Mini App as the demo user:
+
+   ```text
+   http://localhost:3000/?telegramUserId=100001
+   ```
+
+8. Send fake bot messages in the sandbox, click simulated inline buttons, then check dashboard, today, month, budget, drafts, planned expenses, and history.
+
+9. Run tests:
+
+   ```powershell
+   npm.cmd test
+   ```
+
+10. Only after the local acceptance pass should the PR be marked ready.
+
+The root helper scripts are:
+
+- `npm run dev:reset` - refuses production mode or production-looking database URLs, runs migrations, resets the local database, and seeds demo data.
+- `npm run dev:api` - starts the local API and Mini App static server.
+- `npm run dev:sandbox` - prints the sandbox URL after the API is running.
+- `npm run dev` - prints the full local acceptance sequence.
+
+### Demo data
+
+`dev:reset` creates demo user `telegram_user_id = 100001` with a `45000 THB` monthly budget, THB base currency, USD display currency, and completed onboarding.
+
+The seed includes realistic fake data for visual acceptance:
+
+- expenses for today, yesterday, the current month, and the previous month;
+- regular, planned, and `large_oneoff` budget impact examples;
+- many history rows for scrolling and layout checks;
+- categories such as cafe, groceries, transport, home, sport, rent, health, subscriptions, education, and electronics;
+- pending and inbox drafts, including a multi-item draft;
+- planned expenses with paid and unpaid examples.
+
+### Browser Telegram simulation
+
+The sandbox page at `http://localhost:3000/dev` includes:
+
+- an "Open Mini App as demo user" link;
+- current dashboard, today, month, budget, recent expenses, drafts, and planned expenses;
+- a "Send bot message" form with quick examples:
+  `coffee 70 baht`, `groceries 500 baht`, `planned rent 20000 baht monthly`, `large purchase monitor 8000 baht`, `/today`, `/month`, `/budget`;
+- a Bot response block that renders the text and inline keyboard returned by the real bot logic;
+- clickable inline callback simulation for confirm, cancel, category, amount adjustment, planned draft confirmation, and Mini App links.
+
+Internally, `POST /dev/telegram/update` builds a fake Telegram message or callback update and passes it through `bot.handleUpdate`. The endpoint captures what the bot would send to Telegram and returns it to the browser.
+
+### Sandbox safety
+
+The local sandbox is guarded intentionally:
+
+- `/dev` and `/dev/*` return `404` when `NODE_ENV=production`;
+- `dev:reset` throws when `NODE_ENV=production`;
+- `dev:reset` throws when `DATABASE_URL` does not look local/dev;
+- no production data is read or copied for sandbox data;
+- production deploy behavior and Telegram webhook behavior are unchanged.
+
+### Manual acceptance checklist
+
+Before merge/deploy I should be able to:
+
+- run local Postgres;
+- reset and seed demo data;
+- open `http://localhost:3000/dev`;
+- open Mini App as `telegramUserId=100001`;
+- see seeded budget, dashboard, and history;
+- send fake text expenses from the browser;
+- simulate `/today`, `/month`, and `/budget`;
+- simulate inline buttons;
+- confirm a draft;
+- test regular, planned, and `large_oneoff` budget impact examples;
+- see dashboard numbers update;
+- check many expenses in history;
+- edit CSS/JS locally and refresh to see UI changes;
+- run `npm test` successfully.
+
+### Testing with real development Telegram bot
+
+Voice message acceptance should be tested in a future phase with a real development Telegram bot. The browser simulator is enough for text, inline buttons, Mini App, and budget logic, but voice depends on the real Telegram client and file flow.
+
+Future phase:
+
+1. Create a separate development bot through BotFather.
+2. Put the development token in local `.env` as `TELEGRAM_BOT_TOKEN`.
+3. Confirm `DATABASE_URL` points only to a local/dev database.
+4. Start the local API with `npm run dev:api`.
+5. Open a local tunnel to `http://localhost:3000`.
+6. Set the dev bot webhook to `<tunnel-url>/telegram/webhook`.
+7. Send a voice message from Telegram and verify it end-to-end against the local database.
+
 ## Production deploy
 
 The production setup uses Docker Compose with:
