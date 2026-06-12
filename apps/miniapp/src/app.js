@@ -18,6 +18,7 @@ import { groupByDay } from "./history.js";
 import { createTranslator } from "./i18n.js";
 import { inboxDraftDescription, inboxDraftTotal, shouldShowInboxOnDashboard, updateFirstInboxItemCategory } from "./inbox.js";
 import {
+  buildPlannedOccurrences,
   calculatePlannedMonthSummary,
   defaultPlannedCurrency,
   isDueToday,
@@ -351,7 +352,7 @@ function plannedSummaryRowHtml(label, parts) {
 
 function renderPlannedNotice(items) {
   const notice = document.querySelector("#plannedNotice");
-  const due = items.find((item) => isDueToday(item) && !isPlannedPaid(item) && !hiddenNoticeIds.has(String(item.id)));
+  const due = items.find((item) => isDueToday(item) && hasUnpaidOccurrenceToday(item) && !hiddenNoticeIds.has(String(item.id)));
   if (!due) {
     notice.classList.add("hidden");
     notice.innerHTML = "";
@@ -694,25 +695,45 @@ function renderPlannedExpenses(items) {
     list.innerHTML = `<div class="empty">${t("plan.noPlanned")}</div>`;
     return;
   }
-  list.innerHTML = items.map((item) => `
+  list.innerHTML = items.map((item) => {
+    const paid = isPlannedPaid(item);
+    const progress = plannedPaymentProgressLabel(item);
+    return `
     <article class="expense-row" style="--category-color: ${categoryColor(item.category_slug)}">
       <div class="expense-main">
         <div class="expense-title">${escapeHtml(item.description)}</div>
-        <div class="expense-meta">${recurrenceLabel(item)} · ${escapeHtml(categoryLabel(item.category_slug, currentLanguage))}${isPlannedPaid(item) ? ` · ${t("plan.paidSuffix")}` : ""}</div>
+        <div class="expense-meta">${recurrenceLabel(item)} · ${escapeHtml(categoryLabel(item.category_slug, currentLanguage))}${progress ? ` · ${progress}` : ""}</div>
       </div>
       <div class="expense-actions">
         <div class="expense-amount">${formatMoney(item.amount, item.currency)}
           <em>${moneyDisplay(item.display?.amount, item.display?.currency)}</em>
         </div>
         <div class="button-row compact">
-          <button type="button" data-pay-planned="${item.id}"${isPlannedPaid(item) ? " disabled" : ""}>${isPlannedPaid(item) ? t("actions.paid") : t("actions.pay")}</button>
+          <button type="button" data-pay-planned="${item.id}"${paid ? " disabled" : ""}>${paid ? t("actions.paid") : t("actions.pay")}</button>
           <button type="button" class="ghost-button" data-edit-planned="${item.id}">${t("actions.edit")}</button>
           <button type="button" class="danger-button" data-delete-planned="${item.id}">${t("actions.disable")}</button>
         </div>
       </div>
     </article>
-  `).join("");
+  `;
+  }).join("");
   bindPlannedActions(list, items);
+}
+
+function hasUnpaidOccurrenceToday(item) {
+  const now = new Date();
+  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  return buildPlannedOccurrences(item).some((occurrence) => occurrence.occurrence_date === today && !occurrence.paid);
+}
+
+function plannedPaymentProgressLabel(item) {
+  const occurrences = buildPlannedOccurrences(item);
+  if (!occurrences.length) return "";
+  const paid = occurrences.filter((occurrence) => occurrence.paid).length;
+  if (occurrences.length === 1) {
+    return paid ? t("plan.paidSuffix") : (currentLanguage === "ru" ? "не оплачено" : "unpaid");
+  }
+  return `${paid}/${occurrences.length} ${currentLanguage === "ru" ? "оплачено" : "paid"}`;
 }
 
 function bindPlannedActions(container, items) {

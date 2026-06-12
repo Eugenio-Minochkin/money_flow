@@ -457,7 +457,93 @@ test("paying weekly planned expenses uses an occurrence key, not one payment per
 
   assert.equal(Number(expense.amount_base), 1000);
   assert.match(String(paymentQuery.sql), /paid_key/);
-  assert.equal(paymentQuery.params[4], "2026-06:2026-06-17");
+  assert.equal(paymentQuery.params[4], "2026-06-03");
+  assert.equal(paymentQuery.params[5], "2026-06:2026-06-03");
+});
+
+test("paying weekly planned expenses records the nearest unpaid current-month occurrence", async () => {
+  const queries = [];
+  const client = {
+    async query(sql, params = []) {
+      queries.push({ sql, params });
+      if (String(sql).includes("SELECT planned_expenses.*, users.base_currency")) {
+        return {
+          rows: [{
+            id: "5",
+            user_id: "1",
+            amount: "1000",
+            currency: "THB",
+            amount_base: "1000",
+            description: "english",
+            category_slug: "education",
+            tags: [],
+            recurrence: "weekly",
+            weekday: 3,
+            base_currency: "THB",
+            usd_thb_rate: "32.6",
+            paid_occurrence_dates: ["2026-06-03"]
+          }]
+        };
+      }
+      if (String(sql).includes("SELECT occurrence_date")) {
+        return { rows: [{ occurrence_date: "2026-06-03" }] };
+      }
+      if (String(sql).includes("INSERT INTO expenses")) {
+        return {
+          rows: [{
+            id: "20",
+            amount_original: params[1],
+            currency_original: params[2],
+            amount_base: params[3],
+            description: params[8],
+            category_slug: params[9]
+          }]
+        };
+      }
+      if (String(sql).includes("INSERT INTO planned_expense_payments")) return { rows: [{ id: "9" }] };
+      return { rows: [] };
+    },
+    release() {}
+  };
+  const repo = createRepository({
+    async connect() {
+      return client;
+    }
+  }, {
+    exchangeRates: fixedRates()
+  });
+
+  await repo.payPlannedExpenseForTelegramUser(5, 100, new Date("2026-06-13T09:00:00+07:00"));
+  const paymentQuery = queries.find((query) => String(query.sql).includes("INSERT INTO planned_expense_payments"));
+
+  assert.match(String(paymentQuery.sql), /occurrence_date/);
+  assert.equal(paymentQuery.params[4], "2026-06-10");
+});
+
+test("listing planned expenses exposes current-month paid occurrence dates", async () => {
+  const repo = createRepository(fakePool((sql) => {
+    if (String(sql).includes("array_agg")) {
+      return {
+        rows: [{
+          id: "5",
+          amount: "1000",
+          currency: "THB",
+          amount_base: "1000",
+          description: "english",
+          category_slug: "education",
+          recurrence: "weekly",
+          weekday: 3,
+          paid_count: 1,
+          paid_occurrence_dates: ["2026-06-03"]
+        }]
+      };
+    }
+    return { rows: [] };
+  }));
+
+  const planned = await repo.listPlannedExpensesForTelegramUser(100);
+
+  assert.deepEqual(planned[0].paid_occurrence_dates, ["2026-06-03"]);
 });
 
 test("dashboard keeps unpaid twice-monthly occurrences in planned reserve", async () => {

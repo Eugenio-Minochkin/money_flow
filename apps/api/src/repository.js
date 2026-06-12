@@ -492,11 +492,15 @@ export function createRepository(pool, options = {}) {
 
     async listPlannedExpensesForTelegramUser(telegramUserId) {
       const result = await pool.query(
-        `SELECT planned_expenses.*, COALESCE(paid.paid_count, 0)::int AS paid_count
+        `SELECT planned_expenses.*,
+                COALESCE(paid.paid_count, 0)::int AS paid_count,
+                COALESCE(paid.paid_occurrence_dates, '{}'::text[]) AS paid_occurrence_dates
          FROM planned_expenses
          JOIN users ON users.id = planned_expenses.user_id
          LEFT JOIN (
-           SELECT planned_expense_id, COUNT(*)::int AS paid_count
+           SELECT planned_expense_id,
+                  COUNT(*)::int AS paid_count,
+                  array_agg(occurrence_date::text ORDER BY occurrence_date) FILTER (WHERE occurrence_date IS NOT NULL) AS paid_occurrence_dates
            FROM planned_expense_payments
            WHERE paid_month = $2
            GROUP BY planned_expense_id
@@ -607,6 +611,16 @@ export function createRepository(pool, options = {}) {
         );
         const planned = plannedResult.rows[0];
         if (!planned) throw new Error("Planned expense not found");
+        const paidResult = await client.query(
+          `SELECT occurrence_date::text
+           FROM planned_expense_payments
+           WHERE planned_expense_id = $1
+             AND paid_month = $2
+           ORDER BY occurrence_date`,
+          [planned.id, monthKey(paidAt)]
+        );
+        const occurrenceDate = nextUnpaidOccurrenceDate(planned, paidAt, paidResult.rows.map((row) => row.occurrence_date));
+        if (!occurrenceDate) throw new Error("Planned expense is already paid for this month");
 
         const moneyAmounts = await buildMoneyAmounts(exchangeRates, planned.amount, planned.currency, paidAt, planned);
         const expenseResult = await client.query(
@@ -633,13 +647,13 @@ export function createRepository(pool, options = {}) {
           ]
         );
         const expense = expenseResult.rows[0];
-        const paidKey = plannedPaymentKey(planned, paidAt);
+        const paidKey = plannedPaymentKey(planned, occurrenceDate);
         await client.query(
-          `INSERT INTO planned_expense_payments (planned_expense_id, expense_id, paid_month, paid_at, paid_key)
-           VALUES ($1, $2, $3, $4, $5)
-           ON CONFLICT (planned_expense_id, paid_key)
-           DO UPDATE SET expense_id = EXCLUDED.expense_id, paid_at = EXCLUDED.paid_at`,
-          [planned.id, expense.id, monthKey(paidAt), paidAt, paidKey]
+          `INSERT INTO planned_expense_payments (planned_expense_id, expense_id, paid_month, paid_at, occurrence_date, paid_key)
+           VALUES ($1, $2, $3, $4, $5, $6)
+           ON CONFLICT (planned_expense_id, occurrence_date)
+           DO UPDATE SET expense_id = EXCLUDED.expense_id, paid_at = EXCLUDED.paid_at, paid_key = EXCLUDED.paid_key`,
+          [planned.id, expense.id, monthKey(paidAt), paidAt, occurrenceDate, paidKey]
         );
         await client.query("COMMIT");
         return expense;
@@ -974,11 +988,15 @@ async function moveExpiredPendingDraftsToInbox(pool, telegramUserId, expireAfter
 
 async function listPlannedExpensesForTelegramUserAt(pool, telegramUserId, now) {
   const result = await pool.query(
-    `SELECT planned_expenses.*, COALESCE(paid.paid_count, 0)::int AS paid_count
+    `SELECT planned_expenses.*,
+            COALESCE(paid.paid_count, 0)::int AS paid_count,
+            COALESCE(paid.paid_occurrence_dates, '{}'::text[]) AS paid_occurrence_dates
      FROM planned_expenses
      JOIN users ON users.id = planned_expenses.user_id
      LEFT JOIN (
-       SELECT planned_expense_id, COUNT(*)::int AS paid_count
+       SELECT planned_expense_id,
+              COUNT(*)::int AS paid_count,
+              array_agg(occurrence_date::text ORDER BY occurrence_date) FILTER (WHERE occurrence_date IS NOT NULL) AS paid_occurrence_dates
        FROM planned_expense_payments
        WHERE paid_month = $2
        GROUP BY planned_expense_id
@@ -1011,7 +1029,8 @@ function normalizeDraftItem(item) {
 function normalizePlannedExpense(item) {
   const amount = Number(item.amount);
   if (!Number.isFinite(amount) || amount <= 0) throw new Error("Planned expense amount must be positive");
-  const recurrence = ["monthly", "weekly", "twice_monthly", "one_off"].includes(item.recurrence) ? item.recurrence : "monthly";
+  const requestedRecurrence = item.recurrence === "one_time" ? "one_off" : item.recurrence;
+  const recurrence = ["monthly", "weekly", "twice_monthly", "one_off"].includes(requestedRecurrence) ? requestedRecurrence : "monthly";
   const dueDays = normalizeDueDays(item.due_days ?? item.dueDays ?? item.due_day);
   const dueDay = recurrence === "weekly" ? null : (dueDays[0] ?? null);
   return {
@@ -1146,22 +1165,16 @@ function roundMoney(value) {
 
 function calculatePlannedRemaining(plannedExpenses, now) {
   return plannedExpenses.reduce((sum, item) => {
-    const legacyPaid = item.paid_month === monthKey(now) ? 1 : 0;
-    const paidCount = Number(item.paid_count ?? legacyPaid);
-    const unpaidCount = Math.max(occurrencesThisMonth(item, now) - paidCount, 0);
-    return sum + Number(item.amount_base) * unpaidCount;
+    return sum + Number(item.amount_base) * unpaidPlannedDueDatesThisMonth(item, now).length;
   }, 0);
 }
 
 function calculatePlannedThisWeek(plannedExpenses, now) {
   const bounds = localFullWeekBounds(now);
   return plannedExpenses.reduce((sum, item) => {
-    const legacyPaid = item.paid_month === monthKey(now) ? 1 : 0;
-    const paidCount = Number(item.paid_count ?? legacyPaid);
-    const dueDates = plannedDueDatesThisMonth(item, now)
+    const dueDates = unpaidPlannedDueDatesThisMonth(item, now)
       .filter((date) => date >= bounds.start && date < bounds.end);
-    const unpaidCount = Math.max(dueDates.length - paidCount, 0);
-    return sum + Number(item.amount_base) * unpaidCount;
+    return sum + Number(item.amount_base) * dueDates.length;
   }, 0);
 }
 
@@ -1175,18 +1188,27 @@ function localFullWeekBounds(now) {
 
 function plannedDueDatesThisMonth(item, now) {
   if (item.recurrence === "weekly") return weeklyDueDatesThisMonth(now, Number(item.weekday ?? localWeekday(now)));
-  if (item.recurrence === "one_off") {
+  if (item.recurrence === "one_off" || item.recurrence === "one_time") {
     if (!item.due_date) return [];
     const dueDate = plannedLocalDate(item.due_date);
     return monthKey(dueDate) === monthKey(now) ? [dueDate] : [];
   }
-  return dueDaysInMonthValues(item).map((day) => plannedLocalDateForMonthDay(now, day));
+  return dueDaysInMonthValues(item, now).map((day) => plannedLocalDateForMonthDay(now, day));
+}
+
+function unpaidPlannedDueDatesThisMonth(item, now) {
+  const dueDates = plannedDueDatesThisMonth(item, now);
+  const paidDates = new Set(Array.isArray(item.paid_occurrence_dates) ? item.paid_occurrence_dates : []);
+  if (paidDates.size) return dueDates.filter((date) => !paidDates.has(localDayKey(date)));
+  const legacyPaid = item.paid_month === monthKey(now) ? 1 : 0;
+  const paidCount = Math.min(Number(item.paid_count ?? legacyPaid), dueDates.length);
+  return dueDates.slice(paidCount);
 }
 
 function occurrencesThisMonth(item, now) {
   if (item.recurrence === "weekly") return weekdaysInMonth(now, Number(item.weekday ?? localWeekday(now)));
   if (item.recurrence === "twice_monthly") return dueDaysInMonth(item);
-  if (item.recurrence === "one_off") return item.due_date && monthKey(new Date(item.due_date)) === monthKey(now) ? 1 : 0;
+  if (item.recurrence === "one_off" || item.recurrence === "one_time") return item.due_date && monthKey(new Date(item.due_date)) === monthKey(now) ? 1 : 0;
   return dueDaysInMonth(item);
 }
 
@@ -1195,9 +1217,12 @@ function dueDaysInMonth(item) {
   return days.filter((day) => Number(day) >= 1 && Number(day) <= 31).length;
 }
 
-function dueDaysInMonthValues(item) {
+function dueDaysInMonthValues(item, now) {
   const days = Array.isArray(item.due_days) && item.due_days.length ? item.due_days : [Number(item.due_day ?? 1)];
-  return days.map(Number).filter((day) => day >= 1 && day <= 31);
+  const local = new Date(now.getTime() + 7 * 60 * 60_000);
+  const daysInCurrentMonth = new Date(Date.UTC(local.getUTCFullYear(), local.getUTCMonth() + 1, 0)).getUTCDate();
+  return [...new Set(days.map(Number).filter((day) => day >= 1).map((day) => Math.min(day, daysInCurrentMonth)))]
+    .sort((left, right) => left - right);
 }
 
 function weekdaysInMonth(now, weekday) {
@@ -1262,11 +1287,20 @@ function localDayKey(now) {
   return `${local.getUTCFullYear()}-${month}-${day}`;
 }
 
-function plannedPaymentKey(planned, paidAt) {
+function nextUnpaidOccurrenceDate(planned, now, paidOccurrenceDates = []) {
+  const paid = new Set(paidOccurrenceDates.filter(Boolean).map((date) => String(date).slice(0, 10)));
+  const unpaid = plannedDueDatesThisMonth(planned, now)
+    .map(localDayKey)
+    .filter((date) => !paid.has(date));
+  const today = localDayKey(now);
+  return unpaid.filter((date) => date <= today).sort()[0] ?? unpaid.filter((date) => date > today).sort()[0] ?? null;
+}
+
+function plannedPaymentKey(planned, occurrenceDate) {
   if (planned.recurrence === "weekly" || planned.recurrence === "twice_monthly") {
-    return `${monthKey(paidAt)}:${paidAt.toISOString().slice(0, 10)}`;
+    return `${String(occurrenceDate).slice(0, 7)}:${occurrenceDate}`;
   }
-  return monthKey(paidAt);
+  return String(occurrenceDate).slice(0, 7);
 }
 
 async function totalForPeriod(pool, userId, period, now, user = {}) {

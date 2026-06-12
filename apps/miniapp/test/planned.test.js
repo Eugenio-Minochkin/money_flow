@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   calculatePlannedMonthSummary,
+  buildPlannedOccurrences,
   defaultPlannedCurrency,
   isDueToday,
   isPlannedPaid,
@@ -48,6 +49,50 @@ test("finds next unpaid planned item and skips already paid items", () => {
   ], now);
 
   assert.equal(next.item.id, 2);
+});
+
+test("builds occurrence dates for weekly and twice-monthly plans in the selected month", () => {
+  assert.deepEqual(
+    buildPlannedOccurrences(
+      { recurrence: "weekly", weekday: 3, amount: 1000, currency: "THB" },
+      new Date("2026-06-12T10:00:00+07:00")
+    ).map((occurrence) => occurrence.occurrence_date),
+    ["2026-06-03", "2026-06-10", "2026-06-17", "2026-06-24"]
+  );
+
+  assert.deepEqual(
+    buildPlannedOccurrences(
+      { recurrence: "twice_monthly", due_days: [5, 31], amount: 1500, currency: "THB" },
+      new Date("2026-06-12T10:00:00+07:00")
+    ).map((occurrence) => occurrence.occurrence_date),
+    ["2026-06-05", "2026-06-30"]
+  );
+});
+
+test("keeps recurring planned item payable until all current month occurrences are paid", () => {
+  const item = {
+    id: 1,
+    recurrence: "weekly",
+    weekday: 3,
+    amount_base: 1000,
+    display: { amount: 1000, currency: "THB" },
+    paid_occurrence_dates: ["2026-06-03"]
+  };
+  const now = new Date("2026-06-12T10:00:00+07:00");
+
+  assert.equal(isPlannedPaid(item, now), false);
+  assert.equal(nextUnpaidPlannedItem([item], now).date.toISOString().slice(0, 10), "2026-06-10");
+  assert.deepEqual(calculatePlannedMonthSummary([item], now), {
+    total: 4000,
+    paid: 1000,
+    remaining: 3000,
+    display: {
+      total: 4000,
+      paid: 1000,
+      remaining: 3000,
+      currency: "THB"
+    }
+  });
 });
 
 test("calculates current month planned summary from active occurrences", () => {

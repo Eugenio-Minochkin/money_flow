@@ -19,10 +19,11 @@ export function calculatePlannedMonthSummary(items, now = new Date()) {
   };
 
   for (const item of items.filter((planned) => planned.active !== false)) {
-    const occurrenceCount = plannedOccurrencesThisMonth(item, now);
+    const occurrences = buildPlannedOccurrences(item, now);
+    const occurrenceCount = occurrences.length;
     if (!occurrenceCount) continue;
 
-    const paidCount = Math.min(Number(item.paid_count ?? (item.paid_month ? 1 : 0)), occurrenceCount);
+    const paidCount = paidOccurrenceCount(item, occurrences, now);
     const remainingCount = occurrenceCount - paidCount;
     const amountBase = Number(item.amount_base ?? item.amount ?? 0);
     const displayAmount = Number(item.display?.amount ?? 0);
@@ -52,42 +53,27 @@ export function defaultPlannedCurrency(item = {}, baseCurrency = "THB") {
 }
 
 export function nextUnpaidPlannedItem(items, now = new Date()) {
-  return nextPlannedItem(items.filter((item) => !isPlannedPaid(item)), now);
+  const todayKey = dateKey(now);
+  return items
+    .filter((item) => item.active !== false)
+    .flatMap((item) => buildPlannedOccurrences(item, now)
+      .filter((occurrence) => !occurrence.paid)
+      .map((occurrence) => ({ item, date: parseDateKey(occurrence.occurrence_date), occurrence })))
+    .sort((left, right) => occurrenceSortValue(left.occurrence.occurrence_date, todayKey) - occurrenceSortValue(right.occurrence.occurrence_date, todayKey))[0] ?? null;
 }
 
 export function nextPlannedDate(item, now = new Date()) {
-  const today = new Date(now);
-  today.setHours(0, 0, 0, 0);
-  const candidates = [];
-  const addCandidate = (date) => {
-    if (!date) return;
-    date.setHours(0, 0, 0, 0);
-    if (date >= today) candidates.push(date);
-  };
-
-  if (item.recurrence === "one_off" && item.due_date) {
-    addCandidate(new Date(item.due_date));
-  } else if (item.recurrence === "weekly") {
-    const target = Number(item.weekday ?? 1);
-    const current = today.getDay() === 0 ? 7 : today.getDay();
-    const daysUntil = (target - current + 7) % 7;
-    const date = new Date(today);
-    date.setDate(today.getDate() + daysUntil);
-    addCandidate(date);
-  } else {
-    const days = Array.isArray(item.due_days) && item.due_days.length ? item.due_days : [item.due_day].filter(Boolean);
-    for (const day of days.map(Number)) {
-      const date = new Date(today.getFullYear(), today.getMonth(), day);
-      addCandidate(date);
-      if (date < today) addCandidate(new Date(today.getFullYear(), today.getMonth() + 1, day));
-    }
-  }
-
-  return candidates.sort((left, right) => left - right)[0] ?? null;
+  const todayKey = dateKey(now);
+  const thisMonth = buildPlannedOccurrences(item, now)
+    .filter((occurrence) => occurrence.occurrence_date >= todayKey);
+  if (thisMonth.length) return parseDateKey(thisMonth[0].occurrence_date);
+  const nextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+  return buildPlannedOccurrences(item, nextMonth)
+    .map((occurrence) => parseDateKey(occurrence.occurrence_date))[0] ?? null;
 }
 
 export function isDueToday(item, today = new Date()) {
-  if (item.recurrence === "one_off" && item.due_date) {
+  if ((item.recurrence === "one_off" || item.recurrence === "one_time") && item.due_date) {
     return new Date(item.due_date).toDateString() === today.toDateString();
   }
   if (item.recurrence === "weekly") {
@@ -98,34 +84,55 @@ export function isDueToday(item, today = new Date()) {
   return days.map(Number).includes(today.getDate());
 }
 
-export function isPlannedPaid(item) {
-  return Number(item.paid_count ?? (item.paid_month ? 1 : 0)) > 0;
+export function isPlannedPaid(item, now = new Date()) {
+  const occurrences = buildPlannedOccurrences(item, now);
+  if (!occurrences.length) return Number(item.paid_count ?? (item.paid_month ? 1 : 0)) > 0;
+  return occurrences.length > 0 && paidOccurrenceCount(item, occurrences) >= occurrences.length;
 }
 
 export function plannedOccurrencesThisMonth(item, now = new Date()) {
+  return buildPlannedOccurrences(item, now).length;
+}
+
+export function buildPlannedOccurrences(item, now = new Date()) {
+  if (item.active === false) return [];
   const year = now.getFullYear();
   const month = now.getMonth();
   const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const dates = [];
 
-  if (item.recurrence === "one_off") {
-    if (!item.due_date) return 0;
+  if (item.recurrence === "one_off" || item.recurrence === "one_time") {
+    if (!item.due_date) return [];
     const dueDate = new Date(item.due_date);
-    return dueDate.getFullYear() === year && dueDate.getMonth() === month ? 1 : 0;
-  }
-
-  if (item.recurrence === "weekly") {
+    if (dueDate.getFullYear() === year && dueDate.getMonth() === month) dates.push(dateKey(dueDate));
+  } else if (item.recurrence === "weekly") {
     const target = Number(item.weekday ?? 1);
-    let count = 0;
     for (let day = 1; day <= daysInMonth; day += 1) {
       const date = new Date(year, month, day);
       const weekday = date.getDay() === 0 ? 7 : date.getDay();
-      if (weekday === target) count += 1;
+      if (weekday === target) dates.push(dateKey(date));
     }
-    return count;
+  } else {
+    const days = Array.isArray(item.due_days) && item.due_days.length ? item.due_days : [item.due_day].filter(Boolean);
+    const clampedDays = [...new Set(days
+      .map(Number)
+      .filter((day) => Number.isInteger(day) && day >= 1)
+      .map((day) => Math.min(day, daysInMonth)))]
+      .sort((left, right) => left - right);
+    dates.push(...clampedDays.map((day) => dateKey(new Date(year, month, day))));
   }
 
-  const days = Array.isArray(item.due_days) && item.due_days.length ? item.due_days : [item.due_day].filter(Boolean);
-  return days.map(Number).filter((day) => day >= 1 && day <= daysInMonth).length;
+  const paidDates = new Set(item.paid_occurrence_dates ?? item.paidOccurrences ?? []);
+  const legacyPaidCount = Math.min(Number(item.paid_count ?? (item.paid_month ? 1 : 0)), dates.length);
+  return dates.map((occurrenceDate, index) => ({
+    planned_payment_id: item.id,
+    occurrence_date: occurrenceDate,
+    amount: Number(item.amount ?? item.amount_base ?? 0),
+    currency: item.currency,
+    paid: paidDates.has(occurrenceDate) || (!paidDates.size && index < legacyPaidCount),
+    paid_at: item.paid_occurrences?.[occurrenceDate]?.paid_at ?? null,
+    expense_id: item.paid_occurrences?.[occurrenceDate]?.expense_id ?? null
+  }));
 }
 
 export function parseDueDays(value) {
@@ -144,7 +151,7 @@ export function recurrenceLabel(item, formatDate, language = "ru") {
     return days.length ? `${days.join(" и ")} числа` : "2 раза в месяц";
   }
   if (recurrence === "monthly") return item.due_day ? (language === "en" ? `day ${item.due_day}` : `${item.due_day} числа`) : (language === "en" ? "monthly" : "раз в месяц");
-  if (recurrence === "one_off") return item.due_date ? formatDate(item.due_date) : (language === "en" ? "one-off" : "один раз");
+  if (recurrence === "one_off" || recurrence === "one_time") return item.due_date ? formatDate(item.due_date) : (language === "en" ? "one-off" : "один раз");
   return recurrence;
 }
 
@@ -179,4 +186,34 @@ export function weekdayName(weekday, language = "ru") {
 
 function roundMoney(value) {
   return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
+}
+
+function paidOccurrenceCount(item, occurrences, now = new Date()) {
+  const paidDates = new Set(item.paid_occurrence_dates ?? item.paidOccurrences ?? []);
+  if (paidDates.size) return occurrences.filter((occurrence) => paidDates.has(occurrence.occurrence_date)).length;
+  const legacyPaid = item.paid_month === monthKey(now) ? 1 : 0;
+  return Math.min(Number(item.paid_count ?? legacyPaid), occurrences.length);
+}
+
+function occurrenceSortValue(occurrenceDate, todayKey) {
+  const date = parseDateKey(occurrenceDate).getTime();
+  return occurrenceDate <= todayKey ? date : date + 100_000_000_000_000;
+}
+
+function dateKey(date) {
+  const value = new Date(date);
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const day = String(value.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function parseDateKey(value) {
+  const [year, month, day] = String(value).slice(0, 10).split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, day));
+}
+
+function monthKey(now) {
+  const value = new Date(now);
+  return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}`;
 }

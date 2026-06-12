@@ -177,18 +177,24 @@ CREATE TABLE IF NOT EXISTS planned_expense_payments (
   id BIGSERIAL PRIMARY KEY,
   planned_expense_id BIGINT NOT NULL REFERENCES planned_expenses(id) ON DELETE CASCADE,
   expense_id BIGINT NOT NULL REFERENCES expenses(id) ON DELETE CASCADE,
+  occurrence_date DATE,
   paid_month TEXT NOT NULL,
   paid_key TEXT NOT NULL DEFAULT '',
   paid_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE(planned_expense_id, paid_key)
 );
 
+ALTER TABLE planned_expense_payments ADD COLUMN IF NOT EXISTS occurrence_date DATE;
 ALTER TABLE planned_expense_payments ADD COLUMN IF NOT EXISTS paid_key TEXT;
 UPDATE planned_expense_payments SET paid_key = paid_month WHERE paid_key IS NULL OR paid_key = '';
+UPDATE planned_expense_payments
+SET occurrence_date = COALESCE(NULLIF(split_part(paid_key, ':', 2), '')::date, (paid_at + interval '7 hours')::date)
+WHERE occurrence_date IS NULL;
 ALTER TABLE planned_expense_payments ALTER COLUMN paid_key SET NOT NULL;
 ALTER TABLE planned_expense_payments ALTER COLUMN paid_key SET DEFAULT '';
 ALTER TABLE planned_expense_payments DROP CONSTRAINT IF EXISTS planned_expense_payments_planned_expense_id_paid_month_key;
 CREATE UNIQUE INDEX IF NOT EXISTS planned_expense_payments_key_idx ON planned_expense_payments(planned_expense_id, paid_key);
+CREATE UNIQUE INDEX IF NOT EXISTS planned_expense_payments_occurrence_idx ON planned_expense_payments(planned_expense_id, occurrence_date);
 CREATE INDEX IF NOT EXISTS planned_expense_payments_month_idx ON planned_expense_payments(planned_expense_id, paid_month);
 
 UPDATE expenses SET budget_impact = 'planned'
