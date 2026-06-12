@@ -5,6 +5,48 @@ export function nextPlannedItem(items, now = new Date()) {
     .sort((left, right) => left.date - right.date)[0] ?? null;
 }
 
+export function calculatePlannedMonthSummary(items, now = new Date()) {
+  const summary = {
+    total: 0,
+    paid: 0,
+    remaining: 0,
+    display: {
+      total: 0,
+      paid: 0,
+      remaining: 0,
+      currency: null
+    }
+  };
+
+  for (const item of items.filter((planned) => planned.active !== false)) {
+    const occurrenceCount = plannedOccurrencesThisMonth(item, now);
+    if (!occurrenceCount) continue;
+
+    const paidCount = Math.min(Number(item.paid_count ?? (item.paid_month ? 1 : 0)), occurrenceCount);
+    const remainingCount = occurrenceCount - paidCount;
+    const amountBase = Number(item.amount_base ?? item.amount ?? 0);
+    const displayAmount = Number(item.display?.amount ?? 0);
+
+    summary.total += amountBase * occurrenceCount;
+    summary.paid += amountBase * paidCount;
+    summary.remaining += amountBase * remainingCount;
+
+    if (item.display?.currency) summary.display.currency = item.display.currency;
+    summary.display.total += displayAmount * occurrenceCount;
+    summary.display.paid += displayAmount * paidCount;
+    summary.display.remaining += displayAmount * remainingCount;
+  }
+
+  summary.total = roundMoney(summary.total);
+  summary.paid = roundMoney(summary.paid);
+  summary.remaining = roundMoney(summary.remaining);
+  summary.display.total = roundMoney(summary.display.total);
+  summary.display.paid = roundMoney(summary.display.paid);
+  summary.display.remaining = roundMoney(summary.display.remaining);
+
+  return summary;
+}
+
 export function defaultPlannedCurrency(item = {}, baseCurrency = "THB") {
   return item.currency || baseCurrency || "THB";
 }
@@ -60,6 +102,32 @@ export function isPlannedPaid(item) {
   return Number(item.paid_count ?? (item.paid_month ? 1 : 0)) > 0;
 }
 
+export function plannedOccurrencesThisMonth(item, now = new Date()) {
+  const year = now.getFullYear();
+  const month = now.getMonth();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+  if (item.recurrence === "one_off") {
+    if (!item.due_date) return 0;
+    const dueDate = new Date(item.due_date);
+    return dueDate.getFullYear() === year && dueDate.getMonth() === month ? 1 : 0;
+  }
+
+  if (item.recurrence === "weekly") {
+    const target = Number(item.weekday ?? 1);
+    let count = 0;
+    for (let day = 1; day <= daysInMonth; day += 1) {
+      const date = new Date(year, month, day);
+      const weekday = date.getDay() === 0 ? 7 : date.getDay();
+      if (weekday === target) count += 1;
+    }
+    return count;
+  }
+
+  const days = Array.isArray(item.due_days) && item.due_days.length ? item.due_days : [item.due_day].filter(Boolean);
+  return days.map(Number).filter((day) => day >= 1 && day <= daysInMonth).length;
+}
+
 export function parseDueDays(value) {
   return String(value ?? "")
     .split(",")
@@ -107,4 +175,8 @@ export function weekdayName(weekday, language = "ru") {
   };
   const labels = language === "en" ? en : ru;
   return labels[Number(weekday)] ?? labels[1];
+}
+
+function roundMoney(value) {
+  return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
 }
