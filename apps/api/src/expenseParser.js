@@ -84,7 +84,10 @@ function buildSystemPrompt(now, defaultCurrency = "THB") {
     `Supported currencies: ${SUPPORTED_CURRENCY_CODES.join(", ")}.`,
     `Use these category slugs only: ${[...ALLOWED_CATEGORIES].join(", ")}.`,
     "Category is the type of expense. Tags are context.",
-    "Set budget_impact to large_oneoff only when the user explicitly says this is a large/big one-off purchase or expense. Otherwise use regular.",
+    "Set budget_impact from explicit user wording:",
+    "- planned when the user says: плановая, запланированная, из плана, planned.",
+    "- large_oneoff when the user says: крупная, большая покупка, разовая крупная, large/big one-off purchase or expense.",
+    "- regular otherwise.",
     "If category or description is unclear, set needs_review=true and confidence below 0.7.",
     "For relative dates and times, use the provided current timestamp and timezone.",
     `Current timestamp: ${now.toISOString()}. User timezone for expense timestamps: +07:00.`

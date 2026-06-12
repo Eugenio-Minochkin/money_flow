@@ -13,6 +13,7 @@
     "dev:reset": "node --env-file=.env apps/api/scripts/dev-reset.js",
     "dev:sandbox": "node -e \"console.log('Open http://localhost:3000/dev after running npm run dev:api')\"",
     "test": "node --test",
+    "dev:miniapp": "node apps/miniapp/dev-server.cjs",
     "start:api": "node --env-file=.env apps/api/src/server.js"
   },
   "dependencies": {

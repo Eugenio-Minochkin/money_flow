@@ -523,10 +523,12 @@ async function openDraftInline(id, options = {}) {
 }
 
 function expenseRow(expense) {
+  const impactLabel = budgetImpactLabel(expense.budget_impact);
   return `
     <article class="expense-row" style="--category-color: ${categoryColor(expense.category_slug)}">
       <div class="expense-main">
         <div class="expense-title">${escapeHtml(expense.description)}</div>
+        ${impactLabel ? `<div class="expense-meta">${impactLabel}</div>` : ""}
         <div class="expense-meta">${formatDate(expense.spent_at, currentLanguage)} · ${escapeHtml(categoryLabel(expense.category_slug, currentLanguage))}</div>
       </div>
       <div class="expense-actions">
@@ -540,6 +542,12 @@ function expenseRow(expense) {
       </div>
     </article>
   `;
+}
+
+function budgetImpactLabel(value) {
+  if (value === "planned") return currentLanguage === "ru" ? "🧾 Плановая" : "🧾 Planned";
+  if (value === "large_oneoff") return currentLanguage === "ru" ? "📦 Крупная" : "📦 Large";
+  return "";
 }
 
 function bindExpenseActions(container, expenses) {
@@ -738,6 +746,7 @@ function renderExpenseEditor(expense, options = {}) {
         currency: expense.currency_original,
         description: expense.description,
         category_slug: expense.category_slug,
+        budget_impact: expense.budget_impact ?? "regular",
         tags: expense.tags ?? [],
         spent_at: expense.spent_at
       }, "expense", 0)}
@@ -783,6 +792,14 @@ function editableItemFields(item, prefix, index) {
       <label>
         <span>${t("forms.category")}</span>
         <select name="${prefix}-category_slug">${categories.map(([slug]) => option(slug, item.category_slug, categoryLabel(slug, currentLanguage))).join("")}</select>
+      </label>
+      <label>
+        <span>${currentLanguage === "ru" ? "Тип расхода" : "Expense type"}</span>
+        <select name="${prefix}-budget_impact">
+          ${option("regular", item.budget_impact ?? "regular", currentLanguage === "ru" ? "Обычная" : "Regular")}
+          ${option("planned", item.budget_impact ?? "regular", currentLanguage === "ru" ? "Плановая" : "Planned")}
+          ${option("large_oneoff", item.budget_impact ?? "regular", currentLanguage === "ru" ? "Крупная" : "Large")}
+        </select>
       </label>
       <label>
         <span>${t("forms.dateAndTime")}</span>
@@ -868,6 +885,7 @@ function collectItem(prefix, original) {
     currency: input(`${prefix}-currency`).value,
     description: input(`${prefix}-description`).value.trim(),
     category_slug: input(`${prefix}-category_slug`).value,
+    budget_impact: input(`${prefix}-budget_impact`)?.value ?? original.budget_impact ?? "regular",
     spent_at: new Date(input(`${prefix}-spent_at`).value).toISOString(),
     tags: input(`${prefix}-tags`).value.split(",").map((tag) => tag.trim()).filter(Boolean),
     confidence: original.confidence ?? 1,

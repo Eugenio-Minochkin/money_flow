@@ -37,10 +37,29 @@ test("fake callback update is processed through bot logic and captures callback 
   assert.match(telegramClient.messages[0].text, /Saved|Recorded|today|month/i);
 });
 
+test("fake impact callback captures edited draft message", async () => {
+  const telegramClient = createCapturedTelegramClient();
+  const repository = fakeRepository();
+  const bot = createTelegramBot({
+    token: "",
+    miniAppUrl: "http://localhost:3000",
+    repository,
+    telegramClient
+  });
+
+  await bot.handleUpdate(buildFakeCallbackUpdate({ telegramUserId: 100001, data: "impact:42:0:planned" }));
+
+  assert.equal(repository.updatedItems[0].budget_impact, "planned");
+  assert.equal(telegramClient.callbackAnswers[0].text, "Type updated");
+  assert.equal(telegramClient.messages[0].method, "editMessageText");
+  assert.match(telegramClient.messages[0].text, /planned/i);
+});
+
 function fakeRepository() {
   return {
     user: { id: 1, interface_language: "en", base_currency: "THB", onboarding_step: "completed" },
     confirmedDraftId: null,
+    updatedItems: null,
     async upsertTelegramUser() {
       return this.user;
     },
@@ -63,9 +82,14 @@ function fakeRepository() {
           tags: [],
           spent_at: "2026-06-11T09:00:00+07:00",
           confidence: 0.95,
-          needs_review: false
+          needs_review: false,
+          budget_impact: "regular"
         }]
       };
+    },
+    async updateDraftItems(_draftId, _telegramUserId, items) {
+      this.updatedItems = items;
+      return { id: 42, items };
     },
     async confirmDraft(draftId) {
       this.confirmedDraftId = draftId;

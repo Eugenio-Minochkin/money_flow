@@ -5,9 +5,10 @@ export function formatDraft(expenses, options = {}) {
   const totalCurrency = expenses.every((expense) => expense.currency === expenses[0]?.currency)
     ? expenses[0]?.currency
     : (options.baseCurrency ?? "THB");
-  const lines = expenses.map((expense, index) =>
+  let lines = expenses.map((expense, index) =>
     `${index + 1}. <b>${escapeHtml(categoryName(expense.category_slug))}</b>\n   🗓 ${formatSpentAt(expense.spent_at, language)}\n   ${escapeHtml(expense.description)} · <b>${formatMoney(expense.amount, expense.currency, language)}</b>`
   );
+  lines = lines.map((line, index) => line.replace("</b>", `</b>${formatBudgetImpactMarker(expenses[index]?.budget_impact, language)}`));
   const total = expenses.reduce((sum, expense) => sum + Number(expense.amount), 0);
   const review = expenses.some((expense) => expense.needs_review)
     ? `\n\n⚠️ ${t(language, "draftReview")}`
@@ -21,6 +22,12 @@ export function formatDraft(expenses, options = {}) {
     "",
     t(language, "isCorrect")
   ].join("\n");
+}
+
+function formatBudgetImpactMarker(value, language) {
+  if (value === "planned") return language === "en" ? " · 🧾 Planned" : " · 🧾 Плановая";
+  if (value === "large_oneoff") return language === "en" ? " · 📦 Large" : " · 📦 Крупная";
+  return "";
 }
 
 export function formatSavedSummary(total, snapshot, options = {}) {

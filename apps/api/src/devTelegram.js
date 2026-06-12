@@ -11,6 +11,11 @@ export function createCapturedTelegramClient() {
       messages.push(message);
       return { ok: true, result: message };
     },
+    async editMessageText({ chatId, messageId, text, replyMarkup }) {
+      const message = { method: "editMessageText", chatId, messageId, text, replyMarkup };
+      messages.push(message);
+      return { ok: true, result: message };
+    },
     async answerCallbackQuery({ callbackQueryId, text }) {
       const answer = { method: "answerCallbackQuery", callbackQueryId, text };
       callbackAnswers.push(answer);

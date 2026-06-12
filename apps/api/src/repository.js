@@ -385,10 +385,11 @@ export function createRepository(pool, options = {}) {
              description = $7,
              category_slug = $8,
              tags = $9,
-             spent_at = $10
-         WHERE id = $11
-           AND user_id = (SELECT id FROM users WHERE telegram_user_id = $12)
-         RETURNING id, amount_original, currency_original, description, category_slug, tags, spent_at`,
+             spent_at = $10,
+             budget_impact = $11
+         WHERE id = $12
+           AND user_id = (SELECT id FROM users WHERE telegram_user_id = $13)
+         RETURNING id, amount_original, currency_original, description, category_slug, tags, spent_at, budget_impact`,
         [
           item.amount,
           item.currency,
@@ -400,6 +401,7 @@ export function createRepository(pool, options = {}) {
           item.category_slug,
           item.tags,
           spentAt,
+          item.budget_impact,
           expenseId,
           telegramUserId
         ]

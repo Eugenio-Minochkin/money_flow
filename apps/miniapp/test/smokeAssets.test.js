@@ -24,6 +24,16 @@ test("Mini App local module imports resolve to files", async () => {
   }
 });
 
+test("Mini App has a documented local preview server", async () => {
+  const packageJson = JSON.parse(await readFile("package.json", "utf8"));
+  const readme = await readFile("README.md", "utf8");
+
+  assert.equal(packageJson.scripts["dev:miniapp"], "node apps/miniapp/dev-server.cjs");
+  assert.equal(existsSync("apps/miniapp/dev-server.cjs"), true);
+  assert.match(readme, /npm\.cmd run dev:miniapp/);
+  assert.match(readme, /http:\/\/localhost:3000\/\?telegramUserId=100001/);
+});
+
 test("settings keep fallback exchange rate hidden from users", async () => {
   const html = await readFile(join(miniAppRoot, "index.html"), "utf8");
 

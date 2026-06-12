@@ -39,6 +39,18 @@ Implemented MVP slice:
 
 The API listens on `http://localhost:3000`. The Mini App is served from the same origin.
 
+To preview only the Mini App UI before merging changes, run:
+
+```powershell
+npm.cmd run dev:miniapp
+```
+
+Then open:
+
+```text
+http://localhost:3000/?telegramUserId=100001
+```
+
 ## Local acceptance sandbox
 
 Use this flow before marking a feature PR ready for merge or deploy. It uses only local/dev data and the demo Telegram user `100001`.
