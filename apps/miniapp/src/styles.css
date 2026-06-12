@@ -683,14 +683,35 @@ body[data-theme="dark"] .recovery-advice {
   overflow-wrap: anywhere;
 }
 
-.planned-header__summary span {
+.planned-summary-rows {
+  display: grid;
+  gap: 4px;
+}
+
+.planned-summary-row {
+  display: grid;
+  grid-template-columns: 86px minmax(0, 1fr);
+  gap: 8px;
+  align-items: baseline;
   color: var(--muted);
   font-size: 13px;
   font-weight: 750;
   line-height: 1.3;
 }
 
-.planned-header__summary em {
+.planned-summary-row__label {
+  color: var(--muted);
+}
+
+.planned-summary-row__amount {
+  min-width: 0;
+  color: var(--ink);
+  font-weight: 850;
+  overflow-wrap: anywhere;
+}
+
+.planned-header__summary em,
+.planned-summary-row__amount em {
   color: var(--usd);
   font-style: normal;
 }

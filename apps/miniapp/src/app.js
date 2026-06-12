@@ -323,8 +323,8 @@ function renderPlannedMonthSummary(items) {
 
   setHtml("#plannedReserveTotal", plannedSummaryMoneyHtml(total));
   setHtml("#plannedReservePaidRemaining", currentLanguage === "ru"
-    ? `Оплачено ${plannedSummaryMoneyHtml(paid)} · осталось ${plannedSummaryMoneyHtml(remaining)}`
-    : `Paid ${plannedSummaryMoneyHtml(paid)} · remaining ${plannedSummaryMoneyHtml(remaining)}`);
+    ? `${plannedSummaryRowHtml("Оплачено", paid)}${plannedSummaryRowHtml("Осталось", remaining)}`
+    : `${plannedSummaryRowHtml("Paid", paid)}${plannedSummaryRowHtml("Remaining", remaining)}`);
 }
 
 function plannedSummaryMoneyParts(baseAmount, baseCurrency, displayAmount, displayCurrency) {
@@ -338,6 +338,15 @@ function plannedSummaryMoneyParts(baseAmount, baseCurrency, displayAmount, displ
 
 function plannedSummaryMoneyHtml(parts) {
   return parts.display ? `${parts.base} <em>· ${parts.display}</em>` : parts.base;
+}
+
+function plannedSummaryRowHtml(label, parts) {
+  return `
+    <div class="planned-summary-row">
+      <span class="planned-summary-row__label">${label}</span>
+      <span class="planned-summary-row__amount">${plannedSummaryMoneyHtml(parts)}</span>
+    </div>
+  `;
 }
 
 function renderPlannedNotice(items) {
