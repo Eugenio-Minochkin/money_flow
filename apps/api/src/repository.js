@@ -461,7 +461,7 @@ export function createRepository(pool, options = {}) {
         )`;
       }
       const result = await pool.query(
-        `SELECT id, amount_original, currency_original, amount_base, converted_amounts,
+        `SELECT id, amount_original, currency_original, amount_base, converted_amounts, budget_impact,
                 description, category_slug, tags, spent_at
          FROM expenses
          WHERE user_id = $1 AND spent_at >= $2 AND spent_at < $3
@@ -622,7 +622,8 @@ export function createRepository(pool, options = {}) {
         const occurrenceDate = nextUnpaidOccurrenceDate(planned, paidAt, paidResult.rows.map((row) => row.occurrence_date));
         if (!occurrenceDate) throw new Error("Planned expense is already paid for this month");
 
-        const moneyAmounts = await buildMoneyAmounts(exchangeRates, planned.amount, planned.currency, paidAt, planned);
+        const expenseSpentAt = plannedLocalDate(occurrenceDate);
+        const moneyAmounts = await buildMoneyAmounts(exchangeRates, planned.amount, planned.currency, expenseSpentAt, planned);
         const expenseResult = await client.query(
           `INSERT INTO expenses (
              user_id, draft_id, amount_original, currency_original, amount_base, base_currency,
@@ -637,12 +638,12 @@ export function createRepository(pool, options = {}) {
             moneyAmounts.amountBase,
             planned.base_currency,
             JSON.stringify(moneyAmounts.convertedAmounts),
-            paidAt.toISOString().slice(0, 10),
+            expenseSpentAt.toISOString().slice(0, 10),
             moneyAmounts.source,
             planned.description,
             planned.category_slug,
             planned.tags ?? [],
-            paidAt,
+            expenseSpentAt,
             "planned"
           ]
         );

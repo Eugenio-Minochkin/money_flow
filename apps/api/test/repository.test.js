@@ -221,6 +221,7 @@ test("lists expenses for history", async () => {
   const expenses = await repo.listExpensesForTelegramUser(100, { period: "month", search: "кофе" });
 
   assert.equal(expenses[0].description, "кофе");
+  assert.match(queries.at(-1), /budget_impact/);
   assert.doesNotMatch(queries.at(-1), /planned_expense_payments/);
   assert.doesNotMatch(queries.at(-1), /NOT EXISTS/);
 });
@@ -435,7 +436,9 @@ test("paying weekly planned expenses uses an occurrence key, not one payment per
             converted_amounts: JSON.parse(params[5]),
             exchange_rate_source: params[7],
             description: params[8],
-            category_slug: params[9]
+            category_slug: params[9],
+            spent_at: params[11],
+            budget_impact: params[12]
           }]
         };
       }
@@ -514,8 +517,11 @@ test("paying weekly planned expenses records the nearest unpaid current-month oc
   });
 
   await repo.payPlannedExpenseForTelegramUser(5, 100, new Date("2026-06-13T09:00:00+07:00"));
+  const expenseQuery = queries.find((query) => String(query.sql).includes("INSERT INTO expenses"));
   const paymentQuery = queries.find((query) => String(query.sql).includes("INSERT INTO planned_expense_payments"));
 
+  assert.equal(expenseQuery.params[11].toISOString(), "2026-06-09T17:00:00.000Z");
+  assert.equal(expenseQuery.params[12], "planned");
   assert.match(String(paymentQuery.sql), /occurrence_date/);
   assert.equal(paymentQuery.params[4], "2026-06-10");
 });
