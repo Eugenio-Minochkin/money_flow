@@ -144,6 +144,18 @@ test("dashboard uses compact header, inbox before month plan, and bottom navigat
   assert.match(css, /body\[data-theme="light"\]/);
 });
 
+test("planned summary uses stacked paid and remaining rows", async () => {
+  const html = await readFile(join(miniAppRoot, "index.html"), "utf8");
+  const css = await readFile(join(miniAppRoot, "styles.css"), "utf8");
+  const app = await readFile(join(miniAppRoot, "app.js"), "utf8");
+
+  assert.match(html, /class="planned-summary-rows"/);
+  assert.match(app, /plannedSummaryRowHtml\("Оплачено",\s*paid\)/);
+  assert.match(app, /plannedSummaryRowHtml\("Осталось",\s*remaining\)/);
+  assert.match(css, /\.planned-summary-row\s*{[^}]*grid-template-columns:\s*86px minmax\(0,\s*1fr\)/s);
+  assert.match(css, /\.planned-summary-row__amount\s*{[^}]*color:\s*var\(--ink\)/s);
+});
+
 test("settings keep interface theme switching hidden", async () => {
   const html = await readFile(join(miniAppRoot, "index.html"), "utf8");
 
