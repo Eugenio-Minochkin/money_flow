@@ -1,3 +1,5 @@
+import { formatMoney } from "./formatters.js";
+
 const DEMO_USER_ID = 100001;
 const quickMessages = [
   "coffee 70 baht",
@@ -80,13 +82,14 @@ function renderTelegramResult(result) {
 
 function renderState(state) {
   const snapshot = state.dashboard?.snapshot ?? {};
-  els.today.textContent = money(snapshot.today);
-  els.month.textContent = money(snapshot.month);
-  els.budget.textContent = money(snapshot.monthlyBudget);
-  els.free.textContent = money(snapshot.freeRemaining);
+  const currency = snapshot.baseCurrency ?? state.dashboard?.user?.base_currency ?? "THB";
+  els.today.textContent = money(snapshot.today, currency);
+  els.month.textContent = money(snapshot.month, currency);
+  els.budget.textContent = money(snapshot.monthlyBudget, currency);
+  els.free.textContent = money(snapshot.freeRemaining, currency);
   els.expenses.replaceChildren(...state.recentExpenses.map((expense) => row(
     expense.description,
-    `${money(expense.amount_base)} ${expense.budget_impact ?? "regular"}`
+    `${money(expense.amount_base, currency)} ${expense.budget_impact ?? "regular"}`
   )));
   els.drafts.replaceChildren(...state.drafts.map((draft) => row(
     `#${draft.id} ${draft.status}`,
@@ -94,7 +97,7 @@ function renderState(state) {
   )));
   els.planned.replaceChildren(...state.plannedExpenses.map((planned) => row(
     planned.description,
-    `${money(planned.amount_base)} ${planned.recurrence}`
+    `${money(planned.amount_base, currency)} ${planned.recurrence}`
   )));
 }
 
@@ -130,6 +133,6 @@ function row(title, meta) {
   return el;
 }
 
-function money(value) {
-  return `${Math.round(Number(value ?? 0)).toLocaleString("en-US")} THB`;
+function money(value, currency) {
+  return formatMoney(value, currency);
 }

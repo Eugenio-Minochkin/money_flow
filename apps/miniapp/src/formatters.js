@@ -1,27 +1,39 @@
-const money = new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 });
+export const ZERO_DECIMAL_DISPLAY_CURRENCIES = ["THB", "RUB", "IDR", "BYN"];
+export const TWO_DECIMAL_DISPLAY_CURRENCIES = ["USD", "EUR", "GEL"];
+
 let baseCurrency = "THB";
 
 export function setBaseCurrency(currency = "THB") {
   baseCurrency = currency || "THB";
 }
 
+export function formatMoney(amount, currency = baseCurrency, options = {}) {
+  const normalizedCurrency = normalizeCurrency(currency);
+  const formattedAmount = formatMoneyAmount(amount, normalizedCurrency, options);
+  const prefix = options.prefix ?? "";
+  const suffix = options.suffix ?? (options.includeCurrency === false ? "" : ` ${normalizedCurrency}`);
+  return `${prefix}${formattedAmount}${suffix}`;
+}
+
 export function moneyBase(value, currency = baseCurrency) {
-  return `${money.format(Number(value ?? 0))} ${currency}`;
+  return formatMoney(value, currency);
 }
 
 export function moneyDisplay(value, currency = "USD") {
   if (value == null || Number.isNaN(Number(value))) return "";
+  const normalizedCurrency = normalizeCurrency(currency);
   const symbols = {
     USD: "$",
-    EUR: "€",
+    EUR: "\u20ac",
     IDR: "Rp ",
-    GEL: "₾",
+    GEL: "\u20be",
     BYN: "Br ",
     RUB: ""
   };
-  const prefix = symbols[currency] ? `~${symbols[currency]}` : "";
-  const suffix = symbols[currency] ? "" : ` ${currency}`;
-  return `${prefix}${money.format(Number(value))}${suffix}`;
+  const hasSymbol = Object.hasOwn(symbols, normalizedCurrency) && symbols[normalizedCurrency];
+  const prefix = hasSymbol ? `~${symbols[normalizedCurrency]}` : "";
+  const suffix = hasSymbol ? "" : ` ${normalizedCurrency}`;
+  return formatMoney(value, normalizedCurrency, { prefix, suffix });
 }
 
 export function moneyDisplaySigned(value, currency = "USD") {
@@ -50,6 +62,31 @@ export function formatDateOnly(value, language = "ru") {
 
 function localeFor(language) {
   return language === "en" ? "en-US" : "ru-RU";
+}
+
+function formatMoneyAmount(amount, currency, options = {}) {
+  const decimals = displayDecimalsForCurrency(currency);
+  const numeric = safeMoneyNumber(amount);
+  const displayValue = decimals === 0 ? Math.round(numeric) : numeric;
+  return new Intl.NumberFormat(options.locale ?? "ru-RU", {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals
+  }).format(displayValue);
+}
+
+function displayDecimalsForCurrency(currency) {
+  if (ZERO_DECIMAL_DISPLAY_CURRENCIES.includes(currency)) return 0;
+  if (TWO_DECIMAL_DISPLAY_CURRENCIES.includes(currency)) return 2;
+  return 2;
+}
+
+function safeMoneyNumber(amount) {
+  const numeric = Number(amount ?? 0);
+  return Number.isFinite(numeric) ? numeric : 0;
+}
+
+function normalizeCurrency(currency) {
+  return String(currency || baseCurrency || "THB").toUpperCase();
 }
 
 export function dateTimeLocal(value) {
