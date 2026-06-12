@@ -82,8 +82,8 @@ test("formats saved summary with budget context", () => {
 
   assert.match(text, /75 THB/);
   assert.match(text, /Обычные/);
-  assert.match(normalized, /75 \/ 1 475 THB/);
-  assert.match(normalized, /735 \/ 42/);
+  assert.match(normalized, /75 THB \/ 1 475 THB/);
+  assert.match(normalized, /735 THB \/ 42 000 THB/);
   assert.match(text, /1,75%/);
   assert.match(text, /Плановые сегодня/);
   assert.match(text, /Крупные сегодня/);
@@ -102,7 +102,7 @@ test("formats saved summary with planned and large daily aggregates", () => {
   });
   const normalized = normalizeSpaces(text);
 
-  assert.match(normalized, /Обычные: <b>802 \/ 615 THB<\/b>/);
+  assert.match(normalized, /Обычные: <b>802 THB \/ 615 THB<\/b>/);
   assert.match(normalized, /Перерасход: <b>187 THB<\/b>/);
   assert.match(normalized, /Плановые сегодня: <b>1 000 THB<\/b>/);
   assert.match(normalized, /Крупные сегодня: <b>2 000 THB<\/b>/);
@@ -110,8 +110,15 @@ test("formats saved summary with planned and large daily aggregates", () => {
 });
 
 test("formats command totals for month and budget", () => {
-  assert.match(formatTotals("/month", snapshot()), /735 \/ 42/);
-  assert.match(normalizeSpaces(formatTotals("/budget", snapshot())), /15 269,99 THB/);
+  assert.match(normalizeSpaces(formatTotals("/month", snapshot())), /735 THB \/ 42 000 THB/);
+  assert.match(normalizeSpaces(formatTotals("/budget", snapshot())), /15 270 THB/);
+});
+
+test("formats money decimals by currency in Telegram UI", () => {
+  assert.match(normalizeSpaces(formatDraft([{ amount: 8720.81, currency: "THB", description: "food", category_slug: "other" }])), /8 721 THB/);
+  assert.match(normalizeSpaces(formatDraft([{ amount: 266.58, currency: "USD", description: "food", category_slug: "other" }], { language: "en" })), /266\.58 USD/);
+  assert.match(normalizeSpaces(formatDraft([{ amount: 45.2, currency: "EUR", description: "food", category_slug: "other" }], { language: "en" })), /45\.20 EUR/);
+  assert.match(normalizeSpaces(formatDraft([{ amount: 120.5, currency: "GEL", description: "food", category_slug: "other" }], { language: "en" })), /120\.50 GEL/);
 });
 
 test("formats weekly report with top categories", () => {
