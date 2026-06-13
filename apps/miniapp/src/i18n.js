@@ -229,7 +229,7 @@ export const translations = {
     "settings.themeLight": "Light",
     "settings.monthlyBudget": "Monthly budget",
     "settings.currentMonthBudget": "This month’s budget",
-    "settings.currentMonthBudgetHint": "Changes only the current month limit. Your regular monthly budget will not change.",
+    "settings.currentMonthBudgetHint": "Only changes the limit for the current month. Your regular monthly budget will not change.",
     "settings.editCurrentMonthBudget": "Edit this month’s budget",
     "settings.weeklyBudgetPlaceholder": "Automatic from budget",
     "settings.title": "Settings",

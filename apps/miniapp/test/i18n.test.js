@@ -60,6 +60,7 @@ test("settings translations cover interface themes", () => {
 test("settings translations distinguish regular and current month budgets", () => {
   assert.equal(createTranslator("ru")("settings.editCurrentMonthBudget"), "Изменить бюджет на этот месяц");
   assert.equal(createTranslator("en")("settings.editCurrentMonthBudget"), "Edit this month’s budget");
+  assert.equal(createTranslator("en")("settings.currentMonthBudgetHint"), "Only changes the limit for the current month. Your regular monthly budget will not change.");
 });
 
 test("dashboard labels distinguish today's limit from daily budget", () => {
