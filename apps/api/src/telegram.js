@@ -333,12 +333,23 @@ async function sendMessage(token, chatId, text, replyMarkup, telegramClient) {
     console.log("[telegram:sendMessage]", { chatId, text, replyMarkup });
     return { ok: true };
   }
-  return telegramRequest(token, "sendMessage", {
+  const body = {
     chat_id: chatId,
     text,
     parse_mode: "HTML",
     reply_markup: replyMarkup
-  });
+  };
+  try {
+    return await telegramRequest(token, "sendMessage", body);
+  } catch (error) {
+    if (!shouldRetryPlainText(error)) throw error;
+    console.error("[telegram] sendMessage HTML rejected, retrying plain text", error.message);
+    return telegramRequest(token, "sendMessage", {
+      ...body,
+      text: stripTelegramHtml(text),
+      parse_mode: undefined
+    });
+  }
 }
 
 async function editMessageText(token, chatId, messageId, text, replyMarkup, telegramClient) {
@@ -349,13 +360,24 @@ async function editMessageText(token, chatId, messageId, text, replyMarkup, tele
     console.log("[telegram:editMessageText]", { chatId, messageId, text, replyMarkup });
     return { ok: true };
   }
-  return telegramRequest(token, "editMessageText", {
+  const body = {
     chat_id: chatId,
     message_id: messageId,
     text,
     parse_mode: "HTML",
     reply_markup: replyMarkup
-  });
+  };
+  try {
+    return await telegramRequest(token, "editMessageText", body);
+  } catch (error) {
+    if (!shouldRetryPlainText(error)) throw error;
+    console.error("[telegram] editMessageText HTML rejected, retrying plain text", error.message);
+    return telegramRequest(token, "editMessageText", {
+      ...body,
+      text: stripTelegramHtml(text),
+      parse_mode: undefined
+    });
+  }
 }
 
 async function deleteMessage(token, chatId, messageId, telegramClient) {
@@ -389,8 +411,26 @@ async function telegramRequest(token, method, body) {
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body)
   });
-  if (!response.ok) throw new Error(`Telegram ${method} failed: ${response.status}`);
+  if (!response.ok) {
+    const responseBody = await response.text();
+    const error = new Error(`Telegram ${method} failed: ${response.status} ${responseBody}`);
+    error.status = response.status;
+    error.body = responseBody;
+    throw error;
+  }
   return response.json();
+}
+
+function shouldRetryPlainText(error) {
+  return error?.status === 400;
+}
+
+function stripTelegramHtml(text) {
+  return String(text ?? "")
+    .replaceAll(/<\/?b>/g, "")
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&amp;", "&");
 }
 
 function onboardingText(language, key, values = {}) {

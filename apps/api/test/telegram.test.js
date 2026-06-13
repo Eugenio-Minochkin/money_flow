@@ -94,6 +94,57 @@ test("voice message is transcribed and creates a draft response", async () => {
   }
 });
 
+test("sendMessage retries as plain text when Telegram rejects HTML", async () => {
+  const requests = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, request) => {
+    requests.push({ url: String(url), body: JSON.parse(request.body) });
+    if (requests.length === 1) {
+      return {
+        ok: false,
+        status: 400,
+        async text() {
+          return JSON.stringify({ ok: false, description: "Bad Request: can't parse entities" });
+        }
+      };
+    }
+    return {
+      ok: true,
+      status: 200,
+      async json() {
+        return { ok: true };
+      },
+      async text() {
+        return JSON.stringify({ ok: true });
+      }
+    };
+  };
+
+  try {
+    const bot = createTelegramBot({
+      token: "test-token",
+      miniAppUrl: "http://localhost:3000",
+      repository: fakeRepository()
+    });
+
+    await bot.handleUpdate({
+      message: {
+        chat: { id: 10 },
+        from: { id: 100, first_name: "M" },
+        text: "ÐºÐ¾Ñ„Ðµ 70 Ð±Ð°Ñ‚"
+      }
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  assert.equal(requests.length, 2);
+  assert.equal(requests[0].body.parse_mode, "HTML");
+  assert.equal(requests[1].body.parse_mode, undefined);
+  assert.doesNotMatch(requests[1].body.text, /<b>/);
+  assert.match(requests[1].body.text, /70 THB/);
+});
+
 test("text parsing uses user's base currency as default", async () => {
   const seenOptions = [];
   const repository = {
