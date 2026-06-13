@@ -409,7 +409,7 @@ async function telegramRequest(token, method, body) {
   const response = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify(body)
+    body: JSON.stringify(cleanTelegramBody(body))
   });
   if (!response.ok) {
     const responseBody = await response.text();
@@ -431,6 +431,10 @@ function stripTelegramHtml(text) {
     .replaceAll("&lt;", "<")
     .replaceAll("&gt;", ">")
     .replaceAll("&amp;", "&");
+}
+
+function cleanTelegramBody(body) {
+  return Object.fromEntries(Object.entries(body).filter(([, value]) => value != null));
 }
 
 function onboardingText(language, key, values = {}) {

@@ -145,6 +145,42 @@ test("sendMessage retries as plain text when Telegram rejects HTML", async () =>
   assert.match(requests[1].body.text, /70 THB/);
 });
 
+test("sendMessage omits reply markup when no keyboard is provided", async () => {
+  const requests = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, request) => {
+    requests.push({ url: String(url), body: JSON.parse(request.body) });
+    return {
+      ok: true,
+      status: 200,
+      async json() {
+        return { ok: true };
+      }
+    };
+  };
+
+  try {
+    const bot = createTelegramBot({
+      token: "test-token",
+      miniAppUrl: "http://localhost:3000",
+      repository: fakeRepository()
+    });
+
+    await bot.handleUpdate({
+      message: {
+        chat: { id: 10 },
+        from: { id: 100, first_name: "M" },
+        text: "hello without amount"
+      }
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  assert.equal(requests.length, 1);
+  assert.equal(Object.hasOwn(requests[0].body, "reply_markup"), false);
+});
+
 test("text parsing uses user's base currency as default", async () => {
   const seenOptions = [];
   const repository = {
