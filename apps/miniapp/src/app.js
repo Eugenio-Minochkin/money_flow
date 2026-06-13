@@ -28,6 +28,7 @@ import {
   recurrenceLabel as plannedRecurrenceLabel,
   weekdayOptions as plannedWeekdayOptions
 } from "./planned.js";
+import { shouldShowCurrentMonthBudgetOverride } from "./settings.js";
 
 const params = new URLSearchParams(window.location.search);
 const telegramUserId = params.get("telegramUserId") || window.Telegram?.WebApp?.initDataUnsafe?.user?.id;
@@ -304,7 +305,12 @@ function renderSettings(user) {
   setBaseCurrency(user.base_currency ?? "THB");
   applyLanguage(currentLanguage);
   document.querySelector("#budgetInput").value = Math.round(Number(user.monthly_budget_amount ?? 45000));
-  document.querySelector("#currentMonthBudgetInput").value = Math.round(Number(dashboardState?.currentMonthBudget?.amount ?? user.monthly_budget_amount ?? 45000));
+  const currentMonthBudgetForm = document.querySelector("#currentMonthBudgetForm");
+  const showCurrentMonthBudgetOverride = shouldShowCurrentMonthBudgetOverride(dashboardState?.currentMonthBudget);
+  currentMonthBudgetForm?.classList.toggle("hidden", !showCurrentMonthBudgetOverride);
+  if (showCurrentMonthBudgetOverride) {
+    document.querySelector("#currentMonthBudgetInput").value = Math.round(Number(dashboardState.currentMonthBudget.amount));
+  }
   document.querySelector("#weeklyBudgetInput").value = user.weekly_budget_amount == null ? "" : Math.round(Number(user.weekly_budget_amount));
   document.querySelector("#baseCurrencyInput").value = user.base_currency ?? "THB";
   document.querySelector("#displayCurrencyInput").value = user.display_currency ?? "USD";
