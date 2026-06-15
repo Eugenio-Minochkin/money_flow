@@ -25,7 +25,10 @@ export function parseAdminTelegramIds(value) {
 }
 
 export function isAdminTelegramId(telegramUserId, adminTelegramIds) {
-  return adminTelegramIds instanceof Set && adminTelegramIds.has(String(telegramUserId));
+  return adminTelegramIds instanceof Set && (
+    adminTelegramIds.has(Number(telegramUserId)) ||
+    adminTelegramIds.has(String(telegramUserId))
+  );
 }
 
 export function formatReleaseDigest(releaseNotes, language = "ru") {

@@ -16,7 +16,7 @@ export function createRepository(pool, options = {}) {
     async upsertTelegramUser(profile) {
       const result = await pool.query(
         `INSERT INTO users (telegram_user_id, first_name, username, monthly_budget_amount, onboarding_step)
-         VALUES ($1, $2, $3, $4, 'base_currency')
+         VALUES ($1, $2, $3, $4, 'language')
          ON CONFLICT (telegram_user_id)
          DO UPDATE SET first_name = EXCLUDED.first_name, username = EXCLUDED.username
          RETURNING *, (xmax = 0) AS is_new`,
@@ -31,10 +31,55 @@ export function createRepository(pool, options = {}) {
     },
 
     async setOnboardingStep(telegramUserId, step) {
-      const safeStep = ["base_currency", "monthly_budget", "current_month_budget", "month_opening_spend", "completed"].includes(step) ? step : "completed";
+      const safeStep = ["language", "budget_setup", "base_currency", "monthly_budget", "current_month_budget", "month_opening_spend", "completed"].includes(step) ? step : "completed";
       const result = await pool.query(
         "UPDATE users SET onboarding_step = $1 WHERE telegram_user_id = $2 RETURNING *",
         [safeStep, telegramUserId]
+      );
+      return result.rows[0] ?? null;
+    },
+
+    async updateOnboardingLanguage(telegramUserId, language) {
+      const interfaceLanguage = normalizeLanguage(language);
+      const result = await pool.query(
+        `UPDATE users
+         SET interface_language = $1,
+             onboarding_step = 'budget_setup',
+             onboarding_data = '{}'::jsonb
+         WHERE telegram_user_id = $2
+         RETURNING *`,
+        [interfaceLanguage, telegramUserId]
+      );
+      return result.rows[0] ?? null;
+    },
+
+    async updateOnboardingData(telegramUserId, data) {
+      const result = await pool.query(
+        `UPDATE users
+         SET onboarding_data = $1::jsonb
+         WHERE telegram_user_id = $2
+         RETURNING *`,
+        [JSON.stringify(data ?? {}), telegramUserId]
+      );
+      return result.rows[0] ?? null;
+    },
+
+    async completeOnboardingBudgetSetup(telegramUserId, settings) {
+      const baseCurrency = normalizeCurrency(settings.baseCurrency, "THB");
+      const monthlyBudgetAmount = Number(settings.monthlyBudgetAmount);
+      if (!Number.isFinite(monthlyBudgetAmount) || monthlyBudgetAmount <= 0) {
+        throw new Error("Monthly budget must be positive");
+      }
+      const nextStep = ["current_month_budget", "completed"].includes(settings.nextStep) ? settings.nextStep : "completed";
+      const result = await pool.query(
+        `UPDATE users
+         SET base_currency = $1,
+             monthly_budget_amount = $2,
+             onboarding_step = $3,
+             onboarding_data = '{}'::jsonb
+         WHERE telegram_user_id = $4
+         RETURNING *`,
+        [baseCurrency, monthlyBudgetAmount, nextStep, telegramUserId]
       );
       return result.rows[0] ?? null;
     },

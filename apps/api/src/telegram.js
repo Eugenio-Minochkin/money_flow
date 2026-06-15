@@ -2,9 +2,12 @@ import { createExpenseParser } from "./expenseParser.js";
 import { parseExpenseText } from "../../../packages/shared/src/parser.js";
 import { parsePlannedExpenseText } from "../../../packages/shared/src/plannedParser.js";
 import { normalizeCurrency, SUPPORTED_CURRENCY_CODES } from "../../../packages/shared/src/currencies.js";
+import { formatAdminStats } from "./adminStatsService.js";
 import { isAdminTelegramId } from "./releaseNotesService.js";
 import { formatDraft, formatPlannedDraft, formatSavedSummary, formatTotals, formatWeeklyReport } from "./telegramFormat.js";
 import { appKeyboard, draftKeyboard, inboxDraftKeyboard, plannedDraftKeyboard } from "./telegramKeyboards.js";
+
+const ONBOARDING_STEPS = ["language", "budget_setup", "base_currency", "monthly_budget", "current_month_budget", "month_opening_spend"];
 
 export function createTelegramBot({
   repository,
@@ -13,109 +16,233 @@ export function createTelegramBot({
   expenseParser = createExpenseParser(),
   voiceTranscriber,
   telegramClient,
+  perfLogger = console.info,
   adminTelegramIds = new Set(),
+  adminStatsService,
   releaseNotesService,
   now = () => new Date()
 }) {
   return {
     async handleUpdate(update) {
+      const trace = createPerfTrace({ update, logger: perfLogger });
+      let success = false;
       if (update.message) {
-        return handleMessage({ update, repository, token, miniAppUrl, expenseParser, voiceTranscriber, telegramClient, adminTelegramIds, releaseNotesService, now });
+        try {
+          const result = await handleMessage({ update, repository, token, miniAppUrl, expenseParser, voiceTranscriber, telegramClient, adminTelegramIds, adminStatsService, releaseNotesService, now, trace });
+          success = true;
+          return result;
+        } catch (error) {
+          trace.finish(false, error);
+          throw error;
+        } finally {
+          if (success) trace.finish(true);
+        }
       }
-      if (update.callback_query) return handleCallback({ update, repository, token, miniAppUrl, telegramClient });
+      if (update.callback_query) {
+        try {
+          const result = await handleCallback({ update, repository, token, miniAppUrl, telegramClient, trace });
+          success = true;
+          return result;
+        } catch (error) {
+          trace.finish(false, error);
+          throw error;
+        } finally {
+          if (success) trace.finish(true);
+        }
+      }
+      trace.finish(true);
       return { ok: true };
     }
   };
 }
 
-async function handleMessage({ update, repository, token, miniAppUrl, expenseParser, voiceTranscriber, telegramClient, adminTelegramIds, releaseNotesService, now }) {
+async function handleMessage({ update, repository, token, miniAppUrl, expenseParser, voiceTranscriber, telegramClient, adminTelegramIds, adminStatsService, releaseNotesService, now, trace }) {
   const message = update.message;
   const from = message.from;
   if (!from) return { ok: true };
 
+  trace.start("user_context");
   const user = await repository.upsertTelegramUser({
     id: from.id,
     firstName: from.first_name,
     username: from.username
   });
+  trace.end("user_context");
   const language = user.interface_language ?? "en";
+  const chatId = message.chat.id;
 
-  const text = await messageText({ message, voiceTranscriber });
-  if (!text) return sendMessage(token, message.chat.id, botText(language, "unsupported"), null, telegramClient);
+  const rawText = message.text?.trim() || null;
+  const hasVoice = Boolean(message.voice || message.audio);
 
-  if (isAdminReleaseCommand(text)) {
-    return handleAdminReleaseCommand({
-      text,
-      from,
-      chatId: message.chat.id,
-      token,
-      telegramClient,
-      adminTelegramIds,
-      releaseNotesService,
-      now
-    });
+  if (!rawText && !hasVoice) {
+    return sendTelegramResponse(trace, () => sendMessage(token, chatId, botText(language, "unsupported"), null, telegramClient));
+  }
+  if (hasVoice && !rawText && !voiceTranscriber?.isConfigured()) {
+    return sendTelegramResponse(trace, () => sendMessage(token, chatId, botText(language, "unsupported"), null, telegramClient));
   }
 
-  if (text === "/start") {
-    if (isOnboardingActive(user)) {
-      return sendMessage(token, message.chat.id, onboardingText(language, "baseCurrency"), appKeyboard(miniAppUrl, from.id, language), telegramClient);
+  if (rawText && !hasVoice) {
+    if (isAdminReleaseCommand(rawText)) {
+      return handleAdminReleaseCommand({
+        text: rawText,
+        from,
+        chatId,
+        token,
+        telegramClient,
+        adminTelegramIds,
+        releaseNotesService,
+        now,
+        trace
+      });
     }
-    return sendMessage(token, message.chat.id, botText(language, "start"), appKeyboard(miniAppUrl, from.id, language), telegramClient);
-  }
 
-  if (text === "/today" || text === "/week" || text === "/month" || text === "/budget") {
-    const dashboard = await repository.dashboard(from.id);
-    return sendMessage(token, message.chat.id, formatTotals(text, dashboard.snapshot, { language }), appKeyboard(miniAppUrl, from.id, language), telegramClient);
-  }
+    if (rawText === "/admin_stats") {
+      if (!adminTelegramIds.has(Number(from.id))) {
+        return sendTelegramResponse(trace, () => sendMessage(token, chatId, "Access denied", null, telegramClient));
+      }
+      if (!adminStatsService?.getAdminStats) {
+        return sendTelegramResponse(trace, () => sendMessage(token, chatId, "Admin stats unavailable", null, telegramClient));
+      }
+      try {
+        const stats = await adminStatsService.getAdminStats();
+        return sendTelegramResponse(trace, () => sendMessage(token, chatId, formatAdminStats(stats), null, telegramClient));
+      } catch (error) {
+        console.error("[telegram] admin stats failed", error);
+        return sendTelegramResponse(trace, () => sendMessage(token, chatId, "Admin stats unavailable", null, telegramClient));
+      }
+    }
 
-  if (text === "/app" || text === "/settings") {
-    return sendMessage(token, message.chat.id, botText(language, "openMiniApp"), appKeyboard(miniAppUrl, from.id, language), telegramClient);
+    if (rawText === "/start") {
+      if (isOnboardingActive(user)) {
+        return sendTelegramResponse(trace, () => sendMessage(token, chatId, onboardingPrompt(user), onboardingReplyMarkup(user), telegramClient));
+      }
+      return sendTelegramResponse(trace, () => sendMessage(token, chatId, botText(language, "start"), appKeyboard(miniAppUrl, from.id, language), telegramClient));
+    }
+
+    if (rawText === "/today" || rawText === "/week" || rawText === "/month" || rawText === "/budget") {
+      const dashboard = await repository.dashboard(from.id);
+      return sendTelegramResponse(trace, () => sendMessage(token, chatId, formatTotals(rawText, dashboard.snapshot, { language }), appKeyboard(miniAppUrl, from.id, language), telegramClient));
+    }
+
+    if (rawText === "/app" || rawText === "/settings") {
+      return sendTelegramResponse(trace, () => sendMessage(token, chatId, botText(language, "openMiniApp"), appKeyboard(miniAppUrl, from.id, language), telegramClient));
+    }
   }
 
   if (isOnboardingActive(user)) {
-    return handleOnboardingMessage({ text, user, repository, token, chatId: message.chat.id, miniAppUrl, telegramUserId: from.id, telegramClient, now });
+    let onboardingTextInput = rawText;
+    if (!onboardingTextInput && hasVoice) {
+      try {
+        onboardingTextInput = await transcribeVoice(message, voiceTranscriber, trace);
+      } catch (error) {
+        trace.failActive(["telegram_file_download", "transcription"], error);
+        console.error("[telegram] voice transcription failed during onboarding", error.message);
+        onboardingTextInput = null;
+      }
+    }
+    if (!onboardingTextInput) {
+      return sendTelegramResponse(trace, () => sendMessage(token, chatId, botText(language, "unsupported"), null, telegramClient));
+    }
+    return handleOnboardingMessage({ text: onboardingTextInput, user, repository, token, chatId, miniAppUrl, telegramUserId: from.id, telegramClient, now, trace });
   }
 
-  const planned = parsePlannedExpenseText(text, { defaultCurrency: user.base_currency ?? "THB" });
-  if (planned) {
-    const draft = await repository.createPlannedDraft(user.id, text, planned);
-    return sendMessage(
+  const loader = await sendExpenseProcessingMessage(token, chatId, language, telegramClient, trace);
+
+  try {
+    let text = rawText;
+    if (!text && hasVoice) {
+      text = await transcribeVoice(message, voiceTranscriber, trace);
+    }
+    if (!text) {
+      throw new Error("No text to process");
+    }
+
+    const planned = parsePlannedExpenseText(text, { defaultCurrency: user.base_currency ?? "THB" });
+    if (planned) {
+      trace.start("db_save");
+      const draft = await repository.createPlannedDraft(user.id, text, planned);
+      trace.end("db_save");
+      return deliverResultMessage({
+        token,
+        chatId,
+        loaderMessageId: loader.messageId,
+        text: formatPlannedDraft(planned, { language }),
+        replyMarkup: plannedDraftKeyboard(draft.id, miniAppUrl, from.id, language),
+        telegramClient,
+        trace
+      });
+    }
+
+    let llmMetadata = {
+      model: expenseParser.model,
+      promptChars: String(text ?? "").length
+    };
+    trace.start("llm_parse", llmMetadata);
+    const parsed = await expenseParser.parse(text, {
+      defaultCurrency: user.base_currency ?? "THB",
+      onLlmTrace(metadata) {
+        llmMetadata = { ...llmMetadata, ...metadata };
+      }
+    });
+    trace.end("llm_parse", llmMetadata);
+    if (parsed.expenses.length === 0) {
+      return deliverResultMessage({
+        token,
+        chatId,
+        loaderMessageId: loader.messageId,
+        text: botText(language, "amountNotFound"),
+        replyMarkup: null,
+        telegramClient,
+        trace
+      });
+    }
+
+    trace.start("db_save");
+    const draft = await repository.createDraft(user.id, text, parsed.expenses);
+    trace.end("db_save");
+    return deliverResultMessage({
       token,
-      message.chat.id,
-      formatPlannedDraft(planned, { language }),
-      plannedDraftKeyboard(draft.id, miniAppUrl, from.id, language),
-      telegramClient
-    );
+      chatId,
+      loaderMessageId: loader.messageId,
+      text: formatDraft(parsed.expenses, { language, baseCurrency: user.base_currency ?? "THB" }),
+      replyMarkup: draftKeyboard(draft.id, parsed.expenses, miniAppUrl, from.id, language),
+      telegramClient,
+      trace
+    });
+  } catch (error) {
+    trace.failActive(["telegram_file_download", "transcription", "llm_parse", "db_save"], error);
+    console.error("[telegram] expense processing failed", error.message);
+    return deliverResultMessage({
+      token,
+      chatId,
+      loaderMessageId: loader.messageId,
+      text: botText(language, "technicalError"),
+      replyMarkup: null,
+      telegramClient,
+      trace
+    });
   }
-
-  const parsed = await expenseParser.parse(text, { defaultCurrency: user.base_currency ?? "THB" });
-  if (parsed.expenses.length === 0) {
-    return sendMessage(token, message.chat.id, botText(language, "amountNotFound"), null, telegramClient);
-  }
-
-  const draft = await repository.createDraft(user.id, text, parsed.expenses);
-  return sendMessage(token, message.chat.id, formatDraft(parsed.expenses, { language, baseCurrency: user.base_currency ?? "THB" }), draftKeyboard(draft.id, parsed.expenses, miniAppUrl, from.id, language), telegramClient);
 }
 
 function isAdminReleaseCommand(text) {
   return text === "/admin_release_preview" || text === "/admin_release_send";
 }
 
-async function handleAdminReleaseCommand({ text, from, chatId, token, telegramClient, adminTelegramIds, releaseNotesService, now }) {
+async function handleAdminReleaseCommand({ text, from, chatId, token, telegramClient, adminTelegramIds, releaseNotesService, now, trace }) {
   if (!isAdminTelegramId(from.id, adminTelegramIds) || !releaseNotesService) {
-    return sendMessage(token, chatId, "Команда доступна только администратору.", null, telegramClient);
+    return sendTelegramResponse(trace, () => sendMessage(token, chatId, "Команда доступна только администратору.", null, telegramClient));
   }
 
   if (text === "/admin_release_preview") {
     const preview = await releaseNotesService.previewTodayReleaseDigest(now());
-    return sendMessage(token, chatId, preview.text, null, telegramClient);
+    return sendTelegramResponse(trace, () => sendMessage(token, chatId, preview.text, null, telegramClient));
   }
 
   const result = await releaseNotesService.sendTodayReleaseDigest(now());
   if (!result.sent && result.reason === "no_public_release_notes") {
-    return sendMessage(token, chatId, "Сегодня нет публичных release notes для пользователей — отправлять нечего.", null, telegramClient);
+    return sendTelegramResponse(trace, () => sendMessage(token, chatId, "Сегодня нет публичных release notes для пользователей — отправлять нечего.", null, telegramClient));
   }
-  return sendMessage(token, chatId, formatReleaseSendSummary(result), null, telegramClient);
+  return sendTelegramResponse(trace, () => sendMessage(token, chatId, formatReleaseSendSummary(result), null, telegramClient));
 }
 
 function formatReleaseSendSummary(result) {
@@ -129,28 +256,76 @@ function formatReleaseSendSummary(result) {
   ].join("\n");
 }
 
-async function messageText({ message, voiceTranscriber }) {
-  if (message.text?.trim()) return message.text.trim();
-  if (!message.voice) return null;
+async function transcribeVoice(message, voiceTranscriber, trace) {
   if (!voiceTranscriber?.isConfigured()) return null;
+  const voice = message.voice ?? message.audio;
+  if (!voice) return null;
+  return voiceTranscriber.transcribeTelegramVoice(voice, {
+    onPerfStage(stage, metadata = {}) {
+      if (stage.endsWith("_start")) {
+        trace.start(stage.replace(/_start$/, ""), metadata);
+      } else if (stage.endsWith("_end")) {
+        trace.end(stage.replace(/_end$/, ""), metadata);
+      } else {
+        trace.event(stage, metadata);
+      }
+    }
+  });
+}
 
+async function sendExpenseProcessingMessage(token, chatId, language, telegramClient, trace) {
   try {
-    return await voiceTranscriber.transcribeTelegramVoice(message.voice);
+    const result = await sendTelegramResponse(trace, () => sendMessage(token, chatId, botText(language, "expenseProcessing"), null, telegramClient));
+    return { messageId: extractMessageId(result) };
   } catch (error) {
-    console.error("[telegram] voice transcription failed", error.message);
-    return null;
+    console.error("[telegram] failed to send expense processing loader", error.message);
+    return { messageId: null };
   }
 }
 
-async function handleOnboardingMessage({ text, user, repository, token, chatId, miniAppUrl, telegramUserId, telegramClient, now }) {
+async function deliverResultMessage({ token, chatId, loaderMessageId, text, replyMarkup, telegramClient, trace }) {
+  if (loaderMessageId) {
+    try {
+      return await sendTelegramResponse(trace, () => editMessageText(token, chatId, loaderMessageId, text, replyMarkup, telegramClient));
+    } catch (error) {
+      console.error("[telegram] editing loader into result failed, falling back to new message", error.message);
+      await deleteMessage(token, chatId, loaderMessageId, telegramClient).catch((deleteError) => {
+        console.error("[telegram] failed to delete loader after edit failure", deleteError.message);
+      });
+    }
+  }
+  return sendTelegramResponse(trace, () => sendMessage(token, chatId, text, replyMarkup, telegramClient));
+}
+
+function extractMessageId(sendResult) {
+  return sendResult?.result?.message_id ?? sendResult?.message_id ?? null;
+}
+
+async function handleOnboardingMessage({ text, user, repository, token, chatId, miniAppUrl, telegramUserId, telegramClient, now, trace }) {
   const language = user.interface_language ?? "en";
   const step = user.onboarding_step ?? "completed";
+
+  if (step === "language") {
+    const selectedLanguage = parseLanguage(text);
+    if (!selectedLanguage) {
+      return sendTelegramResponse(trace, () => sendMessage(token, chatId, onboardingText(language, "languageRetry"), languageKeyboard(), telegramClient));
+    }
+    trace.start("db_save");
+    await updateOnboardingLanguage(repository, telegramUserId, selectedLanguage);
+    trace.end("db_save");
+    return sendTelegramResponse(trace, () => sendMessage(token, chatId, onboardingText(selectedLanguage, "introBudgetSetup"), null, telegramClient));
+  }
+
+  if (step === "budget_setup") {
+    return handleBudgetSetupMessage({ text, user, repository, token, chatId, miniAppUrl, telegramUserId, telegramClient, now, trace });
+  }
 
   if (step === "base_currency") {
     const currency = parseCurrency(text);
     if (!currency) {
-      return sendMessage(token, chatId, onboardingText(language, "baseCurrencyRetry"), null, telegramClient);
+      return sendTelegramResponse(trace, () => sendMessage(token, chatId, onboardingText(language, "baseCurrencyRetry"), null, telegramClient));
     }
+    trace.start("db_save");
     if (repository.updateOnboardingBaseCurrency) {
       await repository.updateOnboardingBaseCurrency(telegramUserId, currency);
     } else {
@@ -164,15 +339,17 @@ async function handleOnboardingMessage({ text, user, repository, token, chatId, 
         onboardingStep: "monthly_budget"
       });
     }
-    return sendMessage(token, chatId, onboardingText(language, "monthlyBudget", { currency }), null, telegramClient);
+    trace.end("db_save");
+    return sendTelegramResponse(trace, () => sendMessage(token, chatId, onboardingText(language, "monthlyBudget", { currency }), null, telegramClient));
   }
 
   if (step === "monthly_budget") {
     const amount = parseSingleAmount(text, user.base_currency ?? "THB");
     if (!amount || amount.amount <= 0) {
-      return sendMessage(token, chatId, onboardingText(language, "monthlyBudgetRetry", { currency: user.base_currency ?? "THB" }), null, telegramClient);
+      return sendTelegramResponse(trace, () => sendMessage(token, chatId, onboardingText(language, "monthlyBudgetRetry", { currency: user.base_currency ?? "THB" }), null, telegramClient));
     }
     const nextStep = localMonthDay(now()) > 5 ? "current_month_budget" : "completed";
+    trace.start("db_save");
     if (repository.updateOnboardingMonthlyBudget) {
       await repository.updateOnboardingMonthlyBudget(telegramUserId, amount.amount, nextStep);
     } else {
@@ -188,16 +365,19 @@ async function handleOnboardingMessage({ text, user, repository, token, chatId, 
     }
     if (nextStep === "completed") {
       await repository.setOnboardingStep?.(telegramUserId, "completed");
-      return sendMessage(token, chatId, onboardingText(language, "complete"), appKeyboard(miniAppUrl, telegramUserId, language), telegramClient);
+      trace.end("db_save");
+      return sendTelegramResponse(trace, () => sendMessage(token, chatId, onboardingText(language, "complete"), appKeyboard(miniAppUrl, telegramUserId, language), telegramClient));
     }
-    return sendMessage(token, chatId, onboardingText(language, "currentMonthBudget", { currency: user.base_currency ?? "THB" }), null, telegramClient);
+    trace.end("db_save");
+    return sendTelegramResponse(trace, () => sendMessage(token, chatId, onboardingText(language, "currentMonthBudget", { currency: user.base_currency ?? "THB" }), null, telegramClient));
   }
 
   if (step === "current_month_budget" || step === "month_opening_spend") {
     const amount = parseSingleAmount(text, user.base_currency ?? "THB");
     if (!amount || amount.amount <= 0) {
-      return sendMessage(token, chatId, onboardingText(language, "currentMonthBudgetRetry", { currency: user.base_currency ?? "THB" }), null, telegramClient);
+      return sendTelegramResponse(trace, () => sendMessage(token, chatId, onboardingText(language, "currentMonthBudgetRetry", { currency: user.base_currency ?? "THB" }), null, telegramClient));
     }
+    trace.start("db_save");
     if (repository.setCurrentMonthBudget) {
       await repository.setCurrentMonthBudget(telegramUserId, {
         amount: amount.amount,
@@ -214,15 +394,99 @@ async function handleOnboardingMessage({ text, user, repository, token, chatId, 
       });
       await repository.setOnboardingStep?.(telegramUserId, "completed");
     }
-    return sendMessage(token, chatId, onboardingText(language, "complete"), appKeyboard(miniAppUrl, telegramUserId, language), telegramClient);
+    trace.end("db_save");
+    return sendTelegramResponse(trace, () => sendMessage(token, chatId, onboardingText(language, "complete"), appKeyboard(miniAppUrl, telegramUserId, language), telegramClient));
   }
 
+  trace.start("db_save");
   await repository.setOnboardingStep?.(telegramUserId, "completed");
-  return sendMessage(token, chatId, onboardingText(language, "complete"), appKeyboard(miniAppUrl, telegramUserId, language), telegramClient);
+  trace.end("db_save");
+  return sendTelegramResponse(trace, () => sendMessage(token, chatId, onboardingText(language, "complete"), appKeyboard(miniAppUrl, telegramUserId, language), telegramClient));
 }
 
 function isOnboardingActive(user) {
-  return ["base_currency", "monthly_budget", "current_month_budget", "month_opening_spend"].includes(user?.onboarding_step);
+  return ONBOARDING_STEPS.includes(user?.onboarding_step);
+}
+
+async function handleBudgetSetupMessage({ text, user, repository, token, chatId, miniAppUrl, telegramUserId, telegramClient, now, trace }) {
+  const language = user.interface_language ?? "en";
+  const data = normalizeOnboardingData(user.onboarding_data);
+  const currency = parseCurrencyFromText(text) ?? data.currency ?? null;
+  const amount = parseSingleAmount(text, currency ?? user.base_currency ?? "THB");
+  const monthlyBudgetAmount = amount?.amount ?? data.monthlyBudgetAmount ?? null;
+
+  if (!currency && !monthlyBudgetAmount) {
+    return sendTelegramResponse(trace, () => sendMessage(token, chatId, onboardingText(language, "budgetSetupRetry"), null, telegramClient));
+  }
+
+  if (!currency) {
+    trace.start("db_save");
+    await repository.updateOnboardingData?.(telegramUserId, { monthlyBudgetAmount });
+    trace.end("db_save");
+    return sendTelegramResponse(trace, () => sendMessage(token, chatId, onboardingText(language, "budgetSetupCurrencyMissing"), null, telegramClient));
+  }
+
+  if (!monthlyBudgetAmount || monthlyBudgetAmount <= 0) {
+    trace.start("db_save");
+    await repository.updateOnboardingData?.(telegramUserId, { currency });
+    trace.end("db_save");
+    return sendTelegramResponse(trace, () => sendMessage(token, chatId, onboardingText(language, "budgetSetupAmountMissing", { currency }), null, telegramClient));
+  }
+
+  const nextStep = localMonthDay(now()) > 5 ? "current_month_budget" : "completed";
+  trace.start("db_save");
+  if (repository.completeOnboardingBudgetSetup) {
+    await repository.completeOnboardingBudgetSetup(telegramUserId, {
+      baseCurrency: currency,
+      monthlyBudgetAmount,
+      nextStep
+    });
+  } else {
+    await repository.updateUserSettings(telegramUserId, {
+      monthlyBudgetAmount,
+      baseCurrency: currency,
+      displayCurrency: user.display_currency ?? "USD",
+      usdThbRate: user.usd_thb_rate ?? 32.65,
+      weeklyBudgetAmount: user.weekly_budget_amount ?? null,
+      interfaceLanguage: language,
+      onboardingStep: nextStep
+    });
+    await repository.updateOnboardingData?.(telegramUserId, {});
+  }
+  trace.end("db_save");
+
+  if (nextStep === "completed") {
+    return sendTelegramResponse(trace, () => sendMessage(token, chatId, onboardingText(language, "complete"), appKeyboard(miniAppUrl, telegramUserId, language), telegramClient));
+  }
+  return sendTelegramResponse(trace, () => sendMessage(token, chatId, onboardingText(language, "currentMonthBudget", { currency }), null, telegramClient));
+}
+
+function onboardingPrompt(user) {
+  const language = user?.interface_language ?? "en";
+  if (user?.onboarding_step === "language") return onboardingText(language, "language");
+  if (user?.onboarding_step === "budget_setup") return onboardingText(language, "introBudgetSetup");
+  return onboardingText(language, "baseCurrency");
+}
+
+function onboardingReplyMarkup(user) {
+  if (user?.onboarding_step === "language") return languageKeyboard();
+  return null;
+}
+
+function languageKeyboard() {
+  return {
+    inline_keyboard: [[
+      { text: "English", callback_data: "onboard_lang:en" },
+      { text: "Русский", callback_data: "onboard_lang:ru" }
+    ]]
+  };
+}
+
+function parseLanguage(text) {
+  const value = String(text ?? "").trim().toLowerCase();
+  if (["en", "eng", "english"].includes(value)) return "en";
+  if (["ru", "rus", "russian", "русский", "рус"].includes(value)) return "ru";
+  return null;
 }
 
 function parseCurrency(text) {
@@ -241,6 +505,18 @@ function parseCurrency(text) {
   return aliases.get(value) ?? null;
 }
 
+function parseCurrencyFromText(text) {
+  const direct = parseCurrency(text);
+  if (direct) return direct;
+  const value = String(text ?? "").toLowerCase();
+  const tokens = value.match(/[\p{L}\p{N}]+/gu) ?? [];
+  for (const token of tokens) {
+    const currency = parseCurrency(token);
+    if (currency) return currency;
+  }
+  return null;
+}
+
 function parseSingleAmount(text, defaultCurrency) {
   const parsed = parseExpenseText(String(text ?? ""), { defaultCurrency });
   return parsed.expenses[0] ? { amount: parsed.expenses[0].amount, currency: parsed.expenses[0].currency } : null;
@@ -250,90 +526,163 @@ function isSkip(text) {
   return /^(0|skip|пропустить|нет)$/iu.test(String(text ?? "").trim());
 }
 
+function normalizeOnboardingData(value) {
+  if (!value) return {};
+  if (typeof value === "string") {
+    try {
+      return JSON.parse(value);
+    } catch {
+      return {};
+    }
+  }
+  return typeof value === "object" ? value : {};
+}
+
 function localMonthDay(now) {
   const local = new Date(now.getTime() + 7 * 60 * 60_000);
   return local.getUTCDate();
 }
 
-async function handleCallback({ update, repository, token, miniAppUrl, telegramClient }) {
+async function handleCallback({ update, repository, token, miniAppUrl, telegramClient, trace }) {
   const callback = update.callback_query;
   const [action, draftId, itemIndex, value] = callback.data.split(":");
   const telegramUserId = callback.from.id;
+  trace.start("user_context");
   const user = await repository.getUserByTelegramId?.(telegramUserId);
+  trace.end("user_context");
   const language = user?.interface_language ?? "en";
 
+  if (action === "onboard_lang") {
+    const selectedLanguage = ["en", "ru"].includes(draftId) ? draftId : "en";
+    trace.start("db_save");
+    await updateOnboardingLanguage(repository, telegramUserId, selectedLanguage);
+    trace.end("db_save");
+    return sendTelegramResponse(trace, async () => {
+      await answerCallback(token, callback.id, selectedLanguage === "ru" ? "Язык выбран" : "Language selected", telegramClient);
+      return sendMessage(token, callback.message.chat.id, onboardingText(selectedLanguage, "introBudgetSetup"), null, telegramClient);
+    });
+  }
+
   if (action === "plan_confirm") {
+    trace.start("db_save");
     await repository.confirmPlannedDraft(draftId, telegramUserId);
-    await answerCallback(token, callback.id, botText(language, "savedCallback"), telegramClient);
-    return sendMessage(token, callback.message.chat.id, botText(language, "plannedSaved"), appKeyboard(miniAppUrl, telegramUserId, language), telegramClient);
+    trace.end("db_save");
+    return sendTelegramResponse(trace, async () => {
+      await answerCallback(token, callback.id, botText(language, "savedCallback"), telegramClient);
+      return sendMessage(token, callback.message.chat.id, botText(language, "plannedSaved"), appKeyboard(miniAppUrl, telegramUserId, language), telegramClient);
+    });
   }
 
   if (action === "plan_cancel") {
+    trace.start("db_save");
     await repository.cancelPlannedDraft(draftId, telegramUserId);
-    await answerCallback(token, callback.id, botText(language, "cancelledCallback"), telegramClient);
-    return sendMessage(token, callback.message.chat.id, botText(language, "plannedCancelled"), null, telegramClient);
+    trace.end("db_save");
+    return sendTelegramResponse(trace, async () => {
+      await answerCallback(token, callback.id, botText(language, "cancelledCallback"), telegramClient);
+      return sendMessage(token, callback.message.chat.id, botText(language, "plannedCancelled"), null, telegramClient);
+    });
   }
 
   if (action === "cat") {
+    trace.start("db_save");
     const draft = await repository.getDraftForTelegramUser(draftId, telegramUserId);
     const items = updateDraftItem(draft, Number(itemIndex), { category_slug: value, needs_review: false, confidence: 0.9 });
     const updated = await repository.updateDraftItems(draftId, telegramUserId, items);
-    await answerCallback(token, callback.id, botText(language, "categoryUpdatedCallback"), telegramClient);
-    return sendMessage(token, callback.message.chat.id, formatDraft(updated.items, { language, baseCurrency: user?.base_currency ?? "THB" }), draftKeyboard(updated.id, updated.items, miniAppUrl, telegramUserId, language), telegramClient);
+    trace.end("db_save");
+    return sendTelegramResponse(trace, async () => {
+      await answerCallback(token, callback.id, botText(language, "categoryUpdatedCallback"), telegramClient);
+      return sendMessage(token, callback.message.chat.id, formatDraft(updated.items, { language, baseCurrency: user?.base_currency ?? "THB" }), draftKeyboard(updated.id, updated.items, miniAppUrl, telegramUserId, language), telegramClient);
+    });
   }
 
   if (action === "amount") {
+    trace.start("db_save");
     const draft = await repository.getDraftForTelegramUser(draftId, telegramUserId);
     const current = draft.items[Number(itemIndex)];
     const amount = Math.max(Number(current.amount) + Number(value), 1);
     const items = updateDraftItem(draft, Number(itemIndex), { amount });
     const updated = await repository.updateDraftItems(draftId, telegramUserId, items);
-    await answerCallback(token, callback.id, botText(language, "amountUpdatedCallback"), telegramClient);
-    return sendMessage(token, callback.message.chat.id, formatDraft(updated.items, { language, baseCurrency: user?.base_currency ?? "THB" }), draftKeyboard(updated.id, updated.items, miniAppUrl, telegramUserId, language), telegramClient);
+    trace.end("db_save");
+    return sendTelegramResponse(trace, async () => {
+      await answerCallback(token, callback.id, botText(language, "amountUpdatedCallback"), telegramClient);
+      return sendMessage(token, callback.message.chat.id, formatDraft(updated.items, { language, baseCurrency: user?.base_currency ?? "THB" }), draftKeyboard(updated.id, updated.items, miniAppUrl, telegramUserId, language), telegramClient);
+    });
   }
 
   if (action === "impact") {
+    trace.start("db_save");
     const impact = normalizeBudgetImpact(value);
     const draft = await repository.getDraftForTelegramUser(draftId, telegramUserId);
     const items = updateDraftItem(draft, Number(itemIndex), { budget_impact: impact });
     const updated = await repository.updateDraftItems(draftId, telegramUserId, items);
-    await answerCallback(token, callback.id, language === "ru" ? "Тип обновлен" : "Type updated", telegramClient);
+    trace.end("db_save");
     const text = formatDraft(updated.items, { language, baseCurrency: user?.base_currency ?? "THB" });
     const replyMarkup = draftKeyboard(updated.id, updated.items, miniAppUrl, telegramUserId, language);
-    if (callback.message?.message_id) {
-      return editMessageText(token, callback.message.chat.id, callback.message.message_id, text, replyMarkup, telegramClient);
-    }
-    return sendMessage(token, callback.message.chat.id, text, replyMarkup, telegramClient);
+    return sendTelegramResponse(trace, async () => {
+      await answerCallback(token, callback.id, language === "ru" ? "Тип обновлен" : "Type updated", telegramClient);
+      if (callback.message?.message_id) {
+        return editMessageText(token, callback.message.chat.id, callback.message.message_id, text, replyMarkup, telegramClient);
+      }
+      return sendMessage(token, callback.message.chat.id, text, replyMarkup, telegramClient);
+    });
   }
 
   if (action === "confirm") {
+    trace.start("db_save");
     const expenses = await repository.confirmDraft(draftId, telegramUserId);
     const dashboard = await repository.dashboard(telegramUserId);
     const total = expenses.reduce((sum, expense) => sum + Number(expense.amount_base), 0);
-    await answerCallback(token, callback.id, botText(language, "savedCallback"), telegramClient);
-    return sendMessage(token, callback.message.chat.id, formatSavedSummary(total, dashboard.snapshot, { language }), appKeyboard(miniAppUrl, telegramUserId, language), telegramClient);
+    trace.end("db_save");
+    return sendTelegramResponse(trace, async () => {
+      await answerCallback(token, callback.id, botText(language, "savedCallback"), telegramClient);
+      return sendMessage(token, callback.message.chat.id, formatSavedSummary(total, dashboard.snapshot, { language }), appKeyboard(miniAppUrl, telegramUserId, language), telegramClient);
+    });
   }
 
   if (action === "cancel") {
+    trace.start("db_save");
     await repository.cancelDraft(draftId, telegramUserId);
-    await answerCallback(token, callback.id, botText(language, "cancelledCallback"), telegramClient);
+    trace.end("db_save");
     const chatId = callback.message.chat.id;
     const messageId = callback.message.message_id;
-    try {
-      return await deleteMessage(token, chatId, messageId, telegramClient);
-    } catch {
-      return editMessageText(token, chatId, messageId, botText(language, "cancelledCallback"), { inline_keyboard: [] }, telegramClient);
-    }
+    return sendTelegramResponse(trace, async () => {
+      await answerCallback(token, callback.id, botText(language, "cancelledCallback"), telegramClient);
+      return editMessageText(token, chatId, messageId, botText(language, "cancelDraftMessage"), { inline_keyboard: [] }, telegramClient);
+    });
   }
 
   if (action === "inbox") {
+    trace.start("db_save");
     await repository.moveDraftToInbox(draftId, telegramUserId);
-    await answerCallback(token, callback.id, botText(language, "movedCallback"), telegramClient);
-    return sendMessage(token, callback.message.chat.id, botText(language, "movedToInbox"), inboxDraftKeyboard(miniAppUrl, telegramUserId, draftId, language), telegramClient);
+    trace.end("db_save");
+    return sendTelegramResponse(trace, async () => {
+      await answerCallback(token, callback.id, botText(language, "movedCallback"), telegramClient);
+      return sendMessage(token, callback.message.chat.id, botText(language, "movedToInbox"), inboxDraftKeyboard(miniAppUrl, telegramUserId, draftId, language), telegramClient);
+    });
   }
 
-  await answerCallback(token, callback.id, botText(language, "openMiniAppCallback"), telegramClient);
-  return sendMessage(token, callback.message.chat.id, botText(language, "editInMiniApp"), appKeyboard(miniAppUrl, telegramUserId, language), telegramClient);
+  return sendTelegramResponse(trace, async () => {
+    await answerCallback(token, callback.id, botText(language, "openMiniAppCallback"), telegramClient);
+    return sendMessage(token, callback.message.chat.id, botText(language, "editInMiniApp"), appKeyboard(miniAppUrl, telegramUserId, language), telegramClient);
+  });
+}
+
+async function updateOnboardingLanguage(repository, telegramUserId, language) {
+  if (repository.updateOnboardingLanguage) {
+    return repository.updateOnboardingLanguage(telegramUserId, language);
+  }
+  await repository.updateUserSettings?.(telegramUserId, {
+    monthlyBudgetAmount: 45000,
+    baseCurrency: "THB",
+    displayCurrency: "USD",
+    usdThbRate: 32.65,
+    weeklyBudgetAmount: null,
+    interfaceLanguage: language,
+    onboardingStep: "budget_setup"
+  });
+  await repository.setOnboardingStep?.(telegramUserId, "budget_setup");
+  await repository.updateOnboardingData?.(telegramUserId, {});
+  return null;
 }
 
 function updateDraftItem(draft, index, patch) {
@@ -373,13 +722,32 @@ function localDateKey(now) {
   return local.toISOString().slice(0, 10);
 }
 
+async function sendTelegramResponse(trace, fn) {
+  trace.start("telegram_response");
+  try {
+    const result = await fn();
+    trace.end("telegram_response");
+    return result;
+  } catch (error) {
+    trace.end("telegram_response", {}, false, error);
+    throw error;
+  }
+}
+
+let logMessageIdSequence = 0;
+function nextLogMessageId() {
+  logMessageIdSequence += 1;
+  return logMessageIdSequence;
+}
+
 async function sendMessage(token, chatId, text, replyMarkup, telegramClient) {
   if (telegramClient) {
     return telegramClient.sendMessage({ chatId, text, replyMarkup });
   }
   if (!token) {
+    const logMessageId = nextLogMessageId();
     console.log("[telegram:sendMessage]", { chatId, text, replyMarkup });
-    return { ok: true };
+    return { ok: true, result: { message_id: logMessageId } };
   }
   const body = {
     chat_id: chatId,
@@ -398,10 +766,6 @@ async function sendMessage(token, chatId, text, replyMarkup, telegramClient) {
       parse_mode: undefined
     });
   }
-}
-
-export async function sendTelegramMessage({ token, chatId, text, replyMarkup = null, telegramClient }) {
-  return sendMessage(token, chatId, text, replyMarkup, telegramClient);
 }
 
 async function editMessageText(token, chatId, messageId, text, replyMarkup, telegramClient) {
@@ -489,11 +853,152 @@ function cleanTelegramBody(body) {
   return Object.fromEntries(Object.entries(body).filter(([, value]) => value != null));
 }
 
+function createPerfTrace({ update, logger }) {
+  const startedAt = performance.now();
+  const traceId = createTraceId();
+  const messageType = resolveMessageType(update);
+  const userId = update.message?.from?.id ?? update.callback_query?.from?.id ?? null;
+  const starts = new Map();
+  const durations = new Map();
+  let finished = false;
+
+  const trace = {
+    start(stage, metadata = {}) {
+      starts.set(stage, performance.now());
+      logStage(`${stage}_start`, 0, true, metadata);
+    },
+
+    end(stage, metadata = {}, success = true, error = null) {
+      const started = starts.get(stage);
+      const durationMs = started ? elapsedSince(started) : 0;
+      starts.delete(stage);
+      durations.set(stage, (durations.get(stage) ?? 0) + durationMs);
+      logStage(`${stage}_end`, durationMs, success, metadata, error);
+    },
+
+    event(stage, metadata = {}, success = true, error = null) {
+      logStage(stage, 0, success, metadata, error);
+    },
+
+    failActive(stages, error) {
+      for (const stage of stages) {
+        if (starts.has(stage)) {
+          trace.end(stage, {}, false, error);
+        }
+      }
+    },
+
+    finish(success, error = null) {
+      if (finished) return;
+      trace.failActive([...starts.keys()], error);
+      finished = true;
+      logStage("total_done", elapsedSince(startedAt), success, {}, error);
+      logSummary(success, error);
+    }
+  };
+
+  trace.event("message_received", messageMetadata(update, messageType));
+  return trace;
+
+  function logStage(stage, durationMs, success, metadata = {}, error = null) {
+    const payload = {
+      traceId,
+      userId,
+      messageType,
+      stage,
+      durationMs,
+      totalMs: elapsedSince(startedAt),
+      success,
+      ...metadata
+    };
+    if (error) payload.error = error.message;
+    logger(formatPerfStage(payload));
+  }
+
+  function logSummary(success, error = null) {
+    const parts = [
+      "[perf]",
+      `traceId=${traceId}`,
+      `type=${messageType}`,
+      `total=${elapsedSince(startedAt)}ms`
+    ];
+    appendDuration(parts, "download", durations.get("telegram_file_download"));
+    appendDuration(parts, "transcription", durations.get("transcription"));
+    appendDuration(parts, "llm", durations.get("llm_parse"));
+    appendDuration(parts, "db", durations.get("db_save"));
+    appendDuration(parts, "telegram", durations.get("telegram_response"));
+    if (!success) parts.push("success=false");
+    if (error) parts.push(`error=${formatPerfValue(error.message)}`);
+    logger(parts.join(" "));
+  }
+}
+
+function resolveMessageType(update) {
+  if (update.callback_query) return "callback";
+  const message = update.message;
+  if (message?.text) return "text";
+  if (message?.voice || message?.audio) return "voice";
+  if (message?.photo) return "photo";
+  return "unknown";
+}
+
+function messageMetadata(update, messageType) {
+  const message = update.message;
+  if (!message) return {};
+  const metadata = {};
+  if (messageType === "text") {
+    metadata.textChars = String(message.text ?? "").length;
+  }
+  if (messageType === "voice") {
+    const voice = message.voice ?? message.audio;
+    metadata.audioDurationSec = voice?.duration;
+    if (voice?.file_size) metadata.fileSizeKb = Math.round(Number(voice.file_size) / 1024);
+  }
+  return metadata;
+}
+
+function createTraceId() {
+  return `tg_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function elapsedSince(startedAt) {
+  return Math.max(0, Math.round(performance.now() - startedAt));
+}
+
+function appendDuration(parts, label, durationMs) {
+  if (Number.isFinite(durationMs)) parts.push(`${label}=${durationMs}ms`);
+}
+
+function formatPerfStage(payload) {
+  const fields = Object.entries(payload)
+    .filter(([, value]) => value !== undefined && value !== null)
+    .map(([key, value]) => `${key}=${formatPerfValue(value)}`);
+  return `[perf:stage] ${fields.join(" ")}`;
+}
+
+function formatPerfValue(value) {
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  const text = String(value).replaceAll(/\s+/g, " ").slice(0, 160);
+  return /^[A-Za-z0-9_.:/-]+$/.test(text) ? text : JSON.stringify(text);
+}
+
 function onboardingText(language, key, values = {}) {
   const lang = language === "ru" ? "ru" : "en";
   const currency = values.currency ?? "THB";
   const messages = {
     ru: {
+      language: "Choose language / Выбери язык:",
+      languageRetry: "Please choose a language: English or Русский.",
+      introBudgetSetup: [
+        "Money Flow helps you save expenses from text or voice.",
+        "Send expenses like: <b>coffee 70 baht and lunch 180</b>.",
+        "I will show a draft first and save only after confirmation.",
+        "",
+        "Now send your currency and monthly budget in one message, for example: <b>THB 42000</b> or <b>USD 2000</b>."
+      ].join("\n"),
+      budgetSetupRetry: "I did not understand the currency and monthly budget. Send, for example: <b>THB 42000</b> or <b>USD 2000</b>.",
+      budgetSetupCurrencyMissing: "Got the monthly budget. Now send the currency: <b>THB</b>, <b>USD</b>, <b>RUB</b>, <b>IDR</b>, <b>EUR</b>, <b>BYN</b>, or <b>GEL</b>.",
+      budgetSetupAmountMissing: `Good, I will count in <b>${currency}</b>. Now send your monthly budget, for example: <b>42000</b> or <b>42k</b>.`,
       baseCurrency: [
         "Сначала быстро настроим учет.",
         "",
@@ -523,6 +1028,18 @@ function onboardingText(language, key, values = {}) {
       currentMonthBudgetRetry: `Не понял бюджет до конца месяца. Напиши сумму в ${currency}, например: <b>15000</b> или <b>15к</b>.`
     },
     en: {
+      language: "Choose language:",
+      languageRetry: "Please choose a language: English or Russian.",
+      introBudgetSetup: [
+        "Money Flow helps you save expenses from text or voice.",
+        "Write or dictate expenses like: <b>coffee 70 baht and lunch 180</b>.",
+        "I will show a draft first and save only after confirmation.",
+        "",
+        "Now send your currency and monthly budget in one message, for example: <b>THB 42000</b> or <b>USD 2000</b>."
+      ].join("\n"),
+      budgetSetupRetry: "I did not understand the currency and monthly budget. Send, for example: <b>THB 42000</b> or <b>USD 2000</b>.",
+      budgetSetupCurrencyMissing: "Got the monthly budget. Now send the currency: <b>THB</b>, <b>USD</b>, <b>RUB</b>, <b>IDR</b>, <b>EUR</b>, <b>BYN</b>, or <b>GEL</b>.",
+      budgetSetupAmountMissing: `Good, I will count in <b>${currency}</b>. Now send your monthly budget, for example: <b>20000</b> or <b>20k</b>.`,
       baseCurrency: [
         "First, let's set up your account.",
         "",
@@ -562,9 +1079,11 @@ function botText(language, key) {
       amountNotFound: "Не нашел сумму. Напиши так: <b>кофе 70 бат</b>.",
       amountUpdatedCallback: "Сумма обновлена",
       cancelledCallback: "Отменено",
+      cancelDraftMessage: "❌ Запись отменена",
       categoryUpdatedCallback: "Категория обновлена",
       draftCancelled: "Черновик отменен.",
       editInMiniApp: "Редактирование доступно в Mini App.",
+      expenseProcessing: "⏳ Заношу расход…",
       movedCallback: "Перенесено",
       movedToInbox: "Перенес в Inbox. Можно разобрать позже в Mini App.",
       openMiniApp: "Открыть Mini App:",
@@ -580,15 +1099,18 @@ function botText(language, key) {
         "",
         "Сначала покажу черновик, сохраню только после подтверждения."
       ].join("\n"),
+      technicalError: "⚠️ Что-то пошло не так. Попробуйте ещё раз.",
       unsupported: "Пока умею принимать только текстовые и голосовые расходы."
     },
     en: {
       amountNotFound: "I did not find an amount. Try: <b>coffee 70 baht</b>.",
       amountUpdatedCallback: "Amount updated",
       cancelledCallback: "Cancelled",
+      cancelDraftMessage: "❌ Entry cancelled",
       categoryUpdatedCallback: "Category updated",
       draftCancelled: "Draft cancelled.",
       editInMiniApp: "Editing is available in Mini App.",
+      expenseProcessing: "⏳ Adding expense…",
       movedCallback: "Moved",
       movedToInbox: "Moved to Inbox. You can review it later in Mini App.",
       openMiniApp: "Open Mini App:",
@@ -604,6 +1126,7 @@ function botText(language, key) {
         "",
         "I will show a draft first and save only after confirmation."
       ].join("\n"),
+      technicalError: "⚠️ Something went wrong. Please try again.",
       unsupported: "For now I can accept only text and voice expenses."
     }
   };

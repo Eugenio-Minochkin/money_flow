@@ -3,6 +3,77 @@ import assert from "node:assert/strict";
 
 import { createRepository } from "../src/repository.js";
 
+test("creates new Telegram users at the language onboarding step", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql: String(sql), params });
+    return { rows: [{ id: 1, telegram_user_id: params[0], onboarding_step: "language", is_new: true }] };
+  }));
+
+  const user = await repo.upsertTelegramUser({ id: 100, firstName: "M", username: "mino" });
+
+  assert.equal(user.onboarding_step, "language");
+  assert.match(queries[0].sql, /onboarding_step\)/);
+  assert.match(queries[0].sql, /'language'/);
+});
+
+test("updates onboarding language and advances to budget setup", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql: String(sql), params });
+    return { rows: [{ telegram_user_id: params[1], interface_language: params[0], onboarding_step: "budget_setup", onboarding_data: {} }] };
+  }));
+
+  const user = await repo.updateOnboardingLanguage(100, "ru");
+
+  assert.equal(user.interface_language, "ru");
+  assert.equal(user.onboarding_step, "budget_setup");
+  assert.match(queries[0].sql, /interface_language = \$1/);
+  assert.match(queries[0].sql, /onboarding_step = 'budget_setup'/);
+  assert.match(queries[0].sql, /onboarding_data = '\{\}'::jsonb/);
+});
+
+test("stores temporary onboarding data as jsonb", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql: String(sql), params });
+    return { rows: [{ telegram_user_id: params[1], onboarding_data: JSON.parse(params[0]) }] };
+  }));
+
+  const user = await repo.updateOnboardingData(100, { currency: "USD" });
+
+  assert.deepEqual(user.onboarding_data, { currency: "USD" });
+  assert.match(queries[0].sql, /onboarding_data = \$1::jsonb/);
+  assert.equal(queries[0].params[0], JSON.stringify({ currency: "USD" }));
+});
+
+test("completes onboarding budget setup and clears temporary data", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql: String(sql), params });
+    return {
+      rows: [{
+        telegram_user_id: params[3],
+        base_currency: params[0],
+        monthly_budget_amount: params[1],
+        onboarding_step: params[2],
+        onboarding_data: {}
+      }]
+    };
+  }));
+
+  const user = await repo.completeOnboardingBudgetSetup(100, {
+    baseCurrency: "USD",
+    monthlyBudgetAmount: 2000,
+    nextStep: "completed"
+  });
+
+  assert.equal(user.base_currency, "USD");
+  assert.equal(Number(user.monthly_budget_amount), 2000);
+  assert.equal(user.onboarding_step, "completed");
+  assert.match(queries[0].sql, /onboarding_data = '\{\}'::jsonb/);
+});
+
 test("updates monthly budget for a Telegram user", async () => {
   const queries = [];
   const repo = createRepository(fakePool((sql, params) => {

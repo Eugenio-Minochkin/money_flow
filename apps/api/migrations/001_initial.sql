@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS users (
   interface_theme TEXT NOT NULL DEFAULT 'light',
   budget_advice_enabled BOOLEAN NOT NULL DEFAULT true,
   onboarding_step TEXT NOT NULL DEFAULT 'completed',
+  onboarding_data JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -25,6 +26,7 @@ UPDATE users SET interface_theme = 'light' WHERE interface_theme IS NULL OR inte
 ALTER TABLE users ADD COLUMN IF NOT EXISTS budget_advice_enabled BOOLEAN NOT NULL DEFAULT true;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS onboarding_step TEXT NOT NULL DEFAULT 'completed';
 ALTER TABLE users ADD COLUMN IF NOT EXISTS bot_blocked BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS onboarding_data JSONB NOT NULL DEFAULT '{}'::jsonb;
 ALTER TABLE users ALTER COLUMN usd_thb_rate SET DEFAULT 32.65;
 UPDATE users SET usd_thb_rate = 32.65 WHERE usd_thb_rate = 36;
 UPDATE users SET interface_language = 'ru' WHERE telegram_user_id = 428925787;
@@ -201,6 +203,18 @@ CREATE INDEX IF NOT EXISTS planned_expense_payments_month_idx ON planned_expense
 UPDATE expenses SET budget_impact = 'planned'
 WHERE id IN (SELECT expense_id FROM planned_expense_payments)
   AND budget_impact = 'regular';
+
+CREATE TABLE IF NOT EXISTS app_events (
+  id BIGSERIAL PRIMARY KEY,
+  user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+  event_name TEXT NOT NULL,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS app_events_created_at_idx ON app_events(created_at);
+CREATE INDEX IF NOT EXISTS app_events_event_created_at_idx ON app_events(event_name, created_at);
+CREATE INDEX IF NOT EXISTS app_events_user_created_at_idx ON app_events(user_id, created_at);
 
 CREATE TABLE IF NOT EXISTS weekly_reports (
   id BIGSERIAL PRIMARY KEY,

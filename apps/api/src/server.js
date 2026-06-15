@@ -3,6 +3,7 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { config, requireRuntimeConfig } from "./config.js";
+import { createAdminStatsService, parseAdminTelegramIds } from "./adminStatsService.js";
 import { createApiSecurity } from "./apiSecurity.js";
 import { migrate, pool } from "./db.js";
 import { createExchangeRateProvider } from "./exchangeRates.js";
@@ -33,6 +34,7 @@ const repository = createRepository(pool, {
   defaultMonthlyBudget: config.defaultMonthlyBudget,
   exchangeRates: createExchangeRateProvider()
 });
+const adminStatsService = createAdminStatsService({ pool });
 const expenseParser = createExpenseParser({
   apiKey: config.openAiApiKey,
   model: config.openAiModel
@@ -41,7 +43,8 @@ const voiceTranscriber = createVoiceTranscriber({
   telegramBotToken: config.telegramBotToken,
   deepgramApiKey: config.deepgramApiKey
 });
-if (config.adminTelegramIds.size === 0) {
+const adminTelegramIds = parseAdminTelegramIds(config.adminTelegramIds);
+if (adminTelegramIds.size === 0) {
   console.warn("[admin] ADMIN_TELEGRAM_IDS is empty; admin commands are disabled");
 }
 const releaseNotesService = createReleaseNotesService({
@@ -58,9 +61,10 @@ function createBot(telegramClient) {
     voiceTranscriber,
     token: config.telegramBotToken,
     miniAppUrl: config.miniAppUrl,
-    telegramClient,
-    adminTelegramIds: config.adminTelegramIds,
-    releaseNotesService
+    adminTelegramIds,
+    adminStatsService,
+    releaseNotesService,
+    telegramClient
   });
 }
 const bot = createBot();

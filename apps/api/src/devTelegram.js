@@ -3,11 +3,13 @@ export const DEMO_TELEGRAM_USER_ID = 100001;
 export function createCapturedTelegramClient() {
   const messages = [];
   const callbackAnswers = [];
+  let messageIdSequence = 0;
   return {
     messages,
     callbackAnswers,
     async sendMessage({ chatId, text, replyMarkup }) {
-      const message = { method: "sendMessage", chatId, text, replyMarkup };
+      messageIdSequence += 1;
+      const message = { method: "sendMessage", chatId, text, replyMarkup, message_id: messageIdSequence };
       messages.push(message);
       return { ok: true, result: message };
     },
