@@ -14,17 +14,33 @@ export function createExpenseParser(options = {}) {
   const now = options.now ?? (() => new Date());
 
   return {
+    model: apiKey ? model : "local-parser",
+
     async parse(text, parseOptions = {}) {
       const defaultCurrency = normalizeCurrency(parseOptions.defaultCurrency, "THB");
       if (!apiKey || !fetchImpl) {
-        return parseExpenseText(text, { now: now(), defaultCurrency });
+        const result = parseExpenseText(text, { now: now(), defaultCurrency });
+        parseOptions.onLlmTrace?.({
+          model: "local-parser",
+          promptChars: String(text ?? "").length,
+          responseChars: JSON.stringify(result).length
+        });
+        return result;
       }
 
       try {
-        return await parseWithOpenAI({ text, apiKey, model, fetchImpl, now: now(), defaultCurrency });
+        const parsed = await parseWithOpenAI({ text, apiKey, model, fetchImpl, now: now(), defaultCurrency });
+        parseOptions.onLlmTrace?.(parsed.metadata);
+        return parsed.result;
       } catch (error) {
         console.error("[expense-parser] OpenAI parser failed, using local parser", error.message);
         const fallback = parseExpenseText(text, { now: now(), defaultCurrency });
+        parseOptions.onLlmTrace?.({
+          model,
+          promptChars: String(text ?? "").length,
+          responseChars: JSON.stringify(fallback).length,
+          fallback: "local-parser"
+        });
         return {
           ...fallback,
           notes: [...fallback.notes, "AI parser unavailable, used local parser."]
@@ -35,6 +51,7 @@ export function createExpenseParser(options = {}) {
 }
 
 async function parseWithOpenAI({ text, apiKey, model, fetchImpl, now, defaultCurrency }) {
+  const systemPrompt = buildSystemPrompt(now, defaultCurrency);
   const response = await fetchImpl(OPENAI_RESPONSES_URL, {
     method: "POST",
     headers: {
@@ -46,7 +63,7 @@ async function parseWithOpenAI({ text, apiKey, model, fetchImpl, now, defaultCur
       input: [
         {
           role: "system",
-          content: buildSystemPrompt(now, defaultCurrency)
+          content: systemPrompt
         },
         {
           role: "user",
@@ -71,7 +88,14 @@ async function parseWithOpenAI({ text, apiKey, model, fetchImpl, now, defaultCur
   const body = await response.json();
   const outputText = extractOutputText(body);
   if (!outputText) throw new Error("OpenAI response did not include output text");
-  return normalizeParseResult(JSON.parse(outputText), now, defaultCurrency);
+  return {
+    result: normalizeParseResult(JSON.parse(outputText), now, defaultCurrency),
+    metadata: {
+      model,
+      promptChars: systemPrompt.length + String(text ?? "").length,
+      responseChars: outputText.length
+    }
+  };
 }
 
 function buildSystemPrompt(now, defaultCurrency = "THB") {
