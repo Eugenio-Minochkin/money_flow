@@ -135,6 +135,106 @@ export function createRepository(pool, options = {}) {
       );
     },
 
+    async createReleaseNote(input) {
+      const result = await pool.query(
+        `INSERT INTO release_notes (
+           version, audience, category, title_ru, title_en, body_ru, body_en, is_public
+         )
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         RETURNING *`,
+        [
+          input.version,
+          input.audience,
+          input.category ?? null,
+          input.titleRu,
+          input.titleEn ?? null,
+          input.bodyRu,
+          input.bodyEn ?? null,
+          input.isPublic !== false
+        ]
+      );
+      return result.rows[0];
+    },
+
+    async getTodayUnsentPublicReleaseNotes(now = new Date()) {
+      const bounds = localDayBounds(now);
+      const result = await pool.query(
+        `SELECT *
+         FROM release_notes
+         WHERE released_at >= $1
+           AND released_at < $2
+           AND sent_at IS NULL
+           AND is_public = true
+           AND audience = 'user'
+         ORDER BY released_at ASC, id ASC`,
+        [bounds.start, bounds.end]
+      );
+      return result.rows;
+    },
+
+    async getTodayHiddenReleaseNotes(now = new Date()) {
+      const bounds = localDayBounds(now);
+      const result = await pool.query(
+        `SELECT *
+         FROM release_notes
+         WHERE released_at >= $1
+           AND released_at < $2
+           AND audience IN ('admin', 'internal')
+         ORDER BY released_at ASC, id ASC`,
+        [bounds.start, bounds.end]
+      );
+      return result.rows;
+    },
+
+    async getLatestUnsentPublicReleaseNote(now = new Date()) {
+      const notes = await this.getTodayUnsentPublicReleaseNotes(now);
+      return notes.at(-1) ?? null;
+    },
+
+    async getActiveUsersForReleasePush() {
+      const result = await pool.query(
+        `SELECT *
+         FROM users
+         WHERE telegram_user_id IS NOT NULL
+           AND onboarding_step = 'completed'
+           AND bot_blocked = false
+         ORDER BY id ASC`
+      );
+      return result.rows;
+    },
+
+    async hasReleaseNoteDelivery(releaseNoteId, userId) {
+      const result = await pool.query(
+        `SELECT 1 FROM release_note_deliveries
+         WHERE release_note_id = $1 AND user_id = $2`,
+        [releaseNoteId, userId]
+      );
+      return result.rows.length > 0;
+    },
+
+    async markReleaseNoteDelivered(releaseNoteId, userId) {
+      await pool.query(
+        `INSERT INTO release_note_deliveries (release_note_id, user_id)
+         VALUES ($1, $2)
+         ON CONFLICT (release_note_id, user_id) DO NOTHING`,
+        [releaseNoteId, userId]
+      );
+    },
+
+    async markReleaseNoteSent(releaseNoteId) {
+      await pool.query(
+        "UPDATE release_notes SET sent_at = now() WHERE id = $1",
+        [releaseNoteId]
+      );
+    },
+
+    async markUserBotBlocked(userId) {
+      await pool.query(
+        "UPDATE users SET bot_blocked = true WHERE id = $1",
+        [userId]
+      );
+    },
+
     async updateMonthlyBudget(telegramUserId, monthlyBudgetAmount) {
       const amount = Number(monthlyBudgetAmount);
       if (!Number.isFinite(amount) || amount <= 0) {
@@ -1285,6 +1385,14 @@ function localDayKey(now) {
   const month = String(local.getUTCMonth() + 1).padStart(2, "0");
   const day = String(local.getUTCDate()).padStart(2, "0");
   return `${local.getUTCFullYear()}-${month}-${day}`;
+}
+
+function localDayBounds(now) {
+  const start = startOfLocalDay(now);
+  return {
+    start,
+    end: new Date(start.getTime() + 24 * 60 * 60_000)
+  };
 }
 
 function nextUnpaidOccurrenceDate(planned, now, paidOccurrenceDates = []) {

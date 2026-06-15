@@ -2,6 +2,7 @@ import { createExpenseParser } from "./expenseParser.js";
 import { parseExpenseText } from "../../../packages/shared/src/parser.js";
 import { parsePlannedExpenseText } from "../../../packages/shared/src/plannedParser.js";
 import { normalizeCurrency, SUPPORTED_CURRENCY_CODES } from "../../../packages/shared/src/currencies.js";
+import { isAdminTelegramId } from "./releaseNotesService.js";
 import { formatDraft, formatPlannedDraft, formatSavedSummary, formatTotals, formatWeeklyReport } from "./telegramFormat.js";
 import { appKeyboard, draftKeyboard, inboxDraftKeyboard, plannedDraftKeyboard } from "./telegramKeyboards.js";
 
@@ -12,12 +13,14 @@ export function createTelegramBot({
   expenseParser = createExpenseParser(),
   voiceTranscriber,
   telegramClient,
+  adminTelegramIds = new Set(),
+  releaseNotesService,
   now = () => new Date()
 }) {
   return {
     async handleUpdate(update) {
       if (update.message) {
-        return handleMessage({ update, repository, token, miniAppUrl, expenseParser, voiceTranscriber, telegramClient, now });
+        return handleMessage({ update, repository, token, miniAppUrl, expenseParser, voiceTranscriber, telegramClient, adminTelegramIds, releaseNotesService, now });
       }
       if (update.callback_query) return handleCallback({ update, repository, token, miniAppUrl, telegramClient });
       return { ok: true };
@@ -25,7 +28,7 @@ export function createTelegramBot({
   };
 }
 
-async function handleMessage({ update, repository, token, miniAppUrl, expenseParser, voiceTranscriber, telegramClient, now }) {
+async function handleMessage({ update, repository, token, miniAppUrl, expenseParser, voiceTranscriber, telegramClient, adminTelegramIds, releaseNotesService, now }) {
   const message = update.message;
   const from = message.from;
   if (!from) return { ok: true };
@@ -39,6 +42,19 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
 
   const text = await messageText({ message, voiceTranscriber });
   if (!text) return sendMessage(token, message.chat.id, botText(language, "unsupported"), null, telegramClient);
+
+  if (isAdminReleaseCommand(text)) {
+    return handleAdminReleaseCommand({
+      text,
+      from,
+      chatId: message.chat.id,
+      token,
+      telegramClient,
+      adminTelegramIds,
+      releaseNotesService,
+      now
+    });
+  }
 
   if (text === "/start") {
     if (isOnboardingActive(user)) {
@@ -79,6 +95,38 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
 
   const draft = await repository.createDraft(user.id, text, parsed.expenses);
   return sendMessage(token, message.chat.id, formatDraft(parsed.expenses, { language, baseCurrency: user.base_currency ?? "THB" }), draftKeyboard(draft.id, parsed.expenses, miniAppUrl, from.id, language), telegramClient);
+}
+
+function isAdminReleaseCommand(text) {
+  return text === "/admin_release_preview" || text === "/admin_release_send";
+}
+
+async function handleAdminReleaseCommand({ text, from, chatId, token, telegramClient, adminTelegramIds, releaseNotesService, now }) {
+  if (!isAdminTelegramId(from.id, adminTelegramIds) || !releaseNotesService) {
+    return sendMessage(token, chatId, "Команда доступна только администратору.", null, telegramClient);
+  }
+
+  if (text === "/admin_release_preview") {
+    const preview = await releaseNotesService.previewTodayReleaseDigest(now());
+    return sendMessage(token, chatId, preview.text, null, telegramClient);
+  }
+
+  const result = await releaseNotesService.sendTodayReleaseDigest(now());
+  if (!result.sent && result.reason === "no_public_release_notes") {
+    return sendMessage(token, chatId, "Сегодня нет публичных release notes для пользователей — отправлять нечего.", null, telegramClient);
+  }
+  return sendMessage(token, chatId, formatReleaseSendSummary(result), null, telegramClient);
+}
+
+function formatReleaseSendSummary(result) {
+  return [
+    "Release digest отправлен.",
+    `Версия: ${result.version}`,
+    `Пользователей: ${result.users}`,
+    `Успешно: ${result.success}`,
+    `Ошибки: ${result.errors}`,
+    `Заблокировали бота: ${result.blocked}`
+  ].join("\n");
 }
 
 async function messageText({ message, voiceTranscriber }) {
@@ -350,6 +398,10 @@ async function sendMessage(token, chatId, text, replyMarkup, telegramClient) {
       parse_mode: undefined
     });
   }
+}
+
+export async function sendTelegramMessage({ token, chatId, text, replyMarkup = null, telegramClient }) {
+  return sendMessage(token, chatId, text, replyMarkup, telegramClient);
 }
 
 async function editMessageText(token, chatId, messageId, text, replyMarkup, telegramClient) {

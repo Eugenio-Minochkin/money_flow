@@ -24,6 +24,7 @@ ALTER TABLE users ALTER COLUMN interface_theme SET DEFAULT 'light';
 UPDATE users SET interface_theme = 'light' WHERE interface_theme IS NULL OR interface_theme = 'dark';
 ALTER TABLE users ADD COLUMN IF NOT EXISTS budget_advice_enabled BOOLEAN NOT NULL DEFAULT true;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS onboarding_step TEXT NOT NULL DEFAULT 'completed';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS bot_blocked BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE users ALTER COLUMN usd_thb_rate SET DEFAULT 32.65;
 UPDATE users SET usd_thb_rate = 32.65 WHERE usd_thb_rate = 36;
 UPDATE users SET interface_language = 'ru' WHERE telegram_user_id = 428925787;
@@ -207,4 +208,42 @@ CREATE TABLE IF NOT EXISTS weekly_reports (
   report_key TEXT NOT NULL,
   sent_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE(user_id, report_key)
+);
+
+CREATE TABLE IF NOT EXISTS release_notes (
+  id BIGSERIAL PRIMARY KEY,
+  version TEXT NOT NULL,
+  audience TEXT NOT NULL DEFAULT 'user',
+  category TEXT,
+  title_ru TEXT NOT NULL,
+  title_en TEXT,
+  body_ru TEXT NOT NULL,
+  body_en TEXT,
+  released_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  sent_at TIMESTAMPTZ,
+  is_public BOOLEAN NOT NULL DEFAULT true
+);
+
+ALTER TABLE release_notes ADD COLUMN IF NOT EXISTS audience TEXT NOT NULL DEFAULT 'user';
+ALTER TABLE release_notes ADD COLUMN IF NOT EXISTS category TEXT;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'release_notes_audience_check'
+  ) THEN
+    ALTER TABLE release_notes
+      ADD CONSTRAINT release_notes_audience_check
+      CHECK (audience IN ('user', 'admin', 'internal'));
+  END IF;
+END
+$$;
+
+CREATE TABLE IF NOT EXISTS release_note_deliveries (
+  release_note_id BIGINT REFERENCES release_notes(id),
+  user_id BIGINT REFERENCES users(id),
+  sent_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (release_note_id, user_id)
 );
