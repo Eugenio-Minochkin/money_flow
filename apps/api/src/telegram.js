@@ -271,11 +271,7 @@ async function handleCallback({ update, repository, token, miniAppUrl, telegramC
     await answerCallback(token, callback.id, botText(language, "cancelledCallback"), telegramClient);
     const chatId = callback.message.chat.id;
     const messageId = callback.message.message_id;
-    try {
-      return await deleteMessage(token, chatId, messageId, telegramClient);
-    } catch {
-      return editMessageText(token, chatId, messageId, botText(language, "cancelledCallback"), { inline_keyboard: [] }, telegramClient);
-    }
+    return editMessageText(token, chatId, messageId, botText(language, "cancelDraftMessage"), { inline_keyboard: [] }, telegramClient);
   }
 
   if (action === "inbox") {
@@ -510,6 +506,7 @@ function botText(language, key) {
       amountNotFound: "Не нашел сумму. Напиши так: <b>кофе 70 бат</b>.",
       amountUpdatedCallback: "Сумма обновлена",
       cancelledCallback: "Отменено",
+      cancelDraftMessage: "❌ Запись отменена",
       categoryUpdatedCallback: "Категория обновлена",
       draftCancelled: "Черновик отменен.",
       editInMiniApp: "Редактирование доступно в Mini App.",
@@ -534,6 +531,7 @@ function botText(language, key) {
       amountNotFound: "I did not find an amount. Try: <b>coffee 70 baht</b>.",
       amountUpdatedCallback: "Amount updated",
       cancelledCallback: "Cancelled",
+      cancelDraftMessage: "❌ Entry cancelled",
       categoryUpdatedCallback: "Category updated",
       draftCancelled: "Draft cancelled.",
       editInMiniApp: "Editing is available in Mini App.",
