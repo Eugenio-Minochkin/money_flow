@@ -1132,3 +1132,6 @@ function botText(language, key) {
   };
   return messages[lang][key];
 }
+export async function sendTelegramMessage({ token, chatId, text, replyMarkup = null, telegramClient = null }) {
+  return sendMessage(token, chatId, text, replyMarkup, telegramClient);
+}
