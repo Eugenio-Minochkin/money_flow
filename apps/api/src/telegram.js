@@ -2,6 +2,7 @@ import { createExpenseParser } from "./expenseParser.js";
 import { parseExpenseText } from "../../../packages/shared/src/parser.js";
 import { parsePlannedExpenseText } from "../../../packages/shared/src/plannedParser.js";
 import { normalizeCurrency, SUPPORTED_CURRENCY_CODES } from "../../../packages/shared/src/currencies.js";
+import { formatAdminStats } from "./adminStatsService.js";
 import { formatDraft, formatPlannedDraft, formatSavedSummary, formatTotals, formatWeeklyReport } from "./telegramFormat.js";
 import { appKeyboard, draftKeyboard, inboxDraftKeyboard, plannedDraftKeyboard } from "./telegramKeyboards.js";
 
@@ -13,6 +14,8 @@ export function createTelegramBot({
   voiceTranscriber,
   telegramClient,
   perfLogger = console.info,
+  adminTelegramIds = new Set(),
+  adminStatsService,
   now = () => new Date()
 }) {
   return {
@@ -21,7 +24,7 @@ export function createTelegramBot({
       let success = false;
       if (update.message) {
         try {
-          const result = await handleMessage({ update, repository, token, miniAppUrl, expenseParser, voiceTranscriber, telegramClient, now, trace });
+          const result = await handleMessage({ update, repository, token, miniAppUrl, expenseParser, voiceTranscriber, telegramClient, adminTelegramIds, adminStatsService, now, trace });
           success = true;
           return result;
         } catch (error) {
@@ -49,7 +52,7 @@ export function createTelegramBot({
   };
 }
 
-async function handleMessage({ update, repository, token, miniAppUrl, expenseParser, voiceTranscriber, telegramClient, now, trace }) {
+async function handleMessage({ update, repository, token, miniAppUrl, expenseParser, voiceTranscriber, telegramClient, adminTelegramIds, adminStatsService, now, trace }) {
   const message = update.message;
   const from = message.from;
   if (!from) return { ok: true };
@@ -75,6 +78,22 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
   }
 
   if (rawText && !hasVoice) {
+    if (rawText === "/admin_stats") {
+      if (!adminTelegramIds.has(Number(from.id))) {
+        return sendTelegramResponse(trace, () => sendMessage(token, chatId, "Access denied", null, telegramClient));
+      }
+      if (!adminStatsService?.getAdminStats) {
+        return sendTelegramResponse(trace, () => sendMessage(token, chatId, "Admin stats unavailable", null, telegramClient));
+      }
+      try {
+        const stats = await adminStatsService.getAdminStats();
+        return sendTelegramResponse(trace, () => sendMessage(token, chatId, formatAdminStats(stats), null, telegramClient));
+      } catch (error) {
+        console.error("[telegram] admin stats failed", error);
+        return sendTelegramResponse(trace, () => sendMessage(token, chatId, "Admin stats unavailable", null, telegramClient));
+      }
+    }
+
     if (rawText === "/start") {
       if (isOnboardingActive(user)) {
         return sendTelegramResponse(trace, () => sendMessage(token, chatId, onboardingText(language, "baseCurrency"), appKeyboard(miniAppUrl, from.id, language), telegramClient));
