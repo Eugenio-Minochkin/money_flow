@@ -340,6 +340,79 @@ test("sendMessage omits reply markup when no keyboard is provided", async () => 
   }
 });
 
+test("admin stats command sends stats only to configured admin ids", async () => {
+  const calls = [];
+  const originalLog = console.log;
+  console.log = (...args) => calls.push(args);
+  try {
+    const bot = createTelegramBot({
+      token: "",
+      miniAppUrl: "http://localhost:3000",
+      repository: fakeRepository(),
+      adminTelegramIds: new Set([100]),
+      adminStatsService: {
+        async getAdminStats() {
+          return {
+            today: emptyAdminPeriod({ activeUsers: 1 }),
+            last7Days: emptyAdminPeriod(),
+            last30Days: emptyAdminPeriod()
+          };
+        }
+      }
+    });
+
+    await bot.handleUpdate({
+      message: {
+        chat: { id: 10 },
+        from: { id: 100, first_name: "M" },
+        text: "/admin_stats"
+      }
+    });
+  } finally {
+    console.log = originalLog;
+  }
+
+  assert.equal(calls.length, 1);
+  assert.match(calls[0][1].text, /Admin stats/);
+  assert.match(calls[0][1].text, /Today:/);
+  assert.match(calls[0][1].text, /Users: 1 active \/ 0 new/);
+});
+
+test("admin stats command does not reveal stats to non-admin users", async () => {
+  const calls = [];
+  let serviceCalled = false;
+  const originalLog = console.log;
+  console.log = (...args) => calls.push(args);
+  try {
+    const bot = createTelegramBot({
+      token: "",
+      miniAppUrl: "http://localhost:3000",
+      repository: fakeRepository(),
+      adminTelegramIds: new Set([100]),
+      adminStatsService: {
+        async getAdminStats() {
+          serviceCalled = true;
+          return {};
+        }
+      }
+    });
+
+    await bot.handleUpdate({
+      message: {
+        chat: { id: 10 },
+        from: { id: 200, first_name: "M" },
+        text: "/admin_stats"
+      }
+    });
+  } finally {
+    console.log = originalLog;
+  }
+
+  assert.equal(serviceCalled, false);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][1].text, "Access denied");
+});
+
 test("text parsing uses user's base currency as default", async () => {
   const seenOptions = [];
   const repository = {
@@ -821,5 +894,27 @@ function fakeRepository() {
         }
       };
     }
+  };
+}
+
+function emptyAdminPeriod(overrides = {}) {
+  return {
+    activeUsers: 0,
+    newUsers: 0,
+    messagesTotal: 0,
+    textMessages: 0,
+    voiceMessages: 0,
+    photoMessages: 0,
+    expensesSaved: 0,
+    draftsCreated: 0,
+    draftsConfirmed: 0,
+    draftsCancelled: 0,
+    parseFailed: 0,
+    transcriptionFailed: 0,
+    avgTextProcessingSeconds: null,
+    avgVoiceProcessingSeconds: null,
+    confirmRate: null,
+    parseFailedRate: null,
+    ...overrides
   };
 }

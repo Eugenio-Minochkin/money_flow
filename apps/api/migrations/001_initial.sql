@@ -201,6 +201,18 @@ UPDATE expenses SET budget_impact = 'planned'
 WHERE id IN (SELECT expense_id FROM planned_expense_payments)
   AND budget_impact = 'regular';
 
+CREATE TABLE IF NOT EXISTS app_events (
+  id BIGSERIAL PRIMARY KEY,
+  user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+  event_name TEXT NOT NULL,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS app_events_created_at_idx ON app_events(created_at);
+CREATE INDEX IF NOT EXISTS app_events_event_created_at_idx ON app_events(event_name, created_at);
+CREATE INDEX IF NOT EXISTS app_events_user_created_at_idx ON app_events(user_id, created_at);
+
 CREATE TABLE IF NOT EXISTS weekly_reports (
   id BIGSERIAL PRIMARY KEY,
   user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,

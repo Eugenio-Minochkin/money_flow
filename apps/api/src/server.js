@@ -3,6 +3,7 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { config, requireRuntimeConfig } from "./config.js";
+import { createAdminStatsService, parseAdminTelegramIds } from "./adminStatsService.js";
 import { createApiSecurity } from "./apiSecurity.js";
 import { migrate, pool } from "./db.js";
 import { createExchangeRateProvider } from "./exchangeRates.js";
@@ -32,6 +33,7 @@ const repository = createRepository(pool, {
   defaultMonthlyBudget: config.defaultMonthlyBudget,
   exchangeRates: createExchangeRateProvider()
 });
+const adminStatsService = createAdminStatsService({ pool });
 const expenseParser = createExpenseParser({
   apiKey: config.openAiApiKey,
   model: config.openAiModel
@@ -47,6 +49,8 @@ function createBot(telegramClient) {
     voiceTranscriber,
     token: config.telegramBotToken,
     miniAppUrl: config.miniAppUrl,
+    adminTelegramIds: parseAdminTelegramIds(config.adminTelegramIds),
+    adminStatsService,
     telegramClient
   });
 }
