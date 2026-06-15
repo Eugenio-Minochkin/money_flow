@@ -62,92 +62,174 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
   });
   trace.end("user_context");
   const language = user.interface_language ?? "en";
+  const chatId = message.chat.id;
 
-  const text = await messageText({ message, voiceTranscriber, trace });
-  if (!text) return sendTelegramResponse(trace, () => sendMessage(token, message.chat.id, botText(language, "unsupported"), null, telegramClient));
+  const rawText = message.text?.trim() || null;
+  const hasVoice = Boolean(message.voice || message.audio);
 
-  if (text === "/start") {
-    if (isOnboardingActive(user)) {
-      return sendTelegramResponse(trace, () => sendMessage(token, message.chat.id, onboardingText(language, "baseCurrency"), appKeyboard(miniAppUrl, from.id, language), telegramClient));
+  if (!rawText && !hasVoice) {
+    return sendTelegramResponse(trace, () => sendMessage(token, chatId, botText(language, "unsupported"), null, telegramClient));
+  }
+  if (hasVoice && !rawText && !voiceTranscriber?.isConfigured()) {
+    return sendTelegramResponse(trace, () => sendMessage(token, chatId, botText(language, "unsupported"), null, telegramClient));
+  }
+
+  if (rawText && !hasVoice) {
+    if (rawText === "/start") {
+      if (isOnboardingActive(user)) {
+        return sendTelegramResponse(trace, () => sendMessage(token, chatId, onboardingText(language, "baseCurrency"), appKeyboard(miniAppUrl, from.id, language), telegramClient));
+      }
+      return sendTelegramResponse(trace, () => sendMessage(token, chatId, botText(language, "start"), appKeyboard(miniAppUrl, from.id, language), telegramClient));
     }
-    return sendTelegramResponse(trace, () => sendMessage(token, message.chat.id, botText(language, "start"), appKeyboard(miniAppUrl, from.id, language), telegramClient));
-  }
 
-  if (text === "/today" || text === "/week" || text === "/month" || text === "/budget") {
-    const dashboard = await repository.dashboard(from.id);
-    return sendTelegramResponse(trace, () => sendMessage(token, message.chat.id, formatTotals(text, dashboard.snapshot, { language }), appKeyboard(miniAppUrl, from.id, language), telegramClient));
-  }
+    if (rawText === "/today" || rawText === "/week" || rawText === "/month" || rawText === "/budget") {
+      const dashboard = await repository.dashboard(from.id);
+      return sendTelegramResponse(trace, () => sendMessage(token, chatId, formatTotals(rawText, dashboard.snapshot, { language }), appKeyboard(miniAppUrl, from.id, language), telegramClient));
+    }
 
-  if (text === "/app" || text === "/settings") {
-    return sendTelegramResponse(trace, () => sendMessage(token, message.chat.id, botText(language, "openMiniApp"), appKeyboard(miniAppUrl, from.id, language), telegramClient));
+    if (rawText === "/app" || rawText === "/settings") {
+      return sendTelegramResponse(trace, () => sendMessage(token, chatId, botText(language, "openMiniApp"), appKeyboard(miniAppUrl, from.id, language), telegramClient));
+    }
   }
 
   if (isOnboardingActive(user)) {
-    return handleOnboardingMessage({ text, user, repository, token, chatId: message.chat.id, miniAppUrl, telegramUserId: from.id, telegramClient, now, trace });
-  }
-
-  const planned = parsePlannedExpenseText(text, { defaultCurrency: user.base_currency ?? "THB" });
-  if (planned) {
-    trace.start("db_save");
-    const draft = await repository.createPlannedDraft(user.id, text, planned);
-    trace.end("db_save");
-    return sendTelegramResponse(
-      trace,
-      () => sendMessage(
-        token,
-        message.chat.id,
-        formatPlannedDraft(planned, { language }),
-        plannedDraftKeyboard(draft.id, miniAppUrl, from.id, language),
-        telegramClient
-      )
-    );
-  }
-
-  let llmMetadata = {
-    model: expenseParser.model,
-    promptChars: String(text ?? "").length
-  };
-  trace.start("llm_parse", llmMetadata);
-  const parsed = await expenseParser.parse(text, {
-    defaultCurrency: user.base_currency ?? "THB",
-    onLlmTrace(metadata) {
-      llmMetadata = { ...llmMetadata, ...metadata };
+    let onboardingTextInput = rawText;
+    if (!onboardingTextInput && hasVoice) {
+      try {
+        onboardingTextInput = await transcribeVoice(message, voiceTranscriber, trace);
+      } catch (error) {
+        trace.failActive(["telegram_file_download", "transcription"], error);
+        console.error("[telegram] voice transcription failed during onboarding", error.message);
+        onboardingTextInput = null;
+      }
     }
-  });
-  trace.end("llm_parse", llmMetadata);
-  if (parsed.expenses.length === 0) {
-    return sendTelegramResponse(trace, () => sendMessage(token, message.chat.id, botText(language, "amountNotFound"), null, telegramClient));
+    if (!onboardingTextInput) {
+      return sendTelegramResponse(trace, () => sendMessage(token, chatId, botText(language, "unsupported"), null, telegramClient));
+    }
+    return handleOnboardingMessage({ text: onboardingTextInput, user, repository, token, chatId, miniAppUrl, telegramUserId: from.id, telegramClient, now, trace });
   }
 
-  trace.start("db_save");
-  const draft = await repository.createDraft(user.id, text, parsed.expenses);
-  trace.end("db_save");
-  return sendTelegramResponse(trace, () => sendMessage(token, message.chat.id, formatDraft(parsed.expenses, { language, baseCurrency: user.base_currency ?? "THB" }), draftKeyboard(draft.id, parsed.expenses, miniAppUrl, from.id, language), telegramClient));
-}
-
-async function messageText({ message, voiceTranscriber, trace }) {
-  if (message.text?.trim()) return message.text.trim();
-  const voice = message.voice ?? message.audio;
-  if (!voice) return null;
-  if (!voiceTranscriber?.isConfigured()) return null;
+  const loader = await sendExpenseProcessingMessage(token, chatId, language, telegramClient, trace);
 
   try {
-    return await voiceTranscriber.transcribeTelegramVoice(voice, {
-      onPerfStage(stage, metadata = {}) {
-        if (stage.endsWith("_start")) {
-          trace.start(stage.replace(/_start$/, ""), metadata);
-        } else if (stage.endsWith("_end")) {
-          trace.end(stage.replace(/_end$/, ""), metadata);
-        } else {
-          trace.event(stage, metadata);
-        }
+    let text = rawText;
+    if (!text && hasVoice) {
+      text = await transcribeVoice(message, voiceTranscriber, trace);
+    }
+    if (!text) {
+      throw new Error("No text to process");
+    }
+
+    const planned = parsePlannedExpenseText(text, { defaultCurrency: user.base_currency ?? "THB" });
+    if (planned) {
+      trace.start("db_save");
+      const draft = await repository.createPlannedDraft(user.id, text, planned);
+      trace.end("db_save");
+      return deliverResultMessage({
+        token,
+        chatId,
+        loaderMessageId: loader.messageId,
+        text: formatPlannedDraft(planned, { language }),
+        replyMarkup: plannedDraftKeyboard(draft.id, miniAppUrl, from.id, language),
+        telegramClient,
+        trace
+      });
+    }
+
+    let llmMetadata = {
+      model: expenseParser.model,
+      promptChars: String(text ?? "").length
+    };
+    trace.start("llm_parse", llmMetadata);
+    const parsed = await expenseParser.parse(text, {
+      defaultCurrency: user.base_currency ?? "THB",
+      onLlmTrace(metadata) {
+        llmMetadata = { ...llmMetadata, ...metadata };
       }
     });
+    trace.end("llm_parse", llmMetadata);
+    if (parsed.expenses.length === 0) {
+      return deliverResultMessage({
+        token,
+        chatId,
+        loaderMessageId: loader.messageId,
+        text: botText(language, "amountNotFound"),
+        replyMarkup: null,
+        telegramClient,
+        trace
+      });
+    }
+
+    trace.start("db_save");
+    const draft = await repository.createDraft(user.id, text, parsed.expenses);
+    trace.end("db_save");
+    return deliverResultMessage({
+      token,
+      chatId,
+      loaderMessageId: loader.messageId,
+      text: formatDraft(parsed.expenses, { language, baseCurrency: user.base_currency ?? "THB" }),
+      replyMarkup: draftKeyboard(draft.id, parsed.expenses, miniAppUrl, from.id, language),
+      telegramClient,
+      trace
+    });
   } catch (error) {
-    trace.failActive(["telegram_file_download", "transcription"], error);
-    console.error("[telegram] voice transcription failed", error.message);
-    return null;
+    trace.failActive(["telegram_file_download", "transcription", "llm_parse", "db_save"], error);
+    console.error("[telegram] expense processing failed", error.message);
+    return deliverResultMessage({
+      token,
+      chatId,
+      loaderMessageId: loader.messageId,
+      text: botText(language, "technicalError"),
+      replyMarkup: null,
+      telegramClient,
+      trace
+    });
   }
+}
+
+async function transcribeVoice(message, voiceTranscriber, trace) {
+  if (!voiceTranscriber?.isConfigured()) return null;
+  const voice = message.voice ?? message.audio;
+  if (!voice) return null;
+  return voiceTranscriber.transcribeTelegramVoice(voice, {
+    onPerfStage(stage, metadata = {}) {
+      if (stage.endsWith("_start")) {
+        trace.start(stage.replace(/_start$/, ""), metadata);
+      } else if (stage.endsWith("_end")) {
+        trace.end(stage.replace(/_end$/, ""), metadata);
+      } else {
+        trace.event(stage, metadata);
+      }
+    }
+  });
+}
+
+async function sendExpenseProcessingMessage(token, chatId, language, telegramClient, trace) {
+  try {
+    const result = await sendTelegramResponse(trace, () => sendMessage(token, chatId, botText(language, "expenseProcessing"), null, telegramClient));
+    return { messageId: extractMessageId(result) };
+  } catch (error) {
+    console.error("[telegram] failed to send expense processing loader", error.message);
+    return { messageId: null };
+  }
+}
+
+async function deliverResultMessage({ token, chatId, loaderMessageId, text, replyMarkup, telegramClient, trace }) {
+  if (loaderMessageId) {
+    try {
+      return await sendTelegramResponse(trace, () => editMessageText(token, chatId, loaderMessageId, text, replyMarkup, telegramClient));
+    } catch (error) {
+      console.error("[telegram] editing loader into result failed, falling back to new message", error.message);
+      await deleteMessage(token, chatId, loaderMessageId, telegramClient).catch((deleteError) => {
+        console.error("[telegram] failed to delete loader after edit failure", deleteError.message);
+      });
+    }
+  }
+  return sendTelegramResponse(trace, () => sendMessage(token, chatId, text, replyMarkup, telegramClient));
+}
+
+function extractMessageId(sendResult) {
+  return sendResult?.result?.message_id ?? sendResult?.message_id ?? null;
 }
 
 async function handleOnboardingMessage({ text, user, repository, token, chatId, miniAppUrl, telegramUserId, telegramClient, now, trace }) {
@@ -365,11 +447,7 @@ async function handleCallback({ update, repository, token, miniAppUrl, telegramC
     const messageId = callback.message.message_id;
     return sendTelegramResponse(trace, async () => {
       await answerCallback(token, callback.id, botText(language, "cancelledCallback"), telegramClient);
-      try {
-        return await deleteMessage(token, chatId, messageId, telegramClient);
-      } catch {
-        return editMessageText(token, chatId, messageId, botText(language, "cancelledCallback"), { inline_keyboard: [] }, telegramClient);
-      }
+      return editMessageText(token, chatId, messageId, botText(language, "cancelDraftMessage"), { inline_keyboard: [] }, telegramClient);
     });
   }
 
@@ -438,13 +516,20 @@ async function sendTelegramResponse(trace, fn) {
   }
 }
 
+let logMessageIdSequence = 0;
+function nextLogMessageId() {
+  logMessageIdSequence += 1;
+  return logMessageIdSequence;
+}
+
 async function sendMessage(token, chatId, text, replyMarkup, telegramClient) {
   if (telegramClient) {
     return telegramClient.sendMessage({ chatId, text, replyMarkup });
   }
   if (!token) {
+    const logMessageId = nextLogMessageId();
     console.log("[telegram:sendMessage]", { chatId, text, replyMarkup });
-    return { ok: true };
+    return { ok: true, result: { message_id: logMessageId } };
   }
   const body = {
     chat_id: chatId,
@@ -569,7 +654,7 @@ function createPerfTrace({ update, logger }) {
       const started = starts.get(stage);
       const durationMs = started ? elapsedSince(started) : 0;
       starts.delete(stage);
-      durations.set(stage, durationMs);
+      durations.set(stage, (durations.get(stage) ?? 0) + durationMs);
       logStage(`${stage}_end`, durationMs, success, metadata, error);
     },
 
@@ -752,9 +837,11 @@ function botText(language, key) {
       amountNotFound: "Не нашел сумму. Напиши так: <b>кофе 70 бат</b>.",
       amountUpdatedCallback: "Сумма обновлена",
       cancelledCallback: "Отменено",
+      cancelDraftMessage: "❌ Запись отменена",
       categoryUpdatedCallback: "Категория обновлена",
       draftCancelled: "Черновик отменен.",
       editInMiniApp: "Редактирование доступно в Mini App.",
+      expenseProcessing: "⏳ Заношу расход…",
       movedCallback: "Перенесено",
       movedToInbox: "Перенес в Inbox. Можно разобрать позже в Mini App.",
       openMiniApp: "Открыть Mini App:",
@@ -770,15 +857,18 @@ function botText(language, key) {
         "",
         "Сначала покажу черновик, сохраню только после подтверждения."
       ].join("\n"),
+      technicalError: "⚠️ Что-то пошло не так. Попробуйте ещё раз.",
       unsupported: "Пока умею принимать только текстовые и голосовые расходы."
     },
     en: {
       amountNotFound: "I did not find an amount. Try: <b>coffee 70 baht</b>.",
       amountUpdatedCallback: "Amount updated",
       cancelledCallback: "Cancelled",
+      cancelDraftMessage: "❌ Entry cancelled",
       categoryUpdatedCallback: "Category updated",
       draftCancelled: "Draft cancelled.",
       editInMiniApp: "Editing is available in Mini App.",
+      expenseProcessing: "⏳ Adding expense…",
       movedCallback: "Moved",
       movedToInbox: "Moved to Inbox. You can review it later in Mini App.",
       openMiniApp: "Open Mini App:",
@@ -794,6 +884,7 @@ function botText(language, key) {
         "",
         "I will show a draft first and save only after confirmation."
       ].join("\n"),
+      technicalError: "⚠️ Something went wrong. Please try again.",
       unsupported: "For now I can accept only text and voice expenses."
     }
   };

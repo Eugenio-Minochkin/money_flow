@@ -22,9 +22,10 @@ test("text message creates a pending draft response", async () => {
       }
     });
 
-    assert.match(calls[0][1].text, /Я понял так/);
-    assert.match(calls[0][1].text, /кофе/);
-    assert.equal(calls[0][1].replyMarkup.inline_keyboard[0][0].callback_data, "confirm:42");
+    assert.match(calls[0][1].text, /Заношу расход/);
+    assert.match(calls[1][1].text, /Я понял так/);
+    assert.match(calls[1][1].text, /кофе/);
+    assert.equal(calls[1][1].replyMarkup.inline_keyboard[0][0].callback_data, "confirm:42");
   } finally {
     console.log = originalLog;
   }
@@ -239,9 +240,10 @@ test("voice message is transcribed and creates a draft response", async () => {
       }
     });
 
-    assert.match(calls[0][1].text, /кофе/);
-    assert.match(calls[0][1].text, /70 THB/);
-    assert.equal(calls[0][1].replyMarkup.inline_keyboard[0][0].callback_data, "confirm:42");
+    assert.match(calls[0][1].text, /Заношу расход|Adding expense/);
+    assert.match(calls[1][1].text, /кофе/);
+    assert.match(calls[1][1].text, /70 THB/);
+    assert.equal(calls[1][1].replyMarkup.inline_keyboard[0][0].callback_data, "confirm:42");
   } finally {
     console.log = originalLog;
   }
@@ -252,7 +254,8 @@ test("sendMessage retries as plain text when Telegram rejects HTML", async () =>
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (url, request) => {
     requests.push({ url: String(url), body: JSON.parse(request.body) });
-    if (requests.length === 1) {
+    const hasHtmlTags = /<\/?b>/.test(requests[requests.length - 1].body.text ?? "");
+    if (hasHtmlTags && requests.filter((r) => r.url.endsWith("/sendMessage") || r.url.endsWith("/editMessageText")).length <= 2) {
       return {
         ok: false,
         status: 400,
@@ -265,7 +268,7 @@ test("sendMessage retries as plain text when Telegram rejects HTML", async () =>
       ok: true,
       status: 200,
       async json() {
-        return { ok: true };
+        return { ok: true, result: { message_id: 1 } };
       },
       async text() {
         return JSON.stringify({ ok: true });
@@ -284,18 +287,19 @@ test("sendMessage retries as plain text when Telegram rejects HTML", async () =>
       message: {
         chat: { id: 10 },
         from: { id: 100, first_name: "M" },
-        text: "ÐºÐ¾Ñ„Ðµ 70 Ð±Ð°Ñ‚"
+        text: "кофе 70 бат"
       }
     });
   } finally {
     globalThis.fetch = originalFetch;
   }
 
-  assert.equal(requests.length, 2);
-  assert.equal(requests[0].body.parse_mode, "HTML");
-  assert.equal(requests[1].body.parse_mode, undefined);
-  assert.doesNotMatch(requests[1].body.text, /<b>/);
-  assert.match(requests[1].body.text, /70 THB/);
+  const draftRequests = requests.filter((request) => request.url.endsWith("/editMessageText"));
+  assert.equal(draftRequests.length, 2);
+  assert.equal(draftRequests[0].body.parse_mode, "HTML");
+  assert.equal(draftRequests[1].body.parse_mode, undefined);
+  assert.doesNotMatch(draftRequests[1].body.text, /<b>/);
+  assert.match(draftRequests[1].body.text, /70 THB/);
 });
 
 test("sendMessage omits reply markup when no keyboard is provided", async () => {
@@ -307,7 +311,7 @@ test("sendMessage omits reply markup when no keyboard is provided", async () => 
       ok: true,
       status: 200,
       async json() {
-        return { ok: true };
+        return { ok: true, result: { message_id: 1 } };
       }
     };
   };
@@ -330,8 +334,10 @@ test("sendMessage omits reply markup when no keyboard is provided", async () => 
     globalThis.fetch = originalFetch;
   }
 
-  assert.equal(requests.length, 1);
-  assert.equal(Object.hasOwn(requests[0].body, "reply_markup"), false);
+  assert.equal(requests.length, 2);
+  for (const request of requests) {
+    assert.equal(Object.hasOwn(request.body, "reply_markup"), false);
+  }
 });
 
 test("text parsing uses user's base currency as default", async () => {
@@ -519,8 +525,8 @@ test("recurring planned text creates a planned draft before saving", async () =>
   assert.equal(repo.plannedDraft.item.recurrence, "weekly");
   assert.equal(repo.plannedDraft.item.weekday, 2);
   assert.equal(repo.plannedDraft.item.currency, "RUB");
-  assert.match(calls[0][1].text, /Planned expense/i);
-  assert.equal(calls[0][1].replyMarkup.inline_keyboard[0][0].callback_data, "plan_confirm:77");
+  assert.match(calls[1][1].text, /Planned expense/i);
+  assert.equal(calls[1][1].replyMarkup.inline_keyboard[0][0].callback_data, "plan_confirm:77");
   assert.equal(repo.confirmedPlannedDraftId, "77");
 });
 
@@ -672,7 +678,7 @@ test("unclear draft includes category quick actions", async () => {
       }
     });
 
-    const keyboard = calls[0][1].replyMarkup.inline_keyboard.flat();
+    const keyboard = calls[1][1].replyMarkup.inline_keyboard.flat();
     assert.ok(keyboard.some((button) => button.callback_data === "cat:42:0:food_cafe"));
   } finally {
     console.log = originalLog;
