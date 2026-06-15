@@ -22,12 +22,166 @@ test("text message creates a pending draft response", async () => {
       }
     });
 
-    assert.match(calls[0][1].text, /Я понял так/);
-    assert.match(calls[0][1].text, /кофе/);
-    assert.equal(calls[0][1].replyMarkup.inline_keyboard[0][0].callback_data, "confirm:42");
+    assert.match(calls[0][1].text, /Заношу расход/);
+    assert.match(calls[1][1].text, /Я понял так/);
+    assert.match(calls[1][1].text, /кофе/);
+    assert.equal(calls[1][1].replyMarkup.inline_keyboard[0][0].callback_data, "confirm:42");
   } finally {
     console.log = originalLog;
   }
+});
+
+test("text message never calls voice transcription", async () => {
+  let transcribeCalled = false;
+  const originalLog = console.log;
+  console.log = () => {};
+  try {
+    const bot = createTelegramBot({
+      token: "",
+      miniAppUrl: "http://localhost:3000",
+      repository: fakeRepository(),
+      perfLogger: () => {},
+      voiceTranscriber: {
+        isConfigured: () => true,
+        async transcribeTelegramVoice() {
+          transcribeCalled = true;
+          throw new Error("text message must not be transcribed");
+        }
+      }
+    });
+
+    await bot.handleUpdate({
+      message: {
+        chat: { id: 10 },
+        from: { id: 100, first_name: "M" },
+        text: "coffee 70 baht",
+        voice: { file_id: "voice-file-id", mime_type: "audio/ogg" }
+      }
+    });
+  } finally {
+    console.log = originalLog;
+  }
+
+  assert.equal(transcribeCalled, false);
+});
+
+test("message handling writes performance stage logs and compact summary", async () => {
+  const perfLines = [];
+  const originalLog = console.log;
+  console.log = () => {};
+  try {
+    const bot = createTelegramBot({
+      token: "",
+      miniAppUrl: "http://localhost:3000",
+      repository: fakeRepository(),
+      perfLogger: (line) => perfLines.push(line),
+      expenseParser: {
+        model: "test-model",
+        async parse() {
+          return {
+            expenses: [{
+              amount: 70,
+              currency: "THB",
+              description: "coffee",
+              category_slug: "food_cafe",
+              tags: [],
+              spent_at: "2026-06-02T10:00:00+07:00",
+              confidence: 0.9,
+              needs_review: false
+            }]
+          };
+        }
+      }
+    });
+
+    await bot.handleUpdate({
+      message: {
+        chat: { id: 10 },
+        from: { id: 100, first_name: "M" },
+        text: "coffee 70 baht"
+      }
+    });
+  } finally {
+    console.log = originalLog;
+  }
+
+  const stageLines = perfLines.filter((line) => line.startsWith("[perf:stage]"));
+  const stages = stageLines.map((line) => line.match(/stage=([^ ]+)/)?.[1]);
+  assert.ok(stages.includes("message_received"));
+  assert.ok(stages.includes("user_context_start"));
+  assert.ok(stages.includes("user_context_end"));
+  assert.ok(stages.includes("llm_parse_start"));
+  assert.ok(stages.includes("llm_parse_end"));
+  assert.ok(stages.includes("db_save_start"));
+  assert.ok(stages.includes("db_save_end"));
+  assert.ok(stages.includes("telegram_response_start"));
+  assert.ok(stages.includes("telegram_response_end"));
+  assert.ok(stages.includes("total_done"));
+  assert.ok(stageLines.every((line) => /traceId=[^ ]+/.test(line)));
+  assert.ok(stageLines.every((line) => /userId=100/.test(line)));
+  assert.ok(stageLines.every((line) => /messageType=text/.test(line)));
+  assert.ok(stageLines.every((line) => /durationMs=\d+/.test(line)));
+  assert.ok(stageLines.every((line) => /totalMs=\d+/.test(line)));
+  assert.ok(stageLines.every((line) => /success=(true|false)/.test(line)));
+  assert.ok(stages.every((stage) => !String(stage).startsWith("transcription")));
+  assert.ok(stages.every((stage) => !String(stage).startsWith("telegram_file_download")));
+
+  const summary = perfLines.find((line) => line.startsWith("[perf]"));
+  assert.ok(summary);
+  assert.match(summary, /traceId=[^ ]+ type=text total=\d+ms/);
+  assert.match(summary, /llm=\d+ms/);
+  assert.match(summary, /db=\d+ms/);
+  assert.match(summary, /telegram=\d+ms/);
+  assert.doesNotMatch(summary, /coffee 70 baht/);
+});
+
+test("voice message performance summary includes download and transcription stages", async () => {
+  const perfLines = [];
+  const originalLog = console.log;
+  console.log = () => {};
+  try {
+    const bot = createTelegramBot({
+      token: "",
+      miniAppUrl: "http://localhost:3000",
+      repository: fakeRepository(),
+      perfLogger: (line) => perfLines.push(line),
+      voiceTranscriber: {
+        isConfigured: () => true,
+        async transcribeTelegramVoice(_voice, options = {}) {
+          options.onPerfStage("telegram_file_download_start", { audioDurationSec: 3 });
+          options.onPerfStage("telegram_file_download_end", { audioDurationSec: 3, fileSizeKb: 12 });
+          options.onPerfStage("transcription_start", { transcriptionProvider: "deepgram" });
+          options.onPerfStage("transcription_end", { transcriptionProvider: "deepgram", responseChars: 11 });
+          return "coffee 70 baht";
+        }
+      }
+    });
+
+    await bot.handleUpdate({
+      message: {
+        chat: { id: 10 },
+        from: { id: 100, first_name: "M" },
+        voice: { file_id: "voice-file-id", mime_type: "audio/ogg", duration: 3 }
+      }
+    });
+  } finally {
+    console.log = originalLog;
+  }
+
+  const stageLines = perfLines.filter((line) => line.startsWith("[perf:stage]"));
+  assert.ok(stageLines.some((line) => /stage=telegram_file_download_start/.test(line)));
+  assert.ok(stageLines.some((line) => /stage=telegram_file_download_end/.test(line) && /fileSizeKb=12/.test(line)));
+  assert.ok(stageLines.some((line) => /stage=transcription_start/.test(line) && /transcriptionProvider=deepgram/.test(line)));
+  assert.ok(stageLines.some((line) => /stage=transcription_end/.test(line) && /responseChars=11/.test(line)));
+
+  const summary = perfLines.find((line) => line.startsWith("[perf]"));
+  assert.ok(summary);
+  assert.match(summary, /type=voice/);
+  assert.match(summary, /download=\d+ms/);
+  assert.match(summary, /transcription=\d+ms/);
+  assert.match(summary, /llm=\d+ms/);
+  assert.match(summary, /db=\d+ms/);
+  assert.match(summary, /telegram=\d+ms/);
 });
 
 test("confirm callback saves draft and returns an informative summary", async () => {
@@ -86,9 +240,10 @@ test("voice message is transcribed and creates a draft response", async () => {
       }
     });
 
-    assert.match(calls[0][1].text, /кофе/);
-    assert.match(calls[0][1].text, /70 THB/);
-    assert.equal(calls[0][1].replyMarkup.inline_keyboard[0][0].callback_data, "confirm:42");
+    assert.match(calls[0][1].text, /Заношу расход|Adding expense/);
+    assert.match(calls[1][1].text, /кофе/);
+    assert.match(calls[1][1].text, /70 THB/);
+    assert.equal(calls[1][1].replyMarkup.inline_keyboard[0][0].callback_data, "confirm:42");
   } finally {
     console.log = originalLog;
   }
@@ -99,7 +254,8 @@ test("sendMessage retries as plain text when Telegram rejects HTML", async () =>
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (url, request) => {
     requests.push({ url: String(url), body: JSON.parse(request.body) });
-    if (requests.length === 1) {
+    const hasHtmlTags = /<\/?b>/.test(requests[requests.length - 1].body.text ?? "");
+    if (hasHtmlTags && requests.filter((r) => r.url.endsWith("/sendMessage") || r.url.endsWith("/editMessageText")).length <= 2) {
       return {
         ok: false,
         status: 400,
@@ -112,7 +268,7 @@ test("sendMessage retries as plain text when Telegram rejects HTML", async () =>
       ok: true,
       status: 200,
       async json() {
-        return { ok: true };
+        return { ok: true, result: { message_id: 1 } };
       },
       async text() {
         return JSON.stringify({ ok: true });
@@ -131,18 +287,19 @@ test("sendMessage retries as plain text when Telegram rejects HTML", async () =>
       message: {
         chat: { id: 10 },
         from: { id: 100, first_name: "M" },
-        text: "ÐºÐ¾Ñ„Ðµ 70 Ð±Ð°Ñ‚"
+        text: "кофе 70 бат"
       }
     });
   } finally {
     globalThis.fetch = originalFetch;
   }
 
-  assert.equal(requests.length, 2);
-  assert.equal(requests[0].body.parse_mode, "HTML");
-  assert.equal(requests[1].body.parse_mode, undefined);
-  assert.doesNotMatch(requests[1].body.text, /<b>/);
-  assert.match(requests[1].body.text, /70 THB/);
+  const draftRequests = requests.filter((request) => request.url.endsWith("/editMessageText"));
+  assert.equal(draftRequests.length, 2);
+  assert.equal(draftRequests[0].body.parse_mode, "HTML");
+  assert.equal(draftRequests[1].body.parse_mode, undefined);
+  assert.doesNotMatch(draftRequests[1].body.text, /<b>/);
+  assert.match(draftRequests[1].body.text, /70 THB/);
 });
 
 test("sendMessage omits reply markup when no keyboard is provided", async () => {
@@ -154,7 +311,7 @@ test("sendMessage omits reply markup when no keyboard is provided", async () => 
       ok: true,
       status: 200,
       async json() {
-        return { ok: true };
+        return { ok: true, result: { message_id: 1 } };
       }
     };
   };
@@ -177,8 +334,83 @@ test("sendMessage omits reply markup when no keyboard is provided", async () => 
     globalThis.fetch = originalFetch;
   }
 
-  assert.equal(requests.length, 1);
-  assert.equal(Object.hasOwn(requests[0].body, "reply_markup"), false);
+  assert.equal(requests.length, 2);
+  for (const request of requests) {
+    assert.equal(Object.hasOwn(request.body, "reply_markup"), false);
+  }
+});
+
+test("admin stats command sends stats only to configured admin ids", async () => {
+  const calls = [];
+  const originalLog = console.log;
+  console.log = (...args) => calls.push(args);
+  try {
+    const bot = createTelegramBot({
+      token: "",
+      miniAppUrl: "http://localhost:3000",
+      repository: fakeRepository(),
+      adminTelegramIds: new Set([100]),
+      adminStatsService: {
+        async getAdminStats() {
+          return {
+            today: emptyAdminPeriod({ activeUsers: 1 }),
+            last7Days: emptyAdminPeriod(),
+            last30Days: emptyAdminPeriod()
+          };
+        }
+      }
+    });
+
+    await bot.handleUpdate({
+      message: {
+        chat: { id: 10 },
+        from: { id: 100, first_name: "M" },
+        text: "/admin_stats"
+      }
+    });
+  } finally {
+    console.log = originalLog;
+  }
+
+  assert.equal(calls.length, 1);
+  assert.match(calls[0][1].text, /Admin stats/);
+  assert.match(calls[0][1].text, /Today:/);
+  assert.match(calls[0][1].text, /Users: 1 active \/ 0 new/);
+});
+
+test("admin stats command does not reveal stats to non-admin users", async () => {
+  const calls = [];
+  let serviceCalled = false;
+  const originalLog = console.log;
+  console.log = (...args) => calls.push(args);
+  try {
+    const bot = createTelegramBot({
+      token: "",
+      miniAppUrl: "http://localhost:3000",
+      repository: fakeRepository(),
+      adminTelegramIds: new Set([100]),
+      adminStatsService: {
+        async getAdminStats() {
+          serviceCalled = true;
+          return {};
+        }
+      }
+    });
+
+    await bot.handleUpdate({
+      message: {
+        chat: { id: 10 },
+        from: { id: 200, first_name: "M" },
+        text: "/admin_stats"
+      }
+    });
+  } finally {
+    console.log = originalLog;
+  }
+
+  assert.equal(serviceCalled, false);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][1].text, "Access denied");
 });
 
 test("text parsing uses user's base currency as default", async () => {
@@ -532,8 +764,8 @@ test("recurring planned text creates a planned draft before saving", async () =>
   assert.equal(repo.plannedDraft.item.recurrence, "weekly");
   assert.equal(repo.plannedDraft.item.weekday, 2);
   assert.equal(repo.plannedDraft.item.currency, "RUB");
-  assert.match(calls[0][1].text, /Planned expense/i);
-  assert.equal(calls[0][1].replyMarkup.inline_keyboard[0][0].callback_data, "plan_confirm:77");
+  assert.match(calls[1][1].text, /Planned expense/i);
+  assert.equal(calls[1][1].replyMarkup.inline_keyboard[0][0].callback_data, "plan_confirm:77");
   assert.equal(repo.confirmedPlannedDraftId, "77");
 });
 
@@ -685,7 +917,7 @@ test("unclear draft includes category quick actions", async () => {
       }
     });
 
-    const keyboard = calls[0][1].replyMarkup.inline_keyboard.flat();
+    const keyboard = calls[1][1].replyMarkup.inline_keyboard.flat();
     assert.ok(keyboard.some((button) => button.callback_data === "cat:42:0:food_cafe"));
   } finally {
     console.log = originalLog;
@@ -851,5 +1083,27 @@ function fakeRepository() {
         }
       };
     }
+  };
+}
+
+function emptyAdminPeriod(overrides = {}) {
+  return {
+    activeUsers: 0,
+    newUsers: 0,
+    messagesTotal: 0,
+    textMessages: 0,
+    voiceMessages: 0,
+    photoMessages: 0,
+    expensesSaved: 0,
+    draftsCreated: 0,
+    draftsConfirmed: 0,
+    draftsCancelled: 0,
+    parseFailed: 0,
+    transcriptionFailed: 0,
+    avgTextProcessingSeconds: null,
+    avgVoiceProcessingSeconds: null,
+    confirmRate: null,
+    parseFailedRate: null,
+    ...overrides
   };
 }

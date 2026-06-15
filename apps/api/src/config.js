@@ -2,6 +2,7 @@ export const config = {
   port: Number(process.env.PORT ?? 3000),
   databaseUrl: process.env.DATABASE_URL,
   telegramBotToken: process.env.TELEGRAM_BOT_TOKEN,
+  adminTelegramIds: process.env.ADMIN_TELEGRAM_IDS ?? "",
   miniAppUrl: process.env.MINI_APP_URL ?? "http://localhost:3000",
   defaultMonthlyBudget: Number(process.env.DEFAULT_MONTHLY_BUDGET ?? 45000),
   openAiApiKey: process.env.OPENAI_API_KEY,
