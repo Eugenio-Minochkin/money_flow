@@ -11,9 +11,10 @@ import { createExpenseParser } from "./expenseParser.js";
 import { createJsonReader, createStaticHandler, sendJson } from "./http.js";
 import { handleDevRoute } from "./devRoutes.js";
 import { createRateLimiter } from "./rateLimit.js";
+import { createReleaseNotesService } from "./releaseNotesService.js";
 import { createRepository } from "./repository.js";
 import { shouldRateLimitRequest } from "./routing.js";
-import { createTelegramBot, sendWeeklyReports, shouldSendWeeklyReport } from "./telegram.js";
+import { createTelegramBot, sendTelegramMessage, sendWeeklyReports, shouldSendWeeklyReport } from "./telegram.js";
 import { createVoiceTranscriber } from "./voiceTranscriber.js";
 
 const root = resolve(fileURLToPath(new URL("../../..", import.meta.url)));
@@ -42,6 +43,17 @@ const voiceTranscriber = createVoiceTranscriber({
   telegramBotToken: config.telegramBotToken,
   deepgramApiKey: config.deepgramApiKey
 });
+const adminTelegramIds = parseAdminTelegramIds(config.adminTelegramIds);
+if (adminTelegramIds.size === 0) {
+  console.warn("[admin] ADMIN_TELEGRAM_IDS is empty; admin commands are disabled");
+}
+const releaseNotesService = createReleaseNotesService({
+  repository,
+  sendMessage: (message) => sendTelegramMessage({
+    token: config.telegramBotToken,
+    ...message
+  })
+});
 function createBot(telegramClient) {
   return createTelegramBot({
     repository,
@@ -49,8 +61,9 @@ function createBot(telegramClient) {
     voiceTranscriber,
     token: config.telegramBotToken,
     miniAppUrl: config.miniAppUrl,
-    adminTelegramIds: parseAdminTelegramIds(config.adminTelegramIds),
+    adminTelegramIds,
     adminStatsService,
+    releaseNotesService,
     telegramClient
   });
 }

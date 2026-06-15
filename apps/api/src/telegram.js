@@ -3,6 +3,7 @@ import { parseExpenseText } from "../../../packages/shared/src/parser.js";
 import { parsePlannedExpenseText } from "../../../packages/shared/src/plannedParser.js";
 import { normalizeCurrency, SUPPORTED_CURRENCY_CODES } from "../../../packages/shared/src/currencies.js";
 import { formatAdminStats } from "./adminStatsService.js";
+import { isAdminTelegramId } from "./releaseNotesService.js";
 import { formatDraft, formatPlannedDraft, formatSavedSummary, formatTotals, formatWeeklyReport } from "./telegramFormat.js";
 import { appKeyboard, draftKeyboard, inboxDraftKeyboard, plannedDraftKeyboard } from "./telegramKeyboards.js";
 
@@ -18,6 +19,7 @@ export function createTelegramBot({
   perfLogger = console.info,
   adminTelegramIds = new Set(),
   adminStatsService,
+  releaseNotesService,
   now = () => new Date()
 }) {
   return {
@@ -26,7 +28,7 @@ export function createTelegramBot({
       let success = false;
       if (update.message) {
         try {
-          const result = await handleMessage({ update, repository, token, miniAppUrl, expenseParser, voiceTranscriber, telegramClient, adminTelegramIds, adminStatsService, now, trace });
+          const result = await handleMessage({ update, repository, token, miniAppUrl, expenseParser, voiceTranscriber, telegramClient, adminTelegramIds, adminStatsService, releaseNotesService, now, trace });
           success = true;
           return result;
         } catch (error) {
@@ -54,7 +56,7 @@ export function createTelegramBot({
   };
 }
 
-async function handleMessage({ update, repository, token, miniAppUrl, expenseParser, voiceTranscriber, telegramClient, adminTelegramIds, adminStatsService, now, trace }) {
+async function handleMessage({ update, repository, token, miniAppUrl, expenseParser, voiceTranscriber, telegramClient, adminTelegramIds, adminStatsService, releaseNotesService, now, trace }) {
   const message = update.message;
   const from = message.from;
   if (!from) return { ok: true };
@@ -80,6 +82,20 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
   }
 
   if (rawText && !hasVoice) {
+    if (isAdminReleaseCommand(rawText)) {
+      return handleAdminReleaseCommand({
+        text: rawText,
+        from,
+        chatId,
+        token,
+        telegramClient,
+        adminTelegramIds,
+        releaseNotesService,
+        now,
+        trace
+      });
+    }
+
     if (rawText === "/admin_stats") {
       if (!adminTelegramIds.has(Number(from.id))) {
         return sendTelegramResponse(trace, () => sendMessage(token, chatId, "Access denied", null, telegramClient));
@@ -206,6 +222,38 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
       trace
     });
   }
+}
+
+function isAdminReleaseCommand(text) {
+  return text === "/admin_release_preview" || text === "/admin_release_send";
+}
+
+async function handleAdminReleaseCommand({ text, from, chatId, token, telegramClient, adminTelegramIds, releaseNotesService, now, trace }) {
+  if (!isAdminTelegramId(from.id, adminTelegramIds) || !releaseNotesService) {
+    return sendTelegramResponse(trace, () => sendMessage(token, chatId, "Команда доступна только администратору.", null, telegramClient));
+  }
+
+  if (text === "/admin_release_preview") {
+    const preview = await releaseNotesService.previewTodayReleaseDigest(now());
+    return sendTelegramResponse(trace, () => sendMessage(token, chatId, preview.text, null, telegramClient));
+  }
+
+  const result = await releaseNotesService.sendTodayReleaseDigest(now());
+  if (!result.sent && result.reason === "no_public_release_notes") {
+    return sendTelegramResponse(trace, () => sendMessage(token, chatId, "Сегодня нет публичных release notes для пользователей — отправлять нечего.", null, telegramClient));
+  }
+  return sendTelegramResponse(trace, () => sendMessage(token, chatId, formatReleaseSendSummary(result), null, telegramClient));
+}
+
+function formatReleaseSendSummary(result) {
+  return [
+    "Release digest отправлен.",
+    `Версия: ${result.version}`,
+    `Пользователей: ${result.users}`,
+    `Успешно: ${result.success}`,
+    `Ошибки: ${result.errors}`,
+    `Заблокировали бота: ${result.blocked}`
+  ].join("\n");
 }
 
 async function transcribeVoice(message, voiceTranscriber, trace) {

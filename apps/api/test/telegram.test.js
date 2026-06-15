@@ -952,6 +952,144 @@ test("move to inbox callback returns a direct mini app draft link", async () => 
   assert.ok(keyboard.some((button) => button.web_app?.url === "http://localhost:3000?telegramUserId=100&draftId=42"));
 });
 
+test("admin release preview is denied to non-admin users", async () => {
+  const messages = [];
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: fakeRepository(),
+    adminTelegramIds: new Set([999]),
+    releaseNotesService: fakeReleaseNotesService(),
+    telegramClient: captureTelegramClient(messages)
+  });
+
+  await bot.handleUpdate({
+    message: {
+      chat: { id: 10 },
+      from: { id: 100, first_name: "M" },
+      text: "/admin_release_preview"
+    }
+  });
+
+  assert.match(messages[0].text, /доступна только администратору/i);
+});
+
+test("admin release send is denied to non-admin users", async () => {
+  const messages = [];
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: fakeRepository(),
+    adminTelegramIds: new Set([999]),
+    releaseNotesService: fakeReleaseNotesService(),
+    telegramClient: captureTelegramClient(messages)
+  });
+
+  await bot.handleUpdate({
+    message: {
+      chat: { id: 10 },
+      from: { id: 100, first_name: "M" },
+      text: "/admin_release_send"
+    }
+  });
+
+  assert.match(messages[0].text, /доступна только администратору/i);
+});
+
+test("admin release preview shows user digest and hidden notes", async () => {
+  const messages = [];
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: fakeRepository(),
+    adminTelegramIds: new Set([100]),
+    releaseNotesService: fakeReleaseNotesService({
+      previewText: [
+        "Пользователям будет отправлено:",
+        "",
+        "✨ Money Flow v.1.18",
+        "",
+        "Что изменилось сегодня:",
+        "",
+        "• Онбординг стал проще.",
+        "",
+        "Скрыто из пользовательского пуша:",
+        "• admin: добавлена /admin_stats"
+      ].join("\n")
+    }),
+    telegramClient: captureTelegramClient(messages)
+  });
+
+  await bot.handleUpdate({
+    message: {
+      chat: { id: 10 },
+      from: { id: 100, first_name: "M" },
+      text: "/admin_release_preview"
+    }
+  });
+
+  assert.match(messages[0].text, /Пользователям будет отправлено/);
+  assert.match(messages[0].text, /Скрыто из пользовательского пуша/);
+});
+
+test("admin release send returns summary", async () => {
+  const messages = [];
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: fakeRepository(),
+    adminTelegramIds: new Set([100]),
+    releaseNotesService: fakeReleaseNotesService({
+      sendResult: {
+        sent: true,
+        version: "v.1.18",
+        users: 12,
+        success: 11,
+        errors: 1,
+        blocked: 1
+      }
+    }),
+    telegramClient: captureTelegramClient(messages)
+  });
+
+  await bot.handleUpdate({
+    message: {
+      chat: { id: 10 },
+      from: { id: 100, first_name: "M" },
+      text: "/admin_release_send"
+    }
+  });
+
+  assert.match(messages[0].text, /Release digest отправлен/);
+  assert.match(messages[0].text, /Версия: v\.1\.18/);
+  assert.match(messages[0].text, /Пользователей: 12/);
+  assert.match(messages[0].text, /Заблокировали бота: 1/);
+});
+
+test("admin release send reports empty public user notes", async () => {
+  const messages = [];
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: fakeRepository(),
+    adminTelegramIds: new Set([100]),
+    releaseNotesService: fakeReleaseNotesService({
+      sendResult: { sent: false, reason: "no_public_release_notes" }
+    }),
+    telegramClient: captureTelegramClient(messages)
+  });
+
+  await bot.handleUpdate({
+    message: {
+      chat: { id: 10 },
+      from: { id: 100, first_name: "M" },
+      text: "/admin_release_send"
+    }
+  });
+
+  assert.equal(messages[0].text, "Сегодня нет публичных release notes для пользователей — отправлять нечего.");
+});
+
 function fakeRepository() {
   return {
     user: { id: 1, interface_language: "ru", onboarding_step: "completed" },
@@ -1081,6 +1219,41 @@ function fakeRepository() {
           safeToSpendPerDay: 896.38,
           status: "below_plan"
         }
+      };
+    }
+  };
+}
+
+function captureTelegramClient(messages) {
+  return {
+    async sendMessage(message) {
+      messages.push(message);
+      return { ok: true };
+    },
+    async editMessageText(message) {
+      messages.push(message);
+      return { ok: true };
+    },
+    async answerCallbackQuery() {
+      return { ok: true };
+    },
+    async deleteMessage() {
+      return { ok: true };
+    }
+  };
+}
+
+function fakeReleaseNotesService(options = {}) {
+  return {
+    async previewTodayReleaseDigest() {
+      return {
+        text: options.previewText ?? "Сегодня нет release notes — пуш пользователям отправляться не будет."
+      };
+    },
+    async sendTodayReleaseDigest() {
+      return options.sendResult ?? {
+        sent: false,
+        reason: "no_public_release_notes"
       };
     }
   };

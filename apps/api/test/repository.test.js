@@ -173,6 +173,120 @@ test("checks database health", async () => {
   assert.deepEqual(await repo.health(), { db: true });
 });
 
+test("creates a release note with audience and category", async () => {
+  const repo = createRepository(fakePool((sql, params) => {
+    assert.match(String(sql), /INSERT INTO release_notes/);
+    assert.equal(params[0], "v.1.18");
+    assert.equal(params[1], "user");
+    assert.equal(params[2], "onboarding");
+    assert.equal(params[3], "Онбординг");
+    assert.equal(params[4], "Onboarding");
+    assert.equal(params[5], "Стало проще.");
+    assert.equal(params[6], "Simpler.");
+    assert.equal(params[7], true);
+    return {
+      rows: [{
+        id: "1",
+        version: params[0],
+        audience: params[1],
+        category: params[2],
+        title_ru: params[3],
+        title_en: params[4],
+        body_ru: params[5],
+        body_en: params[6],
+        is_public: params[7]
+      }]
+    };
+  }));
+
+  const note = await repo.createReleaseNote({
+    version: "v.1.18",
+    audience: "user",
+    category: "onboarding",
+    titleRu: "Онбординг",
+    titleEn: "Onboarding",
+    bodyRu: "Стало проще.",
+    bodyEn: "Simpler.",
+    isPublic: true
+  });
+
+  assert.equal(note.audience, "user");
+  assert.equal(note.category, "onboarding");
+});
+
+test("lists today's unsent public user release notes only", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql: String(sql), params });
+    return { rows: [{ id: "1", version: "v.1.18", audience: "user" }] };
+  }));
+
+  const notes = await repo.getTodayUnsentPublicReleaseNotes(new Date("2026-06-15T18:00:00+07:00"));
+
+  assert.equal(notes[0].audience, "user");
+  assert.match(queries[0].sql, /audience = 'user'/);
+  assert.match(queries[0].sql, /is_public = true/);
+  assert.match(queries[0].sql, /sent_at IS NULL/i);
+  assert.equal(queries[0].params[0].toISOString(), "2026-06-14T17:00:00.000Z");
+  assert.equal(queries[0].params[1].toISOString(), "2026-06-15T17:00:00.000Z");
+});
+
+test("lists today's hidden release notes for preview", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql) => {
+    queries.push(String(sql));
+    return { rows: [{ id: "2", audience: "admin", title_ru: "добавлена /admin_stats" }] };
+  }));
+
+  const notes = await repo.getTodayHiddenReleaseNotes(new Date("2026-06-15T18:00:00+07:00"));
+
+  assert.equal(notes[0].audience, "admin");
+  assert.match(queries[0], /audience IN \('admin', 'internal'\)/);
+});
+
+test("lists active users for release push", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql) => {
+    queries.push(String(sql));
+    return { rows: [{ id: "1", telegram_user_id: "100", interface_language: "ru" }] };
+  }));
+
+  const users = await repo.getActiveUsersForReleasePush();
+
+  assert.equal(users[0].telegram_user_id, "100");
+  assert.match(queries[0], /telegram_user_id IS NOT NULL/);
+  assert.match(queries[0], /onboarding_step = 'completed'/);
+  assert.match(queries[0], /bot_blocked = false/);
+});
+
+test("records release note deliveries and sent markers", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql: String(sql), params });
+    if (String(sql).startsWith("SELECT 1 FROM release_note_deliveries")) return { rows: [{ exists: 1 }] };
+    return { rows: [] };
+  }));
+
+  assert.equal(await repo.hasReleaseNoteDelivery(1, 2), true);
+  await repo.markReleaseNoteDelivered(1, 2);
+  await repo.markReleaseNoteSent(1);
+
+  assert.match(queries[0].sql, /SELECT 1 FROM release_note_deliveries/);
+  assert.deepEqual(queries[0].params, [1, 2]);
+  assert.match(queries[1].sql, /INSERT INTO release_note_deliveries/);
+  assert.match(queries[2].sql, /UPDATE release_notes SET sent_at = now\(\)/);
+});
+
+test("marks user as bot blocked", async () => {
+  const repo = createRepository(fakePool((sql, params) => {
+    assert.match(String(sql), /UPDATE users SET bot_blocked = true/);
+    assert.deepEqual(params, [1]);
+    return { rows: [] };
+  }));
+
+  await repo.markUserBotBlocked(1);
+});
+
 test("returns a draft owned by a Telegram user", async () => {
   const repo = createRepository(fakePool(() => ({
     rows: [{ id: "42", status: "pending", items: [{ description: "кофе" }] }]
