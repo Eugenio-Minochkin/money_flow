@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS users (
   interface_theme TEXT NOT NULL DEFAULT 'light',
   budget_advice_enabled BOOLEAN NOT NULL DEFAULT true,
   onboarding_step TEXT NOT NULL DEFAULT 'completed',
+  onboarding_data JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -24,6 +25,7 @@ ALTER TABLE users ALTER COLUMN interface_theme SET DEFAULT 'light';
 UPDATE users SET interface_theme = 'light' WHERE interface_theme IS NULL OR interface_theme = 'dark';
 ALTER TABLE users ADD COLUMN IF NOT EXISTS budget_advice_enabled BOOLEAN NOT NULL DEFAULT true;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS onboarding_step TEXT NOT NULL DEFAULT 'completed';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS onboarding_data JSONB NOT NULL DEFAULT '{}'::jsonb;
 ALTER TABLE users ALTER COLUMN usd_thb_rate SET DEFAULT 32.65;
 UPDATE users SET usd_thb_rate = 32.65 WHERE usd_thb_rate = 36;
 UPDATE users SET interface_language = 'ru' WHERE telegram_user_id = 428925787;

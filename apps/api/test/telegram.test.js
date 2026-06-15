@@ -461,6 +461,172 @@ test("text parsing uses user's base currency as default", async () => {
   assert.equal(seenOptions[0].defaultCurrency, "IDR");
 });
 
+test("new user chooses language and completes budget setup in one message before the 5th", async () => {
+  const calls = [];
+  const repo = fakeRepository();
+  repo.user = { id: 1, interface_language: "en", base_currency: "THB", onboarding_step: "language", onboarding_data: {} };
+  const originalLog = console.log;
+  console.log = (...args) => calls.push(args);
+  try {
+    const bot = createTelegramBot({
+      token: "",
+      miniAppUrl: "http://localhost:3000",
+      repository: repo,
+      now: () => new Date("2026-06-05T10:00:00+07:00")
+    });
+
+    await bot.handleUpdate({
+      message: {
+        chat: { id: 10 },
+        from: { id: 100, first_name: "M" },
+        text: "/start"
+      }
+    });
+    await bot.handleUpdate({
+      message: {
+        chat: { id: 10 },
+        from: { id: 100, first_name: "M" },
+        text: "English"
+      }
+    });
+    await bot.handleUpdate({
+      message: {
+        chat: { id: 10 },
+        from: { id: 100, first_name: "M" },
+        text: "IDR 20k"
+      }
+    });
+  } finally {
+    console.log = originalLog;
+  }
+
+  assert.match(calls[0][1].text, /Choose language/i);
+  assert.match(calls[1][1].text, /write or dictate/i);
+  assert.match(calls[1][1].text, /currency and monthly budget/i);
+  assert.match(calls[2][1].text, /setup is complete/i);
+  assert.equal(repo.user.interface_language, "en");
+  assert.equal(repo.user.onboarding_step, "completed");
+  assert.equal(repo.settings.baseCurrency, "IDR");
+  assert.equal(repo.settings.monthlyBudgetAmount, 20000);
+  assert.equal(repo.currentMonthBudget, null);
+});
+
+test("budget setup can collect currency and monthly budget step by step", async () => {
+  const calls = [];
+  const repo = fakeRepository();
+  repo.user = { id: 1, interface_language: "en", base_currency: "THB", onboarding_step: "budget_setup", onboarding_data: {} };
+  const originalLog = console.log;
+  console.log = (...args) => calls.push(args);
+  try {
+    const bot = createTelegramBot({
+      token: "",
+      miniAppUrl: "http://localhost:3000",
+      repository: repo,
+      now: () => new Date("2026-06-05T10:00:00+07:00")
+    });
+
+    await bot.handleUpdate({
+      message: {
+        chat: { id: 10 },
+        from: { id: 100, first_name: "M" },
+        text: "USD"
+      }
+    });
+    await bot.handleUpdate({
+      message: {
+        chat: { id: 10 },
+        from: { id: 100, first_name: "M" },
+        text: "2000"
+      }
+    });
+  } finally {
+    console.log = originalLog;
+  }
+
+  assert.match(calls[0][1].text, /monthly budget/i);
+  assert.match(calls[1][1].text, /setup is complete/i);
+  assert.equal(repo.user.onboarding_data.currency, undefined);
+  assert.equal(repo.settings.baseCurrency, "USD");
+  assert.equal(repo.settings.monthlyBudgetAmount, 2000);
+});
+
+test("budget setup after the 5th asks for current partial-month budget", async () => {
+  const calls = [];
+  const repo = fakeRepository();
+  repo.user = { id: 1, interface_language: "en", base_currency: "THB", onboarding_step: "budget_setup", onboarding_data: {} };
+  const originalLog = console.log;
+  console.log = (...args) => calls.push(args);
+  try {
+    const bot = createTelegramBot({
+      token: "",
+      miniAppUrl: "http://localhost:3000",
+      repository: repo,
+      now: () => new Date("2026-06-12T10:00:00+07:00")
+    });
+
+    await bot.handleUpdate({
+      message: {
+        chat: { id: 10 },
+        from: { id: 100, first_name: "M" },
+        text: "USD 2000"
+      }
+    });
+    await bot.handleUpdate({
+      message: {
+        chat: { id: 10 },
+        from: { id: 100, first_name: "M" },
+        text: "900"
+      }
+    });
+  } finally {
+    console.log = originalLog;
+  }
+
+  assert.match(calls[0][1].text, /until the end of this month/);
+  assert.match(calls[1][1].text, /setup is complete/i);
+  assert.equal(repo.settings.baseCurrency, "USD");
+  assert.equal(repo.settings.monthlyBudgetAmount, 2000);
+  assert.equal(repo.currentMonthBudget.amount, 900);
+  assert.equal(repo.currentMonthBudget.currency, "USD");
+});
+
+test("text message does not call voice transcription during onboarding", async () => {
+  const repo = fakeRepository();
+  repo.user = { id: 1, interface_language: "en", base_currency: "THB", onboarding_step: "language", onboarding_data: {} };
+  let transcribed = false;
+  const originalLog = console.log;
+  console.log = () => {};
+  try {
+    const bot = createTelegramBot({
+      token: "",
+      miniAppUrl: "http://localhost:3000",
+      repository: repo,
+      voiceTranscriber: {
+        isConfigured: () => true,
+        transcribeTelegramVoice: async () => {
+          transcribed = true;
+          return "Russian";
+        }
+      }
+    });
+
+    await bot.handleUpdate({
+      message: {
+        chat: { id: 10 },
+        from: { id: 100, first_name: "M" },
+        text: "English",
+        voice: { file_id: "voice-file-id", mime_type: "audio/ogg" }
+      }
+    });
+  } finally {
+    console.log = originalLog;
+  }
+
+  assert.equal(transcribed, false);
+  assert.equal(repo.user.interface_language, "en");
+  assert.equal(repo.user.onboarding_step, "budget_setup");
+});
+
 test("new user onboarding from the 1st to 5th asks only for regular monthly budget", async () => {
   const calls = [];
   const repo = fakeRepository();
@@ -817,6 +983,29 @@ function fakeRepository() {
     },
     async setOnboardingStep(_telegramUserId, step) {
       this.user = { ...this.user, onboarding_step: step };
+      return this.user;
+    },
+    async updateOnboardingLanguage(telegramUserId, language) {
+      this.user = { ...this.user, interface_language: language, onboarding_step: "budget_setup", onboarding_data: {} };
+      return this.user;
+    },
+    async updateOnboardingData(_telegramUserId, data) {
+      this.user = { ...this.user, onboarding_data: data };
+      return this.user;
+    },
+    async completeOnboardingBudgetSetup(_telegramUserId, settings) {
+      this.settings = {
+        ...this.settings,
+        baseCurrency: settings.baseCurrency,
+        monthlyBudgetAmount: settings.monthlyBudgetAmount
+      };
+      this.user = {
+        ...this.user,
+        base_currency: settings.baseCurrency,
+        monthly_budget_amount: settings.monthlyBudgetAmount,
+        onboarding_step: settings.nextStep,
+        onboarding_data: {}
+      };
       return this.user;
     },
     async setMonthBaseline(_telegramUserId, baseline) {
