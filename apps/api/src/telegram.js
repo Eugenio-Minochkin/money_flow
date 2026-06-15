@@ -5,6 +5,8 @@ import { normalizeCurrency, SUPPORTED_CURRENCY_CODES } from "../../../packages/s
 import { formatDraft, formatPlannedDraft, formatSavedSummary, formatTotals, formatWeeklyReport } from "./telegramFormat.js";
 import { appKeyboard, draftKeyboard, inboxDraftKeyboard, plannedDraftKeyboard } from "./telegramKeyboards.js";
 
+const ONBOARDING_STEPS = ["language", "budget_setup", "base_currency", "monthly_budget", "current_month_budget", "month_opening_spend"];
+
 export function createTelegramBot({
   repository,
   token,
@@ -42,7 +44,7 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
 
   if (text === "/start") {
     if (isOnboardingActive(user)) {
-      return sendMessage(token, message.chat.id, onboardingText(language, "baseCurrency"), appKeyboard(miniAppUrl, from.id, language), telegramClient);
+      return sendMessage(token, message.chat.id, onboardingPrompt(user), onboardingReplyMarkup(user), telegramClient);
     }
     return sendMessage(token, message.chat.id, botText(language, "start"), appKeyboard(miniAppUrl, from.id, language), telegramClient);
   }
@@ -83,11 +85,12 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
 
 async function messageText({ message, voiceTranscriber }) {
   if (message.text?.trim()) return message.text.trim();
-  if (!message.voice) return null;
+  const audio = message.voice ?? message.audio;
+  if (!audio) return null;
   if (!voiceTranscriber?.isConfigured()) return null;
 
   try {
-    return await voiceTranscriber.transcribeTelegramVoice(message.voice);
+    return await voiceTranscriber.transcribeTelegramVoice(audio);
   } catch (error) {
     console.error("[telegram] voice transcription failed", error.message);
     return null;
@@ -97,6 +100,19 @@ async function messageText({ message, voiceTranscriber }) {
 async function handleOnboardingMessage({ text, user, repository, token, chatId, miniAppUrl, telegramUserId, telegramClient, now }) {
   const language = user.interface_language ?? "en";
   const step = user.onboarding_step ?? "completed";
+
+  if (step === "language") {
+    const selectedLanguage = parseLanguage(text);
+    if (!selectedLanguage) {
+      return sendMessage(token, chatId, onboardingText(language, "languageRetry"), languageKeyboard(), telegramClient);
+    }
+    await updateOnboardingLanguage(repository, telegramUserId, selectedLanguage);
+    return sendMessage(token, chatId, onboardingText(selectedLanguage, "introBudgetSetup"), null, telegramClient);
+  }
+
+  if (step === "budget_setup") {
+    return handleBudgetSetupMessage({ text, user, repository, token, chatId, miniAppUrl, telegramUserId, telegramClient, now });
+  }
 
   if (step === "base_currency") {
     const currency = parseCurrency(text);
@@ -174,7 +190,82 @@ async function handleOnboardingMessage({ text, user, repository, token, chatId, 
 }
 
 function isOnboardingActive(user) {
-  return ["base_currency", "monthly_budget", "current_month_budget", "month_opening_spend"].includes(user?.onboarding_step);
+  return ONBOARDING_STEPS.includes(user?.onboarding_step);
+}
+
+async function handleBudgetSetupMessage({ text, user, repository, token, chatId, miniAppUrl, telegramUserId, telegramClient, now }) {
+  const language = user.interface_language ?? "en";
+  const data = normalizeOnboardingData(user.onboarding_data);
+  const currency = parseCurrencyFromText(text) ?? data.currency ?? null;
+  const amount = parseSingleAmount(text, currency ?? user.base_currency ?? "THB");
+  const monthlyBudgetAmount = amount?.amount ?? data.monthlyBudgetAmount ?? null;
+
+  if (!currency && !monthlyBudgetAmount) {
+    return sendMessage(token, chatId, onboardingText(language, "budgetSetupRetry"), null, telegramClient);
+  }
+
+  if (!currency) {
+    await repository.updateOnboardingData?.(telegramUserId, { monthlyBudgetAmount });
+    return sendMessage(token, chatId, onboardingText(language, "budgetSetupCurrencyMissing"), null, telegramClient);
+  }
+
+  if (!monthlyBudgetAmount || monthlyBudgetAmount <= 0) {
+    await repository.updateOnboardingData?.(telegramUserId, { currency });
+    return sendMessage(token, chatId, onboardingText(language, "budgetSetupAmountMissing", { currency }), null, telegramClient);
+  }
+
+  const nextStep = localMonthDay(now()) > 5 ? "current_month_budget" : "completed";
+  if (repository.completeOnboardingBudgetSetup) {
+    await repository.completeOnboardingBudgetSetup(telegramUserId, {
+      baseCurrency: currency,
+      monthlyBudgetAmount,
+      nextStep
+    });
+  } else {
+    await repository.updateUserSettings(telegramUserId, {
+      monthlyBudgetAmount,
+      baseCurrency: currency,
+      displayCurrency: user.display_currency ?? "USD",
+      usdThbRate: user.usd_thb_rate ?? 32.65,
+      weeklyBudgetAmount: user.weekly_budget_amount ?? null,
+      interfaceLanguage: language,
+      onboardingStep: nextStep
+    });
+    await repository.updateOnboardingData?.(telegramUserId, {});
+  }
+
+  if (nextStep === "completed") {
+    return sendMessage(token, chatId, onboardingText(language, "complete"), appKeyboard(miniAppUrl, telegramUserId, language), telegramClient);
+  }
+  return sendMessage(token, chatId, onboardingText(language, "currentMonthBudget", { currency }), null, telegramClient);
+}
+
+function onboardingPrompt(user) {
+  const language = user?.interface_language ?? "en";
+  if (user?.onboarding_step === "language") return onboardingText(language, "language");
+  if (user?.onboarding_step === "budget_setup") return onboardingText(language, "introBudgetSetup");
+  return onboardingText(language, "baseCurrency");
+}
+
+function onboardingReplyMarkup(user) {
+  if (user?.onboarding_step === "language") return languageKeyboard();
+  return null;
+}
+
+function languageKeyboard() {
+  return {
+    inline_keyboard: [[
+      { text: "English", callback_data: "onboard_lang:en" },
+      { text: "Русский", callback_data: "onboard_lang:ru" }
+    ]]
+  };
+}
+
+function parseLanguage(text) {
+  const value = String(text ?? "").trim().toLowerCase();
+  if (["en", "eng", "english"].includes(value)) return "en";
+  if (["ru", "rus", "russian", "русский", "рус"].includes(value)) return "ru";
+  return null;
 }
 
 function parseCurrency(text) {
@@ -193,6 +284,18 @@ function parseCurrency(text) {
   return aliases.get(value) ?? null;
 }
 
+function parseCurrencyFromText(text) {
+  const direct = parseCurrency(text);
+  if (direct) return direct;
+  const value = String(text ?? "").toLowerCase();
+  const tokens = value.match(/[\p{L}\p{N}]+/gu) ?? [];
+  for (const token of tokens) {
+    const currency = parseCurrency(token);
+    if (currency) return currency;
+  }
+  return null;
+}
+
 function parseSingleAmount(text, defaultCurrency) {
   const parsed = parseExpenseText(String(text ?? ""), { defaultCurrency });
   return parsed.expenses[0] ? { amount: parsed.expenses[0].amount, currency: parsed.expenses[0].currency } : null;
@@ -200,6 +303,18 @@ function parseSingleAmount(text, defaultCurrency) {
 
 function isSkip(text) {
   return /^(0|skip|пропустить|нет)$/iu.test(String(text ?? "").trim());
+}
+
+function normalizeOnboardingData(value) {
+  if (!value) return {};
+  if (typeof value === "string") {
+    try {
+      return JSON.parse(value);
+    } catch {
+      return {};
+    }
+  }
+  return typeof value === "object" ? value : {};
 }
 
 function localMonthDay(now) {
@@ -213,6 +328,13 @@ async function handleCallback({ update, repository, token, miniAppUrl, telegramC
   const telegramUserId = callback.from.id;
   const user = await repository.getUserByTelegramId?.(telegramUserId);
   const language = user?.interface_language ?? "en";
+
+  if (action === "onboard_lang") {
+    const selectedLanguage = ["en", "ru"].includes(draftId) ? draftId : "en";
+    await updateOnboardingLanguage(repository, telegramUserId, selectedLanguage);
+    await answerCallback(token, callback.id, selectedLanguage === "ru" ? "Язык выбран" : "Language selected", telegramClient);
+    return sendMessage(token, callback.message.chat.id, onboardingText(selectedLanguage, "introBudgetSetup"), null, telegramClient);
+  }
 
   if (action === "plan_confirm") {
     await repository.confirmPlannedDraft(draftId, telegramUserId);
@@ -286,6 +408,24 @@ async function handleCallback({ update, repository, token, miniAppUrl, telegramC
 
   await answerCallback(token, callback.id, botText(language, "openMiniAppCallback"), telegramClient);
   return sendMessage(token, callback.message.chat.id, botText(language, "editInMiniApp"), appKeyboard(miniAppUrl, telegramUserId, language), telegramClient);
+}
+
+async function updateOnboardingLanguage(repository, telegramUserId, language) {
+  if (repository.updateOnboardingLanguage) {
+    return repository.updateOnboardingLanguage(telegramUserId, language);
+  }
+  await repository.updateUserSettings?.(telegramUserId, {
+    monthlyBudgetAmount: 45000,
+    baseCurrency: "THB",
+    displayCurrency: "USD",
+    usdThbRate: 32.65,
+    weeklyBudgetAmount: null,
+    interfaceLanguage: language,
+    onboardingStep: "budget_setup"
+  });
+  await repository.setOnboardingStep?.(telegramUserId, "budget_setup");
+  await repository.updateOnboardingData?.(telegramUserId, {});
+  return null;
 }
 
 function updateDraftItem(draft, index, patch) {
@@ -442,6 +582,18 @@ function onboardingText(language, key, values = {}) {
   const currency = values.currency ?? "THB";
   const messages = {
     ru: {
+      language: "Choose language / Выбери язык:",
+      languageRetry: "Please choose a language: English or Русский.",
+      introBudgetSetup: [
+        "Money Flow helps you save expenses from text or voice.",
+        "Send expenses like: <b>coffee 70 baht and lunch 180</b>.",
+        "I will show a draft first and save only after confirmation.",
+        "",
+        "Now send your currency and monthly budget in one message, for example: <b>THB 42000</b> or <b>USD 2000</b>."
+      ].join("\n"),
+      budgetSetupRetry: "I did not understand the currency and monthly budget. Send, for example: <b>THB 42000</b> or <b>USD 2000</b>.",
+      budgetSetupCurrencyMissing: "Got the monthly budget. Now send the currency: <b>THB</b>, <b>USD</b>, <b>RUB</b>, <b>IDR</b>, <b>EUR</b>, <b>BYN</b>, or <b>GEL</b>.",
+      budgetSetupAmountMissing: `Good, I will count in <b>${currency}</b>. Now send your monthly budget, for example: <b>42000</b> or <b>42k</b>.`,
       baseCurrency: [
         "Сначала быстро настроим учет.",
         "",
@@ -471,6 +623,18 @@ function onboardingText(language, key, values = {}) {
       currentMonthBudgetRetry: `Не понял бюджет до конца месяца. Напиши сумму в ${currency}, например: <b>15000</b> или <b>15к</b>.`
     },
     en: {
+      language: "Choose language:",
+      languageRetry: "Please choose a language: English or Russian.",
+      introBudgetSetup: [
+        "Money Flow helps you save expenses from text or voice.",
+        "Write or dictate expenses like: <b>coffee 70 baht and lunch 180</b>.",
+        "I will show a draft first and save only after confirmation.",
+        "",
+        "Now send your currency and monthly budget in one message, for example: <b>THB 42000</b> or <b>USD 2000</b>."
+      ].join("\n"),
+      budgetSetupRetry: "I did not understand the currency and monthly budget. Send, for example: <b>THB 42000</b> or <b>USD 2000</b>.",
+      budgetSetupCurrencyMissing: "Got the monthly budget. Now send the currency: <b>THB</b>, <b>USD</b>, <b>RUB</b>, <b>IDR</b>, <b>EUR</b>, <b>BYN</b>, or <b>GEL</b>.",
+      budgetSetupAmountMissing: `Good, I will count in <b>${currency}</b>. Now send your monthly budget, for example: <b>20000</b> or <b>20k</b>.`,
       baseCurrency: [
         "First, let's set up your account.",
         "",
