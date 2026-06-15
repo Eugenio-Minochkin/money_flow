@@ -10,30 +10,51 @@ export function createVoiceTranscriber(options = {}) {
       return Boolean(telegramBotToken && deepgramApiKey && fetchImpl);
     },
 
-    async transcribeTelegramVoice(voice) {
+    async transcribeTelegramVoice(voice, options = {}) {
       if (!this.isConfigured()) {
         throw new Error("Voice transcription is not configured");
       }
 
-      const filePath = await getTelegramFilePath({ telegramBotToken, fileId: voice.file_id, fetchImpl });
-      const audio = await downloadTelegramFile({ telegramBotToken, filePath, fetchImpl });
+      const onPerfStage = options.onPerfStage ?? (() => {});
+      onPerfStage("telegram_file_download_start", voiceMetadata(voice));
+      const file = await getTelegramFile({ telegramBotToken, fileId: voice.file_id, fetchImpl });
+      const audio = await downloadTelegramFile({ telegramBotToken, filePath: file.filePath, fetchImpl });
+      onPerfStage("telegram_file_download_end", {
+        ...voiceMetadata(voice),
+        fileSizeKb: bytesToKb(file.fileSizeBytes)
+      });
+
+      onPerfStage("transcription_start", {
+        ...voiceMetadata(voice),
+        transcriptionProvider: "deepgram"
+      });
       return transcribeWithDeepgram({
         deepgramApiKey,
         audio,
-        mimeType: voice.mime_type ?? contentTypeForPath(filePath),
+        mimeType: voice.mime_type ?? contentTypeForPath(file.filePath),
         fetchImpl
+      }).then((transcript) => {
+        onPerfStage("transcription_end", {
+          ...voiceMetadata(voice),
+          transcriptionProvider: "deepgram",
+          responseChars: transcript.length
+        });
+        return transcript;
       });
     }
   };
 }
 
-async function getTelegramFilePath({ telegramBotToken, fileId, fetchImpl }) {
+async function getTelegramFile({ telegramBotToken, fileId, fetchImpl }) {
   const response = await fetchImpl(`https://api.telegram.org/bot${telegramBotToken}/getFile?file_id=${encodeURIComponent(fileId)}`);
   const body = await response.json();
   if (!response.ok || !body.ok || !body.result?.file_path) {
     throw new Error(`Telegram getFile failed: ${response.status}`);
   }
-  return body.result.file_path;
+  return {
+    filePath: body.result.file_path,
+    fileSizeBytes: body.result.file_size
+  };
 }
 
 async function downloadTelegramFile({ telegramBotToken, filePath, fetchImpl }) {
@@ -74,4 +95,15 @@ function contentTypeForPath(filePath) {
   if (filePath.endsWith(".mp3")) return "audio/mpeg";
   if (filePath.endsWith(".wav")) return "audio/wav";
   return "application/octet-stream";
+}
+
+function voiceMetadata(voice) {
+  return {
+    audioDurationSec: voice?.duration
+  };
+}
+
+function bytesToKb(bytes) {
+  const value = Number(bytes);
+  return Number.isFinite(value) ? Math.round(value / 1024) : undefined;
 }

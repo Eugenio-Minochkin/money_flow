@@ -30,6 +30,159 @@ test("text message creates a pending draft response", async () => {
   }
 });
 
+test("text message never calls voice transcription", async () => {
+  let transcribeCalled = false;
+  const originalLog = console.log;
+  console.log = () => {};
+  try {
+    const bot = createTelegramBot({
+      token: "",
+      miniAppUrl: "http://localhost:3000",
+      repository: fakeRepository(),
+      perfLogger: () => {},
+      voiceTranscriber: {
+        isConfigured: () => true,
+        async transcribeTelegramVoice() {
+          transcribeCalled = true;
+          throw new Error("text message must not be transcribed");
+        }
+      }
+    });
+
+    await bot.handleUpdate({
+      message: {
+        chat: { id: 10 },
+        from: { id: 100, first_name: "M" },
+        text: "coffee 70 baht",
+        voice: { file_id: "voice-file-id", mime_type: "audio/ogg" }
+      }
+    });
+  } finally {
+    console.log = originalLog;
+  }
+
+  assert.equal(transcribeCalled, false);
+});
+
+test("message handling writes performance stage logs and compact summary", async () => {
+  const perfLines = [];
+  const originalLog = console.log;
+  console.log = () => {};
+  try {
+    const bot = createTelegramBot({
+      token: "",
+      miniAppUrl: "http://localhost:3000",
+      repository: fakeRepository(),
+      perfLogger: (line) => perfLines.push(line),
+      expenseParser: {
+        model: "test-model",
+        async parse() {
+          return {
+            expenses: [{
+              amount: 70,
+              currency: "THB",
+              description: "coffee",
+              category_slug: "food_cafe",
+              tags: [],
+              spent_at: "2026-06-02T10:00:00+07:00",
+              confidence: 0.9,
+              needs_review: false
+            }]
+          };
+        }
+      }
+    });
+
+    await bot.handleUpdate({
+      message: {
+        chat: { id: 10 },
+        from: { id: 100, first_name: "M" },
+        text: "coffee 70 baht"
+      }
+    });
+  } finally {
+    console.log = originalLog;
+  }
+
+  const stageLines = perfLines.filter((line) => line.startsWith("[perf:stage]"));
+  const stages = stageLines.map((line) => line.match(/stage=([^ ]+)/)?.[1]);
+  assert.ok(stages.includes("message_received"));
+  assert.ok(stages.includes("user_context_start"));
+  assert.ok(stages.includes("user_context_end"));
+  assert.ok(stages.includes("llm_parse_start"));
+  assert.ok(stages.includes("llm_parse_end"));
+  assert.ok(stages.includes("db_save_start"));
+  assert.ok(stages.includes("db_save_end"));
+  assert.ok(stages.includes("telegram_response_start"));
+  assert.ok(stages.includes("telegram_response_end"));
+  assert.ok(stages.includes("total_done"));
+  assert.ok(stageLines.every((line) => /traceId=[^ ]+/.test(line)));
+  assert.ok(stageLines.every((line) => /userId=100/.test(line)));
+  assert.ok(stageLines.every((line) => /messageType=text/.test(line)));
+  assert.ok(stageLines.every((line) => /durationMs=\d+/.test(line)));
+  assert.ok(stageLines.every((line) => /totalMs=\d+/.test(line)));
+  assert.ok(stageLines.every((line) => /success=(true|false)/.test(line)));
+  assert.ok(stages.every((stage) => !String(stage).startsWith("transcription")));
+  assert.ok(stages.every((stage) => !String(stage).startsWith("telegram_file_download")));
+
+  const summary = perfLines.find((line) => line.startsWith("[perf]"));
+  assert.ok(summary);
+  assert.match(summary, /traceId=[^ ]+ type=text total=\d+ms/);
+  assert.match(summary, /llm=\d+ms/);
+  assert.match(summary, /db=\d+ms/);
+  assert.match(summary, /telegram=\d+ms/);
+  assert.doesNotMatch(summary, /coffee 70 baht/);
+});
+
+test("voice message performance summary includes download and transcription stages", async () => {
+  const perfLines = [];
+  const originalLog = console.log;
+  console.log = () => {};
+  try {
+    const bot = createTelegramBot({
+      token: "",
+      miniAppUrl: "http://localhost:3000",
+      repository: fakeRepository(),
+      perfLogger: (line) => perfLines.push(line),
+      voiceTranscriber: {
+        isConfigured: () => true,
+        async transcribeTelegramVoice(_voice, options = {}) {
+          options.onPerfStage("telegram_file_download_start", { audioDurationSec: 3 });
+          options.onPerfStage("telegram_file_download_end", { audioDurationSec: 3, fileSizeKb: 12 });
+          options.onPerfStage("transcription_start", { transcriptionProvider: "deepgram" });
+          options.onPerfStage("transcription_end", { transcriptionProvider: "deepgram", responseChars: 11 });
+          return "coffee 70 baht";
+        }
+      }
+    });
+
+    await bot.handleUpdate({
+      message: {
+        chat: { id: 10 },
+        from: { id: 100, first_name: "M" },
+        voice: { file_id: "voice-file-id", mime_type: "audio/ogg", duration: 3 }
+      }
+    });
+  } finally {
+    console.log = originalLog;
+  }
+
+  const stageLines = perfLines.filter((line) => line.startsWith("[perf:stage]"));
+  assert.ok(stageLines.some((line) => /stage=telegram_file_download_start/.test(line)));
+  assert.ok(stageLines.some((line) => /stage=telegram_file_download_end/.test(line) && /fileSizeKb=12/.test(line)));
+  assert.ok(stageLines.some((line) => /stage=transcription_start/.test(line) && /transcriptionProvider=deepgram/.test(line)));
+  assert.ok(stageLines.some((line) => /stage=transcription_end/.test(line) && /responseChars=11/.test(line)));
+
+  const summary = perfLines.find((line) => line.startsWith("[perf]"));
+  assert.ok(summary);
+  assert.match(summary, /type=voice/);
+  assert.match(summary, /download=\d+ms/);
+  assert.match(summary, /transcription=\d+ms/);
+  assert.match(summary, /llm=\d+ms/);
+  assert.match(summary, /db=\d+ms/);
+  assert.match(summary, /telegram=\d+ms/);
+});
+
 test("confirm callback saves draft and returns an informative summary", async () => {
   const calls = [];
   const repo = fakeRepository();
