@@ -64,7 +64,13 @@ function createBot(telegramClient) {
     adminTelegramIds,
     adminStatsService,
     releaseNotesService,
-    telegramClient
+    telegramClient,
+    awaitQueuedJobs: false,
+    telegramJobQueueOptions: {
+      globalConcurrency: config.telegramJobGlobalConcurrency,
+      userQueueLimit: config.telegramJobUserQueueLimit,
+      jobTimeoutMs: config.telegramJobTimeoutMs
+    }
   });
 }
 const bot = createBot();

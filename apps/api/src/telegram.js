@@ -4,6 +4,7 @@ import { parsePlannedExpenseText } from "../../../packages/shared/src/plannedPar
 import { normalizeCurrency, SUPPORTED_CURRENCY_CODES } from "../../../packages/shared/src/currencies.js";
 import { formatAdminStats } from "./adminStatsService.js";
 import { isAdminTelegramId } from "./releaseNotesService.js";
+import { createTelegramJobQueue } from "./telegramJobQueue.js";
 import { formatDraft, formatPlannedDraft, formatSavedSummary, formatTotals, formatWeeklyReport } from "./telegramFormat.js";
 import { appKeyboard, draftKeyboard, inboxDraftKeyboard, plannedDraftKeyboard } from "./telegramKeyboards.js";
 
@@ -20,7 +21,10 @@ export function createTelegramBot({
   adminTelegramIds = new Set(),
   adminStatsService,
   releaseNotesService,
-  now = () => new Date()
+  now = () => new Date(),
+  telegramJobQueueOptions = {},
+  telegramJobQueue = createTelegramJobQueue(telegramJobQueueOptions),
+  awaitQueuedJobs = true
 }) {
   return {
     async handleUpdate(update) {
@@ -28,8 +32,8 @@ export function createTelegramBot({
       let success = false;
       if (update.message) {
         try {
-          const result = await handleMessage({ update, repository, token, miniAppUrl, expenseParser, voiceTranscriber, telegramClient, adminTelegramIds, adminStatsService, releaseNotesService, now, trace });
-          success = true;
+          const result = await handleMessage({ update, repository, token, miniAppUrl, expenseParser, voiceTranscriber, telegramClient, adminTelegramIds, adminStatsService, releaseNotesService, now, trace, telegramJobQueue, awaitQueuedJobs });
+          success = !result?.queued;
           return result;
         } catch (error) {
           trace.finish(false, error);
@@ -56,7 +60,7 @@ export function createTelegramBot({
   };
 }
 
-async function handleMessage({ update, repository, token, miniAppUrl, expenseParser, voiceTranscriber, telegramClient, adminTelegramIds, adminStatsService, releaseNotesService, now, trace }) {
+async function handleMessage({ update, repository, token, miniAppUrl, expenseParser, voiceTranscriber, telegramClient, adminTelegramIds, adminStatsService, releaseNotesService, now, trace, telegramJobQueue, awaitQueuedJobs }) {
   const message = update.message;
   const from = message.from;
   if (!from) return { ok: true };
@@ -128,6 +132,63 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
       return sendTelegramResponse(trace, () => sendMessage(token, chatId, botText(language, "openMiniApp"), appKeyboard(miniAppUrl, from.id, language), telegramClient));
     }
   }
+
+  const queued = telegramJobQueue.enqueue({
+    userId: from.id,
+    run: () => processQueuedMessage({ message, from, user, rawText, hasVoice, repository, token, miniAppUrl, expenseParser, voiceTranscriber, telegramClient, now, trace }),
+    onStart: (metadata) => trace.event("queue_job_start", metadata),
+    onFinish: (metadata) => trace.event("queue_job_done", metadata)
+  });
+
+  trace.event("queue_enqueue", {
+    status: queued.status,
+    queueDepth: queued.stats.queueDepth,
+    globalActiveJobs: queued.stats.globalActiveJobs,
+    userPendingJobs: queued.stats.userPendingJobs
+  }, queued.accepted);
+
+  if (!queued.accepted) {
+    const key = queued.status === "globalQueueFull" ? "globalQueueFull" : "userQueueFull";
+    return sendTelegramResponse(trace, () => sendMessage(token, chatId, botText(language, key), null, telegramClient));
+  }
+
+  if (queued.status === "queuedBehindPrevious") {
+    await sendTelegramResponse(trace, () => sendMessage(token, chatId, botText(language, "queuedBehindPrevious"), null, telegramClient));
+  } else if (queued.status === "globalQueueDelayed") {
+    await sendTelegramResponse(trace, () => sendMessage(token, chatId, botText(language, "globalQueueDelayed"), null, telegramClient));
+  }
+
+  if (awaitQueuedJobs) {
+    try {
+      await queued.promise;
+    } catch (error) {
+      await sendQueuedJobFailure({ error, token, chatId, language, telegramClient, trace });
+    }
+    return { ok: true };
+  }
+
+  queued.promise
+    .then(() => trace.finish(true))
+    .catch(async (error) => {
+      await sendQueuedJobFailure({ error, token, chatId, language, telegramClient, trace });
+      trace.finish(false, error);
+    });
+  return { ok: true, queued: true };
+}
+
+async function sendQueuedJobFailure({ error, token, chatId, language, telegramClient, trace }) {
+  trace.failActive(["telegram_file_download", "transcription", "llm_parse", "db_save"], error);
+  console.error("[telegram] queued job failed", error.message);
+  try {
+    await sendTelegramResponse(trace, () => sendMessage(token, chatId, botText(language, "jobProcessingFailed"), null, telegramClient));
+  } catch (sendError) {
+    console.error("[telegram] failed to send queued job failure message", sendError.message);
+  }
+}
+
+async function processQueuedMessage({ message, from, user, rawText, hasVoice, repository, token, miniAppUrl, expenseParser, voiceTranscriber, telegramClient, now, trace }) {
+  const language = user.interface_language ?? "en";
+  const chatId = message.chat.id;
 
   if (isOnboardingActive(user)) {
     let onboardingTextInput = rawText;
@@ -216,7 +277,7 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
       token,
       chatId,
       loaderMessageId: loader.messageId,
-      text: botText(language, "technicalError"),
+      text: botText(language, "jobProcessingFailed"),
       replyMarkup: null,
       telegramClient,
       trace
@@ -1076,6 +1137,11 @@ function botText(language, key) {
   const lang = language === "ru" ? "ru" : "en";
   const messages = {
     ru: {
+      queuedBehindPrevious: "Принял ещё одно сообщение. Сначала закончу предыдущий расход, потом обработаю это.",
+      userQueueFull: "Я уже разбираю несколько твоих сообщений. Чтобы не перепутать расходы, дождись результата и отправь следующее чуть позже.",
+      globalQueueDelayed: "Сейчас обработка может занять чуть больше времени. Я принял сообщение и разберу его по очереди.",
+      globalQueueFull: "Сейчас обработка временно занята. Дождись, пожалуйста, результата по предыдущим сообщениям и отправь это ещё раз чуть позже.",
+      jobProcessingFailed: "Не получилось обработать это сообщение. Попробуй отправить его ещё раз.",
       amountNotFound: "Не нашел сумму. Напиши так: <b>кофе 70 бат</b>.",
       amountUpdatedCallback: "Сумма обновлена",
       cancelledCallback: "Отменено",
@@ -1103,6 +1169,11 @@ function botText(language, key) {
       unsupported: "Пока умею принимать только текстовые и голосовые расходы."
     },
     en: {
+      queuedBehindPrevious: "Got one more message. I’ll finish the previous expense first, then process this one.",
+      userQueueFull: "I’m already processing several of your messages. To avoid mixing up expenses, please wait for the result and send the next one a bit later.",
+      globalQueueDelayed: "Processing may take a little longer right now. I’ve received your message and will handle it in order.",
+      globalQueueFull: "Processing is temporarily busy right now. Please wait for the previous messages to finish and send this again a bit later.",
+      jobProcessingFailed: "I couldn’t process this message. Please try sending it again.",
       amountNotFound: "I did not find an amount. Try: <b>coffee 70 baht</b>.",
       amountUpdatedCallback: "Amount updated",
       cancelledCallback: "Cancelled",
@@ -1132,6 +1203,7 @@ function botText(language, key) {
   };
   return messages[lang][key];
 }
+
 export async function sendTelegramMessage({ token, chatId, text, replyMarkup = null, telegramClient = null }) {
   return sendMessage(token, chatId, text, replyMarkup, telegramClient);
 }
