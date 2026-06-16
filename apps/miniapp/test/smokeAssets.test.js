@@ -156,9 +156,11 @@ test("planned summary uses stacked paid and remaining rows", async () => {
   assert.match(css, /\.planned-summary-row__amount\s*{[^}]*color:\s*var\(--ink\)/s);
 });
 
-test("settings keep interface theme switching hidden", async () => {
+test("settings expose interface theme as a visible select", async () => {
   const html = await readFile(join(miniAppRoot, "index.html"), "utf8");
 
-  assert.match(html, /id="interfaceThemeInput"[^>]+type="hidden"/);
-  assert.doesNotMatch(html, /data-i18n="settings.interfaceTheme"/);
+  assert.match(html, /<select id="interfaceThemeInput" name="interfaceTheme">/);
+  assert.match(html, /<option value="light" data-i18n="settings.themeLight"/);
+  assert.match(html, /<option value="dark" data-i18n="settings.themeDark"/);
+  assert.match(html, /data-i18n="settings.interfaceTheme"/);
 });

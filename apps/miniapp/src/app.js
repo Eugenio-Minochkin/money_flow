@@ -70,6 +70,7 @@ document.querySelectorAll("[data-tab]").forEach((button) => {
 document.querySelector("#baseCurrencyInput").addEventListener("change", updateCurrencyFlags);
 document.querySelector("#displayCurrencyInput").addEventListener("change", updateCurrencyFlags);
 document.querySelector("#interfaceLanguageInput").addEventListener("change", updateCurrencyFlags);
+document.querySelector("#interfaceThemeInput").addEventListener("change", (event) => applyTheme(event.target.value));
 document.querySelector("#openHistoryInboxButton")?.addEventListener("click", () => switchTab("history"));
 document.querySelectorAll("[data-history-period]").forEach((chip) => {
   chip.addEventListener("click", () => selectHistoryPeriod(chip.dataset.historyPeriod));
@@ -418,7 +419,8 @@ function renderSnapshot(snapshot) {
 
 function renderSettings(user) {
   currentLanguage = user.interface_language ?? "en";
-  applyTheme("light");
+  currentTheme = user.interface_theme ?? "light";
+  applyTheme(currentTheme);
   setBaseCurrency(user.base_currency ?? "THB");
   applyLanguage(currentLanguage);
   document.querySelector("#budgetInput").value = Math.round(Number(user.monthly_budget_amount ?? 45000));
@@ -432,7 +434,7 @@ function renderSettings(user) {
   document.querySelector("#baseCurrencyInput").value = user.base_currency ?? "THB";
   document.querySelector("#displayCurrencyInput").value = user.display_currency ?? "USD";
   document.querySelector("#interfaceLanguageInput").value = currentLanguage;
-  document.querySelector("#interfaceThemeInput").value = "light";
+  document.querySelector("#interfaceThemeInput").value = currentTheme;
   document.querySelector("#usdThbRateInput").value = Number(user.usd_thb_rate ?? 32.65);
   document.querySelector("#budgetAdviceInput").checked = user.budget_advice_enabled !== false;
   updateCurrencyFlags();
@@ -1010,7 +1012,7 @@ async function saveSettings(event) {
         baseCurrency: document.querySelector("#baseCurrencyInput").value,
         displayCurrency: document.querySelector("#displayCurrencyInput").value,
         interfaceLanguage: document.querySelector("#interfaceLanguageInput").value,
-        interfaceTheme: "light",
+        interfaceTheme: document.querySelector("#interfaceThemeInput").value,
         budgetAdviceEnabled: document.querySelector("#budgetAdviceInput").checked,
         usdThbRate: Number(document.querySelector("#usdThbRateInput").value)
       }
@@ -1159,7 +1161,8 @@ function applyLanguage(language) {
     ["#weeklyBudgetInput", "settings.weeklyBudget"],
     ["#baseCurrencyInput", "settings.baseCurrency"],
     ["#displayCurrencyInput", "settings.displayCurrency"],
-    ["#interfaceLanguageInput", "settings.interfaceLanguage"]
+    ["#interfaceLanguageInput", "settings.interfaceLanguage"],
+    ["#interfaceThemeInput", "settings.interfaceTheme"]
   ];
   for (const [selector, key] of labels) {
     const label = document.querySelector(selector)?.closest("label")?.querySelector("span");

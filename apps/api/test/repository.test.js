@@ -132,6 +132,41 @@ test("updates user budget and display currency settings", async () => {
   assert.equal(queries[0].params[8], 100);
 });
 
+test("persists dark interface theme without normalizing it back to light", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql: String(sql), params });
+    if (String(sql).startsWith("UPDATE users")) {
+      return {
+        rows: [{
+          monthly_budget_amount: params[0],
+          base_currency: params[1],
+          display_currency: params[2],
+          usd_thb_rate: params[3],
+          weekly_budget_amount: params[4],
+          interface_language: params[5],
+          budget_advice_enabled: params[6],
+          interface_theme: params[7]
+        }]
+      };
+    }
+    return { rows: [] };
+  }));
+
+  const user = await repo.updateUserSettings(100, {
+    monthlyBudgetAmount: 60000,
+    baseCurrency: "THB",
+    displayCurrency: "USD",
+    usdThbRate: 32.65,
+    interfaceLanguage: "en",
+    budgetAdviceEnabled: true,
+    interfaceTheme: "dark"
+  });
+
+  assert.equal(user.interface_theme, "dark");
+  assert.equal(queries[0].params[7], "dark");
+});
+
 test("updates only the current month budget override for a Telegram user", async () => {
   const queries = [];
   const repo = createRepository(fakePool((sql, params) => {

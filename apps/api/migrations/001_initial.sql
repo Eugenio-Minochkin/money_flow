@@ -22,7 +22,7 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS weekly_budget_amount NUMERIC(14, 2);
 ALTER TABLE users ADD COLUMN IF NOT EXISTS interface_language TEXT NOT NULL DEFAULT 'en';
 ALTER TABLE users ADD COLUMN IF NOT EXISTS interface_theme TEXT NOT NULL DEFAULT 'light';
 ALTER TABLE users ALTER COLUMN interface_theme SET DEFAULT 'light';
-UPDATE users SET interface_theme = 'light' WHERE interface_theme IS NULL OR interface_theme = 'dark';
+UPDATE users SET interface_theme = 'light' WHERE interface_theme IS NULL OR interface_theme NOT IN ('light', 'dark');
 ALTER TABLE users ADD COLUMN IF NOT EXISTS budget_advice_enabled BOOLEAN NOT NULL DEFAULT true;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS onboarding_step TEXT NOT NULL DEFAULT 'completed';
 ALTER TABLE users ADD COLUMN IF NOT EXISTS bot_blocked BOOLEAN NOT NULL DEFAULT false;
