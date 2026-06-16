@@ -169,6 +169,12 @@
           <div class="section-heading">
             <h2 data-i18n="screen.history">История</h2>
           </div>
+          <section class="inbox-block history-inbox-compact hidden" id="inboxBlock">
+            <div class="section-heading compact-heading">
+              <h3 id="inboxTitle">Needs review</h3>
+            </div>
+            <div class="expense-list" id="inboxDrafts"></div>
+          </section>
           <form class="inline-form" id="historySearchForm">
             <label>
               <span data-i18n="history.search">Поиск</span>
@@ -177,14 +183,17 @@
             <button type="submit" data-i18n="actions.find">Найти</button>
           </form>
           <section class="history-filters" id="historyFilters">
-            <div class="history-filter-title" data-i18n="history.period">Период</div>
+            <div class="history-filter-title">
+              <span data-i18n="history.period">Период</span>
+              <span class="history-filter-current" id="historyFilterCurrent"></span>
+            </div>
             <div class="history-filter-chips">
               <button type="button" class="history-filter-chip" data-history-period="today" data-i18n="history.today">Сегодня</button>
               <button type="button" class="history-filter-chip" data-history-period="yesterday" data-i18n="history.yesterday">Вчера</button>
               <button type="button" class="history-filter-chip" data-history-period="last7" data-i18n="history.last7">7 дней</button>
-              <button type="button" class="history-filter-chip active" data-history-period="month" data-i18n="history.thisMonth">Этот месяц</button>
-              <button type="button" class="history-filter-chip" data-history-period="previous_month" data-i18n="history.previousMonth">Прошлый месяц</button>
-              <button type="button" class="history-filter-chip" data-history-period="custom" data-i18n="history.customPeriod">Период</button>
+              <button type="button" class="history-filter-chip active" data-history-period="month" data-i18n="history.thisMonth">Месяц</button>
+              <button type="button" class="history-filter-chip" data-history-period="previous_month" data-i18n="history.previousMonth">Прошлый</button>
+              <button type="button" class="history-filter-chip" data-history-period="custom" data-i18n="history.customPeriod">Даты</button>
             </div>
             <div class="history-custom-range hidden" id="historyCustomRange">
               <label>
@@ -201,12 +210,6 @@
               </div>
             </div>
             <div class="history-period-summary" id="historyPeriodSummary"></div>
-          </section>
-          <section class="inbox-block hidden" id="inboxBlock">
-            <div class="section-heading compact-heading">
-              <h3 id="inboxTitle">Needs review</h3>
-            </div>
-            <div class="expense-list" id="inboxDrafts"></div>
           </section>
           <div class="history-list" id="historyList"></div>
         </section>
