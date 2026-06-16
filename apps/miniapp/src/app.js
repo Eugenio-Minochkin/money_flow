@@ -11,7 +11,6 @@ import {
   formatMoney,
   moneyBase,
   moneyDisplay,
-  moneyDisplaySigned,
   setBaseCurrency
 } from "./formatters.js";
 import { expenseCountLabel, formatCustomRangeLabel, groupByDay, periodTotal } from "./history.js";
@@ -111,26 +110,6 @@ async function loadDashboard() {
 
 function renderAnalytics(snapshot, analytics) {
   renderMonthlyForecast(snapshot);
-  setText("#forecastMonth", moneyBase(snapshot.forecastMonthTotal));
-  setText("#forecastMonthDisplay", moneyDisplay(snapshot.display?.forecastMonthTotal, snapshot.display?.currency));
-
-  const deviation = Number(snapshot.planDeviation ?? 0);
-  const deviationRow = document.querySelector("#planDeviation").closest(".plan-row");
-  deviationRow.classList.toggle("good", deviation < 0);
-  deviationRow.classList.toggle("bad", deviation > 0);
-  deviationRow.classList.toggle("neutral", deviation === 0);
-  setText("#planDeviationLabel", deviation > 0 ? t("dashboard.overPlan") : deviation < 0 ? t("dashboard.underPlan") : t("dashboard.onPlan"));
-  setText("#planDeviation", deviation === 0 ? moneyBase(0) : `${currentLanguage === "ru" ? "на " : ""}${moneyBase(Math.abs(deviation))}`);
-  setText("#planDeviationDisplay", moneyDisplay(Math.abs(snapshot.display?.planDeviation ?? 0), snapshot.display?.currency));
-
-  setText("#todayLimit", `${moneyBase(snapshot.today)} / ${moneyBase(snapshot.dailyPlanLimit)}`);
-  setText("#todayLimitDisplay", `${moneyDisplay(snapshot.display?.today, snapshot.display?.currency)} / ${moneyDisplay(snapshot.display?.dailyPlanLimit, snapshot.display?.currency)}`);
-
-  const comparison = analytics.weekComparison ?? {};
-  const weekPrefix = Number(comparison.delta) > 0 ? "+" : "";
-  setText("#weekComparison", `${weekPrefix}${moneyBase(comparison.delta ?? 0)}`);
-  setText("#weekComparisonDisplay", moneyDisplaySigned(comparison.display?.delta, comparison.display?.currency));
-
   renderOtherWarning(analytics.otherCategoryWarning);
   renderLargestExpenses(analytics);
   renderTopTags(analytics.topTags ?? []);
@@ -245,9 +224,6 @@ function renderMonthlyForecast(snapshot) {
 
   setText("#forecastBudget", moneyBase(monthlyBudget));
   setText("#forecastBudgetDisplay", displayText(displayBudget));
-
-  setText("#forecastValue", moneyBase(forecast));
-  setText("#forecastValueDisplay", displayText(displayForecast));
 
   const diffRow = document.querySelector("#forecastDiffRow");
   diffRow.classList.remove("good", "bad", "neutral");
