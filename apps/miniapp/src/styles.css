@@ -279,6 +279,7 @@ h2 {
 .dashboard-card,
 .plan-summary,
 .next-planned,
+.monthly-forecast,
 .section,
 .notice {
   border: 1px solid var(--line);
@@ -304,7 +305,7 @@ body[data-theme="dark"] .plan-summary,
 body[data-theme="dark"] .next-planned,
 body[data-theme="dark"] .notice,
 body[data-theme="dark"] .inbox-block,
-body[data-theme="dark"] .recovery-advice {
+body[data-theme="dark"] .monthly-forecast {
   background: color-mix(in srgb, var(--panel) 92%, #000);
 }
 
@@ -423,71 +424,67 @@ body[data-theme="dark"] .recovery-advice {
   overflow: hidden;
 }
 
-.recovery-advice {
+.monthly-forecast {
   margin-top: 12px;
   overflow: hidden;
-  border: 1px solid #e8c99c;
-  border-radius: 12px;
-  background: #fffaf1;
-  box-shadow: var(--shadow);
 }
 
-.recovery-advice[data-state="danger"] {
-  border-color: #edc7cb;
-  background: #fff0f1;
-}
-
-.recovery-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 14px;
-  border-bottom: 1px solid rgb(37 29 24 / 8%);
-}
-
-.recovery-head span {
-  color: var(--amber);
-  font-size: 12px;
-  font-weight: 900;
-  white-space: nowrap;
-}
-
-.recovery-advice[data-state="danger"] .recovery-head span {
-  color: var(--red);
-}
-
-.recovery-body {
+.monthly-forecast__head {
   display: grid;
-  gap: 10px;
-  padding: 14px;
+  gap: 4px;
+  padding: 18px 16px 4px;
 }
 
-.recovery-body > span {
+.monthly-forecast__head h2 {
+  color: #4f453e;
+  font-size: 22px;
+  font-weight: 820;
+  line-height: 1.15;
+}
+
+.monthly-forecast__subtitle {
   color: var(--muted);
   font-size: 13px;
 }
 
-.recovery-body > strong {
-  font-size: 24px;
-  line-height: 1.1;
+.monthly-forecast__body {
+  display: grid;
+  gap: 6px;
+  padding: 4px 16px 16px;
 }
 
-.recovery-body > em,
-.recovery-body .plan-row em {
+.monthly-forecast__amount {
+  color: #11100f;
+  font-size: clamp(32px, 8vw, 38px);
+  line-height: 1.05;
+  overflow-wrap: anywhere;
+}
+
+.monthly-forecast__amount-display {
   color: var(--usd);
   font-style: normal;
   font-size: 12px;
   font-weight: 850;
 }
 
-.micro-advice {
-  border-radius: 8px;
-  background: rgb(255 255 255 / 72%);
+.monthly-forecast__explanation {
+  margin: 8px 0 4px;
+  padding: 12px;
+  border-radius: 12px;
+  background: var(--accent-soft);
+  color: var(--ink);
   font-size: 13px;
-  font-weight: 750;
-  line-height: 1.35;
-  padding: 10px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.forecast-rows {
+  display: grid;
+}
+
+#forecastDiffRow strong {
+  white-space: normal;
+  line-height: 1.25;
 }
 
 .compact-heading {

@@ -110,7 +110,7 @@ async function loadDashboard() {
 }
 
 function renderAnalytics(snapshot, analytics) {
-  renderRecoveryAdvice(snapshot);
+  renderMonthlyForecast(snapshot);
   setText("#forecastMonth", moneyBase(snapshot.forecastMonthTotal));
   setText("#forecastMonthDisplay", moneyDisplay(snapshot.display?.forecastMonthTotal, snapshot.display?.currency));
 
@@ -224,30 +224,52 @@ function renderHeatmap(items, daysInMonth) {
   }).join("");
 }
 
-function renderRecoveryAdvice(snapshot) {
-  const advice = snapshot.recoveryAdvice;
-  const recovery = document.querySelector("#recoveryAdvice");
-  const planSummary = document.querySelector(".plan-summary");
-  if (!advice?.active) {
-    recovery.classList.add("hidden");
-    planSummary.classList.remove("hidden");
-    return;
+function renderMonthlyForecast(snapshot) {
+  const forecast = Number(snapshot.forecastMonthTotal ?? 0);
+  const monthlyBudget = Number(snapshot.monthlyBudget ?? 0);
+  const spentSoFar = Number(snapshot.month ?? 0);
+  const daysInMonth = Number(snapshot.daysInMonth ?? 0) || 0;
+  const averageDailySpending = daysInMonth > 0 ? forecast / daysInMonth : 0;
+  const difference = forecast - monthlyBudget;
+  const displayCurrency = snapshot.display?.currency;
+  const showDisplay = Boolean(displayCurrency) && displayCurrency !== snapshot.baseCurrency;
+  const displayText = (value) => (showDisplay ? moneyDisplay(value, displayCurrency) : "");
+  const displayForecast = Number(snapshot.display?.forecastMonthTotal ?? 0);
+  const displayBudget = Number(snapshot.display?.monthlyBudget ?? 0);
+  const displayAverageDaily = daysInMonth > 0 ? displayForecast / daysInMonth : 0;
+  const perDay = t("monthlyForecast.perDay");
+
+  setText("#forecastAmount", moneyBase(forecast));
+  setText("#forecastAmountDisplay", displayText(displayForecast));
+  setText("#forecastExplanation", t("monthlyForecast.explanation", { spentSoFar: moneyBase(spentSoFar) }));
+
+  setText("#forecastBudget", moneyBase(monthlyBudget));
+  setText("#forecastBudgetDisplay", displayText(displayBudget));
+
+  setText("#forecastValue", moneyBase(forecast));
+  setText("#forecastValueDisplay", displayText(displayForecast));
+
+  const diffRow = document.querySelector("#forecastDiffRow");
+  diffRow.classList.remove("good", "bad", "neutral");
+  const roundedDifference = Math.round(difference * 100) / 100;
+  if (roundedDifference > 0) {
+    diffRow.classList.add("bad");
+    setText("#forecastDiff", t("monthlyForecast.aboveBudget", { amount: moneyBase(difference) }));
+  } else if (roundedDifference < 0) {
+    diffRow.classList.add("good");
+    setText("#forecastDiff", t("monthlyForecast.withinBudgetWithLeft", { amount: moneyBase(Math.abs(difference)) }));
+  } else {
+    diffRow.classList.add("neutral");
+    setText("#forecastDiff", t("monthlyForecast.withinBudget"));
   }
-  planSummary.classList.add("hidden");
-  recovery.classList.remove("hidden");
-  recovery.dataset.state = advice.state;
-  setText("#recoveryBadge", advice.state === "danger" ? t("budgetAdvice.dangerBadge") : t("budgetAdvice.warnBadge"));
-  setText("#recoveryRequiredPerDay", `${moneyBase(advice.requiredPerDay)}/${t("dashboard.day")}`);
-  setText("#recoveryRequiredPerDayDisplay", `${moneyDisplay(advice.display?.requiredPerDay, advice.display?.currency)}/${t("dashboard.day")}`);
-  setText("#recoveryMicroAdvice", advice.state === "danger" ? t("budgetAdvice.dangerText", { amount: moneyBase(advice.requiredPerDay) }) : t("budgetAdvice.warnText", { amount: moneyBase(advice.requiredPerDay) }));
-  setText("#recoveryMonthNow", `${moneyBase(snapshot.month)} / ${moneyBase(snapshot.monthlyBudget)}`);
-  setText("#recoveryMonthNowDisplay", `${moneyDisplay(snapshot.display?.month, snapshot.display?.currency)} / ${moneyDisplay(snapshot.display?.monthlyBudget, snapshot.display?.currency)}`);
-  setText("#recoveryForecast", moneyBase(snapshot.forecastMonthTotal));
-  setText("#recoveryForecastDisplay", moneyDisplay(snapshot.display?.forecastMonthTotal, snapshot.display?.currency));
-  setText("#recoveryOverBudget", `${currentLanguage === "ru" ? "на " : ""}${moneyBase(advice.forecastOverBudget)}`);
-  setText("#recoveryOverBudgetDisplay", moneyDisplay(advice.display?.forecastOverBudget, advice.display?.currency));
-  setText("#recoveryToday", `${moneyBase(snapshot.today)} / ${moneyBase(snapshot.dayPlanLimit ?? snapshot.dailyPlanLimit ?? 0)}`);
-  setText("#recoveryTodayDisplay", `${moneyDisplay(snapshot.display?.today, snapshot.display?.currency)} / ${moneyDisplay(snapshot.display?.dayPlanLimit, snapshot.display?.currency)}`);
+  setText("#forecastDiffDisplay", displayText(Math.abs(displayForecast - displayBudget)));
+
+  setText("#forecastAvgPace", `${moneyBase(averageDailySpending)}${perDay}`);
+  setText("#forecastAvgPaceDisplay", showDisplay ? `${moneyDisplay(displayAverageDaily, displayCurrency)}${perDay}` : "");
+
+  const hasBudget = Number.isFinite(monthlyBudget) && monthlyBudget > 0;
+  document.querySelector("#forecastBudgetRow").classList.toggle("hidden", !hasBudget);
+  document.querySelector("#forecastDiffRow").classList.toggle("hidden", !hasBudget);
 }
 
 async function loadHistory() {
