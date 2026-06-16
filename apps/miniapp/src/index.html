@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Money Flow</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/styles.css?v=20260605-card-match" />
+    <link rel="stylesheet" href="/styles.css?v=20260616-forecast" />
   </head>
   <body data-theme="light">
     <main class="shell">
@@ -67,35 +67,36 @@
           </div>
         </section>
 
-        <section class="recovery-advice hidden" id="recoveryAdvice" aria-label="Return to budget">
-          <div class="recovery-head">
-            <h2 data-i18n="budgetAdvice.title">Вернуться в бюджет</h2>
-            <span id="recoveryBadge">...</span>
+        <section class="monthly-forecast" id="monthlyForecast" aria-label="Monthly forecast">
+          <div class="monthly-forecast__head">
+            <h2 data-i18n="monthlyForecast.title">Прогноз месяца</h2>
+            <span class="monthly-forecast__subtitle" data-i18n="monthlyForecast.subtitle">Если продолжишь тратить в текущем темпе:</span>
           </div>
-          <div class="recovery-body">
-            <span data-i18n="budgetAdvice.goal">Чтобы уложиться в бюджет:</span>
-            <strong id="recoveryRequiredPerDay">...</strong>
-            <em id="recoveryRequiredPerDayDisplay"></em>
-            <div class="micro-advice" id="recoveryMicroAdvice">...</div>
-            <div class="plan-row">
-              <span data-i18n="budgetAdvice.monthNow">Месяц сейчас</span>
-              <strong id="recoveryMonthNow">...</strong>
-              <em id="recoveryMonthNowDisplay"></em>
-            </div>
-            <div class="plan-row">
-              <span data-i18n="budgetAdvice.forecast">Прогноз сейчас</span>
-              <strong id="recoveryForecast">...</strong>
-              <em id="recoveryForecastDisplay"></em>
-            </div>
-            <div class="plan-row">
-              <span data-i18n="budgetAdvice.overBudget">Выше бюджета</span>
-              <strong id="recoveryOverBudget">...</strong>
-              <em id="recoveryOverBudgetDisplay"></em>
-            </div>
-            <div class="plan-row">
-              <span data-i18n="budgetAdvice.today">Сегодня</span>
-              <strong id="recoveryToday">...</strong>
-              <em id="recoveryTodayDisplay"></em>
+          <div class="monthly-forecast__body">
+            <strong class="monthly-forecast__amount" id="forecastAmount">…</strong>
+            <em class="monthly-forecast__amount-display" id="forecastAmountDisplay"></em>
+            <p class="monthly-forecast__explanation" id="forecastExplanation"></p>
+            <div class="forecast-rows">
+              <div class="plan-row" id="forecastBudgetRow">
+                <span data-i18n="monthlyForecast.monthlyBudget">Бюджет месяца</span>
+                <strong id="forecastBudget">…</strong>
+                <em id="forecastBudgetDisplay"></em>
+              </div>
+              <div class="plan-row">
+                <span data-i18n="monthlyForecast.forecast">Прогноз</span>
+                <strong id="forecastValue">…</strong>
+                <em id="forecastValueDisplay"></em>
+              </div>
+              <div class="plan-row" id="forecastDiffRow">
+                <span data-i18n="monthlyForecast.difference">Отклонение</span>
+                <strong id="forecastDiff">…</strong>
+                <em id="forecastDiffDisplay"></em>
+              </div>
+              <div class="plan-row">
+                <span data-i18n="monthlyForecast.averagePace">Средний темп</span>
+                <strong id="forecastAvgPace">…</strong>
+                <em id="forecastAvgPaceDisplay"></em>
+              </div>
             </div>
           </div>
         </section>

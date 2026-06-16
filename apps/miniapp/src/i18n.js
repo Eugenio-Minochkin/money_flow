@@ -145,7 +145,18 @@ export const translations = {
     "budgetAdvice.warnBadge": "режим восстановления",
     "budgetAdvice.dangerBadge": "эконом-режим",
     "budgetAdvice.warnText": "Сегодня лучше оставить запас: цель — до {amount}.",
-    "budgetAdvice.dangerText": "Сегодня лучше остановиться. Завтра цель — до {amount} и без необязательных покупок."
+    "budgetAdvice.dangerText": "Сегодня лучше остановиться. Завтра цель — до {amount} и без необязательных покупок.",
+    "monthlyForecast.title": "Прогноз месяца",
+    "monthlyForecast.subtitle": "Если продолжишь тратить в текущем темпе:",
+    "monthlyForecast.explanation": "Сейчас потрачено {spentSoFar}. Прогноз считается по среднему расходу за прошедшие дни месяца.",
+    "monthlyForecast.monthlyBudget": "Бюджет месяца",
+    "monthlyForecast.forecast": "Прогноз",
+    "monthlyForecast.difference": "Отклонение",
+    "monthlyForecast.averagePace": "Средний темп",
+    "monthlyForecast.aboveBudget": "Выше бюджета на {amount}",
+    "monthlyForecast.withinBudgetWithLeft": "В пределах бюджета, запас {amount}",
+    "monthlyForecast.withinBudget": "В пределах бюджета",
+    "monthlyForecast.perDay": "/день"
   },
   en: {
     "actions.add": "Add",
@@ -293,7 +304,18 @@ export const translations = {
     "budgetAdvice.warnBadge": "recovery mode",
     "budgetAdvice.dangerBadge": "economy mode",
     "budgetAdvice.warnText": "Better keep a buffer today: target up to {amount}.",
-    "budgetAdvice.dangerText": "Better stop for today. Tomorrow target up to {amount}, no optional purchases."
+    "budgetAdvice.dangerText": "Better stop for today. Tomorrow target up to {amount}, no optional purchases.",
+    "monthlyForecast.title": "Monthly forecast",
+    "monthlyForecast.subtitle": "If you keep spending at the current pace:",
+    "monthlyForecast.explanation": "You’ve spent {spentSoFar} so far. The forecast is based on your average daily spending this month.",
+    "monthlyForecast.monthlyBudget": "Monthly budget",
+    "monthlyForecast.forecast": "Forecast",
+    "monthlyForecast.difference": "Difference",
+    "monthlyForecast.averagePace": "Average pace",
+    "monthlyForecast.aboveBudget": "Above budget by {amount}",
+    "monthlyForecast.withinBudgetWithLeft": "Within budget, {amount} left",
+    "monthlyForecast.withinBudget": "Within budget",
+    "monthlyForecast.perDay": "/day"
   }
 };
 
