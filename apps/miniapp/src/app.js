@@ -909,9 +909,15 @@ function bindPlannedActions(container, items) {
       } catch (error) {
         button.disabled = false;
         button.textContent = originalLabel;
-        showToast(error.message === "planned_expense_already_paid"
+        const code = String(error.message || "");
+        const message = code === "planned_expense_already_paid"
           ? t("toast.plannedAlreadyPaid")
-          : (error.message || t("toast.paymentFailed")));
+          : code === "planned_expense_not_found"
+            ? t("toast.plannedNotFound")
+            : code === "internal_error" || !code
+              ? t("toast.paymentFailed")
+              : code;
+        showToast(message);
       }
     });
   });

@@ -893,6 +893,68 @@ test("paying an already-paid monthly occurrence rejects without creating an expe
   assert.ok(!queries.some((query) => String(query.sql).includes("INSERT INTO expenses")));
 });
 
+test("paying a monthly expense with a stale occurrence_date rejects as already_paid", async () => {
+  const queries = [];
+  const repo = createRepository({
+    async connect() {
+      return fakePayClient({
+        planned: {
+          id: "9",
+          user_id: "1",
+          amount: "500",
+          currency: "THB",
+          amount_base: "500",
+          description: "Сервер",
+          category_slug: "subscriptions",
+          tags: [],
+          recurrence: "monthly",
+          due_day: 6,
+          due_days: [6],
+          base_currency: "THB"
+        },
+        paidOccurrences: [{ occurrence_date: "2026-06-07", paid_key: "2026-06" }],
+        queries
+      });
+    }
+  }, { exchangeRates: fixedRates() });
+
+  await assert.rejects(
+    repo.payPlannedExpenseForTelegramUser(9, 100, new Date("2026-06-16T09:00:00+07:00")),
+    (error) => error.code === "already_paid"
+  );
+  assert.ok(!queries.some((query) => String(query.sql).includes("INSERT INTO expenses")));
+});
+
+test("paying a planned expense uses paid_key as the conflict arbiter", async () => {
+  const queries = [];
+  const repo = createRepository({
+    async connect() {
+      return fakePayClient({
+        planned: {
+          id: "5",
+          user_id: "1",
+          amount: "17000",
+          currency: "THB",
+          amount_base: "17000",
+          description: "сервер",
+          category_slug: "subscriptions",
+          tags: [],
+          recurrence: "monthly",
+          due_day: 6,
+          due_days: [6],
+          base_currency: "THB"
+        },
+        queries
+      });
+    }
+  }, { exchangeRates: fixedRates() });
+
+  await repo.payPlannedExpenseForTelegramUser(5, 100, new Date("2026-06-16T09:00:00+07:00"));
+  const paymentInsert = queries.find((query) => String(query.sql).includes("INSERT INTO planned_expense_payments"));
+  assert.match(String(paymentInsert.sql), /ON CONFLICT \(planned_expense_id, paid_key\)/);
+  assert.match(String(paymentInsert.sql), /occurrence_date = EXCLUDED\.occurrence_date/);
+});
+
 test("paying a not-found planned expense rejects with a not_found code", async () => {
   const repo = createRepository({
     async connect() {

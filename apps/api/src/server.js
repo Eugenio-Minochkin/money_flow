@@ -247,6 +247,14 @@ async function route(req, res) {
     } catch (error) {
       if (error.code === "not_found") return sendJson(res, 404, { error: "planned_expense_not_found" });
       if (error.code === "already_paid") return sendJson(res, 409, { error: "planned_expense_already_paid" });
+      console.error("[planned-pay] failed", {
+        plannedExpenseId: plannedPayMatch[1],
+        telegramUserId: auth.telegramUserId,
+        paidAt: body.paidAt,
+        code: error.code,
+        message: error.message,
+        stack: error.stack
+      });
       throw error;
     }
   }

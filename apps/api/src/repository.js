@@ -766,7 +766,7 @@ export function createRepository(pool, options = {}) {
           throw Object.assign(new Error("Planned expense not found"), { code: "not_found" });
         }
         const paidResult = await client.query(
-          `SELECT occurrence_date::text
+          `SELECT occurrence_date::text, paid_key
            FROM planned_expense_payments
            WHERE planned_expense_id = $1
              AND paid_month = $2
@@ -775,6 +775,12 @@ export function createRepository(pool, options = {}) {
         );
         const occurrenceDate = nextUnpaidOccurrenceDate(planned, paidAt, paidResult.rows.map((row) => row.occurrence_date));
         if (!occurrenceDate) {
+          throw Object.assign(new Error("Planned expense is already paid for this month"), { code: "already_paid" });
+        }
+
+        const paidKey = plannedPaymentKey(planned, occurrenceDate);
+        const existingPaidKeys = new Set(paidResult.rows.map((row) => row.paid_key).filter(Boolean));
+        if (existingPaidKeys.has(paidKey)) {
           throw Object.assign(new Error("Planned expense is already paid for this month"), { code: "already_paid" });
         }
 
@@ -805,18 +811,20 @@ export function createRepository(pool, options = {}) {
           ]
         );
         const expense = expenseResult.rows[0];
-        const paidKey = plannedPaymentKey(planned, occurrenceDate);
         await client.query(
           `INSERT INTO planned_expense_payments (planned_expense_id, expense_id, paid_month, paid_at, occurrence_date, paid_key)
            VALUES ($1, $2, $3, $4, $5, $6)
-           ON CONFLICT (planned_expense_id, occurrence_date)
-           DO UPDATE SET expense_id = EXCLUDED.expense_id, paid_at = EXCLUDED.paid_at, paid_key = EXCLUDED.paid_key`,
+           ON CONFLICT (planned_expense_id, paid_key)
+           DO UPDATE SET expense_id = EXCLUDED.expense_id, paid_at = EXCLUDED.paid_at, occurrence_date = EXCLUDED.occurrence_date`,
           [planned.id, expense.id, occurrenceMonth, paidAt, occurrenceDate, paidKey]
         );
         await client.query("COMMIT");
         return expense;
       } catch (error) {
         await client.query("ROLLBACK");
+        if (error.code === "23505") {
+          throw Object.assign(new Error("Planned expense is already paid for this month"), { code: "already_paid" });
+        }
         throw error;
       } finally {
         client.release();
