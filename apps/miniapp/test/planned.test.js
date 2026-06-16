@@ -95,6 +95,96 @@ test("keeps recurring planned item payable until all current month occurrences a
   });
 });
 
+test("monthly plan stays payable after its due day when nothing is paid", () => {
+  const now = new Date("2026-06-16T10:00:00+07:00");
+  const item = {
+    id: 1,
+    recurrence: "monthly",
+    due_day: 6,
+    due_days: [6],
+    amount: 17000,
+    currency: "THB",
+    paid_count: 0,
+    paid_occurrence_dates: []
+  };
+
+  const occurrences = buildPlannedOccurrences(item, now);
+  assert.equal(occurrences.length, 1);
+  assert.equal(occurrences[0].occurrence_date, "2026-06-06");
+  assert.equal(occurrences[0].paid, false);
+  assert.equal(isPlannedPaid(item, now), false);
+});
+
+test("monthly plan is paid only when the occurrence has a linked expense", () => {
+  const now = new Date("2026-06-16T10:00:00+07:00");
+  const paid = {
+    id: 1,
+    recurrence: "monthly",
+    due_day: 6,
+    due_days: [6],
+    amount: 17000,
+    currency: "THB",
+    paid_occurrence_dates: ["2026-06-06"],
+    paid_occurrences: { "2026-06-06": { expense_id: 42, paid_at: "2026-06-06T09:00:00Z" } }
+  };
+
+  assert.equal(isPlannedPaid(paid, now), true);
+});
+
+test("monthly plan is not paid when the payment record lacks a valid expense (broken state)", () => {
+  const now = new Date("2026-06-16T10:00:00+07:00");
+  const broken = {
+    id: 1,
+    recurrence: "monthly",
+    due_day: 6,
+    due_days: [6],
+    amount: 17000,
+    currency: "THB",
+    paid_occurrence_dates: ["2026-06-06"],
+    paid_occurrences: { "2026-06-06": { expense_id: null, paid_at: "2026-06-16T09:00:00Z" } }
+  };
+
+  const occurrences = buildPlannedOccurrences(broken, now);
+  assert.equal(occurrences[0].paid, false);
+  assert.equal(isPlannedPaid(broken, now), false);
+});
+
+test("twice-monthly plan reports honest 1/2 progress while partly paid", () => {
+  const now = new Date("2026-06-16T10:00:00+07:00");
+  const item = {
+    id: 1,
+    recurrence: "twice_monthly",
+    due_days: [4, 17],
+    amount: 2000,
+    currency: "THB",
+    paid_occurrence_dates: ["2026-06-04"],
+    paid_occurrences: { "2026-06-04": { expense_id: 7 } }
+  };
+
+  const occurrences = buildPlannedOccurrences(item, now);
+  assert.equal(occurrences.length, 2);
+  const paidCount = occurrences.filter((occurrence) => occurrence.paid).length;
+  assert.equal(paidCount, 1);
+  assert.equal(isPlannedPaid(item, now), false);
+});
+
+test("weekly plan stays payable while a past occurrence is unpaid", () => {
+  const now = new Date("2026-06-16T10:00:00+07:00");
+  const item = {
+    id: 1,
+    recurrence: "weekly",
+    weekday: 3,
+    amount: 1000,
+    currency: "THB",
+    paid_occurrence_dates: [],
+    paid_occurrences: {}
+  };
+
+  assert.equal(isPlannedPaid(item, now), false);
+  const next = nextUnpaidPlannedItem([item], now);
+  assert.equal(next.occurrence.occurrence_date, "2026-06-03");
+});
+
 test("calculates current month planned summary from active occurrences", () => {
   const summary = calculatePlannedMonthSummary([
     {

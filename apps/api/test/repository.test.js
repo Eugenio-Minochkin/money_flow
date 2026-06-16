@@ -789,7 +789,7 @@ test("paying weekly planned expenses records the nearest unpaid current-month oc
           }]
         };
       }
-      if (String(sql).includes("SELECT occurrence_date")) {
+      if (String(sql).includes("pep.occurrence_date")) {
         return { rows: [{ occurrence_date: "2026-06-03" }] };
       }
       if (String(sql).includes("INSERT INTO expenses")) {
@@ -1085,6 +1085,42 @@ test("listing planned expenses exposes current-month paid occurrence dates", asy
   const planned = await repo.listPlannedExpensesForTelegramUser(100);
 
   assert.deepEqual(planned[0].paid_occurrence_dates, ["2026-06-03"]);
+});
+
+test("listing planned expenses only counts payments backed by a matching expense", async () => {
+  let listSql = "";
+  const repo = createRepository(fakePool((sql) => {
+    const query = String(sql);
+    if (query.includes("planned_expense_payments")) {
+      listSql = query;
+      return {
+        rows: [{
+          id: "5",
+          amount: "1000",
+          currency: "THB",
+          amount_base: "1000",
+          description: "Сервер",
+          category_slug: "subscriptions",
+          recurrence: "monthly",
+          due_day: 6,
+          due_days: [6],
+          paid_count: 0,
+          paid_occurrence_dates: [],
+          paid_occurrences: {}
+        }]
+      };
+    }
+    return { rows: [] };
+  }));
+
+  const planned = await repo.listPlannedExpensesForTelegramUser(100);
+
+  assert.match(listSql, /JOIN expenses e ON e\.id = pep\.expense_id/);
+  assert.match(listSql, /e\.user_id = pe\.user_id/);
+  assert.match(listSql, /\(e\.spent_at \+ interval '7 hours'\)::date = pep\.occurrence_date/);
+  assert.match(listSql, /paid_occurrences/);
+  assert.equal(planned[0].paid_count, 0);
+  assert.deepEqual(planned[0].paid_occurrence_dates, []);
 });
 
 test("dashboard keeps unpaid twice-monthly occurrences in planned reserve", async () => {
@@ -1396,7 +1432,7 @@ function fakePayClient({ planned, paidOccurrences = [], queries = [] }) {
       if (query.includes("SELECT planned_expenses.*, users.base_currency")) {
         return { rows: [planned] };
       }
-      if (query.includes("SELECT occurrence_date")) {
+      if (query.includes("pep.occurrence_date")) {
         return { rows: paidOccurrences };
       }
       if (query.includes("INSERT INTO expenses")) {

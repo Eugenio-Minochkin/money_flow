@@ -123,16 +123,23 @@ export function buildPlannedOccurrences(item, now = new Date()) {
   }
 
   const paidDates = new Set(item.paid_occurrence_dates ?? item.paidOccurrences ?? []);
+  const paidMap = item.paid_occurrences && typeof item.paid_occurrences === "object" ? item.paid_occurrences : null;
   const legacyPaidCount = Math.min(Number(item.paid_count ?? (item.paid_month ? 1 : 0)), dates.length);
-  return dates.map((occurrenceDate, index) => ({
-    planned_payment_id: item.id,
-    occurrence_date: occurrenceDate,
-    amount: Number(item.amount ?? item.amount_base ?? 0),
-    currency: item.currency,
-    paid: paidDates.has(occurrenceDate) || (!paidDates.size && index < legacyPaidCount),
-    paid_at: item.paid_occurrences?.[occurrenceDate]?.paid_at ?? null,
-    expense_id: item.paid_occurrences?.[occurrenceDate]?.expense_id ?? null
-  }));
+  return dates.map((occurrenceDate, index) => {
+    const paidEntry = paidMap ? paidMap[occurrenceDate] : null;
+    const paid = paidMap
+      ? Boolean(paidEntry && paidEntry.expense_id)
+      : (paidDates.has(occurrenceDate) || (!paidDates.size && index < legacyPaidCount));
+    return {
+      planned_payment_id: item.id,
+      occurrence_date: occurrenceDate,
+      amount: Number(item.amount ?? item.amount_base ?? 0),
+      currency: item.currency,
+      paid,
+      paid_at: paidEntry?.paid_at ?? item.paid_occurrences?.[occurrenceDate]?.paid_at ?? null,
+      expense_id: paidEntry?.expense_id ?? item.paid_occurrences?.[occurrenceDate]?.expense_id ?? null
+    };
+  });
 }
 
 export function parseDueDays(value) {
@@ -189,10 +196,7 @@ function roundMoney(value) {
 }
 
 function paidOccurrenceCount(item, occurrences, now = new Date()) {
-  const paidDates = new Set(item.paid_occurrence_dates ?? item.paidOccurrences ?? []);
-  if (paidDates.size) return occurrences.filter((occurrence) => paidDates.has(occurrence.occurrence_date)).length;
-  const legacyPaid = item.paid_month === monthKey(now) ? 1 : 0;
-  return Math.min(Number(item.paid_count ?? legacyPaid), occurrences.length);
+  return occurrences.filter((occurrence) => occurrence.paid).length;
 }
 
 function occurrenceSortValue(occurrenceDate, todayKey) {

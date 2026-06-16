@@ -176,6 +176,23 @@ async function route(req, res) {
     if (auth.error) return sendJson(res, 400, { error: auth.error });
     const telegramUserId = auth.telegramUserId;
     const plannedExpenses = await repository.listPlannedExpensesForTelegramUser(telegramUserId);
+    if (process.env.DEBUG_PLANNED === "1") {
+      for (const item of plannedExpenses) {
+        console.log("[planned-debug]", {
+          id: item.id,
+          description: item.description,
+          recurrence: item.recurrence,
+          due_day: item.due_day,
+          due_days: item.due_days,
+          weekday: item.weekday,
+          due_date: item.due_date,
+          active: item.active,
+          paid_count: item.paid_count,
+          paid_occurrence_dates: item.paid_occurrence_dates,
+          paid_occurrences: item.paid_occurrences
+        });
+      }
+    }
     return sendJson(res, 200, { plannedExpenses });
   }
 

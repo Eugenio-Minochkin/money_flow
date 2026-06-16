@@ -234,6 +234,25 @@ WHERE pep.id = corrected.payment_id
   AND corrected.occ IS NOT NULL
   AND pep.occurrence_date IS DISTINCT FROM corrected.occ;
 
+-- Cleanup broken planned_expense_payments that would falsely mark a planned
+-- expense as paid: rows whose linked expense no longer exists or belongs to a
+-- different user than the planned expense. The expenses(expense_id) FK cascades
+-- deletes already, but these DELETEs are safe to re-run and guard against any
+-- rows left from older schema states. Payment rows whose expense.spent_at does
+-- not land on the occurrence day are intentionally kept (they represent a real
+-- expense that was simply recorded on a different day) and are filtered out at
+-- query time instead.
+DELETE FROM planned_expense_payments pep
+USING planned_expenses pe
+WHERE pep.planned_expense_id = pe.id
+  AND NOT EXISTS (SELECT 1 FROM expenses e WHERE e.id = pep.expense_id);
+
+DELETE FROM planned_expense_payments pep
+USING planned_expenses pe, expenses e
+WHERE pep.planned_expense_id = pe.id
+  AND pep.expense_id = e.id
+  AND e.user_id <> pe.user_id;
+
 CREATE TABLE IF NOT EXISTS app_events (
   id BIGSERIAL PRIMARY KEY,
   user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
