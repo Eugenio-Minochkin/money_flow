@@ -854,11 +854,117 @@ test("paying an overdue monthly planned expense records the expense on the occur
   const expenseInsert = queries.find((query) => String(query.sql).includes("INSERT INTO expenses"));
   const paymentInsert = queries.find((query) => String(query.sql).includes("INSERT INTO planned_expense_payments"));
 
-  assert.equal(new Date(expenseInsert.params[11]).toISOString(), "2026-06-05T17:00:00.000Z");
+  assert.equal(new Date(expenseInsert.params[11]).toISOString(), "2026-06-06T05:00:00.000Z");
   assert.equal(expenseInsert.params[6], "2026-06-06");
   assert.equal(paymentInsert.params[4], "2026-06-06");
   assert.equal(paymentInsert.params[3], paidAt);
   assert.equal(paymentInsert.params[2], "2026-06");
+});
+
+test("paying a same-day monthly planned expense records the expense at the click time", async () => {
+  const queries = [];
+  const repo = createRepository({
+    async connect() {
+      return fakePayClient({
+        planned: {
+          id: "5",
+          user_id: "1",
+          amount: "17000",
+          currency: "THB",
+          amount_base: "17000",
+          description: "сервер",
+          category_slug: "subscriptions",
+          tags: [],
+          recurrence: "monthly",
+          due_day: 16,
+          due_days: [16],
+          base_currency: "THB"
+        },
+        queries
+      });
+    }
+  }, { exchangeRates: fixedRates() });
+
+  const paidAt = new Date("2026-06-16T14:16:00+07:00");
+  await repo.payPlannedExpenseForTelegramUser(5, 100, paidAt);
+
+  const expenseInsert = queries.find((query) => String(query.sql).includes("INSERT INTO expenses"));
+  const paymentInsert = queries.find((query) => String(query.sql).includes("INSERT INTO planned_expense_payments"));
+
+  assert.equal(new Date(expenseInsert.params[11]).toISOString(), paidAt.toISOString());
+  assert.equal(expenseInsert.params[6], "2026-06-16");
+  assert.equal(paymentInsert.params[4], "2026-06-16");
+  assert.equal(paymentInsert.params[3], paidAt);
+});
+
+test("paying an overdue twice-monthly planned expense records the expense at local noon", async () => {
+  const queries = [];
+  const repo = createRepository({
+    async connect() {
+      return fakePayClient({
+        planned: {
+          id: "5",
+          user_id: "1",
+          amount: "2000",
+          currency: "THB",
+          amount_base: "2000",
+          description: "therapy",
+          category_slug: "health",
+          tags: [],
+          recurrence: "twice_monthly",
+          due_days: [4, 17],
+          base_currency: "THB"
+        },
+        queries
+      });
+    }
+  }, { exchangeRates: fixedRates() });
+
+  const paidAt = new Date("2026-06-16T14:16:00+07:00");
+  await repo.payPlannedExpenseForTelegramUser(5, 100, paidAt);
+
+  const expenseInsert = queries.find((query) => String(query.sql).includes("INSERT INTO expenses"));
+  const paymentInsert = queries.find((query) => String(query.sql).includes("INSERT INTO planned_expense_payments"));
+
+  assert.equal(new Date(expenseInsert.params[11]).toISOString(), "2026-06-04T05:00:00.000Z");
+  assert.equal(expenseInsert.params[6], "2026-06-04");
+  assert.equal(paymentInsert.params[4], "2026-06-04");
+  assert.equal(paymentInsert.params[3], paidAt);
+});
+
+test("paying an overdue weekly planned expense records the expense at local noon", async () => {
+  const queries = [];
+  const repo = createRepository({
+    async connect() {
+      return fakePayClient({
+        planned: {
+          id: "5",
+          user_id: "1",
+          amount: "1000",
+          currency: "THB",
+          amount_base: "1000",
+          description: "english",
+          category_slug: "education",
+          tags: [],
+          recurrence: "weekly",
+          weekday: 3,
+          base_currency: "THB"
+        },
+        queries
+      });
+    }
+  }, { exchangeRates: fixedRates() });
+
+  const paidAt = new Date("2026-06-16T14:16:00+07:00");
+  await repo.payPlannedExpenseForTelegramUser(5, 100, paidAt);
+
+  const expenseInsert = queries.find((query) => String(query.sql).includes("INSERT INTO expenses"));
+  const paymentInsert = queries.find((query) => String(query.sql).includes("INSERT INTO planned_expense_payments"));
+
+  assert.equal(new Date(expenseInsert.params[11]).toISOString(), "2026-06-03T05:00:00.000Z");
+  assert.equal(expenseInsert.params[6], "2026-06-03");
+  assert.equal(paymentInsert.params[4], "2026-06-03");
+  assert.equal(paymentInsert.params[3], paidAt);
 });
 
 test("paying an already-paid monthly occurrence rejects without creating an expense", async () => {
