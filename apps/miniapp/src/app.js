@@ -110,27 +110,7 @@ async function loadDashboard() {
 }
 
 function renderAnalytics(snapshot, analytics) {
-  renderMonthlyForecast(snapshot);
-  setText("#forecastMonth", moneyBase(snapshot.forecastMonthTotal));
-  setText("#forecastMonthDisplay", moneyDisplay(snapshot.display?.forecastMonthTotal, snapshot.display?.currency));
-
-  const deviation = Number(snapshot.planDeviation ?? 0);
-  const deviationRow = document.querySelector("#planDeviation").closest(".plan-row");
-  deviationRow.classList.toggle("good", deviation < 0);
-  deviationRow.classList.toggle("bad", deviation > 0);
-  deviationRow.classList.toggle("neutral", deviation === 0);
-  setText("#planDeviationLabel", deviation > 0 ? t("dashboard.overPlan") : deviation < 0 ? t("dashboard.underPlan") : t("dashboard.onPlan"));
-  setText("#planDeviation", deviation === 0 ? moneyBase(0) : `${currentLanguage === "ru" ? "на " : ""}${moneyBase(Math.abs(deviation))}`);
-  setText("#planDeviationDisplay", moneyDisplay(Math.abs(snapshot.display?.planDeviation ?? 0), snapshot.display?.currency));
-
-  setText("#todayLimit", `${moneyBase(snapshot.today)} / ${moneyBase(snapshot.dailyPlanLimit)}`);
-  setText("#todayLimitDisplay", `${moneyDisplay(snapshot.display?.today, snapshot.display?.currency)} / ${moneyDisplay(snapshot.display?.dailyPlanLimit, snapshot.display?.currency)}`);
-
-  const comparison = analytics.weekComparison ?? {};
-  const weekPrefix = Number(comparison.delta) > 0 ? "+" : "";
-  setText("#weekComparison", `${weekPrefix}${moneyBase(comparison.delta ?? 0)}`);
-  setText("#weekComparisonDisplay", moneyDisplaySigned(comparison.display?.delta, comparison.display?.currency));
-
+  renderMonthlyForecast(snapshot, analytics);
   renderOtherWarning(analytics.otherCategoryWarning);
   renderLargestExpenses(analytics);
   renderTopTags(analytics.topTags ?? []);
@@ -224,7 +204,7 @@ function renderHeatmap(items, daysInMonth) {
   }).join("");
 }
 
-function renderMonthlyForecast(snapshot) {
+function renderMonthlyForecast(snapshot, analytics) {
   const forecast = Number(snapshot.forecastMonthTotal ?? 0);
   const monthlyBudget = Number(snapshot.monthlyBudget ?? 0);
   const spentSoFar = Number(snapshot.month ?? 0);
@@ -246,9 +226,6 @@ function renderMonthlyForecast(snapshot) {
   setText("#forecastBudget", moneyBase(monthlyBudget));
   setText("#forecastBudgetDisplay", displayText(displayBudget));
 
-  setText("#forecastValue", moneyBase(forecast));
-  setText("#forecastValueDisplay", displayText(displayForecast));
-
   const diffRow = document.querySelector("#forecastDiffRow");
   diffRow.classList.remove("good", "bad", "neutral");
   const roundedDifference = Math.round(difference * 100) / 100;
@@ -266,6 +243,22 @@ function renderMonthlyForecast(snapshot) {
 
   setText("#forecastAvgPace", `${moneyBase(averageDailySpending)}${perDay}`);
   setText("#forecastAvgPaceDisplay", showDisplay ? `${moneyDisplay(displayAverageDaily, displayCurrency)}${perDay}` : "");
+
+  const weekComparison = analytics?.weekComparison ?? {};
+  const weekDelta = Number(weekComparison.delta ?? NaN);
+  const weekRow = document.querySelector("#forecastWeekRow");
+  weekRow.classList.remove("good", "bad", "neutral");
+  if (Number.isFinite(weekDelta)) {
+    if (weekDelta > 0) weekRow.classList.add("bad");
+    else if (weekDelta < 0) weekRow.classList.add("good");
+    else weekRow.classList.add("neutral");
+    setText("#forecastWeek", `${weekDelta > 0 ? "+" : ""}${moneyBase(weekDelta)}`);
+    setText("#forecastWeekDisplay", showDisplay ? moneyDisplaySigned(weekComparison.display?.delta, weekComparison.display?.currency) : "");
+  } else {
+    weekRow.classList.add("neutral");
+    setText("#forecastWeek", t("monthlyForecast.noData"));
+    setText("#forecastWeekDisplay", "");
+  }
 
   const hasBudget = Number.isFinite(monthlyBudget) && monthlyBudget > 0;
   document.querySelector("#forecastBudgetRow").classList.toggle("hidden", !hasBudget);

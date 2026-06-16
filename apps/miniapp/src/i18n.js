@@ -156,7 +156,9 @@ export const translations = {
     "monthlyForecast.aboveBudget": "Выше бюджета на {amount}",
     "monthlyForecast.withinBudgetWithLeft": "В пределах бюджета, запас {amount}",
     "monthlyForecast.withinBudget": "В пределах бюджета",
-    "monthlyForecast.perDay": "/день"
+    "monthlyForecast.perDay": "/день",
+    "monthlyForecast.weekVsPrevious": "Неделя vs прошлая",
+    "monthlyForecast.noData": "Нет данных"
   },
   en: {
     "actions.add": "Add",
@@ -315,7 +317,9 @@ export const translations = {
     "monthlyForecast.aboveBudget": "Above budget by {amount}",
     "monthlyForecast.withinBudgetWithLeft": "Within budget, {amount} left",
     "monthlyForecast.withinBudget": "Within budget",
-    "monthlyForecast.perDay": "/day"
+    "monthlyForecast.perDay": "/day",
+    "monthlyForecast.weekVsPrevious": "Week vs previous",
+    "monthlyForecast.noData": "No data"
   }
 };
 

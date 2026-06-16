@@ -136,7 +136,7 @@ test("dashboard uses compact header, inbox before month plan, and bottom navigat
   assert.doesNotMatch(html, /class="quick-actions"/);
   assert.doesNotMatch(html, /id="themeToggleButton"/);
   assert.match(html, /id="heroStatus"/);
-  assert.ok(html.indexOf('id="dashboardInboxBlock"') < html.indexOf('class="plan-summary"'));
+  assert.ok(html.indexOf('id="dashboardInboxBlock"') < html.indexOf('id="monthlyForecast"'));
   assert.match(html, /class="bottom-tabs"/);
   assert.match(css, /\.bottom-tabs\s*{/);
   assert.match(css, /\.dashboard-card\s*{[^}]*grid-template-rows:/s);

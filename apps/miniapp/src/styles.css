@@ -277,7 +277,6 @@ h2 {
 }
 
 .dashboard-card,
-.plan-summary,
 .next-planned,
 .monthly-forecast,
 .section,
@@ -301,7 +300,6 @@ h2 {
 
 body[data-theme="dark"] .dashboard-card,
 body[data-theme="dark"] .section,
-body[data-theme="dark"] .plan-summary,
 body[data-theme="dark"] .next-planned,
 body[data-theme="dark"] .notice,
 body[data-theme="dark"] .inbox-block,
@@ -419,11 +417,6 @@ body[data-theme="dark"] .monthly-forecast {
   background: var(--green);
 }
 
-.plan-summary {
-  margin-top: 12px;
-  overflow: hidden;
-}
-
 .monthly-forecast {
   margin-top: 12px;
   overflow: hidden;
@@ -493,11 +486,6 @@ body[data-theme="dark"] .monthly-forecast {
   justify-content: space-between;
   gap: 12px;
   padding-bottom: 10px;
-}
-
-.plan-summary-body {
-  display: grid;
-  padding: 0 14px 4px;
 }
 
 .plan-progress {
