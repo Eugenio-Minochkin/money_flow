@@ -762,7 +762,9 @@ export function createRepository(pool, options = {}) {
           [plannedExpenseId, telegramUserId]
         );
         const planned = plannedResult.rows[0];
-        if (!planned) throw new Error("Planned expense not found");
+        if (!planned) {
+          throw Object.assign(new Error("Planned expense not found"), { code: "not_found" });
+        }
         const paidResult = await client.query(
           `SELECT occurrence_date::text
            FROM planned_expense_payments
@@ -772,9 +774,13 @@ export function createRepository(pool, options = {}) {
           [planned.id, monthKey(paidAt)]
         );
         const occurrenceDate = nextUnpaidOccurrenceDate(planned, paidAt, paidResult.rows.map((row) => row.occurrence_date));
-        if (!occurrenceDate) throw new Error("Planned expense is already paid for this month");
+        if (!occurrenceDate) {
+          throw Object.assign(new Error("Planned expense is already paid for this month"), { code: "already_paid" });
+        }
 
-        const moneyAmounts = await buildMoneyAmounts(exchangeRates, planned.amount, planned.currency, paidAt, planned);
+        const expenseDate = plannedLocalDate(occurrenceDate);
+        const occurrenceMonth = monthKey(expenseDate);
+        const moneyAmounts = await buildMoneyAmounts(exchangeRates, planned.amount, planned.currency, expenseDate, planned);
         const expenseResult = await client.query(
           `INSERT INTO expenses (
              user_id, draft_id, amount_original, currency_original, amount_base, base_currency,
@@ -789,12 +795,12 @@ export function createRepository(pool, options = {}) {
             moneyAmounts.amountBase,
             planned.base_currency,
             JSON.stringify(moneyAmounts.convertedAmounts),
-            paidAt.toISOString().slice(0, 10),
+            occurrenceDate,
             moneyAmounts.source,
             planned.description,
             planned.category_slug,
             planned.tags ?? [],
-            paidAt,
+            expenseDate,
             "planned"
           ]
         );
@@ -805,7 +811,7 @@ export function createRepository(pool, options = {}) {
            VALUES ($1, $2, $3, $4, $5, $6)
            ON CONFLICT (planned_expense_id, occurrence_date)
            DO UPDATE SET expense_id = EXCLUDED.expense_id, paid_at = EXCLUDED.paid_at, paid_key = EXCLUDED.paid_key`,
-          [planned.id, expense.id, monthKey(paidAt), paidAt, occurrenceDate, paidKey]
+          [planned.id, expense.id, occurrenceMonth, paidAt, occurrenceDate, paidKey]
         );
         await client.query("COMMIT");
         return expense;

@@ -897,10 +897,22 @@ function bindPlannedActions(container, items) {
   });
   container.querySelectorAll("[data-pay-planned]").forEach((button) => {
     button.addEventListener("click", async () => {
-      await api(`/api/planned-expenses/${button.dataset.payPlanned}/pay`, { method: "POST", body: { telegramUserId } });
-      await loadDashboard();
-      await loadHistory();
-      showToast(t("toast.paymentSaved"));
+      if (button.disabled) return;
+      const originalLabel = button.textContent;
+      button.disabled = true;
+      button.textContent = currentLanguage === "ru" ? "Оплачиваю…" : "Paying…";
+      try {
+        await api(`/api/planned-expenses/${button.dataset.payPlanned}/pay`, { method: "POST", body: { telegramUserId } });
+        await loadDashboard();
+        await loadHistory();
+        showToast(t("toast.paymentSaved"));
+      } catch (error) {
+        button.disabled = false;
+        button.textContent = originalLabel;
+        showToast(error.message === "planned_expense_already_paid"
+          ? t("toast.plannedAlreadyPaid")
+          : (error.message || t("toast.paymentFailed")));
+      }
     });
   });
   container.querySelectorAll("[data-hide-notice]").forEach((button) => {
