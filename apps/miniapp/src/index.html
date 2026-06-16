@@ -288,7 +288,13 @@
                 </select>
               </div>
             </label>
-            <input id="interfaceThemeInput" name="interfaceTheme" type="hidden" value="light" />
+            <label>
+              <span data-i18n="settings.interfaceTheme">Тема интерфейса</span>
+              <select id="interfaceThemeInput" name="interfaceTheme">
+                <option value="light" data-i18n="settings.themeLight">Светлая</option>
+                <option value="dark" data-i18n="settings.themeDark">Темная</option>
+              </select>
+            </label>
             <input id="usdThbRateInput" name="usdThbRate" type="hidden" value="32.65" />
             <div class="button-row">
               <button type="submit" data-i18n="actions.save">Сохранить</button>
