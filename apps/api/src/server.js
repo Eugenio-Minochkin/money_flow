@@ -144,8 +144,19 @@ async function route(req, res) {
   if (req.method === "GET" && url.pathname === "/api/expenses") {
     const auth = apiSecurity.resolveTelegramUserId(req, url);
     if (auth.error) return sendJson(res, 400, { error: auth.error });
+    const fromDate = url.searchParams.get("fromDate") ?? "";
+    const toDate = url.searchParams.get("toDate") ?? "";
+    if (fromDate && toDate) {
+      const fromMs = Date.parse(`${fromDate}T00:00:00`);
+      const toMs = Date.parse(`${toDate}T00:00:00`);
+      if (Number.isNaN(fromMs) || Number.isNaN(toMs) || new Date(fromMs) > new Date(toMs)) {
+        return sendJson(res, 400, { error: "invalid_date_range" });
+      }
+    }
     const expenses = await repository.listExpensesForTelegramUser(auth.telegramUserId, {
       period: url.searchParams.get("period") ?? "month",
+      fromDate,
+      toDate,
       search: url.searchParams.get("search") ?? ""
     });
     return sendJson(res, 200, { expenses });

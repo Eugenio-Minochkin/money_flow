@@ -1,6 +1,6 @@
 import { calculateBudgetSnapshot } from "../../../packages/shared/src/budget.js";
 import { SUPPORTED_CURRENCY_CODES, fallbackThbRate, normalizeCurrency } from "../../../packages/shared/src/currencies.js";
-import { localPeriodBounds } from "../../../packages/shared/src/time.js";
+import { localDateRangeBounds, localPeriodBounds } from "../../../packages/shared/src/time.js";
 import { createExchangeRateProvider } from "./exchangeRates.js";
 
 export function createRepository(pool, options = {}) {
@@ -593,16 +593,23 @@ export function createRepository(pool, options = {}) {
     async listExpensesForTelegramUser(telegramUserId, options = {}) {
       const user = await this.getUserByTelegramId(telegramUserId);
       if (!user) return [];
-      const bounds = localPeriodBounds(options.now ?? new Date(), options.period ?? "month");
+      const validPeriods = ["today", "yesterday", "last7", "week", "month", "previous_month"];
+      const period = validPeriods.includes(options.period) ? options.period : "month";
+      const fromDate = options.fromDate ? String(options.fromDate) : "";
+      const toDate = options.toDate ? String(options.toDate) : "";
+      const bounds = fromDate && toDate
+        ? (localDateRangeBounds(fromDate, toDate) ?? localPeriodBounds(options.now ?? new Date(), "month"))
+        : localPeriodBounds(options.now ?? new Date(), period);
       const search = String(options.search ?? "").trim();
       const params = [user.id, bounds.start, bounds.end];
       let searchSql = "";
       if (search) {
         params.push(`%${search.toLowerCase()}%`);
+        const searchParam = `$${params.length}`;
         searchSql = `AND (
-          lower(description) LIKE $4
-          OR lower(category_slug) LIKE $4
-          OR EXISTS (SELECT 1 FROM unnest(tags) AS tag WHERE lower(tag) LIKE $4)
+          lower(description) LIKE ${searchParam}
+          OR lower(category_slug) LIKE ${searchParam}
+          OR EXISTS (SELECT 1 FROM unnest(tags) AS tag WHERE lower(tag) LIKE ${searchParam})
         )`;
       }
       const result = await pool.query(
