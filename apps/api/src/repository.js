@@ -770,7 +770,7 @@ export function createRepository(pool, options = {}) {
           throw Object.assign(new Error("Planned expense is already paid for this month"), { code: "already_paid" });
         }
 
-        const expenseDate = plannedLocalDate(occurrenceDate);
+        const expenseDate = plannedExpenseSpentAt(occurrenceDate, paidAt);
         const occurrenceMonth = monthKey(expenseDate);
         const moneyAmounts = await buildMoneyAmounts(exchangeRates, planned.amount, planned.currency, expenseDate, planned);
         const expenseResult = await client.query(
@@ -1419,6 +1419,13 @@ function weeklyDueDatesThisMonth(now, weekday) {
 function plannedLocalDate(value) {
   const [year, month, day] = String(value).slice(0, 10).split("-").map(Number);
   return new Date(Date.UTC(year, month - 1, day) - 7 * 60 * 60_000);
+}
+
+function plannedExpenseSpentAt(occurrenceDate, paidAt = new Date()) {
+  const occurrenceKey = String(occurrenceDate).slice(0, 10);
+  if (occurrenceKey === localDayKey(paidAt)) return paidAt;
+  const [year, month, day] = occurrenceKey.split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, day, 12) - 7 * 60 * 60_000);
 }
 
 function plannedLocalDateForMonthDay(now, day) {
