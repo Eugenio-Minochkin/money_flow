@@ -11,6 +11,7 @@ import {
   formatMoney,
   moneyBase,
   moneyDisplay,
+  moneyDisplaySigned,
   setBaseCurrency
 } from "./formatters.js";
 import { expenseCountLabel, formatCustomRangeLabel, groupByDay, periodTotal } from "./history.js";
@@ -109,7 +110,7 @@ async function loadDashboard() {
 }
 
 function renderAnalytics(snapshot, analytics) {
-  renderMonthlyForecast(snapshot);
+  renderMonthlyForecast(snapshot, analytics);
   renderOtherWarning(analytics.otherCategoryWarning);
   renderLargestExpenses(analytics);
   renderTopTags(analytics.topTags ?? []);
@@ -203,7 +204,7 @@ function renderHeatmap(items, daysInMonth) {
   }).join("");
 }
 
-function renderMonthlyForecast(snapshot) {
+function renderMonthlyForecast(snapshot, analytics) {
   const forecast = Number(snapshot.forecastMonthTotal ?? 0);
   const monthlyBudget = Number(snapshot.monthlyBudget ?? 0);
   const spentSoFar = Number(snapshot.month ?? 0);
@@ -242,6 +243,22 @@ function renderMonthlyForecast(snapshot) {
 
   setText("#forecastAvgPace", `${moneyBase(averageDailySpending)}${perDay}`);
   setText("#forecastAvgPaceDisplay", showDisplay ? `${moneyDisplay(displayAverageDaily, displayCurrency)}${perDay}` : "");
+
+  const weekComparison = analytics?.weekComparison ?? {};
+  const weekDelta = Number(weekComparison.delta ?? NaN);
+  const weekRow = document.querySelector("#forecastWeekRow");
+  weekRow.classList.remove("good", "bad", "neutral");
+  if (Number.isFinite(weekDelta)) {
+    if (weekDelta > 0) weekRow.classList.add("bad");
+    else if (weekDelta < 0) weekRow.classList.add("good");
+    else weekRow.classList.add("neutral");
+    setText("#forecastWeek", `${weekDelta > 0 ? "+" : ""}${moneyBase(weekDelta)}`);
+    setText("#forecastWeekDisplay", showDisplay ? moneyDisplaySigned(weekComparison.display?.delta, weekComparison.display?.currency) : "");
+  } else {
+    weekRow.classList.add("neutral");
+    setText("#forecastWeek", t("monthlyForecast.noData"));
+    setText("#forecastWeekDisplay", "");
+  }
 
   const hasBudget = Number.isFinite(monthlyBudget) && monthlyBudget > 0;
   document.querySelector("#forecastBudgetRow").classList.toggle("hidden", !hasBudget);
