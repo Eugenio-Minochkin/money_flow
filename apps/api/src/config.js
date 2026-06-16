@@ -12,7 +12,10 @@ export const config = {
   requireTelegramInitData: process.env.REQUIRE_TELEGRAM_INIT_DATA === "true",
   rateLimitWindowMs: Number(process.env.RATE_LIMIT_WINDOW_MS ?? 60_000),
   rateLimitMax: Number(process.env.RATE_LIMIT_MAX ?? 120),
-  maxJsonBytes: Number(process.env.MAX_JSON_BYTES ?? 256_000)
+  maxJsonBytes: Number(process.env.MAX_JSON_BYTES ?? 256_000),
+  telegramJobGlobalConcurrency: Number(process.env.TELEGRAM_JOB_GLOBAL_CONCURRENCY ?? 3),
+  telegramJobUserQueueLimit: Number(process.env.TELEGRAM_JOB_USER_QUEUE_LIMIT ?? 2),
+  telegramJobTimeoutMs: Number(process.env.TELEGRAM_JOB_TIMEOUT_MS ?? 90_000)
 };
 
 export function requireRuntimeConfig() {
