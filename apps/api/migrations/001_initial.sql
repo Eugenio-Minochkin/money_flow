@@ -204,6 +204,36 @@ UPDATE expenses SET budget_impact = 'planned'
 WHERE id IN (SELECT expense_id FROM planned_expense_payments)
   AND budget_impact = 'regular';
 
+-- Recompute occurrence_date so it matches the actual due day of each payment.
+-- Older rows stored the click time as occurrence_date, which diverged from
+-- paid_key and made the (planned_expense_id, occurrence_date) unique index
+-- inconsistent with (planned_expense_id, paid_key).
+WITH corrected AS (
+  SELECT pep.id AS payment_id,
+         CASE
+           WHEN pe.recurrence IN ('weekly', 'twice_monthly') AND pep.paid_key LIKE '%:%'
+             THEN split_part(pep.paid_key, ':', 2)::date
+           WHEN pe.recurrence IN ('one_off', 'one_time') AND pe.due_date IS NOT NULL
+             THEN pe.due_date
+           WHEN pe.recurrence = 'monthly' AND pe.due_day IS NOT NULL
+             THEN make_date(
+                    split_part(pep.paid_month, '-', 1)::int,
+                    split_part(pep.paid_month, '-', 2)::int,
+                    LEAST(pe.due_day,
+                          EXTRACT(day FROM (date_trunc('month', to_date(pep.paid_month, 'YYYY-MM')) + interval '1 month - 1 day'))::int)
+                  )
+           ELSE pep.occurrence_date
+         END AS occ
+  FROM planned_expense_payments pep
+  JOIN planned_expenses pe ON pe.id = pep.planned_expense_id
+)
+UPDATE planned_expense_payments pep
+SET occurrence_date = corrected.occ
+FROM corrected
+WHERE pep.id = corrected.payment_id
+  AND corrected.occ IS NOT NULL
+  AND pep.occurrence_date IS DISTINCT FROM corrected.occ;
+
 CREATE TABLE IF NOT EXISTS app_events (
   id BIGSERIAL PRIMARY KEY,
   user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
