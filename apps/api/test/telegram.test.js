@@ -952,6 +952,98 @@ test("move to inbox callback returns a direct mini app draft link", async () => 
   assert.ok(keyboard.some((button) => button.web_app?.url === "http://localhost:3000?telegramUserId=100&draftId=42"));
 });
 
+test("queued second message uses localized text for ru and en users", async () => {
+  const cases = [
+    {
+      language: "ru",
+      expected: "Принял ещё одно сообщение. Сначала закончу предыдущий расход, потом обработаю это."
+    },
+    {
+      language: "en",
+      expected: "Got one more message. I’ll finish the previous expense first, then process this one."
+    }
+  ];
+
+  for (const { language, expected } of cases) {
+    const messages = [];
+    const parser = controlledExpenseParser();
+    const repo = fakeRepository();
+    repo.user = { id: 1, interface_language: language, base_currency: "THB", onboarding_step: "completed" };
+    const bot = createTelegramBot({
+      token: "test-token",
+      miniAppUrl: "http://localhost:3000",
+      repository: repo,
+      expenseParser: parser,
+      telegramClient: captureTelegramClient(messages),
+      awaitQueuedJobs: false,
+      telegramJobQueueOptions: {
+        globalConcurrency: 1,
+        userQueueLimit: 2,
+        jobTimeoutMs: 10_000
+      },
+      perfLogger: () => {}
+    });
+
+    await bot.handleUpdate(textUpdate("first expense", 100));
+    await bot.handleUpdate(textUpdate("second expense", 100));
+
+    assert.ok(messages.some((message) => message.text === expected));
+    await parser.waitForCalls(1);
+    parser.resolveNext();
+    await parser.waitForCalls(2);
+    parser.resolveNext();
+    await parser.waitForCalls(2);
+  }
+});
+
+test("full user queue uses localized text for ru and en users", async () => {
+  const cases = [
+    {
+      language: "ru",
+      expected: "Я уже разбираю несколько твоих сообщений. Чтобы не перепутать расходы, дождись результата и отправь следующее чуть позже."
+    },
+    {
+      language: "en",
+      expected: "I’m already processing several of your messages. To avoid mixing up expenses, please wait for the result and send the next one a bit later."
+    }
+  ];
+
+  for (const { language, expected } of cases) {
+    const messages = [];
+    const parser = controlledExpenseParser();
+    const repo = fakeRepository();
+    repo.user = { id: 1, interface_language: language, base_currency: "THB", onboarding_step: "completed" };
+    const bot = createTelegramBot({
+      token: "test-token",
+      miniAppUrl: "http://localhost:3000",
+      repository: repo,
+      expenseParser: parser,
+      telegramClient: captureTelegramClient(messages),
+      awaitQueuedJobs: false,
+      telegramJobQueueOptions: {
+        globalConcurrency: 1,
+        userQueueLimit: 2,
+        jobTimeoutMs: 10_000
+      },
+      perfLogger: () => {}
+    });
+
+    await bot.handleUpdate(textUpdate("first expense", 100));
+    await bot.handleUpdate(textUpdate("second expense", 100));
+    await bot.handleUpdate(textUpdate("third expense", 100));
+    await bot.handleUpdate(textUpdate("fourth expense", 100));
+
+    assert.ok(messages.some((message) => message.text === expected));
+    assert.equal(parser.callCount(), 1);
+    await parser.waitForCalls(1);
+    parser.resolveNext();
+    await parser.waitForCalls(2);
+    parser.resolveNext();
+    await parser.waitForCalls(3);
+    parser.resolveNext();
+  }
+});
+
 test("admin release preview is denied to non-admin users", async () => {
   const messages = [];
   const bot = createTelegramBot({
@@ -1241,6 +1333,62 @@ function captureTelegramClient(messages) {
       return { ok: true };
     }
   };
+}
+
+function textUpdate(text, telegramUserId) {
+  return {
+    message: {
+      chat: { id: 10 },
+      from: { id: telegramUserId, first_name: "M" },
+      text
+    }
+  };
+}
+
+function controlledExpenseParser() {
+  const pending = [];
+  let calls = 0;
+  let waiters = [];
+
+  return {
+    model: "test-model",
+    async parse() {
+      calls += 1;
+      notifyWaiters();
+      return new Promise((resolve) => {
+        pending.push(() => resolve({
+          expenses: [{
+            amount: 70,
+            currency: "THB",
+            description: "coffee",
+            category_slug: "food_cafe",
+            tags: [],
+            spent_at: "2026-06-02T10:00:00+07:00",
+            confidence: 0.9,
+            needs_review: false
+          }]
+        }));
+      });
+    },
+    resolveNext() {
+      pending.shift()?.();
+    },
+    callCount() {
+      return calls;
+    },
+    waitForCalls(expected) {
+      if (calls >= expected) return Promise.resolve();
+      return new Promise((resolve) => {
+        waiters.push({ expected, resolve });
+      });
+    }
+  };
+
+  function notifyWaiters() {
+    const ready = waiters.filter((waiter) => calls >= waiter.expected);
+    waiters = waiters.filter((waiter) => calls < waiter.expected);
+    for (const waiter of ready) waiter.resolve();
+  }
 }
 
 function fakeReleaseNotesService(options = {}) {
