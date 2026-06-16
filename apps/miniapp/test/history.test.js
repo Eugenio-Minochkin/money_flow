@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { groupByDay, periodTotal } from "../src/history.js";
+import { expenseCountLabel, formatCustomRangeLabel, groupByDay, periodTotal } from "../src/history.js";
 
 test("groups expenses by local calendar day and sums base amounts", () => {
   const groups = groupByDay([
@@ -26,4 +26,31 @@ test("periodTotal sums amount_base across all expenses", () => {
 
 test("periodTotal returns 0 for empty list", () => {
   assert.equal(periodTotal([]), 0);
+});
+
+test("expenseCountLabel applies Russian plural rules", () => {
+  assert.equal(expenseCountLabel(0, "ru"), "Расходов нет");
+  assert.equal(expenseCountLabel(1, "ru"), "1 расход");
+  assert.equal(expenseCountLabel(2, "ru"), "2 расхода");
+  assert.equal(expenseCountLabel(5, "ru"), "5 расходов");
+  assert.equal(expenseCountLabel(11, "ru"), "11 расходов");
+  assert.equal(expenseCountLabel(21, "ru"), "21 расход");
+  assert.equal(expenseCountLabel(22, "ru"), "22 расхода");
+  assert.equal(expenseCountLabel(25, "ru"), "25 расходов");
+});
+
+test("expenseCountLabel uses English singular and plural", () => {
+  assert.equal(expenseCountLabel(0, "en"), "No expenses");
+  assert.equal(expenseCountLabel(1, "en"), "1 expense");
+  assert.equal(expenseCountLabel(12, "en"), "12 expenses");
+});
+
+test("formatCustomRangeLabel formats a range and single day", () => {
+  assert.equal(formatCustomRangeLabel("2026-06-10", "2026-06-11", "ru"), "10 июня–11 июня");
+  assert.equal(formatCustomRangeLabel("2026-06-10", "2026-06-10", "ru"), "10 июня");
+});
+
+test("formatCustomRangeLabel returns empty for invalid dates", () => {
+  assert.equal(formatCustomRangeLabel("nope", "2026-06-11", "ru"), "");
+  assert.equal(formatCustomRangeLabel("", "", "ru"), "");
 });

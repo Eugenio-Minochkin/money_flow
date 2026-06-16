@@ -14,7 +14,7 @@ import {
   moneyDisplaySigned,
   setBaseCurrency
 } from "./formatters.js";
-import { groupByDay, periodTotal } from "./history.js";
+import { expenseCountLabel, formatCustomRangeLabel, groupByDay, periodTotal } from "./history.js";
 import { createTranslator } from "./i18n.js";
 import { inboxDraftDescription, inboxDraftTotal, shouldShowInboxOnDashboard, updateFirstInboxItemCategory } from "./inbox.js";
 import {
@@ -317,15 +317,60 @@ function updateHistoryFilterChips() {
   document.querySelectorAll("[data-history-period]").forEach((chip) => {
     chip.classList.toggle("active", chip.dataset.historyPeriod === historyFilterState.period);
   });
+  updateHistoryFilterCurrent();
+}
+
+function updateHistoryFilterCurrent() {
+  const current = document.querySelector("#historyFilterCurrent");
+  if (!current) return;
+  current.textContent = historyPeriodLabel();
+}
+
+function historyPeriodLabel() {
+  const period = historyFilterState.period;
+  if (period === "custom" && historyFilterState.fromDate && historyFilterState.toDate) {
+    return formatCustomRangeLabel(historyFilterState.fromDate, historyFilterState.toDate, currentLanguage);
+  }
+  const key = {
+    today: "history.today",
+    yesterday: "history.yesterday",
+    last7: "history.last7",
+    previous_month: "history.previousMonth",
+    month: "history.thisMonth"
+  }[period] ?? "history.thisMonth";
+  return t(key);
+}
+
+function historyPeriodTitle() {
+  const period = historyFilterState.period;
+  if (period === "custom" && historyFilterState.fromDate && historyFilterState.toDate) {
+    return t("history.total.custom", {
+      range: formatCustomRangeLabel(historyFilterState.fromDate, historyFilterState.toDate, currentLanguage)
+    });
+  }
+  const key = {
+    today: "history.total.today",
+    yesterday: "history.total.yesterday",
+    last7: "history.total.last7",
+    previous_month: "history.total.previousMonth",
+    month: "history.total.month"
+  }[period] ?? "history.total.month";
+  return t(key);
 }
 
 function renderHistoryPeriodSummary(expenses) {
   const summary = document.querySelector("#historyPeriodSummary");
   if (!summary) return;
   const total = periodTotal(expenses);
-  summary.textContent = expenses.length
-    ? t("history.periodTotal", { amount: moneyBase(total) })
-    : t("history.periodEmpty");
+  const count = expenses.length;
+  const title = historyPeriodTitle();
+  summary.innerHTML = `
+    <div class="history-summary-card">
+      <span class="history-summary-label">${escapeHtml(title)}</span>
+      <strong class="history-summary-amount">${escapeHtml(moneyBase(total))}</strong>
+      <small class="history-summary-meta">${escapeHtml(expenseCountLabel(count, currentLanguage))}</small>
+    </div>
+  `;
 }
 
 async function loadDraft(id, options = {}) {
@@ -487,7 +532,8 @@ function renderLatest(expenses) {
 function renderHistory(expenses) {
   const list = document.querySelector("#historyList");
   if (!expenses.length) {
-    list.innerHTML = `<div class="empty">${t("history.empty")}</div>`;
+    const searching = document.querySelector("#historySearch")?.value.trim();
+    list.innerHTML = `<div class="empty">${escapeHtml(searching ? t("history.empty") : t("history.periodEmpty"))}</div>`;
     return;
   }
 
