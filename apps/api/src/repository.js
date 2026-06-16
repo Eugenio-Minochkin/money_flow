@@ -643,25 +643,7 @@ export function createRepository(pool, options = {}) {
     },
 
     async listPlannedExpensesForTelegramUser(telegramUserId) {
-      const result = await pool.query(
-        `SELECT planned_expenses.*,
-                COALESCE(paid.paid_count, 0)::int AS paid_count,
-                COALESCE(paid.paid_occurrence_dates, '{}'::text[]) AS paid_occurrence_dates
-         FROM planned_expenses
-         JOIN users ON users.id = planned_expenses.user_id
-         LEFT JOIN (
-           SELECT planned_expense_id,
-                  COUNT(*)::int AS paid_count,
-                  array_agg(occurrence_date::text ORDER BY occurrence_date) FILTER (WHERE occurrence_date IS NOT NULL) AS paid_occurrence_dates
-           FROM planned_expense_payments
-           WHERE paid_month = $2
-           GROUP BY planned_expense_id
-         ) paid ON paid.planned_expense_id = planned_expenses.id
-         WHERE users.telegram_user_id = $1 AND planned_expenses.active = true
-         ORDER BY planned_expenses.id DESC`,
-        [telegramUserId, monthKey(new Date())]
-      );
-      return result.rows;
+      return listPlannedExpensesForTelegramUserAt(pool, telegramUserId, new Date());
     },
 
     async createPlannedExpense(telegramUserId, input) {
@@ -766,12 +748,16 @@ export function createRepository(pool, options = {}) {
           throw Object.assign(new Error("Planned expense not found"), { code: "not_found" });
         }
         const paidResult = await client.query(
-          `SELECT occurrence_date::text, paid_key
-           FROM planned_expense_payments
-           WHERE planned_expense_id = $1
-             AND paid_month = $2
-           ORDER BY occurrence_date`,
-          [planned.id, monthKey(paidAt)]
+          `SELECT pep.occurrence_date::text, pep.paid_key
+           FROM planned_expense_payments pep
+           JOIN expenses e ON e.id = pep.expense_id
+                           AND e.user_id = $3
+                           AND (pep.occurrence_date IS NULL
+                                OR (e.spent_at + interval '7 hours')::date = pep.occurrence_date)
+           WHERE pep.planned_expense_id = $1
+             AND pep.paid_month = $2
+           ORDER BY pep.occurrence_date`,
+          [planned.id, monthKey(paidAt), planned.user_id]
         );
         const occurrenceDate = nextUnpaidOccurrenceDate(planned, paidAt, paidResult.rows.map((row) => row.occurrence_date));
         if (!occurrenceDate) {
@@ -1156,16 +1142,27 @@ async function listPlannedExpensesForTelegramUserAt(pool, telegramUserId, now) {
   const result = await pool.query(
     `SELECT planned_expenses.*,
             COALESCE(paid.paid_count, 0)::int AS paid_count,
-            COALESCE(paid.paid_occurrence_dates, '{}'::text[]) AS paid_occurrence_dates
+            COALESCE(paid.paid_occurrence_dates, '{}'::text[]) AS paid_occurrence_dates,
+            COALESCE(paid.paid_occurrences, '{}'::jsonb) AS paid_occurrences
      FROM planned_expenses
      JOIN users ON users.id = planned_expenses.user_id
      LEFT JOIN (
-       SELECT planned_expense_id,
+       SELECT pep.planned_expense_id,
               COUNT(*)::int AS paid_count,
-              array_agg(occurrence_date::text ORDER BY occurrence_date) FILTER (WHERE occurrence_date IS NOT NULL) AS paid_occurrence_dates
-       FROM planned_expense_payments
-       WHERE paid_month = $2
-       GROUP BY planned_expense_id
+              array_agg(DISTINCT pep.occurrence_date::text ORDER BY pep.occurrence_date::text)
+                FILTER (WHERE pep.occurrence_date IS NOT NULL) AS paid_occurrence_dates,
+              COALESCE(jsonb_object_agg(
+                pep.occurrence_date::text,
+                jsonb_build_object('expense_id', pep.expense_id, 'paid_at', pep.paid_at)
+              ) FILTER (WHERE pep.occurrence_date IS NOT NULL), '{}'::jsonb) AS paid_occurrences
+       FROM planned_expense_payments pep
+       JOIN planned_expenses pe ON pe.id = pep.planned_expense_id
+       JOIN expenses e ON e.id = pep.expense_id
+                       AND e.user_id = pe.user_id
+                       AND (pep.occurrence_date IS NULL
+                            OR (e.spent_at + interval '7 hours')::date = pep.occurrence_date)
+       WHERE pep.paid_month = $2
+       GROUP BY pep.planned_expense_id
      ) paid ON paid.planned_expense_id = planned_expenses.id
      WHERE users.telegram_user_id = $1 AND planned_expenses.active = true
      ORDER BY planned_expenses.id DESC`,
