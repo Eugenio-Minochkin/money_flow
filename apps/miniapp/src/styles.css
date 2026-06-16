@@ -1337,3 +1337,73 @@ button:disabled {
     font-size: 22px;
   }
 }
+
+.history-filters {
+  margin-top: 12px;
+}
+
+.history-filter-title {
+  color: var(--muted);
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+
+.history-filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.history-filter-chip {
+  min-height: 32px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--ink);
+  font-size: 13px;
+  padding: 5px 12px;
+  border-radius: 16px;
+  cursor: pointer;
+}
+
+.history-filter-chip.active {
+  border-color: color-mix(in srgb, var(--accent) 36%, var(--line));
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.history-custom-range {
+  margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.history-custom-range.hidden {
+  display: none;
+}
+
+.history-custom-range label {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.history-custom-range input[type="date"] {
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--ink);
+  min-height: 34px;
+  padding: 4px 8px;
+}
+
+.history-custom-range .button-row {
+  margin-top: 0;
+}
+
+.history-period-summary {
+  margin-top: 12px;
+  color: var(--accent);
+  font-weight: 600;
+}

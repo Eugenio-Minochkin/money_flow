@@ -410,6 +410,90 @@ test("lists expenses for history", async () => {
   assert.doesNotMatch(queries.at(-1), /NOT EXISTS/);
 });
 
+test("lists expenses with last7 period and filters by spent_at", async () => {
+  const calls = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    calls.push({ sql: String(sql), params });
+    if (String(sql).startsWith("SELECT * FROM users")) {
+      return { rows: [{ id: "1", telegram_user_id: "100", base_currency: "THB" }] };
+    }
+    return { rows: [] };
+  }));
+
+  await repo.listExpensesForTelegramUser(100, {
+    period: "last7",
+    now: new Date("2026-06-16T15:00:00+07:00")
+  });
+
+  const listCall = calls.at(-1);
+  assert.match(listCall.sql, /spent_at >= \$2 AND spent_at < \$3/);
+  assert.doesNotMatch(listCall.sql, /created_at/);
+  assert.equal(listCall.params[1].toISOString(), "2026-06-09T17:00:00.000Z");
+  assert.equal(listCall.params[2].toISOString(), "2026-06-16T17:00:00.000Z");
+});
+
+test("listExpensesForTelegramUser with fromDate/toDate uses custom bounds", async () => {
+  const calls = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    calls.push({ sql: String(sql), params });
+    if (String(sql).startsWith("SELECT * FROM users")) {
+      return { rows: [{ id: "1", telegram_user_id: "100", base_currency: "THB" }] };
+    }
+    return { rows: [] };
+  }));
+
+  await repo.listExpensesForTelegramUser(100, {
+    fromDate: "2026-06-01",
+    toDate: "2026-06-15"
+  });
+
+  const listCall = calls.at(-1);
+  assert.equal(listCall.params[1].toISOString(), "2026-05-31T17:00:00.000Z");
+  assert.equal(listCall.params[2].toISOString(), "2026-06-15T17:00:00.000Z");
+});
+
+test("listExpensesForTelegramUser keeps search working with dates using dynamic placeholder", async () => {
+  const calls = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    calls.push({ sql: String(sql), params });
+    if (String(sql).startsWith("SELECT * FROM users")) {
+      return { rows: [{ id: "1", telegram_user_id: "100", base_currency: "THB" }] };
+    }
+    return { rows: [] };
+  }));
+
+  await repo.listExpensesForTelegramUser(100, {
+    fromDate: "2026-06-01",
+    toDate: "2026-06-15",
+    search: "coffee"
+  });
+
+  const listCall = calls.at(-1);
+  assert.match(listCall.sql, /LIKE \$4/);
+  assert.equal(listCall.params[3], "%coffee%");
+  assert.match(listCall.sql, /spent_at >= \$2 AND spent_at < \$3/);
+});
+
+test("listExpensesForTelegramUser falls back to month for unknown period", async () => {
+  const calls = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    calls.push({ sql: String(sql), params });
+    if (String(sql).startsWith("SELECT * FROM users")) {
+      return { rows: [{ id: "1", telegram_user_id: "100", base_currency: "THB" }] };
+    }
+    return { rows: [] };
+  }));
+
+  await repo.listExpensesForTelegramUser(100, {
+    period: "bogus",
+    now: new Date("2026-06-16T15:00:00+07:00")
+  });
+
+  const listCall = calls.at(-1);
+  assert.equal(listCall.params[1].toISOString(), "2026-05-31T17:00:00.000Z");
+  assert.equal(listCall.params[2].toISOString(), "2026-06-30T17:00:00.000Z");
+});
+
 test("returns top categories", async () => {
   const repo = createRepository(fakePool(() => ({
     rows: [{ category_slug: "food_cafe", total: 1200 }]

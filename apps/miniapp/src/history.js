@@ -9,3 +9,7 @@ export function groupByDay(expenses) {
   }
   return [...groups.values()];
 }
+
+export function periodTotal(expenses) {
+  return expenses.reduce((sum, expense) => sum + Number(expense.amount_base ?? 0), 0);
+}

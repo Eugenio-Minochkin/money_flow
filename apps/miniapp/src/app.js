@@ -14,7 +14,7 @@ import {
   moneyDisplaySigned,
   setBaseCurrency
 } from "./formatters.js";
-import { groupByDay } from "./history.js";
+import { groupByDay, periodTotal } from "./history.js";
 import { createTranslator } from "./i18n.js";
 import { inboxDraftDescription, inboxDraftTotal, shouldShowInboxOnDashboard, updateFirstInboxItemCategory } from "./inbox.js";
 import {
@@ -43,6 +43,7 @@ let expenseReturnTab = "dashboard";
 let historyState = [];
 let inboxState = [];
 let hiddenNoticeIds = new Set();
+let historyFilterState = { period: "month", fromDate: "", toDate: "" };
 let currentLanguage = "en";
 let translate = createTranslator(currentLanguage);
 let currentTheme = "light";
@@ -70,6 +71,11 @@ document.querySelector("#baseCurrencyInput").addEventListener("change", updateCu
 document.querySelector("#displayCurrencyInput").addEventListener("change", updateCurrencyFlags);
 document.querySelector("#interfaceLanguageInput").addEventListener("change", updateCurrencyFlags);
 document.querySelector("#openHistoryInboxButton")?.addEventListener("click", () => switchTab("history"));
+document.querySelectorAll("[data-history-period]").forEach((chip) => {
+  chip.addEventListener("click", () => selectHistoryPeriod(chip.dataset.historyPeriod));
+});
+document.querySelector("#applyHistoryPeriodButton")?.addEventListener("click", applyHistoryCustomRange);
+document.querySelector("#resetHistoryPeriodButton")?.addEventListener("click", resetHistoryPeriod);
 
 applyLanguage(currentLanguage);
 load().catch(showError);
@@ -245,8 +251,18 @@ function renderRecoveryAdvice(snapshot) {
 
 async function loadHistory() {
   const search = document.querySelector("#historySearch").value.trim();
+  const params = new URLSearchParams({
+    telegramUserId: String(telegramUserId),
+    search
+  });
+  if (historyFilterState.period === "custom" && historyFilterState.fromDate && historyFilterState.toDate) {
+    params.set("fromDate", historyFilterState.fromDate);
+    params.set("toDate", historyFilterState.toDate);
+  } else {
+    params.set("period", historyFilterState.period || "month");
+  }
   const [data, inbox] = await Promise.all([
-    api(`/api/expenses?telegramUserId=${encodeURIComponent(telegramUserId)}&period=month&search=${encodeURIComponent(search)}`),
+    api(`/api/expenses?${params.toString()}`),
     api(`/api/drafts?telegramUserId=${encodeURIComponent(telegramUserId)}&status=inbox`)
   ]);
   historyState = data.expenses ?? [];
@@ -254,6 +270,62 @@ async function loadHistory() {
   renderDashboardInboxDrafts(inboxState);
   renderInboxDrafts(inboxState);
   renderHistory(historyState);
+  renderHistoryPeriodSummary(historyState);
+}
+
+function selectHistoryPeriod(period) {
+  if (period === "custom") {
+    historyFilterState.period = "custom";
+    document.querySelector("#historyCustomRange")?.classList.remove("hidden");
+    updateHistoryFilterChips();
+    return;
+  }
+  historyFilterState = { period, fromDate: "", toDate: "" };
+  document.querySelector("#historyFromDate").value = "";
+  document.querySelector("#historyToDate").value = "";
+  document.querySelector("#historyCustomRange")?.classList.add("hidden");
+  updateHistoryFilterChips();
+  loadHistory().catch(showError);
+}
+
+function applyHistoryCustomRange() {
+  const fromDate = document.querySelector("#historyFromDate").value;
+  const toDate = document.querySelector("#historyToDate").value;
+  if (!fromDate || !toDate) {
+    showError(new Error(currentLanguage === "ru" ? "Выберите обе даты" : "Select both dates"));
+    return;
+  }
+  if (new Date(fromDate) > new Date(toDate)) {
+    showError(new Error(currentLanguage === "ru" ? "Дата «С» позже даты «По»" : "From date is after To date"));
+    return;
+  }
+  historyFilterState = { period: "custom", fromDate, toDate };
+  updateHistoryFilterChips();
+  loadHistory().catch(showError);
+}
+
+function resetHistoryPeriod() {
+  historyFilterState = { period: "month", fromDate: "", toDate: "" };
+  document.querySelector("#historyFromDate").value = "";
+  document.querySelector("#historyToDate").value = "";
+  document.querySelector("#historyCustomRange")?.classList.add("hidden");
+  updateHistoryFilterChips();
+  loadHistory().catch(showError);
+}
+
+function updateHistoryFilterChips() {
+  document.querySelectorAll("[data-history-period]").forEach((chip) => {
+    chip.classList.toggle("active", chip.dataset.historyPeriod === historyFilterState.period);
+  });
+}
+
+function renderHistoryPeriodSummary(expenses) {
+  const summary = document.querySelector("#historyPeriodSummary");
+  if (!summary) return;
+  const total = periodTotal(expenses);
+  summary.textContent = expenses.length
+    ? t("history.periodTotal", { amount: moneyBase(total) })
+    : t("history.periodEmpty");
 }
 
 async function loadDraft(id, options = {}) {
