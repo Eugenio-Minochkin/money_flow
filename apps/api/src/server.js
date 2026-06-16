@@ -237,12 +237,18 @@ async function route(req, res) {
     const body = await readJson(req);
     const auth = apiSecurity.resolveTelegramUserId(req, url, body);
     if (auth.error) return sendJson(res, 400, { error: auth.error });
-    const expense = await repository.payPlannedExpenseForTelegramUser(
-      Number(plannedPayMatch[1]),
-      auth.telegramUserId,
-      body.paidAt ? new Date(body.paidAt) : new Date()
-    );
-    return sendJson(res, 200, { expense });
+    try {
+      const expense = await repository.payPlannedExpenseForTelegramUser(
+        Number(plannedPayMatch[1]),
+        auth.telegramUserId,
+        body.paidAt ? new Date(body.paidAt) : new Date()
+      );
+      return sendJson(res, 200, { expense });
+    } catch (error) {
+      if (error.code === "not_found") return sendJson(res, 404, { error: "planned_expense_not_found" });
+      if (error.code === "already_paid") return sendJson(res, 409, { error: "planned_expense_already_paid" });
+      throw error;
+    }
   }
 
   const draftMatch = url.pathname.match(/^\/api\/drafts\/(\d+)(\/confirm)?$/);
