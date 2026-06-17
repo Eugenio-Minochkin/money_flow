@@ -258,16 +258,20 @@ async function route(req, res) {
       const expense = await repository.payPlannedExpenseForTelegramUser(
         Number(plannedPayMatch[1]),
         auth.telegramUserId,
-        body.paidAt ? new Date(body.paidAt) : new Date()
+        body.paidAt ? new Date(body.paidAt) : new Date(),
+        { occurrenceDate: body.occurrenceDate }
       );
       return sendJson(res, 200, { expense });
     } catch (error) {
       if (error.code === "not_found") return sendJson(res, 404, { error: "planned_expense_not_found" });
       if (error.code === "already_paid") return sendJson(res, 409, { error: "planned_expense_already_paid" });
+      if (error.code === "invalid_occurrence") return sendJson(res, 400, { error: "invalid_occurrence" });
+      if (error.code === "future_occurrence") return sendJson(res, 400, { error: "future_occurrence" });
       console.error("[planned-pay] failed", {
         plannedExpenseId: plannedPayMatch[1],
         telegramUserId: auth.telegramUserId,
         paidAt: body.paidAt,
+        occurrenceDate: body.occurrenceDate,
         code: error.code,
         message: error.message,
         stack: error.stack

@@ -62,6 +62,29 @@ export function nextUnpaidPlannedItem(items, now = new Date()) {
     .sort((left, right) => occurrenceSortValue(left.occurrence.occurrence_date, todayKey) - occurrenceSortValue(right.occurrence.occurrence_date, todayKey))[0] ?? null;
 }
 
+export function dueOrOverduePlannedOccurrences(items, now = new Date()) {
+  const todayKey = dateKey(now);
+  const entries = items
+    .filter((item) => item.active !== false)
+    .flatMap((item) => buildPlannedOccurrences(item, now)
+      .filter((occurrence) => !occurrence.paid && occurrence.occurrence_date <= todayKey)
+      .map((occurrence) => ({
+        item,
+        occurrence,
+        date: parseDateKey(occurrence.occurrence_date),
+        isToday: occurrence.occurrence_date === todayKey
+      })));
+  return entries.sort((left, right) => {
+    if (left.isToday !== right.isToday) return left.isToday ? 1 : -1;
+    const byDate = left.occurrence.occurrence_date.localeCompare(right.occurrence.occurrence_date);
+    if (byDate !== 0) return byDate;
+    const leftDesc = String(left.item.description ?? "");
+    const rightDesc = String(right.item.description ?? "");
+    if (leftDesc !== rightDesc) return leftDesc.localeCompare(rightDesc);
+    return String(left.item.id ?? "").localeCompare(String(right.item.id ?? ""));
+  });
+}
+
 export function nextPlannedDate(item, now = new Date()) {
   const todayKey = dateKey(now);
   const thisMonth = buildPlannedOccurrences(item, now)

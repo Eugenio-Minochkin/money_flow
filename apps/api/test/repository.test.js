@@ -1139,6 +1139,164 @@ test("paying a twice-monthly planned expense moves to the next occurrence when e
   assert.equal(paymentInsert.params[4], "2026-06-17");
 });
 
+test("paying with an explicit occurrenceDate creates the expense on that occurrence date", async () => {
+  const queries = [];
+  const repo = createRepository({
+    async connect() {
+      return fakePayClient({
+        planned: {
+          id: "5",
+          user_id: "1",
+          amount: "17000",
+          currency: "THB",
+          amount_base: "17000",
+          description: "сервер",
+          category_slug: "subscriptions",
+          tags: [],
+          recurrence: "monthly",
+          due_day: 6,
+          due_days: [6],
+          base_currency: "THB"
+        },
+        queries
+      });
+    }
+  }, { exchangeRates: fixedRates() });
+
+  await repo.payPlannedExpenseForTelegramUser(5, 100, new Date("2026-06-16T09:00:00+07:00"), { occurrenceDate: "2026-06-06" });
+
+  const expenseInsert = queries.find((query) => String(query.sql).includes("INSERT INTO expenses"));
+  const paymentInsert = queries.find((query) => String(query.sql).includes("INSERT INTO planned_expense_payments"));
+
+  assert.equal(expenseInsert.params[6], "2026-06-06");
+  assert.equal(new Date(expenseInsert.params[11]).toISOString(), "2026-06-06T05:00:00.000Z");
+  assert.equal(paymentInsert.params[4], "2026-06-06");
+});
+
+test("paying with occurrenceDate does not pay a different occurrence", async () => {
+  const queries = [];
+  const repo = createRepository({
+    async connect() {
+      return fakePayClient({
+        planned: {
+          id: "5",
+          user_id: "1",
+          amount: "2000",
+          currency: "THB",
+          amount_base: "2000",
+          description: "therapy",
+          category_slug: "health",
+          tags: [],
+          recurrence: "twice_monthly",
+          due_days: [4, 17],
+          base_currency: "THB"
+        },
+        queries
+      });
+    }
+  }, { exchangeRates: fixedRates() });
+
+  await repo.payPlannedExpenseForTelegramUser(5, 100, new Date("2026-06-18T09:00:00+07:00"), { occurrenceDate: "2026-06-17" });
+
+  const paymentInsert = queries.find((query) => String(query.sql).includes("INSERT INTO planned_expense_payments"));
+  assert.equal(paymentInsert.params[4], "2026-06-17");
+  assert.equal(paymentInsert.params[5], "2026-06:2026-06-17");
+});
+
+test("paying the same occurrence twice with occurrenceDate rejects as already_paid", async () => {
+  const queries = [];
+  const repo = createRepository({
+    async connect() {
+      return fakePayClient({
+        planned: {
+          id: "5",
+          user_id: "1",
+          amount: "17000",
+          currency: "THB",
+          amount_base: "17000",
+          description: "сервер",
+          category_slug: "subscriptions",
+          tags: [],
+          recurrence: "monthly",
+          due_day: 6,
+          due_days: [6],
+          base_currency: "THB"
+        },
+        paidOccurrences: [{ occurrence_date: "2026-06-06", paid_key: "2026-06" }],
+        queries
+      });
+    }
+  }, { exchangeRates: fixedRates() });
+
+  await assert.rejects(
+    repo.payPlannedExpenseForTelegramUser(5, 100, new Date("2026-06-16T09:00:00+07:00"), { occurrenceDate: "2026-06-06" }),
+    (error) => error.code === "already_paid"
+  );
+  assert.ok(!queries.some((query) => String(query.sql).includes("INSERT INTO expenses")));
+});
+
+test("paying with occurrenceDate in the future rejects with future_occurrence", async () => {
+  const queries = [];
+  const repo = createRepository({
+    async connect() {
+      return fakePayClient({
+        planned: {
+          id: "5",
+          user_id: "1",
+          amount: "17000",
+          currency: "THB",
+          amount_base: "17000",
+          description: "сервер",
+          category_slug: "subscriptions",
+          tags: [],
+          recurrence: "monthly",
+          due_day: 25,
+          due_days: [25],
+          base_currency: "THB"
+        },
+        queries
+      });
+    }
+  }, { exchangeRates: fixedRates() });
+
+  await assert.rejects(
+    repo.payPlannedExpenseForTelegramUser(5, 100, new Date("2026-06-16T09:00:00+07:00"), { occurrenceDate: "2026-06-25" }),
+    (error) => error.code === "future_occurrence"
+  );
+  assert.ok(!queries.some((query) => String(query.sql).includes("INSERT INTO expenses")));
+});
+
+test("paying with an invalid occurrenceDate rejects with invalid_occurrence", async () => {
+  const queries = [];
+  const repo = createRepository({
+    async connect() {
+      return fakePayClient({
+        planned: {
+          id: "5",
+          user_id: "1",
+          amount: "17000",
+          currency: "THB",
+          amount_base: "17000",
+          description: "сервер",
+          category_slug: "subscriptions",
+          tags: [],
+          recurrence: "monthly",
+          due_day: 6,
+          due_days: [6],
+          base_currency: "THB"
+        },
+        queries
+      });
+    }
+  }, { exchangeRates: fixedRates() });
+
+  await assert.rejects(
+    repo.payPlannedExpenseForTelegramUser(5, 100, new Date("2026-06-16T09:00:00+07:00"), { occurrenceDate: "2026-06-13" }),
+    (error) => error.code === "invalid_occurrence"
+  );
+  assert.ok(!queries.some((query) => String(query.sql).includes("INSERT INTO expenses")));
+});
+
 test("paying a weekly planned expense pays the earliest overdue occurrence", async () => {
   const queries = [];
   const repo = createRepository({
