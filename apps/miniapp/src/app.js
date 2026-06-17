@@ -21,9 +21,8 @@ import {
   buildPlannedOccurrences,
   calculatePlannedMonthSummary,
   defaultPlannedCurrency,
-  isDueToday,
+  dueOrOverduePlannedOccurrences,
   isPlannedPaid,
-  nextUnpaidPlannedItem,
   parseDueDays,
   recurrenceLabel as plannedRecurrenceLabel,
   weekdayOptions as plannedWeekdayOptions
@@ -42,7 +41,6 @@ let draftReturnTab = "dashboard";
 let expenseReturnTab = "dashboard";
 let historyState = [];
 let inboxState = [];
-let hiddenNoticeIds = new Set();
 let historyFilterState = { period: "month", fromDate: "", toDate: "" };
 let currentLanguage = "en";
 let translate = createTranslator(currentLanguage);
@@ -77,6 +75,12 @@ document.querySelectorAll("[data-history-period]").forEach((chip) => {
 });
 document.querySelector("#applyHistoryPeriodButton")?.addEventListener("click", applyHistoryCustomRange);
 document.querySelector("#resetHistoryPeriodButton")?.addEventListener("click", resetHistoryPeriod);
+document.addEventListener("click", (event) => {
+  const popover = document.querySelector("#plannedDuePopover");
+  if (!popover || popover.classList.contains("hidden")) return;
+  if (popover.contains(event.target) || event.target.closest("[data-planned-menu]")) return;
+  popover.classList.add("hidden");
+});
 
 applyLanguage(currentLanguage);
 load().catch(showError);
@@ -101,7 +105,6 @@ async function loadDashboard() {
   renderPlannedForm();
   renderSnapshot(data.snapshot);
   renderPlannedNotice(data.plannedExpenses ?? []);
-  renderNextPlannedSummary(data.plannedExpenses ?? []);
   renderAnalytics(data.snapshot, data.analytics ?? {});
   renderTopCategories(data.topCategories ?? [], data.snapshot.month);
   renderPlannedMonthSummary(data.plannedExpenses ?? []);
@@ -132,26 +135,6 @@ function renderOtherWarning(warning) {
     </div>
     <div class="expense-meta">${currentLanguage === "ru" ? "Стоит разобрать эти траты, чтобы статистика была полезнее." : "Review these expenses to make the stats more useful."}</div>
   `;
-}
-
-function renderNextPlannedSummary(items) {
-  const block = document.querySelector("#nextPlannedSummary");
-  const next = nextUnpaidPlannedItem(items);
-  if (!next) {
-    block.classList.add("hidden");
-    block.innerHTML = "";
-    return;
-  }
-  block.classList.remove("hidden");
-  block.innerHTML = `
-    <div>
-      <span>${t("plan.nextPlanned")}</span>
-      <strong>${escapeHtml(next.item.description)}</strong>
-      <em>${formatDateOnly(next.date, currentLanguage)} · ${moneyBase(next.item.amount_base ?? next.item.amount)}</em>
-    </div>
-    <button type="button" class="ghost-button" data-open-plan>Plan</button>
-  `;
-  block.querySelector("[data-open-plan]").addEventListener("click", () => switchTab("plan"));
 }
 
 function renderLargestExpenses(analytics) {
@@ -496,26 +479,71 @@ function plannedSummaryRowHtml(label, parts) {
 
 function renderPlannedNotice(items) {
   const notice = document.querySelector("#plannedNotice");
-  const due = items.find((item) => isDueToday(item) && hasUnpaidOccurrenceToday(item) && !hiddenNoticeIds.has(String(item.id)));
-  if (!due) {
+  const entries = dueOrOverduePlannedOccurrences(items);
+  if (!entries.length) {
     notice.classList.add("hidden");
     notice.innerHTML = "";
     return;
   }
   notice.classList.remove("hidden");
+  const hasToday = entries.some((entry) => entry.isToday);
+  const hasOverdue = entries.some((entry) => !entry.isToday);
+  const titleKey = hasToday && hasOverdue
+    ? "plan.paymentsDueTitle"
+    : hasOverdue ? "plan.overduePaymentsTitle" : "plan.paymentsDueTodayTitle";
+  const rows = entries.map(plannedDueRowHtml).join("");
   notice.innerHTML = `
-    <div class="notice-title">
-      <span>${t("plan.todayDue")}</span>
-      <strong>${moneyBase(due.amount_base ?? due.amount)}</strong>
-    </div>
-    <div class="expense-meta">${escapeHtml(due.description)} · ${escapeHtml(categoryLabel(due.category_slug, currentLanguage))}</div>
-    <div class="button-row">
-      <button type="button" data-pay-planned="${due.id}">${t("actions.pay")}</button>
-      <button type="button" class="ghost-button" data-hide-notice="${due.id}">${currentLanguage === "ru" ? "Позже" : "Later"}</button>
-      <button type="button" class="ghost-button" data-edit-planned="${due.id}">${t("actions.edit")}</button>
-    </div>
+    <div class="notice-title"><span>${t(titleKey)}</span></div>
+    <div class="planned-due-list">${rows}</div>
+    <div class="planned-due-popover hidden" id="plannedDuePopover" data-planned-popover></div>
   `;
   bindPlannedActions(notice, items);
+}
+
+function plannedDueRowHtml(entry) {
+  const { item, occurrence, isToday } = entry;
+  const dateLabel = isToday
+    ? t("plan.dueToday")
+    : t("plan.wasDue", { date: formatDateOnly(occurrence.occurrence_date, currentLanguage) });
+  const displayCurrency = item.display?.currency;
+  const displayAmount = item.display?.amount;
+  const payAttributes = `data-pay-planned="${escapeAttribute(item.id)}" data-occurrence-date="${escapeAttribute(occurrence.occurrence_date)}"`;
+  return `
+    <article class="planned-due-row" style="--category-color: ${categoryColor(item.category_slug)}">
+      <div class="planned-due-main">
+        <div class="planned-due-title">${escapeHtml(item.description)}</div>
+        <div class="planned-due-meta">
+          <span>${escapeHtml(dateLabel)}</span>
+          <em>${moneyDisplay(displayAmount, displayCurrency)}</em>
+        </div>
+      </div>
+      <div class="planned-due-actions">
+        <div class="planned-due-amount">${moneyBase(item.amount_base ?? item.amount)}</div>
+        <div class="button-row compact">
+          <button type="button" ${payAttributes}>${t("actions.pay")}</button>
+          <button type="button" class="ghost-button planned-due-menu" data-planned-menu="${escapeAttribute(item.id)}" aria-label="${escapeAttribute(t("actions.more"))}">⋯</button>
+        </div>
+      </div>
+    </article>
+  `;
+}
+
+function openPlannedDueMenu(item, anchor) {
+  const popover = document.querySelector("#plannedDuePopover");
+  if (!popover) return;
+  popover.innerHTML = `
+    <button type="button" data-edit-planned="${escapeAttribute(item.id)}">${t("actions.edit")}</button>
+    <button type="button" data-open-plan-tab>${t("actions.openPlan")}</button>
+  `;
+  popover.classList.remove("hidden");
+  popover.dataset.plannedId = item.id;
+  if (anchor) {
+    const rect = anchor.getBoundingClientRect();
+    const popoverWidth = 160;
+    const left = Math.min(rect.right, window.innerWidth - popoverWidth - 8);
+    popover.style.top = `${rect.bottom + 4}px`;
+    popover.style.left = `${Math.max(8, left)}px`;
+  }
 }
 
 function renderTopCategories(items, monthTotal) {
@@ -865,12 +893,6 @@ function renderPlannedExpenses(items) {
   bindPlannedActions(list, items);
 }
 
-function hasUnpaidOccurrenceToday(item) {
-  const now = new Date();
-  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-  return buildPlannedOccurrences(item).some((occurrence) => occurrence.occurrence_date === today && !occurrence.paid);
-}
-
 function plannedPaymentProgressLabel(item) {
   const occurrences = buildPlannedOccurrences(item);
   if (!occurrences.length) return "";
@@ -906,7 +928,9 @@ function bindPlannedActions(container, items) {
       button.disabled = true;
       button.textContent = currentLanguage === "ru" ? "Оплачиваю…" : "Paying…";
       try {
-        await api(`/api/planned-expenses/${button.dataset.payPlanned}/pay`, { method: "POST", body: { telegramUserId } });
+        const body = { telegramUserId };
+        if (button.dataset.occurrenceDate) body.occurrenceDate = button.dataset.occurrenceDate;
+        await api(`/api/planned-expenses/${button.dataset.payPlanned}/pay`, { method: "POST", body });
         await loadDashboard();
         await loadHistory();
         showToast(t("toast.paymentSaved"));
@@ -918,19 +942,49 @@ function bindPlannedActions(container, items) {
           ? t("toast.plannedAlreadyPaid")
           : code === "planned_expense_not_found"
             ? t("toast.plannedNotFound")
-            : code === "internal_error" || !code
-              ? t("toast.paymentFailed")
-              : code;
+            : code === "invalid_occurrence"
+              ? t("toast.plannedInvalidOccurrence")
+              : code === "future_occurrence"
+                ? t("toast.plannedFutureOccurrence")
+                : code === "internal_error" || !code
+                  ? t("toast.paymentFailed")
+                  : code;
         showToast(message);
       }
     });
   });
-  container.querySelectorAll("[data-hide-notice]").forEach((button) => {
-    button.addEventListener("click", () => {
-      hiddenNoticeIds.add(button.dataset.hideNotice);
-      renderPlannedNotice(dashboardState.plannedExpenses ?? []);
+  container.querySelectorAll("[data-planned-menu]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const item = items.find((planned) => String(planned.id) === button.dataset.plannedMenu);
+      if (!item) return;
+      const popover = document.querySelector("#plannedDuePopover");
+      if (popover && !popover.classList.contains("hidden") && popover.dataset.plannedId === String(item.id)) {
+        popover.classList.add("hidden");
+        return;
+      }
+      openPlannedDueMenu(item, button);
     });
   });
+  const popover = container.querySelector("#plannedDuePopover");
+  if (popover) {
+    popover.querySelectorAll("[data-edit-planned]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const item = items.find((planned) => String(planned.id) === button.dataset.editPlanned);
+        popover.classList.add("hidden");
+        switchTab("plan");
+        renderPlannedForm(item);
+        document.querySelector("#plannedForm").classList.remove("hidden");
+        document.querySelector("#plannedForm").scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+    });
+    popover.querySelectorAll("[data-open-plan-tab]").forEach((button) => {
+      button.addEventListener("click", () => {
+        popover.classList.add("hidden");
+        switchTab("plan");
+      });
+    });
+  }
 }
 
 function renderDraftEditor(draft) {

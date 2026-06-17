@@ -729,7 +729,7 @@ export function createRepository(pool, options = {}) {
       return result.rows[0] ?? null;
     },
 
-    async payPlannedExpenseForTelegramUser(plannedExpenseId, telegramUserId, paidAt = new Date()) {
+    async payPlannedExpenseForTelegramUser(plannedExpenseId, telegramUserId, paidAt = new Date(), options = {}) {
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
@@ -759,10 +759,11 @@ export function createRepository(pool, options = {}) {
            ORDER BY pep.occurrence_date`,
           [planned.id, monthKey(paidAt), planned.user_id]
         );
-        const occurrenceDate = nextUnpaidOccurrenceDate(planned, paidAt, paidResult.rows.map((row) => row.occurrence_date));
-        if (!occurrenceDate) {
-          throw Object.assign(new Error("Planned expense is already paid for this month"), { code: "already_paid" });
+        const requestedOccurrence = resolveOccurrenceDate(planned, paidAt, options.occurrenceDate, paidResult.rows);
+        if (requestedOccurrence.error) {
+          throw Object.assign(new Error(requestedOccurrence.error), { code: requestedOccurrence.code });
         }
+        const occurrenceDate = requestedOccurrence.value;
 
         const paidKey = plannedPaymentKey(planned, occurrenceDate);
         const existingPaidKeys = new Set(paidResult.rows.map((row) => row.paid_key).filter(Boolean));
@@ -1474,6 +1475,34 @@ function nextUnpaidOccurrenceDate(planned, now, paidOccurrenceDates = []) {
     .filter((date) => !paid.has(date));
   const today = localDayKey(now);
   return unpaid.filter((date) => date <= today).sort()[0] ?? unpaid.filter((date) => date > today).sort()[0] ?? null;
+}
+
+function resolveOccurrenceDate(planned, now, requested, paidRows = []) {
+  if (!requested) {
+    const fallback = nextUnpaidOccurrenceDate(planned, now, paidRows.map((row) => row.occurrence_date));
+    if (!fallback) return { error: "Planned expense is already paid for this month", code: "already_paid" };
+    return { value: fallback };
+  }
+  const normalized = normalizeOccurrenceKey(requested);
+  if (!normalized) return { error: "Invalid occurrence date", code: "invalid_occurrence" };
+  const dueDates = new Set(plannedDueDatesThisMonth(planned, now).map(localDayKey));
+  if (!dueDates.has(normalized)) return { error: "Invalid occurrence date", code: "invalid_occurrence" };
+  const today = localDayKey(now);
+  if (normalized > today) return { error: "Occurrence is in the future", code: "future_occurrence" };
+  const paidDates = new Set(paidRows.map((row) => String(row.occurrence_date ?? "").slice(0, 10)));
+  if (paidDates.has(normalized)) return { error: "Planned expense is already paid for this month", code: "already_paid" };
+  return { value: normalized };
+}
+
+function normalizeOccurrenceKey(value) {
+  const match = String(value).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!match) return null;
+  const [, year, month, day] = match;
+  const date = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)));
+  if (date.getUTCFullYear() !== Number(year) || date.getUTCMonth() !== Number(month) - 1 || date.getUTCDate() !== Number(day)) {
+    return null;
+  }
+  return `${year}-${month}-${day}`;
 }
 
 function plannedPaymentKey(planned, occurrenceDate) {

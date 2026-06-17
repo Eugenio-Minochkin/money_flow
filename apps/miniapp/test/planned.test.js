@@ -5,6 +5,7 @@ import {
   calculatePlannedMonthSummary,
   buildPlannedOccurrences,
   defaultPlannedCurrency,
+  dueOrOverduePlannedOccurrences,
   isDueToday,
   isPlannedPaid,
   nextPlannedItem,
@@ -240,4 +241,35 @@ test("calculates current month planned summary from active occurrences", () => {
       currency: "USD"
     }
   });
+});
+
+test("dueOrOverduePlannedOccurrences excludes future, paid and inactive occurrences", () => {
+  const now = new Date("2026-06-18T10:00:00+07:00");
+  const items = [
+    { id: 1, recurrence: "monthly", due_day: 18, due_days: [18], amount: 100, currency: "THB", description: "today" },
+    { id: 2, recurrence: "monthly", due_day: 10, due_days: [10], amount: 200, currency: "THB", description: "overdue", paid_count: 0 },
+    { id: 3, recurrence: "monthly", due_day: 10, due_days: [10], amount: 300, currency: "THB", description: "paid-overdue", paid_occurrence_dates: ["2026-06-10"], paid_occurrences: { "2026-06-10": { expense_id: 9 } } },
+    { id: 4, recurrence: "monthly", due_day: 25, due_days: [25], amount: 400, currency: "THB", description: "future" },
+    { id: 5, active: false, recurrence: "monthly", due_day: 5, due_days: [5], amount: 500, currency: "THB", description: "inactive" }
+  ];
+
+  const result = dueOrOverduePlannedOccurrences(items, now).map((entry) => ({
+    id: entry.item.id,
+    date: entry.occurrence.occurrence_date,
+    isToday: entry.isToday
+  }));
+
+  assert.deepEqual(result, [
+    { id: 2, date: "2026-06-10", isToday: false },
+    { id: 1, date: "2026-06-18", isToday: true }
+  ]);
+});
+
+test("dueOrOverduePlannedOccurrences keeps a future-only month empty", () => {
+  const now = new Date("2026-06-17T10:00:00+07:00");
+  const items = [
+    { id: 1, recurrence: "monthly", due_day: 18, due_days: [18], amount: 100, currency: "THB" }
+  ];
+
+  assert.deepEqual(dueOrOverduePlannedOccurrences(items, now), []);
 });
