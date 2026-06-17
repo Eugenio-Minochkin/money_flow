@@ -10,6 +10,8 @@ export function calculateBudgetSnapshot({
   plannedThisWeekTotal = 0,
   paidPlannedMonthTotal = 0,
   largeOneOffMonthTotal = 0,
+  paidPlannedMonthDisplayTotal = 0,
+  largeOneOffMonthDisplayTotal = 0,
   todayDisplayTotal = 0,
   weekDisplayTotal = 0,
   monthDisplayTotal = 0,
@@ -37,6 +39,9 @@ export function calculateBudgetSnapshot({
   const resolvedWeeklyBudget = roundMoney(resolveWeeklyBudget({ monthlyBudget, weeklyBudget, daysInMonth }));
   const nonDailyMonthTotal = Number(paidPlannedMonthTotal ?? 0) + Number(largeOneOffMonthTotal ?? 0);
   const regularMonthTotal = Math.max(monthTotal - nonDailyMonthTotal, 0);
+  const averageDailyRegularSpending = elapsedDaysInMonth > 0
+    ? roundMoney(regularMonthTotal / elapsedDaysInMonth)
+    : 0;
   const forecastMonthTotal = roundMoney((regularMonthTotal / elapsedDaysInMonth) * daysInMonth + nonDailyMonthTotal + plannedRemainingTotal);
   const plannedSpendToDate = monthlyBudget * (elapsedDaysInMonth / daysInMonth);
   const planDeviation = roundMoney(monthTotal - plannedSpendToDate);
@@ -67,6 +72,11 @@ export function calculateBudgetSnapshot({
   const monthDisplayRemaining = roundMoney(Math.max(displayFromBase(monthRemaining, monthTotal, monthDisplayTotal), 0));
   const forecastDisplayMonthTotal = roundMoney(displayFromBase(forecastMonthTotal, monthTotal, monthDisplayTotal));
   const planDisplayDeviation = roundMoney(displayFromBase(planDeviation, monthTotal, monthDisplayTotal));
+  const nonDailyDisplayMonthTotal = Number(paidPlannedMonthDisplayTotal ?? 0) + Number(largeOneOffMonthDisplayTotal ?? 0);
+  const regularDisplayMonthTotal = Math.max(monthDisplayTotal - nonDailyDisplayMonthTotal, 0);
+  const averageDailyRegularDisplaySpending = elapsedDaysInMonth > 0
+    ? roundMoney(regularDisplayMonthTotal / elapsedDaysInMonth)
+    : 0;
   const progress = {
     day: { percent: dayProgressPercent, state: simpleProgressState(dayProgressPercent) },
     week: { percent: weekProgressPercent, state: pacedProgressState(weekProgressPercent, elapsedDaysInWeek, daysInWeek) },
@@ -115,6 +125,7 @@ export function calculateBudgetSnapshot({
     weekProgressPercent,
     monthRemaining,
     forecastMonthTotal,
+    averageDailyRegularSpending,
     planDeviation,
     safeToSpendPerDay,
     recoveryAdvice,
@@ -137,6 +148,7 @@ export function calculateBudgetSnapshot({
       weekRemaining: weekDisplayRemaining,
       monthRemaining: monthDisplayRemaining,
       forecastMonthTotal: forecastDisplayMonthTotal,
+      averageDailyRegularSpending: averageDailyRegularDisplaySpending,
       planDeviation: planDisplayDeviation,
       safeToSpendPerDay: safeToSpendDisplayPerDay
     },

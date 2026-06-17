@@ -830,7 +830,7 @@ export function createRepository(pool, options = {}) {
         todayTotal: today.total,
         plannedToday: today.plannedTotal,
         largeToday: today.largeOneOffTotal,
-        week: week.total,
+        week: week.regularTotal,
         month: month.total,
         regularWeek: week.regularTotal,
         regularMonth: month.regularTotal,
@@ -840,7 +840,7 @@ export function createRepository(pool, options = {}) {
         todayDisplayTotal: today.displayTotal,
         plannedTodayDisplay: today.plannedDisplayTotal,
         largeTodayDisplay: today.largeOneOffDisplayTotal,
-        weekDisplay: week.displayTotal,
+        weekDisplay: week.regularDisplayTotal,
         regularWeekDisplay: week.regularDisplayTotal,
         monthDisplay: month.displayTotal,
         regularMonthDisplay: month.regularDisplayTotal,
@@ -906,6 +906,8 @@ export function createRepository(pool, options = {}) {
         plannedThisWeekDisplayTotal: displayFromBase(plannedThisWeekTotal, user),
         paidPlannedMonthTotal,
         largeOneOffMonthTotal: totals.largeMonth,
+        paidPlannedMonthDisplayTotal: displayFromBase(paidPlannedMonthTotal, user),
+        largeOneOffMonthDisplayTotal: totals.largeMonthDisplay,
         dayPlanLimit: dayBudgetSnapshot.budgetAmountBase,
         dayDisplayPlanLimit: dayBudgetSnapshot.budgetDisplayAmount,
         baseCurrency: user.base_currency ?? "THB",
@@ -951,13 +953,13 @@ async function dashboardAnalytics(pool, user, topCategories, snapshot, now) {
     dailyHeatmap,
     weekComparison: {
       current: snapshot.week,
-      previous: previousWeek.total,
-      delta: roundMoney(snapshot.week - previousWeek.total),
+      previous: previousWeek.regularTotal,
+      delta: roundMoney(snapshot.week - previousWeek.regularTotal),
       display: {
         currency: user.display_currency ?? "USD",
         current: snapshot.display.week,
-        previous: previousWeek.displayTotal,
-        delta: roundMoney(snapshot.display.week - previousWeek.displayTotal)
+        previous: previousWeek.regularDisplayTotal,
+        delta: roundMoney(snapshot.display.week - previousWeek.regularDisplayTotal)
       }
     },
     otherCategoryWarning: {
