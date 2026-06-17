@@ -38,6 +38,7 @@ test("calculates month remaining and safe-to-spend", () => {
     weekProgressPercent: 0,
     monthRemaining: 16500,
     forecastMonthTotal: 122142.86,
+    averageDailyRegularSpending: 4071.43,
     planDeviation: 18000,
     safeToSpendPerDay: 687.5,
     recoveryAdvice: {
@@ -80,6 +81,7 @@ test("calculates month remaining and safe-to-spend", () => {
       weekRemaining: 0,
       monthRemaining: 0,
       forecastMonthTotal: 0,
+      averageDailyRegularSpending: 0,
       planDeviation: 0,
       safeToSpendPerDay: 0
     },
@@ -282,4 +284,53 @@ test("does not build recovery advice when disabled", () => {
   });
 
   assert.equal(snapshot.recoveryAdvice.active, false);
+});
+
+test("averageDailyRegularSpending excludes planned and large one-off", () => {
+  const snapshot = calculateBudgetSnapshot({
+    todayTotal: 500,
+    monthTotal: 10000,
+    monthlyBudget: 45000,
+    paidPlannedMonthTotal: 3000,
+    largeOneOffMonthTotal: 2000,
+    now: new Date("2026-06-10T10:00:00+07:00")
+  });
+
+  assert.equal(snapshot.averageDailyRegularSpending, 500);
+});
+
+test("averageDailyRegularSpending reflects only regular spending", () => {
+  const withPlanned = calculateBudgetSnapshot({
+    todayTotal: 500,
+    monthTotal: 10000,
+    monthlyBudget: 45000,
+    paidPlannedMonthTotal: 3000,
+    now: new Date("2026-06-10T10:00:00+07:00")
+  });
+  const regularOnly = calculateBudgetSnapshot({
+    todayTotal: 500,
+    monthTotal: 7000,
+    monthlyBudget: 45000,
+    now: new Date("2026-06-10T10:00:00+07:00")
+  });
+
+  assert.equal(withPlanned.averageDailyRegularSpending, regularOnly.averageDailyRegularSpending);
+});
+
+test("averageDailyRegularSpending display excludes non-daily impacts", () => {
+  const snapshot = calculateBudgetSnapshot({
+    todayTotal: 500,
+    todayDisplayTotal: 15,
+    monthTotal: 10000,
+    monthDisplayTotal: 300,
+    monthlyBudget: 45000,
+    paidPlannedMonthTotal: 3000,
+    paidPlannedMonthDisplayTotal: 90,
+    largeOneOffMonthTotal: 2000,
+    largeOneOffMonthDisplayTotal: 60,
+    displayCurrency: "USD",
+    now: new Date("2026-06-10T10:00:00+07:00")
+  });
+
+  assert.equal(snapshot.display.averageDailyRegularSpending, 15);
 });

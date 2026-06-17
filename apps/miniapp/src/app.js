@@ -209,14 +209,18 @@ function renderMonthlyForecast(snapshot, analytics) {
   const monthlyBudget = Number(snapshot.monthlyBudget ?? 0);
   const spentSoFar = Number(snapshot.month ?? 0);
   const daysInMonth = Number(snapshot.daysInMonth ?? 0) || 0;
-  const averageDailySpending = daysInMonth > 0 ? forecast / daysInMonth : 0;
+  const averageDailySpending = Number(
+    snapshot.averageDailyRegularSpending ?? (daysInMonth > 0 ? forecast / daysInMonth : 0)
+  );
   const difference = forecast - monthlyBudget;
   const displayCurrency = snapshot.display?.currency;
   const showDisplay = Boolean(displayCurrency) && displayCurrency !== snapshot.baseCurrency;
   const displayText = (value) => (showDisplay ? moneyDisplay(value, displayCurrency) : "");
   const displayForecast = Number(snapshot.display?.forecastMonthTotal ?? 0);
   const displayBudget = Number(snapshot.display?.monthlyBudget ?? 0);
-  const displayAverageDaily = daysInMonth > 0 ? displayForecast / daysInMonth : 0;
+  const displayAverageDaily = Number(
+    snapshot.display?.averageDailyRegularSpending ?? (daysInMonth > 0 ? displayForecast / daysInMonth : 0)
+  );
   const perDay = t("monthlyForecast.perDay");
 
   setText("#forecastAmount", moneyBase(forecast));

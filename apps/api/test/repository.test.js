@@ -1469,6 +1469,8 @@ test("dashboard separates regular, planned and large one-off daily totals", asyn
   assert.equal(dashboard.snapshot.dayPlanLimit, 1417.2);
   assert.equal(dashboard.snapshot.dayRemaining, 615.2);
   assert.equal(dashboard.snapshot.month, 9772.25);
+  assert.equal(dashboard.snapshot.week, 6472.25);
+  assert.equal(dashboard.snapshot.averageDailyRegularSpending, 1295.38);
 });
 
 test("dashboard returns analytics blocks for the mini app", async () => {
@@ -1520,6 +1522,47 @@ test("dashboard returns analytics blocks for the mini app", async () => {
   assert.equal(dashboard.analytics.dailyHeatmap[0].day, 1);
   assert.equal(dashboard.analytics.weekComparison.current, 3200);
   assert.equal(dashboard.analytics.otherCategoryWarning.active, true);
+});
+
+test("dashboard weekComparison ignores planned and large one-off spending", async () => {
+  let totalsCall = 0;
+  const repo = createRepository(fakePool((sql, params) => {
+    const query = String(sql);
+    if (query.startsWith("SELECT * FROM users")) {
+      return {
+        rows: [{
+          id: "1",
+          telegram_user_id: "100",
+          monthly_budget_amount: "45000",
+          display_currency: "USD",
+          usd_thb_rate: "32.6"
+        }]
+      };
+    }
+    if (query.includes("COALESCE(SUM(amount_base)") && query.includes("FILTER")) {
+      totalsCall += 1;
+      if (totalsCall === 1) {
+        return { rows: [{ total: 100, regular_total: 100, planned_total: 0, large_oneoff_total: 0, display_total: 3.07, regular_display_total: 3.07, planned_display_total: 0, large_oneoff_display_total: 0 }] };
+      }
+      if (totalsCall === 2) {
+        return { rows: [{ total: 6000, regular_total: 1000, planned_total: 5000, large_oneoff_total: 0, display_total: 184.05, regular_display_total: 30.67, planned_display_total: 153.37, large_oneoff_display_total: 0 }] };
+      }
+      if (totalsCall === 3) {
+        return { rows: [{ total: 6000, regular_total: 1000, planned_total: 5000, large_oneoff_total: 0, display_total: 184.05, regular_display_total: 30.67, planned_display_total: 153.37, large_oneoff_display_total: 0 }] };
+      }
+      return { rows: [{ total: 11000, regular_total: 2000, planned_total: 9000, large_oneoff_total: 0, display_total: 337.42, regular_display_total: 61.35, planned_display_total: 276.07, large_oneoff_display_total: 0 }] };
+    }
+    if (query.includes("planned_expense_payments")) return { rows: [] };
+    if (query.includes("FROM expenses") && query.includes("ORDER BY")) return { rows: [] };
+    if (query.includes("GROUP BY category_slug")) return { rows: [] };
+    return { rows: [] };
+  }));
+
+  const dashboard = await repo.dashboard(100, new Date("2026-06-10T10:00:00+07:00"));
+
+  assert.equal(dashboard.analytics.weekComparison.current, 1000);
+  assert.equal(dashboard.analytics.weekComparison.previous, 2000);
+  assert.equal(dashboard.analytics.weekComparison.delta, -1000);
 });
 
 function fakePool(handler) {
