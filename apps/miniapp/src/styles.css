@@ -564,6 +564,9 @@ body[data-theme="dark"] .monthly-forecast {
 
 #plannedNotice {
   position: relative;
+  padding: 12px 14px;
+  border-color: var(--line);
+  background: var(--panel);
 }
 
 .dashboard-inbox {
@@ -615,19 +618,23 @@ body[data-theme="dark"] .monthly-forecast {
 }
 
 .planned-due-list {
-  display: flex;
-  flex-direction: column;
-  margin-top: 8px;
+  display: grid;
+  gap: 0;
+  margin-top: 0;
+}
+
+.planned-due-list--overdue {
+  border-left: 3px solid var(--notice-line);
+  padding-left: 10px;
 }
 
 .planned-due-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 10px;
+  align-items: center;
+  gap: 12px;
   padding: 10px 0;
   border-top: 1px solid var(--line);
-  border-left: 3px solid var(--category-color, var(--accent));
-  padding-left: 10px;
 }
 
 .planned-due-list .planned-due-row:first-child {
@@ -635,79 +642,47 @@ body[data-theme="dark"] .monthly-forecast {
 }
 
 .planned-due-main {
+  display: grid;
+  gap: 2px;
   min-width: 0;
 }
 
+.planned-due-label {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+
 .planned-due-title {
-  font-weight: 800;
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 900;
+  line-height: 1.15;
   overflow-wrap: anywhere;
 }
 
 .planned-due-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  align-items: baseline;
   color: var(--muted);
-  font-size: 12px;
-  margin-top: 2px;
-}
-
-.planned-due-meta em {
+  font-size: 13px;
   font-style: normal;
+  line-height: 1.25;
 }
 
-.planned-due-actions {
-  display: grid;
-  justify-items: end;
-  align-content: start;
-  gap: 6px;
-}
-
-.planned-due-amount {
-  font-weight: 900;
+.planned-due-pay {
+  flex: 0 0 auto;
+  min-height: 48px;
+  padding: 0 16px;
+  border-radius: 12px;
   white-space: nowrap;
-  text-align: right;
-}
-
-.planned-due-menu {
-  min-width: 32px;
-  padding: 5px 8px;
-  font-size: 16px;
-  line-height: 1;
-}
-
-.planned-due-popover {
-  position: fixed;
-  z-index: 20;
-  display: grid;
-  gap: 2px;
-  padding: 4px;
-  border: 1px solid var(--line);
-  background: var(--panel);
-  box-shadow: 0 6px 18px rgba(0, 0, 0, .12);
-  min-width: 150px;
-}
-
-.planned-due-popover.hidden {
-  display: none;
-}
-
-.planned-due-popover button {
-  justify-content: flex-start;
-  text-align: left;
-  min-height: 32px;
 }
 
 @media (max-width: 480px) {
   .planned-due-row {
-    grid-template-columns: minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr) auto;
   }
-  .planned-due-actions {
-    justify-items: stretch;
-  }
-  .planned-due-actions .button-row.compact {
-    justify-content: space-between;
+  .planned-due-pay {
+    min-height: 46px;
+    padding: 0 14px;
   }
 }
 
