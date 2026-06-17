@@ -491,39 +491,34 @@ function renderPlannedNotice(items) {
   const titleKey = hasToday && hasOverdue
     ? "plan.paymentsDueTitle"
     : hasOverdue ? "plan.overduePaymentsTitle" : "plan.paymentsDueTodayTitle";
-  const rows = entries.map(plannedDueRowHtml).join("");
-  notice.innerHTML = `
-    <div class="notice-title"><span>${t(titleKey)}</span></div>
-    <div class="planned-due-list">${rows}</div>
-    <div class="planned-due-popover hidden" id="plannedDuePopover" data-planned-popover></div>
-  `;
+  const rows = entries.map((entry) => plannedDueRowHtml(entry, titleKey)).join("");
+  notice.innerHTML = `<div class="planned-due-list${hasOverdue ? " planned-due-list--overdue" : ""}">${rows}</div>`;
   bindPlannedActions(notice, items);
 }
 
-function plannedDueRowHtml(entry) {
+function plannedDueRowHtml(entry, titleKey) {
   const { item, occurrence, isToday } = entry;
   const dateLabel = isToday
     ? t("plan.dueToday")
     : t("plan.wasDue", { date: formatDateOnly(occurrence.occurrence_date, currentLanguage) });
   const displayCurrency = item.display?.currency;
   const displayAmount = item.display?.amount;
+  const baseAmount = moneyBase(item.amount_base ?? item.amount);
+  const metaParts = [dateLabel, baseAmount];
+  const displayText = moneyDisplay(displayAmount, displayCurrency);
+  if (displayText && displayCurrency && String(displayCurrency).toUpperCase() !== String(item.base_currency ?? "").toUpperCase()) {
+    metaParts.push(displayText);
+  }
+  const labelKey = titleKey ?? "plan.paymentsDueTodayTitle";
   const payAttributes = `data-pay-planned="${escapeAttribute(item.id)}" data-occurrence-date="${escapeAttribute(occurrence.occurrence_date)}"`;
   return `
-    <article class="planned-due-row" style="--category-color: ${categoryColor(item.category_slug)}">
+    <article class="planned-due-row planned-due-row--compact">
       <div class="planned-due-main">
-        <div class="planned-due-title">${escapeHtml(item.description)}</div>
-        <div class="planned-due-meta">
-          <span>${escapeHtml(dateLabel)}</span>
-          <em>${moneyDisplay(displayAmount, displayCurrency)}</em>
-        </div>
+        <span class="planned-due-label">${t(labelKey)}</span>
+        <strong class="planned-due-title">${escapeHtml(item.description)}</strong>
+        <em class="planned-due-meta">${escapeHtml(metaParts.join(" · "))}</em>
       </div>
-      <div class="planned-due-actions">
-        <div class="planned-due-amount">${moneyBase(item.amount_base ?? item.amount)}</div>
-        <div class="button-row compact">
-          <button type="button" ${payAttributes}>${t("actions.pay")}</button>
-          <button type="button" class="ghost-button planned-due-menu" data-planned-menu="${escapeAttribute(item.id)}" aria-label="${escapeAttribute(t("actions.more"))}">⋯</button>
-        </div>
-      </div>
+      <button type="button" class="planned-due-pay" ${payAttributes}>${t("actions.pay")}</button>
     </article>
   `;
 }
