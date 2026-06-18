@@ -5,9 +5,7 @@ import {
   createReleaseNotesService,
   formatReleaseDigest,
   hiddenReleaseNoteLabel,
-  isAdminTelegramId,
-  normalizeReleaseNoteInput,
-  parseAdminTelegramIds
+  normalizeReleaseNoteInput
 } from "../src/releaseNotesService.js";
 
 test("release note input keeps explicit user audience", () => {
@@ -55,12 +53,6 @@ test("digest uses English text for en users", () => {
   assert.match(text, /Today's updates/);
   assert.match(text, /• Onboarding is now simpler/);
   assert.match(text, /• Voice works too/);
-});
-
-test("admin ids parse comma-separated env values", () => {
-  assert.deepEqual(parseAdminTelegramIds("123, 456,,789"), new Set(["123", "456", "789"]));
-  assert.equal(isAdminTelegramId(456, new Set(["123", "456"])), true);
-  assert.equal(isAdminTelegramId(999, new Set(["123", "456"])), false);
 });
 
 test("hidden release note label includes audience and title", () => {

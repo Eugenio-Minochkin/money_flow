@@ -2,8 +2,8 @@ import { createExpenseParser } from "./expenseParser.js";
 import { parseExpenseText } from "../../../packages/shared/src/parser.js";
 import { parsePlannedExpenseText } from "../../../packages/shared/src/plannedParser.js";
 import { normalizeCurrency, SUPPORTED_CURRENCY_CODES } from "../../../packages/shared/src/currencies.js";
+import { isAdminTelegramId, normalizeBotCommand } from "./adminAccess.js";
 import { formatAdminStats } from "./adminStatsService.js";
-import { isAdminTelegramId } from "./releaseNotesService.js";
 import { createTelegramJobQueue } from "./telegramJobQueue.js";
 import { formatDraft, formatPlannedDraft, formatSavedSummary, formatTotals, formatWeeklyReport } from "./telegramFormat.js";
 import { appKeyboard, draftKeyboard, inboxDraftKeyboard, plannedDraftKeyboard } from "./telegramKeyboards.js";
@@ -76,6 +76,7 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
   const chatId = message.chat.id;
 
   const rawText = message.text?.trim() || null;
+  const commandText = normalizeBotCommand(rawText);
   const hasVoice = Boolean(message.voice || message.audio);
 
   if (!rawText && !hasVoice) {
@@ -86,9 +87,9 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
   }
 
   if (rawText && !hasVoice) {
-    if (isAdminReleaseCommand(rawText)) {
+    if (isAdminReleaseCommand(commandText)) {
       return handleAdminReleaseCommand({
-        text: rawText,
+        text: commandText,
         from,
         chatId,
         token,
@@ -100,8 +101,16 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
       });
     }
 
-    if (rawText === "/admin_stats") {
-      if (!adminTelegramIds.has(Number(from.id))) {
+    if (commandText === "/admin_stats") {
+      if (!isAdminTelegramId(from.id, adminTelegramIds)) {
+        console.warn("[admin] access denied", {
+          command: "/admin_stats",
+          fromId: from.id,
+          username: from.username ?? null,
+          chatId,
+          adminIdsCount: adminTelegramIds.size,
+          adminEnvConfigured: adminTelegramIds.size > 0
+        });
         return sendTelegramResponse(trace, () => sendMessage(token, chatId, "Access denied", null, telegramClient));
       }
       if (!adminStatsService?.getAdminStats) {
@@ -116,19 +125,19 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
       }
     }
 
-    if (rawText === "/start") {
+    if (commandText === "/start") {
       if (isOnboardingActive(user)) {
         return sendTelegramResponse(trace, () => sendMessage(token, chatId, onboardingPrompt(user), onboardingReplyMarkup(user), telegramClient));
       }
       return sendTelegramResponse(trace, () => sendMessage(token, chatId, botText(language, "start"), appKeyboard(miniAppUrl, from.id, language), telegramClient));
     }
 
-    if (rawText === "/today" || rawText === "/week" || rawText === "/month" || rawText === "/budget") {
+    if (commandText === "/today" || commandText === "/week" || commandText === "/month" || commandText === "/budget") {
       const dashboard = await repository.dashboard(from.id);
-      return sendTelegramResponse(trace, () => sendMessage(token, chatId, formatTotals(rawText, dashboard.snapshot, { language }), appKeyboard(miniAppUrl, from.id, language), telegramClient));
+      return sendTelegramResponse(trace, () => sendMessage(token, chatId, formatTotals(commandText, dashboard.snapshot, { language }), appKeyboard(miniAppUrl, from.id, language), telegramClient));
     }
 
-    if (rawText === "/app" || rawText === "/settings") {
+    if (commandText === "/app" || commandText === "/settings") {
       return sendTelegramResponse(trace, () => sendMessage(token, chatId, botText(language, "openMiniApp"), appKeyboard(miniAppUrl, from.id, language), telegramClient));
     }
   }

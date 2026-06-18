@@ -17,20 +17,6 @@ export function normalizeReleaseNoteInput(input = {}) {
   };
 }
 
-export function parseAdminTelegramIds(value) {
-  return new Set(String(value ?? "")
-    .split(",")
-    .map((item) => item.trim())
-    .filter(Boolean));
-}
-
-export function isAdminTelegramId(telegramUserId, adminTelegramIds) {
-  return adminTelegramIds instanceof Set && (
-    adminTelegramIds.has(Number(telegramUserId)) ||
-    adminTelegramIds.has(String(telegramUserId))
-  );
-}
-
 export function formatReleaseDigest(releaseNotes, language = "ru") {
   const notes = Array.isArray(releaseNotes) ? releaseNotes : [];
   const lang = language === "en" ? "en" : "ru";

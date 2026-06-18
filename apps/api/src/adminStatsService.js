@@ -1,12 +1,5 @@
 const BANGKOK_OFFSET_MS = 7 * 60 * 60_000;
 
-export function parseAdminTelegramIds(value) {
-  return new Set(String(value ?? "")
-    .split(",")
-    .map((item) => Number(String(item).trim()))
-    .filter((item) => Number.isSafeInteger(item) && item > 0));
-}
-
 export function createAdminStatsService({ pool, now = () => new Date() }) {
   return {
     async getAdminStats() {
