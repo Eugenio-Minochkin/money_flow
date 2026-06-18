@@ -752,8 +752,6 @@ export function createRepository(pool, options = {}) {
            FROM planned_expense_payments pep
            JOIN expenses e ON e.id = pep.expense_id
                            AND e.user_id = $3
-                           AND (pep.occurrence_date IS NULL
-                                OR (e.spent_at + interval '7 hours')::date = pep.occurrence_date)
            WHERE pep.planned_expense_id = $1
              AND pep.paid_month = $2
            ORDER BY pep.occurrence_date`,
@@ -1162,8 +1160,6 @@ async function listPlannedExpensesForTelegramUserAt(pool, telegramUserId, now) {
        JOIN planned_expenses pe ON pe.id = pep.planned_expense_id
        JOIN expenses e ON e.id = pep.expense_id
                        AND e.user_id = pe.user_id
-                       AND (pep.occurrence_date IS NULL
-                            OR (e.spent_at + interval '7 hours')::date = pep.occurrence_date)
        WHERE pep.paid_month = $2
        GROUP BY pep.planned_expense_id
      ) paid ON paid.planned_expense_id = planned_expenses.id

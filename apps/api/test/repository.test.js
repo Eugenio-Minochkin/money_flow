@@ -1031,6 +1031,46 @@ test("paying a monthly expense with a stale occurrence_date rejects as already_p
   assert.ok(!queries.some((query) => String(query.sql).includes("INSERT INTO expenses")));
 });
 
+test("date-mismatched linked expense blocks duplicate planned payment", async () => {
+  const queries = [];
+  const repo = createRepository({
+    async connect() {
+      return fakePayClient({
+        planned: {
+          id: "17",
+          user_id: "26",
+          amount: "300",
+          currency: "THB",
+          amount_base: "300",
+          description: "Simcard",
+          category_slug: "subscriptions",
+          tags: [],
+          recurrence: "monthly",
+          due_day: 14,
+          due_days: [14],
+          base_currency: "THB"
+        },
+        paidOccurrences: [{ occurrence_date: "2026-06-14", paid_key: "2026-06" }],
+        queries
+      });
+    }
+  }, { exchangeRates: fixedRates() });
+
+  await assert.rejects(
+    repo.payPlannedExpenseForTelegramUser(
+      17,
+      222386362,
+      new Date("2026-06-18T09:00:00+07:00"),
+      { occurrenceDate: "2026-06-14" }
+    ),
+    (error) => error.code === "already_paid"
+  );
+
+  const paidLookup = queries.find((query) => String(query.sql).includes("pep.occurrence_date"));
+  assert.doesNotMatch(String(paidLookup.sql), /e\.spent_at/);
+  assert.ok(!queries.some((query) => String(query.sql).includes("INSERT INTO expenses")));
+});
+
 test("paying a planned expense uses paid_key as the conflict arbiter", async () => {
   const queries = [];
   const repo = createRepository({
@@ -1381,10 +1421,50 @@ test("listing planned expenses only counts payments backed by a matching expense
 
   assert.match(listSql, /JOIN expenses e ON e\.id = pep\.expense_id/);
   assert.match(listSql, /e\.user_id = pe\.user_id/);
-  assert.match(listSql, /\(e\.spent_at \+ interval '7 hours'\)::date = pep\.occurrence_date/);
+  assert.doesNotMatch(listSql, /e\.spent_at/);
   assert.match(listSql, /paid_occurrences/);
   assert.equal(planned[0].paid_count, 0);
   assert.deepEqual(planned[0].paid_occurrence_dates, []);
+});
+
+test("listing planned expenses accepts a date-mismatched same-user expense", async () => {
+  let listSql = "";
+  const repo = createRepository(fakePool((sql) => {
+    const query = String(sql);
+    if (query.includes("planned_expense_payments")) {
+      listSql = query;
+      return {
+        rows: [{
+          id: "17",
+          amount: "300",
+          currency: "THB",
+          amount_base: "300",
+          description: "Simcard",
+          category_slug: "subscriptions",
+          recurrence: "monthly",
+          due_day: 14,
+          due_days: [14],
+          paid_count: 1,
+          paid_occurrence_dates: ["2026-06-14"],
+          paid_occurrences: {
+            "2026-06-14": {
+              expense_id: "187",
+              paid_at: "2026-06-15T06:53:14.825Z"
+            }
+          }
+        }]
+      };
+    }
+    return { rows: [] };
+  }));
+
+  const planned = await repo.listPlannedExpensesForTelegramUser(222386362);
+
+  assert.match(listSql, /JOIN expenses e ON e\.id = pep\.expense_id/);
+  assert.match(listSql, /e\.user_id = pe\.user_id/);
+  assert.doesNotMatch(listSql, /e\.spent_at/);
+  assert.deepEqual(planned[0].paid_occurrence_dates, ["2026-06-14"]);
+  assert.equal(planned[0].paid_occurrences["2026-06-14"].expense_id, "187");
 });
 
 test("dashboard keeps unpaid twice-monthly occurrences in planned reserve", async () => {
