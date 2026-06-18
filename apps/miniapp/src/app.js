@@ -1356,6 +1356,8 @@ function applyLanguage(language) {
   }
   const save = document.querySelector("#settingsForm button[type='submit']");
   if (save) save.textContent = t("actions.save");
+  updateHistoryFilterChips();
+  if (historyCalendarDraft) renderHistoryCalendar();
 }
 
 function applyTheme(theme) {
