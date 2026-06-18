@@ -838,6 +838,10 @@ async function sendMessage(token, chatId, text, replyMarkup, telegramClient) {
   }
 }
 
+export async function sendTelegramMessage({ token, chatId, text, replyMarkup = null, telegramClient = null }) {
+  return sendMessage(token, chatId, text, replyMarkup, telegramClient);
+}
+
 async function editMessageText(token, chatId, messageId, text, replyMarkup, telegramClient) {
   if (telegramClient) {
     return telegramClient.editMessageText({ chatId, messageId, text, replyMarkup });
@@ -1211,8 +1215,4 @@ function botText(language, key) {
     }
   };
   return messages[lang][key];
-}
-
-export async function sendTelegramMessage({ token, chatId, text, replyMarkup = null, telegramClient = null }) {
-  return sendMessage(token, chatId, text, replyMarkup, telegramClient);
 }
