@@ -37,7 +37,7 @@ export function formatCustomRangeLabel(fromDate, toDate, language = "ru") {
   const monthStyle = language === "en" ? "short" : "long";
   const format = (date) => new Intl.DateTimeFormat(locale, { day: "numeric", month: monthStyle }).format(date);
   if (String(fromDate) === String(toDate)) return format(from);
-  return `${format(from)}\u2013${format(to)}`;
+  return `${format(from)} \u2014 ${format(to)}`;
 }
 
 export function selectRangeDate(state = {}, date) {
@@ -103,6 +103,28 @@ export function canNavigateToMonth(month, today) {
   if (!parsed || !todayDate) return false;
   const currentMonth = `${todayDate.getFullYear()}-${String(todayDate.getMonth() + 1).padStart(2, "0")}`;
   return month <= currentMonth;
+}
+
+export function createCalendarDraft(filter, today) {
+  const currentMonth = String(today ?? "").slice(0, 7);
+  if (
+    filter?.period === "custom"
+    && parseYmd(filter.fromDate)
+    && parseYmd(filter.toDate)
+  ) {
+    return {
+      startDate: filter.fromDate,
+      endDate: filter.toDate,
+      selectionComplete: filter.fromDate !== filter.toDate,
+      visibleMonth: filter.fromDate.slice(0, 7)
+    };
+  }
+  return {
+    startDate: "",
+    endDate: "",
+    selectionComplete: false,
+    visibleMonth: parseYm(currentMonth) ? currentMonth : ""
+  };
 }
 
 function parseYmd(value) {

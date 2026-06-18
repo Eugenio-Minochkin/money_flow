@@ -14,7 +14,17 @@ import {
   moneyDisplaySigned,
   setBaseCurrency
 } from "./formatters.js";
-import { expenseCountLabel, formatCustomRangeLabel, groupByDay, periodTotal } from "./history.js";
+import {
+  buildCalendarMonth,
+  canNavigateToMonth,
+  createCalendarDraft,
+  expenseCountLabel,
+  formatCustomRangeLabel,
+  groupByDay,
+  periodTotal,
+  selectRangeDate,
+  shiftCalendarMonth
+} from "./history.js";
 import { createTranslator } from "./i18n.js";
 import { inboxDraftDescription, inboxDraftTotal, shouldShowInboxOnDashboard, updateFirstInboxItemCategory } from "./inbox.js";
 import {
@@ -42,6 +52,7 @@ let expenseReturnTab = "dashboard";
 let historyState = [];
 let inboxState = [];
 let historyFilterState = { period: "month", fromDate: "", toDate: "" };
+let historyCalendarDraft = null;
 let currentLanguage = "en";
 let translate = createTranslator(currentLanguage);
 let currentTheme = "light";
@@ -73,8 +84,27 @@ document.querySelector("#openHistoryInboxButton")?.addEventListener("click", () 
 document.querySelectorAll("[data-history-period]").forEach((chip) => {
   chip.addEventListener("click", () => selectHistoryPeriod(chip.dataset.historyPeriod));
 });
+document.querySelector("#openHistoryDatePicker")?.addEventListener("click", openHistoryDatePicker);
+document.querySelector("#closeHistoryDatePicker")?.addEventListener("click", closeHistoryDatePicker);
+document.querySelector("#historyDateBackdrop")?.addEventListener("click", closeHistoryDatePicker);
+document.querySelector("#historyCalendarPrevious")?.addEventListener("click", () => moveHistoryCalendar(-1));
+document.querySelector("#historyCalendarNext")?.addEventListener("click", () => moveHistoryCalendar(1));
+document.querySelector("#historyCalendarGrid")?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-calendar-date]");
+  if (!button || button.disabled) return;
+  historyCalendarDraft = {
+    ...historyCalendarDraft,
+    ...selectRangeDate(historyCalendarDraft, button.dataset.calendarDate)
+  };
+  renderHistoryCalendar();
+});
 document.querySelector("#applyHistoryPeriodButton")?.addEventListener("click", applyHistoryCustomRange);
 document.querySelector("#resetHistoryPeriodButton")?.addEventListener("click", resetHistoryPeriod);
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !document.querySelector("#historyDateSheet")?.classList.contains("hidden")) {
+    closeHistoryDatePicker();
+  }
+});
 document.addEventListener("click", (event) => {
   const popover = document.querySelector("#plannedDuePopover");
   if (!popover || popover.classList.contains("hidden")) return;
@@ -277,50 +307,120 @@ async function loadHistory() {
 }
 
 function selectHistoryPeriod(period) {
-  if (period === "custom") {
-    historyFilterState.period = "custom";
-    document.querySelector("#historyCustomRange")?.classList.remove("hidden");
-    updateHistoryFilterChips();
-    return;
-  }
   historyFilterState = { period, fromDate: "", toDate: "" };
-  document.querySelector("#historyFromDate").value = "";
-  document.querySelector("#historyToDate").value = "";
-  document.querySelector("#historyCustomRange")?.classList.add("hidden");
   updateHistoryFilterChips();
   loadHistory().catch(showError);
 }
 
 function applyHistoryCustomRange() {
-  const fromDate = document.querySelector("#historyFromDate").value;
-  const toDate = document.querySelector("#historyToDate").value;
+  const fromDate = historyCalendarDraft?.startDate;
+  const toDate = historyCalendarDraft?.endDate;
   if (!fromDate || !toDate) {
-    showError(new Error(currentLanguage === "ru" ? "Выберите обе даты" : "Select both dates"));
-    return;
-  }
-  if (new Date(fromDate) > new Date(toDate)) {
-    showError(new Error(currentLanguage === "ru" ? "Дата «С» позже даты «По»" : "From date is after To date"));
     return;
   }
   historyFilterState = { period: "custom", fromDate, toDate };
+  closeHistoryDatePicker();
   updateHistoryFilterChips();
   loadHistory().catch(showError);
 }
 
 function resetHistoryPeriod() {
   historyFilterState = { period: "month", fromDate: "", toDate: "" };
-  document.querySelector("#historyFromDate").value = "";
-  document.querySelector("#historyToDate").value = "";
-  document.querySelector("#historyCustomRange")?.classList.add("hidden");
+  closeHistoryDatePicker();
   updateHistoryFilterChips();
   loadHistory().catch(showError);
 }
 
 function updateHistoryFilterChips() {
   document.querySelectorAll("[data-history-period]").forEach((chip) => {
-    chip.classList.toggle("active", chip.dataset.historyPeriod === historyFilterState.period);
+    const active = chip.dataset.historyPeriod === historyFilterState.period;
+    chip.classList.toggle("active", active);
+    chip.setAttribute("aria-pressed", String(active));
   });
+  const dateButton = document.querySelector("#openHistoryDatePicker");
+  const customActive = historyFilterState.period === "custom";
+  dateButton?.classList.toggle("active", customActive);
+  dateButton?.setAttribute("aria-pressed", String(customActive));
   updateHistoryFilterCurrent();
+}
+
+function openHistoryDatePicker() {
+  historyCalendarDraft = createCalendarDraft(historyFilterState, localTodayYmd());
+  document.querySelector("#historyDateBackdrop")?.classList.remove("hidden");
+  document.querySelector("#historyDateSheet")?.classList.remove("hidden");
+  document.body.classList.add("history-date-sheet-open");
+  renderHistoryCalendar();
+  document.querySelector("#closeHistoryDatePicker")?.focus();
+}
+
+function closeHistoryDatePicker() {
+  document.querySelector("#historyDateBackdrop")?.classList.add("hidden");
+  document.querySelector("#historyDateSheet")?.classList.add("hidden");
+  document.body.classList.remove("history-date-sheet-open");
+  historyCalendarDraft = null;
+  document.querySelector("#openHistoryDatePicker")?.focus();
+}
+
+function moveHistoryCalendar(delta) {
+  if (!historyCalendarDraft) return;
+  const nextMonth = shiftCalendarMonth(historyCalendarDraft.visibleMonth, delta);
+  if (!canNavigateToMonth(nextMonth, localTodayYmd())) return;
+  historyCalendarDraft.visibleMonth = nextMonth;
+  renderHistoryCalendar();
+}
+
+function renderHistoryCalendar() {
+  if (!historyCalendarDraft) return;
+  const today = localTodayYmd();
+  const cells = buildCalendarMonth(historyCalendarDraft.visibleMonth, today, historyCalendarDraft);
+  const monthDate = new Date(
+    Number(historyCalendarDraft.visibleMonth.slice(0, 4)),
+    Number(historyCalendarDraft.visibleMonth.slice(5, 7)) - 1,
+    1
+  );
+  setText("#historyCalendarMonth", new Intl.DateTimeFormat(
+    currentLanguage === "ru" ? "ru-RU" : "en-US",
+    { month: "long", year: "numeric" }
+  ).format(monthDate));
+
+  const grid = document.querySelector("#historyCalendarGrid");
+  grid.innerHTML = cells.map((cell, index) => {
+    const classes = [
+      "history-calendar__day",
+      cell.isStart ? "is-start" : "",
+      cell.isEnd ? "is-end" : "",
+      cell.isInRange ? "is-in-range" : "",
+      cell.date === today ? "is-today" : ""
+    ].filter(Boolean).join(" ");
+    const label = new Intl.DateTimeFormat(
+      currentLanguage === "ru" ? "ru-RU" : "en-US",
+      { day: "numeric", month: "long", year: "numeric" }
+    ).format(new Date(Number(cell.date.slice(0, 4)), Number(cell.date.slice(5, 7)) - 1, cell.day));
+    const offset = index === 0 ? ` style="grid-column-start:${cell.weekdayIndex + 1}"` : "";
+    return `<button type="button" class="${classes}" data-calendar-date="${cell.date}" aria-label="${escapeAttribute(label)}"${offset}${cell.disabled ? " disabled" : ""}>${cell.day}</button>`;
+  }).join("");
+
+  const selection = historyCalendarDraft.startDate
+    ? formatCustomRangeLabel(historyCalendarDraft.startDate, historyCalendarDraft.endDate, currentLanguage)
+    : t("history.selectedPeriod");
+  setText("#historyDateSelection", selection);
+  const applyButton = document.querySelector("#applyHistoryPeriodButton");
+  if (applyButton) applyButton.disabled = !historyCalendarDraft.startDate;
+  const nextMonth = shiftCalendarMonth(historyCalendarDraft.visibleMonth, 1);
+  const nextButton = document.querySelector("#historyCalendarNext");
+  if (nextButton) nextButton.disabled = !canNavigateToMonth(nextMonth, today);
+
+  const weekdayLabels = currentLanguage === "ru"
+    ? ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
+    : ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+  document.querySelectorAll(".history-calendar__weekdays span").forEach((element, index) => {
+    element.textContent = weekdayLabels[index];
+  });
+}
+
+function localTodayYmd() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
 }
 
 function updateHistoryFilterCurrent() {

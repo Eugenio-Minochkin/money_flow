@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   buildCalendarMonth,
   canNavigateToMonth,
+  createCalendarDraft,
   expenseCountLabel,
   formatCustomRangeLabel,
   groupByDay,
@@ -55,7 +56,7 @@ test("expenseCountLabel uses English singular and plural", () => {
 });
 
 test("formatCustomRangeLabel formats a range and single day", () => {
-  assert.equal(formatCustomRangeLabel("2026-06-10", "2026-06-11", "ru"), "10 июня–11 июня");
+  assert.equal(formatCustomRangeLabel("2026-06-10", "2026-06-11", "ru"), "10 июня — 11 июня");
   assert.equal(formatCustomRangeLabel("2026-06-10", "2026-06-10", "ru"), "10 июня");
 });
 
@@ -107,4 +108,30 @@ test("calendar navigation cannot move beyond the current month", () => {
   assert.equal(shiftCalendarMonth("2026-12", 1), "2027-01");
   assert.equal(canNavigateToMonth("2026-06", "2026-06-18"), true);
   assert.equal(canNavigateToMonth("2026-07", "2026-06-18"), false);
+});
+
+test("calendar draft preserves an applied custom range and its visible month", () => {
+  assert.deepEqual(createCalendarDraft({
+    period: "custom",
+    fromDate: "2026-05-10",
+    toDate: "2026-05-12"
+  }, "2026-06-18"), {
+    startDate: "2026-05-10",
+    endDate: "2026-05-12",
+    selectionComplete: true,
+    visibleMonth: "2026-05"
+  });
+});
+
+test("calendar draft starts empty in the current month for a quick period", () => {
+  assert.deepEqual(createCalendarDraft({
+    period: "month",
+    fromDate: "",
+    toDate: ""
+  }, "2026-06-18"), {
+    startDate: "",
+    endDate: "",
+    selectionComplete: false,
+    visibleMonth: "2026-06"
+  });
 });
