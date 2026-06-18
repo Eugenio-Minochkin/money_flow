@@ -1,13 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { createAdminStatsService, formatAdminStats, parseAdminTelegramIds } from "../src/adminStatsService.js";
-
-test("parses comma-separated admin Telegram ids with whitespace", () => {
-  assert.deepEqual(parseAdminTelegramIds(" 123456789, 987654321 ,, bad "), new Set([123456789, 987654321]));
-  assert.deepEqual(parseAdminTelegramIds(""), new Set());
-  assert.deepEqual(parseAdminTelegramIds(undefined), new Set());
-});
+import { createAdminStatsService, formatAdminStats } from "../src/adminStatsService.js";
 
 test("aggregates admin stats from app events and users", async () => {
   const queries = [];

@@ -2,8 +2,9 @@ import { createServer } from "node:http";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { parseAdminTelegramIds } from "./adminAccess.js";
 import { config, requireRuntimeConfig } from "./config.js";
-import { createAdminStatsService, parseAdminTelegramIds } from "./adminStatsService.js";
+import { createAdminStatsService } from "./adminStatsService.js";
 import { createApiSecurity } from "./apiSecurity.js";
 import { migrate, pool } from "./db.js";
 import { createExchangeRateProvider } from "./exchangeRates.js";

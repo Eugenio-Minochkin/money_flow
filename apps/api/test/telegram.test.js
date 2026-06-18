@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+import { parseAdminTelegramIds } from "../src/adminAccess.js";
 import { createTelegramBot, sendWeeklyReports } from "../src/telegram.js";
 
 test("text message creates a pending draft response", async () => {
@@ -378,17 +379,54 @@ test("admin stats command sends stats only to configured admin ids", async () =>
   assert.match(calls[0][1].text, /Users: 1 active \/ 0 new/);
 });
 
+test("admin stats accepts numeric-string ids and bot command suffixes", async () => {
+  const messages = [];
+  let serviceCalls = 0;
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: fakeRepository(),
+    adminTelegramIds: new Set([100]),
+    adminStatsService: {
+      async getAdminStats() {
+        serviceCalls += 1;
+        return {
+          today: emptyAdminPeriod(),
+          last7Days: emptyAdminPeriod(),
+          last30Days: emptyAdminPeriod()
+        };
+      }
+    },
+    telegramClient: captureTelegramClient(messages)
+  });
+
+  await bot.handleUpdate({
+    message: {
+      chat: { id: 10 },
+      from: { id: "100", first_name: "M" },
+      text: "/admin_stats@MoneyFlowBot"
+    }
+  });
+
+  assert.equal(serviceCalls, 1);
+  assert.match(messages[0].text, /Admin stats/);
+});
+
 test("admin stats command does not reveal stats to non-admin users", async () => {
   const calls = [];
+  const warnings = [];
+  const rawAdminEnv = "\"100\"";
   let serviceCalled = false;
   const originalLog = console.log;
+  const originalWarn = console.warn;
   console.log = (...args) => calls.push(args);
+  console.warn = (...args) => warnings.push(args);
   try {
     const bot = createTelegramBot({
       token: "",
       miniAppUrl: "http://localhost:3000",
       repository: fakeRepository(),
-      adminTelegramIds: new Set([100]),
+      adminTelegramIds: parseAdminTelegramIds(rawAdminEnv),
       adminStatsService: {
         async getAdminStats() {
           serviceCalled = true;
@@ -400,17 +438,30 @@ test("admin stats command does not reveal stats to non-admin users", async () =>
     await bot.handleUpdate({
       message: {
         chat: { id: 10 },
-        from: { id: 200, first_name: "M" },
+        from: { id: 200, first_name: "M", username: "not_admin" },
         text: "/admin_stats"
       }
     });
   } finally {
     console.log = originalLog;
+    console.warn = originalWarn;
   }
 
   assert.equal(serviceCalled, false);
   assert.equal(calls.length, 1);
   assert.equal(calls[0][1].text, "Access denied");
+  assert.deepEqual(warnings, [[
+    "[admin] access denied",
+    {
+      command: "/admin_stats",
+      fromId: 200,
+      username: "not_admin",
+      chatId: 10,
+      adminIdsCount: 1,
+      adminEnvConfigured: true
+    }
+  ]]);
+  assert.doesNotMatch(JSON.stringify(warnings), new RegExp(rawAdminEnv.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 });
 
 test("text parsing uses user's base currency as default", async () => {
@@ -1116,7 +1167,7 @@ test("admin release preview shows user digest and hidden notes", async () => {
     message: {
       chat: { id: 10 },
       from: { id: 100, first_name: "M" },
-      text: "/admin_release_preview"
+      text: "/admin_release_preview@MoneyFlowBot"
     }
   });
 
@@ -1148,7 +1199,7 @@ test("admin release send returns summary", async () => {
     message: {
       chat: { id: 10 },
       from: { id: 100, first_name: "M" },
-      text: "/admin_release_send"
+      text: "/admin_release_send@MoneyFlowBot"
     }
   });
 
