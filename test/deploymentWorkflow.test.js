@@ -24,6 +24,12 @@ test('GitHub Actions deploy workflow runs CI, SSH deploy, and production checks'
   assert.match(workflow, /\.\/scripts\/prod-security-check\.sh/);
 });
 
+test('production compose passes configured admin Telegram ids to the API', () => {
+  const compose = readText('compose.prod.yml');
+
+  assert.match(compose, /ADMIN_TELEGRAM_IDS:\s*\$\{ADMIN_TELEGRAM_IDS:-\}/);
+});
+
 test('deployment runbook documents secrets, local flow, deploy, and rollback', () => {
   const runbook = readText('docs/deployment-runbook.md');
 
