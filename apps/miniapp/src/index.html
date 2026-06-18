@@ -158,27 +158,14 @@
               <span data-i18n="history.period">Период</span>
               <span class="history-filter-current" id="historyFilterCurrent"></span>
             </div>
-            <div class="history-filter-chips">
-              <button type="button" class="history-filter-chip" data-history-period="today" data-i18n="history.today">Сегодня</button>
-              <button type="button" class="history-filter-chip" data-history-period="yesterday" data-i18n="history.yesterday">Вчера</button>
-              <button type="button" class="history-filter-chip" data-history-period="last7" data-i18n="history.last7">7 дней</button>
-              <button type="button" class="history-filter-chip active" data-history-period="month" data-i18n="history.thisMonth">Месяц</button>
-              <button type="button" class="history-filter-chip" data-history-period="previous_month" data-i18n="history.previousMonth">Прошлый</button>
-              <button type="button" class="history-filter-chip" data-history-period="custom" data-i18n="history.customPeriod">Даты</button>
-            </div>
-            <div class="history-custom-range hidden" id="historyCustomRange">
-              <label>
-                <span data-i18n="history.from">С</span>
-                <input id="historyFromDate" type="date" />
-              </label>
-              <label>
-                <span data-i18n="history.to">По</span>
-                <input id="historyToDate" type="date" />
-              </label>
-              <div class="button-row">
-                <button type="button" id="applyHistoryPeriodButton" data-i18n="history.applyPeriod">Применить</button>
-                <button type="button" class="ghost-button" id="resetHistoryPeriodButton" data-i18n="history.resetPeriod">Сбросить</button>
+            <div class="history-period-row">
+              <div class="history-filter-chips" id="historyQuickPeriods">
+                <button type="button" class="history-filter-chip" data-history-period="today" data-i18n="history.today">Сегодня</button>
+                <button type="button" class="history-filter-chip" data-history-period="yesterday" data-i18n="history.yesterday">Вчера</button>
+                <button type="button" class="history-filter-chip" data-history-period="last7" data-i18n="history.last7">7 дней</button>
+                <button type="button" class="history-filter-chip active" data-history-period="month" data-i18n="history.thisMonth">Месяц</button>
               </div>
+              <button type="button" class="history-filter-chip history-date-action" id="openHistoryDatePicker" data-i18n="history.customPeriod">Даты</button>
             </div>
             <div class="history-period-summary" id="historyPeriodSummary"></div>
           </section>
@@ -274,6 +261,33 @@
         </section>
       </section>
     </main>
+
+    <div class="history-date-backdrop hidden" id="historyDateBackdrop"></div>
+    <section class="history-date-sheet hidden" id="historyDateSheet" role="dialog" aria-modal="true" aria-labelledby="historyDateSheetTitle">
+      <div class="history-date-sheet__handle" aria-hidden="true"></div>
+      <div class="history-date-sheet__header">
+        <div>
+          <h2 id="historyDateSheetTitle" data-i18n="history.choosePeriod">Выберите период</h2>
+          <p class="history-date-selection" id="historyDateSelection" data-i18n="history.selectedPeriod">Период не выбран</p>
+        </div>
+        <button type="button" class="history-date-sheet__close" id="closeHistoryDatePicker" aria-label="Закрыть" data-i18n-aria-label="history.closePeriod">×</button>
+      </div>
+      <div class="history-calendar">
+        <div class="history-calendar__navigation">
+          <button type="button" id="historyCalendarPrevious" aria-label="Предыдущий месяц" data-i18n-aria-label="history.previousMonthAction">‹</button>
+          <strong id="historyCalendarMonth"></strong>
+          <button type="button" id="historyCalendarNext" aria-label="Следующий месяц" data-i18n-aria-label="history.nextMonthAction">›</button>
+        </div>
+        <div class="history-calendar__weekdays" aria-hidden="true">
+          <span>Пн</span><span>Вт</span><span>Ср</span><span>Чт</span><span>Пт</span><span>Сб</span><span>Вс</span>
+        </div>
+        <div class="history-calendar__grid" id="historyCalendarGrid"></div>
+      </div>
+      <div class="history-date-sheet__actions">
+        <button type="button" class="ghost-button" id="resetHistoryPeriodButton" data-i18n="history.resetPeriod">Сбросить</button>
+        <button type="button" id="applyHistoryPeriodButton" data-i18n="history.applyPeriod" disabled>Применить</button>
+      </div>
+    </section>
 
     <nav class="bottom-tabs" aria-label="Sections" data-i18n-aria-label="navigation.sections">
       <button class="tab-button active" type="button" data-tab="dashboard">Dashboard</button>

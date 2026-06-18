@@ -24,6 +24,19 @@ test("Mini App local module imports resolve to files", async () => {
   }
 });
 
+test("history period picker uses a fixed dates action and one calendar dialog", async () => {
+  const html = await readFile(join(miniAppRoot, "index.html"), "utf8");
+
+  assert.match(html, /id="historyQuickPeriods"/);
+  assert.match(html, /id="openHistoryDatePicker"/);
+  assert.match(html, /id="historyDateSheet"[^>]+role="dialog"[^>]+aria-modal="true"/);
+  assert.match(html, /id="historyCalendarGrid"/);
+  assert.doesNotMatch(html, /id="historyFromDate"/);
+  assert.doesNotMatch(html, /id="historyToDate"/);
+  assert.doesNotMatch(html, /id="historyCustomRange"/);
+  assert.doesNotMatch(html, /data-history-period="previous_month"/);
+});
+
 test("Mini App has a documented local preview server", async () => {
   const packageJson = JSON.parse(await readFile("package.json", "utf8"));
   const readme = await readFile("README.md", "utf8");
