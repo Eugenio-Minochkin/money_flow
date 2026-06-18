@@ -2,7 +2,29 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { parseAdminTelegramIds } from "../src/adminAccess.js";
-import { createTelegramBot, sendWeeklyReports } from "../src/telegram.js";
+import { createTelegramBot, sendTelegramMessage, sendWeeklyReports } from "../src/telegram.js";
+
+test("exports the Telegram message sender used by the production server", async () => {
+  const calls = [];
+  const telegramClient = {
+    async sendMessage(message) {
+      calls.push(message);
+      return { ok: true, result: { message_id: 42 } };
+    }
+  };
+  const replyMarkup = { inline_keyboard: [[{ text: "Open", url: "https://example.com" }]] };
+
+  const result = await sendTelegramMessage({
+    token: "unused-with-client",
+    chatId: 100,
+    text: "Release digest",
+    replyMarkup,
+    telegramClient
+  });
+
+  assert.deepEqual(calls, [{ chatId: 100, text: "Release digest", replyMarkup }]);
+  assert.deepEqual(result, { ok: true, result: { message_id: 42 } });
+});
 
 test("text message creates a pending draft response", async () => {
   const calls = [];
