@@ -59,9 +59,18 @@ export function createReleaseDigestScheduler(options) {
     }
   }
 
-  function runScheduledTick(now) {
+  async function runScheduledTick(now) {
     const tickNow = now instanceof Date ? now : new Date();
-    return tick(tickNow).catch(onError);
+    try {
+      return await tick(tickNow);
+    } catch (error) {
+      try {
+        await onError(error);
+      } catch {
+        // Scheduled callbacks must never leak a rejected promise to the process.
+      }
+      return undefined;
+    }
   }
 
   return {

@@ -15,6 +15,10 @@ test("releaseDigestLocalParts uses the configured timezone and h23 hour", () => 
     releaseDigestLocalParts(new Date("2026-06-19T17:05:00Z"), "America/New_York"),
     { date: "2026-06-19", hour: 13 }
   );
+  assert.deepEqual(
+    releaseDigestLocalParts(new Date("2026-06-19T17:00:00Z"), "Asia/Bangkok"),
+    { date: "2026-06-20", hour: 0 }
+  );
 });
 
 test("disabled scheduler skips without checking the repository or sending", async () => {
@@ -216,6 +220,99 @@ test("start schedules one initial tick and one interval, and stop clears both", 
   scheduler.start();
   assert.equal(timers.timeoutHandles.length, 2);
   assert.equal(timers.intervalHandles.length, 2);
+});
+
+test("scheduled runner absorbs errors when onError throws", async () => {
+  const timers = fakeTimerApi();
+  const scheduler = createReleaseDigestScheduler({
+    enabled: true,
+    timezone: "Asia/Bangkok",
+    sendHour: 21,
+    repo: {
+      async getReleaseDigestRunForLocalDate() {
+        throw new Error("tick failed");
+      }
+    },
+    releaseNotesService: {},
+    onError() {
+      throw new Error("handler failed");
+    },
+    timerApi: timers
+  });
+
+  scheduler.start();
+
+  await assert.doesNotReject(
+    timers.runTimeout(new Date("2026-06-19T14:00:00Z"))
+  );
+});
+
+test("scheduled runner absorbs errors when onError returns a rejected promise", async () => {
+  const timers = fakeTimerApi();
+  const scheduler = createReleaseDigestScheduler({
+    enabled: true,
+    timezone: "Asia/Bangkok",
+    sendHour: 21,
+    repo: {
+      async getReleaseDigestRunForLocalDate() {
+        throw new Error("tick failed");
+      }
+    },
+    releaseNotesService: {},
+    async onError() {
+      throw new Error("async handler failed");
+    },
+    timerApi: timers
+  });
+
+  scheduler.start();
+
+  await assert.doesNotReject(
+    timers.runInterval(new Date("2026-06-19T14:00:00Z"))
+  );
+});
+
+test("stop clears future timers while an active tick finishes and releases the lock", async () => {
+  const timers = fakeTimerApi();
+  let releaseSend;
+  let sends = 0;
+  const pendingSend = new Promise((resolve) => {
+    releaseSend = resolve;
+  });
+  const scheduler = createReleaseDigestScheduler({
+    enabled: true,
+    timezone: "Asia/Bangkok",
+    sendHour: 21,
+    repo: {
+      async getReleaseDigestRunForLocalDate() {
+        return null;
+      }
+    },
+    releaseNotesService: {
+      async sendReleaseDigestSinceLastRun() {
+        sends += 1;
+        if (sends === 1) await pendingSend;
+        return { sent: true };
+      }
+    },
+    timerApi: timers
+  });
+  const now = new Date("2026-06-19T14:00:00Z");
+
+  scheduler.start();
+  const activeTick = timers.runTimeout(now);
+  await Promise.resolve();
+  scheduler.stop();
+
+  assert.deepEqual(timers.clearedTimeouts, [timers.timeoutHandles[0]]);
+  assert.deepEqual(timers.clearedIntervals, [timers.intervalHandles[0]]);
+  assert.deepEqual(await scheduler.tick(now), { skipped: true, reason: "running" });
+
+  releaseSend();
+  await activeTick;
+
+  assert.deepEqual(await scheduler.tick(now), { sent: true });
+  assert.equal(sends, 2);
 });
 
 test("disabled scheduler start does not create timers", () => {
