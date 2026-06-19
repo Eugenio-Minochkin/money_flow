@@ -78,8 +78,9 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
   const rawText = message.text?.trim() || null;
   const commandText = normalizeBotCommand(rawText);
   const hasVoice = Boolean(message.voice || message.audio);
+  const hasPhoto = Boolean(message.photo?.length);
 
-  if (!rawText && !hasVoice) {
+  if (!rawText && !hasVoice && !hasPhoto) {
     return sendTelegramResponse(trace, () => sendMessage(token, chatId, botText(language, "unsupported"), null, telegramClient));
   }
   if (hasVoice && !rawText && !voiceTranscriber?.isConfigured()) {
@@ -142,9 +143,15 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
     }
   }
 
+  const inputType = hasPhoto ? "photo" : (hasVoice ? "voice" : "text");
+  const trackExpenseMessage = !isOnboardingActive(user);
+  if (trackExpenseMessage) {
+    await safeRecordAppEvent(repository, user.id, "message_received", { inputType });
+  }
+
   const queued = telegramJobQueue.enqueue({
     userId: from.id,
-    run: () => processQueuedMessage({ message, from, user, rawText, hasVoice, repository, token, miniAppUrl, expenseParser, voiceTranscriber, telegramClient, now, trace }),
+    run: () => processQueuedMessage({ message, from, user, rawText, hasVoice, inputType: trackExpenseMessage ? inputType : null, repository, token, miniAppUrl, expenseParser, voiceTranscriber, telegramClient, now, trace }),
     onStart: (metadata) => trace.event("queue_job_start", metadata),
     onFinish: (metadata) => trace.event("queue_job_done", metadata)
   });
@@ -195,101 +202,154 @@ async function sendQueuedJobFailure({ error, token, chatId, language, telegramCl
   }
 }
 
-async function processQueuedMessage({ message, from, user, rawText, hasVoice, repository, token, miniAppUrl, expenseParser, voiceTranscriber, telegramClient, now, trace }) {
+async function processQueuedMessage({ message, from, user, rawText, hasVoice, inputType, repository, token, miniAppUrl, expenseParser, voiceTranscriber, telegramClient, now, trace }) {
+  const processingStartedAt = performance.now();
   const language = user.interface_language ?? "en";
   const chatId = message.chat.id;
 
-  if (isOnboardingActive(user)) {
-    let onboardingTextInput = rawText;
-    if (!onboardingTextInput && hasVoice) {
-      try {
-        onboardingTextInput = await transcribeVoice(message, voiceTranscriber, trace);
-      } catch (error) {
-        trace.failActive(["telegram_file_download", "transcription"], error);
-        console.error("[telegram] voice transcription failed during onboarding", error.message);
-        onboardingTextInput = null;
-      }
-    }
-    if (!onboardingTextInput) {
-      return sendTelegramResponse(trace, () => sendMessage(token, chatId, botText(language, "unsupported"), null, telegramClient));
-    }
-    return handleOnboardingMessage({ text: onboardingTextInput, user, repository, token, chatId, miniAppUrl, telegramUserId: from.id, telegramClient, now, trace });
-  }
-
-  const loader = await sendExpenseProcessingMessage(token, chatId, language, telegramClient, trace);
-
   try {
-    let text = rawText;
-    if (!text && hasVoice) {
-      text = await transcribeVoice(message, voiceTranscriber, trace);
-    }
-    if (!text) {
-      throw new Error("No text to process");
+    if (isOnboardingActive(user)) {
+      let onboardingTextInput = rawText;
+      if (!onboardingTextInput && hasVoice) {
+        try {
+          onboardingTextInput = await transcribeVoice(message, voiceTranscriber, trace);
+        } catch (error) {
+          trace.failActive(["telegram_file_download", "transcription"], error);
+          console.error("[telegram] voice transcription failed during onboarding", error.message);
+          onboardingTextInput = null;
+        }
+      }
+      if (!onboardingTextInput) {
+        return sendTelegramResponse(trace, () => sendMessage(token, chatId, botText(language, "unsupported"), null, telegramClient));
+      }
+      return handleOnboardingMessage({ text: onboardingTextInput, user, repository, token, chatId, miniAppUrl, telegramUserId: from.id, telegramClient, now, trace });
     }
 
-    const planned = parsePlannedExpenseText(text, { defaultCurrency: user.base_currency ?? "THB" });
-    if (planned) {
+    const loader = await sendExpenseProcessingMessage(token, chatId, language, telegramClient, trace);
+    try {
+      let text = rawText;
+      if (!text && hasVoice) {
+        try {
+          text = await transcribeVoice(message, voiceTranscriber, trace);
+        } catch (error) {
+          await safeRecordAppEvent(repository, user.id, "voice_transcription_failed", {});
+          throw error;
+        }
+      }
+      if (!text && inputType === "photo") {
+        await safeRecordAppEvent(repository, user.id, "expense_parse_failed", { inputType });
+        return deliverResultMessage({
+          token,
+          chatId,
+          loaderMessageId: loader.messageId,
+          text: botText(language, "unsupported"),
+          replyMarkup: null,
+          telegramClient,
+          trace
+        });
+      }
+      if (!text) {
+        throw new Error("No text to process");
+      }
+
+      let planned;
+      try {
+        planned = parsePlannedExpenseText(text, { defaultCurrency: user.base_currency ?? "THB" });
+      } catch (error) {
+        await safeRecordAppEvent(repository, user.id, "expense_parse_failed", { inputType });
+        throw error;
+      }
+      if (planned) {
+        trace.start("db_save");
+        const draft = await repository.createPlannedDraft(user.id, text, planned);
+        trace.end("db_save");
+        await safeRecordAppEvent(repository, user.id, "expense_draft_created", { inputType, draftType: "planned" });
+        return deliverResultMessage({
+          token,
+          chatId,
+          loaderMessageId: loader.messageId,
+          text: formatPlannedDraft(planned, { language }),
+          replyMarkup: plannedDraftKeyboard(draft.id, miniAppUrl, from.id, language),
+          telegramClient,
+          trace
+        });
+      }
+
+      let llmMetadata = {
+        model: expenseParser.model,
+        promptChars: String(text ?? "").length
+      };
+      trace.start("llm_parse", llmMetadata);
+      let parsed;
+      try {
+        parsed = await expenseParser.parse(text, {
+          defaultCurrency: user.base_currency ?? "THB",
+          onLlmTrace(metadata) {
+            llmMetadata = { ...llmMetadata, ...metadata };
+          }
+        });
+      } catch (error) {
+        await safeRecordAppEvent(repository, user.id, "expense_parse_failed", { inputType });
+        throw error;
+      }
+      trace.end("llm_parse", llmMetadata);
+      if (parsed.expenses.length === 0) {
+        await safeRecordAppEvent(repository, user.id, "expense_parse_failed", { inputType });
+        return deliverResultMessage({
+          token,
+          chatId,
+          loaderMessageId: loader.messageId,
+          text: botText(language, "amountNotFound"),
+          replyMarkup: null,
+          telegramClient,
+          trace
+        });
+      }
+
       trace.start("db_save");
-      const draft = await repository.createPlannedDraft(user.id, text, planned);
+      const draft = await repository.createDraft(user.id, text, parsed.expenses);
       trace.end("db_save");
+      await safeRecordAppEvent(repository, user.id, "expense_draft_created", { inputType, draftType: "regular" });
       return deliverResultMessage({
         token,
         chatId,
         loaderMessageId: loader.messageId,
-        text: formatPlannedDraft(planned, { language }),
-        replyMarkup: plannedDraftKeyboard(draft.id, miniAppUrl, from.id, language),
+        text: formatDraft(parsed.expenses, { language, baseCurrency: user.base_currency ?? "THB" }),
+        replyMarkup: draftKeyboard(draft.id, parsed.expenses, miniAppUrl, from.id, language),
         telegramClient,
         trace
       });
-    }
-
-    let llmMetadata = {
-      model: expenseParser.model,
-      promptChars: String(text ?? "").length
-    };
-    trace.start("llm_parse", llmMetadata);
-    const parsed = await expenseParser.parse(text, {
-      defaultCurrency: user.base_currency ?? "THB",
-      onLlmTrace(metadata) {
-        llmMetadata = { ...llmMetadata, ...metadata };
-      }
-    });
-    trace.end("llm_parse", llmMetadata);
-    if (parsed.expenses.length === 0) {
+    } catch (error) {
+      trace.failActive(["telegram_file_download", "transcription", "llm_parse", "db_save"], error);
+      console.error("[telegram] expense processing failed", error.message);
       return deliverResultMessage({
         token,
         chatId,
         loaderMessageId: loader.messageId,
-        text: botText(language, "amountNotFound"),
+        text: botText(language, "jobProcessingFailed"),
         replyMarkup: null,
         telegramClient,
         trace
       });
     }
+  } finally {
+    if (inputType) {
+      await safeRecordAppEvent(repository, user.id, "message_processing_completed", {
+        inputType,
+        processingTotalMs: Math.max(0, Math.round(performance.now() - processingStartedAt))
+      });
+    }
+  }
+}
 
-    trace.start("db_save");
-    const draft = await repository.createDraft(user.id, text, parsed.expenses);
-    trace.end("db_save");
-    return deliverResultMessage({
-      token,
-      chatId,
-      loaderMessageId: loader.messageId,
-      text: formatDraft(parsed.expenses, { language, baseCurrency: user.base_currency ?? "THB" }),
-      replyMarkup: draftKeyboard(draft.id, parsed.expenses, miniAppUrl, from.id, language),
-      telegramClient,
-      trace
-    });
+async function safeRecordAppEvent(repository, userId, eventName, metadata = {}) {
+  try {
+    await repository.recordAppEvent?.(userId, eventName, metadata);
   } catch (error) {
-    trace.failActive(["telegram_file_download", "transcription", "llm_parse", "db_save"], error);
-    console.error("[telegram] expense processing failed", error.message);
-    return deliverResultMessage({
-      token,
-      chatId,
-      loaderMessageId: loader.messageId,
-      text: botText(language, "jobProcessingFailed"),
-      replyMarkup: null,
-      telegramClient,
-      trace
+    console.warn("[events] record failed", {
+      userId: userId ?? null,
+      eventName,
+      message: error.message
     });
   }
 }
@@ -637,6 +697,7 @@ async function handleCallback({ update, repository, token, miniAppUrl, telegramC
     trace.start("db_save");
     await repository.confirmPlannedDraft(draftId, telegramUserId);
     trace.end("db_save");
+    await safeRecordAppEvent(repository, user?.id, "expense_draft_confirmed", { draftType: "planned" });
     return sendTelegramResponse(trace, async () => {
       await answerCallback(token, callback.id, botText(language, "savedCallback"), telegramClient);
       return sendMessage(token, callback.message.chat.id, botText(language, "plannedSaved"), appKeyboard(miniAppUrl, telegramUserId, language), telegramClient);
@@ -647,6 +708,7 @@ async function handleCallback({ update, repository, token, miniAppUrl, telegramC
     trace.start("db_save");
     await repository.cancelPlannedDraft(draftId, telegramUserId);
     trace.end("db_save");
+    await safeRecordAppEvent(repository, user?.id, "expense_draft_cancelled", { draftType: "planned" });
     return sendTelegramResponse(trace, async () => {
       await answerCallback(token, callback.id, botText(language, "cancelledCallback"), telegramClient);
       return sendMessage(token, callback.message.chat.id, botText(language, "plannedCancelled"), null, telegramClient);
@@ -703,6 +765,10 @@ async function handleCallback({ update, repository, token, miniAppUrl, telegramC
     const dashboard = await repository.dashboard(telegramUserId);
     const total = expenses.reduce((sum, expense) => sum + Number(expense.amount_base), 0);
     trace.end("db_save");
+    await safeRecordAppEvent(repository, user?.id, "expense_draft_confirmed", { draftType: "regular" });
+    for (const _expense of expenses) {
+      await safeRecordAppEvent(repository, user?.id, "expense_saved", { draftType: "regular" });
+    }
     return sendTelegramResponse(trace, async () => {
       await answerCallback(token, callback.id, botText(language, "savedCallback"), telegramClient);
       return sendMessage(token, callback.message.chat.id, formatSavedSummary(total, dashboard.snapshot, { language }), appKeyboard(miniAppUrl, telegramUserId, language), telegramClient);
@@ -713,6 +779,7 @@ async function handleCallback({ update, repository, token, miniAppUrl, telegramC
     trace.start("db_save");
     await repository.cancelDraft(draftId, telegramUserId);
     trace.end("db_save");
+    await safeRecordAppEvent(repository, user?.id, "expense_draft_cancelled", { draftType: "regular" });
     const chatId = callback.message.chat.id;
     const messageId = callback.message.message_id;
     return sendTelegramResponse(trace, async () => {

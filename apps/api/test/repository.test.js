@@ -3,6 +3,41 @@ import assert from "node:assert/strict";
 
 import { createRepository } from "../src/repository.js";
 
+test("records app events with JSON metadata", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql: String(sql), params });
+    return { rows: [] };
+  }));
+
+  await repo.recordAppEvent(7, "message_received", { inputType: "text" });
+
+  assert.match(queries[0].sql, /INSERT INTO app_events/);
+  assert.deepEqual(queries[0].params, [7, "message_received", JSON.stringify({ inputType: "text" })]);
+});
+
+test("app event logging failures do not reject user operations", async () => {
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = (...args) => warnings.push(args);
+  try {
+    const repo = createRepository(fakePool(() => {
+      throw new Error("events unavailable");
+    }));
+
+    await assert.doesNotReject(() => repo.recordAppEvent(7, "message_received", { inputType: "text" }));
+  } finally {
+    console.warn = originalWarn;
+  }
+
+  assert.equal(warnings[0][0], "[events] record failed");
+  assert.deepEqual(warnings[0][1], {
+    userId: 7,
+    eventName: "message_received",
+    message: "events unavailable"
+  });
+});
+
 test("creates new Telegram users at the language onboarding step", async () => {
   const queries = [];
   const repo = createRepository(fakePool((sql, params) => {
