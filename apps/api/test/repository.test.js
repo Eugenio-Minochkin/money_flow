@@ -301,6 +301,8 @@ test("release digest persistence schema includes source metadata and run constra
   assert.match(migration, /CHECK \(trigger IN \('auto', 'manual', 'preview', 'test'\)\)/);
   assert.match(migration, /CREATE UNIQUE INDEX IF NOT EXISTS release_digest_runs_auto_date_unique/);
   assert.match(migration, /WHERE trigger = 'auto' AND status IN \('success', 'skipped', 'running'\)/);
+  assert.match(migration, /CREATE UNIQUE INDEX IF NOT EXISTS release_digest_runs_single_running_unique/);
+  assert.match(migration, /ON release_digest_runs \(\(1\)\) WHERE status = 'running'/);
 });
 
 test("creates an idempotent PR-sourced release note", async () => {
@@ -479,6 +481,26 @@ test("duplicate automatic release digest run returns null", async () => {
   assert.equal(run, null);
 });
 
+test("concurrent running release digest run returns null", async () => {
+  const duplicate = Object.assign(new Error("duplicate"), {
+    code: "23505",
+    constraint: "release_digest_runs_single_running_unique"
+  });
+  const repo = createRepository(fakePool(() => {
+    throw duplicate;
+  }));
+
+  const run = await repo.createReleaseDigestRun({
+    trigger: "manual",
+    sentFrom: null,
+    sentTo: new Date("2026-06-19T14:00:00Z"),
+    digestLocalDate: "2026-06-19",
+    timezone: "Asia/Bangkok"
+  });
+
+  assert.equal(run, null);
+});
+
 test("unrelated automatic release digest unique violation is not swallowed", async () => {
   const duplicate = Object.assign(new Error("duplicate"), {
     code: "23505",
@@ -579,6 +601,23 @@ test("records release note deliveries and sent markers", async () => {
   assert.deepEqual(queries[0].params, [1, 2]);
   assert.match(queries[1].sql, /INSERT INTO release_note_deliveries/);
   assert.match(queries[2].sql, /UPDATE release_notes SET sent_at = now\(\)/);
+});
+
+test("records multiple release note deliveries atomically", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql: String(sql), params });
+    return { rows: [] };
+  }));
+
+  await repo.markReleaseNotesDelivered([1, 2, 3], 7);
+
+  assert.equal(queries.length, 1);
+  assert.match(queries[0].sql, /INSERT INTO release_note_deliveries/);
+  assert.match(queries[0].sql, /SELECT release_note_id, \$2/);
+  assert.match(queries[0].sql, /unnest\(\$1::bigint\[\]\)/);
+  assert.match(queries[0].sql, /ON CONFLICT DO NOTHING/);
+  assert.deepEqual(queries[0].params, [[1, 2, 3], 7]);
 });
 
 test("counts active users missing a release note delivery", async () => {

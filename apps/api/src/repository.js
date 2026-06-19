@@ -324,7 +324,10 @@ export function createRepository(pool, options = {}) {
       } catch (error) {
         if (
           error.code === "23505" &&
-          error.constraint === "release_digest_runs_auto_date_unique"
+          [
+            "release_digest_runs_auto_date_unique",
+            "release_digest_runs_single_running_unique"
+          ].includes(error.constraint)
         ) {
           return null;
         }
@@ -443,6 +446,16 @@ export function createRepository(pool, options = {}) {
          VALUES ($1, $2)
          ON CONFLICT (release_note_id, user_id) DO NOTHING`,
         [releaseNoteId, userId]
+      );
+    },
+
+    async markReleaseNotesDelivered(releaseNoteIds, userId) {
+      await pool.query(
+        `INSERT INTO release_note_deliveries (release_note_id, user_id)
+         SELECT release_note_id, $2
+         FROM unnest($1::bigint[]) AS release_note_id
+         ON CONFLICT DO NOTHING`,
+        [releaseNoteIds, userId]
       );
     },
 

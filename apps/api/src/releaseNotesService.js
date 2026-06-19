@@ -98,6 +98,8 @@ export function hiddenReleaseNoteLabel(note) {
 }
 
 export function createReleaseNotesService({ repository, sendMessage } = {}) {
+  let digestSendInProgress = false;
+
   return {
     async createReleaseNote(input) {
       const normalized = normalizeReleaseNoteInput(input);
@@ -143,95 +145,121 @@ export function createReleaseNotesService({ repository, sendMessage } = {}) {
       };
     },
     async sendReleaseDigestSinceLastRun(now = new Date(), options = {}) {
-      const trigger = options.trigger ?? "manual";
-      const timezone = options.timezone ?? "Asia/Bangkok";
-      const localDate = options.localDate ?? formatLocalDate(now, timezone);
-      const context = await getPendingReleaseContext(repository, now);
-      const run = await repository.createReleaseDigestRun({
-        trigger,
-        sentFrom: context.sentFrom,
-        sentTo: context.sentTo,
-        digestLocalDate: localDate,
-        timezone
-      });
-
-      if (!run) {
-        return { ...emptyReleaseSummary(), reason: "duplicate_auto_run" };
+      if (digestSendInProgress) {
+        return { ...emptyReleaseSummary(), reason: "digest_already_running" };
       }
-      if (context.selectedNotes.length === 0) {
-        await repository.markReleaseDigestRunSkipped(run.id, "no_public_release_notes");
-        return emptyReleaseSummary();
-      }
-
-      const summary = {
-        sent: true,
-        version: context.selectedNotes.at(-1)?.version ?? null,
-        versionFrom: context.selectedNotes[0]?.version ?? null,
-        versionTo: context.selectedNotes.at(-1)?.version ?? null,
-        notes: context.selectedNotes.length,
-        users: 0,
-        success: 0,
-        errors: 0,
-        blocked: 0
-      };
+      digestSendInProgress = true;
 
       try {
-        if (!sendMessage) throw new Error("sendMessage is required");
-        const users = await repository.getActiveUsersForReleasePush();
-        summary.users = users.length;
+        const trigger = options.trigger ?? "manual";
+        const timezone = options.timezone ?? "Asia/Bangkok";
+        const localDate = options.localDate ?? formatLocalDate(now, timezone);
+        const context = await getPendingReleaseContext(repository, now);
+        const run = await repository.createReleaseDigestRun({
+          trigger,
+          sentFrom: context.sentFrom,
+          sentTo: context.sentTo,
+          digestLocalDate: localDate,
+          timezone
+        });
 
-        for (const user of users) {
-          try {
-            const missingNotes = [];
-            for (const note of context.selectedNotes) {
-              if (!await repository.hasReleaseNoteDelivery(note.id, user.id)) {
-                missingNotes.push(note);
-              }
-            }
-            if (missingNotes.length === 0) continue;
+        if (!run) {
+          return { ...emptyReleaseSummary(), reason: "digest_already_running" };
+        }
+        if (context.selectedNotes.length === 0) {
+          await repository.markReleaseDigestRunSkipped(run.id, "no_public_release_notes");
+          return emptyReleaseSummary();
+        }
 
+        const summary = {
+          sent: true,
+          version: context.selectedNotes.at(-1)?.version ?? null,
+          versionFrom: context.selectedNotes[0]?.version ?? null,
+          versionTo: context.selectedNotes.at(-1)?.version ?? null,
+          notes: context.selectedNotes.length,
+          users: 0,
+          success: 0,
+          errors: 0,
+          skipped: 0,
+          blocked: 0
+        };
+
+        try {
+          if (!sendMessage) throw new Error("sendMessage is required");
+          const users = await repository.getActiveUsersForReleasePush();
+          summary.users = users.length;
+
+          for (const user of users) {
             try {
-              await sendMessage({
-                chatId: Number(user.telegram_user_id),
-                text: formatReleaseDigest(missingNotes, user.interface_language),
-                user,
-                releaseNotes: missingNotes
-              });
-              for (const note of missingNotes) {
-                await repository.markReleaseNoteDelivered(note.id, user.id);
+              const missingNotes = [];
+              for (const note of context.selectedNotes) {
+                if (!await repository.hasReleaseNoteDelivery(note.id, user.id)) {
+                  missingNotes.push(note);
+                }
               }
-              summary.success += 1;
-            } catch (error) {
+              if (missingNotes.length === 0) {
+                summary.skipped += 1;
+                continue;
+              }
+
+              try {
+                await sendMessage({
+                  chatId: Number(user.telegram_user_id),
+                  text: formatReleaseDigest(missingNotes, user.interface_language),
+                  user,
+                  releaseNotes: missingNotes
+                });
+              } catch (error) {
+                summary.errors += 1;
+                if (isBotBlockedError(error)) {
+                  summary.blocked += 1;
+                  try {
+                    await repository.markUserBotBlocked(user.id);
+                  } catch {
+                    // The Telegram error is already counted; keep processing users.
+                  }
+                }
+                continue;
+              }
+
+              try {
+                await retryReleaseDeliveryWrite(() => (
+                  repository.markReleaseNotesDelivered(
+                    missingNotes.map((note) => note.id),
+                    user.id
+                  )
+                ));
+                summary.success += 1;
+              } catch {
+                summary.errors += 1;
+              }
+            } catch {
               summary.errors += 1;
-              if (isBotBlockedError(error)) {
-                summary.blocked += 1;
-                await repository.markUserBotBlocked(user.id);
-              }
             }
-          } catch (error) {
-            summary.errors += 1;
           }
-        }
 
-        for (const note of context.selectedNotes) {
-          if (await repository.countMissingReleaseNoteDeliveries(note.id) === 0) {
-            await repository.markReleaseNoteSent(note.id);
+          for (const note of context.selectedNotes) {
+            if (await repository.countMissingReleaseNoteDeliveries(note.id) === 0) {
+              await repository.markReleaseNoteSent(note.id);
+            }
           }
-        }
 
-        if (summary.errors > summary.blocked) {
-          await repository.markReleaseDigestRunFailed(
-            run.id,
-            new Error("release_digest_partial_failure"),
-            summary
-          );
-        } else {
-          await repository.markReleaseDigestRunSuccess(run.id, summary);
+          if (summary.errors > summary.blocked) {
+            await repository.markReleaseDigestRunFailed(
+              run.id,
+              new Error("release_digest_partial_failure"),
+              summary
+            );
+          } else {
+            await repository.markReleaseDigestRunSuccess(run.id, summary);
+          }
+          return summary;
+        } catch (error) {
+          await repository.markReleaseDigestRunFailed(run.id, error, summary);
+          throw error;
         }
-        return summary;
-      } catch (error) {
-        await repository.markReleaseDigestRunFailed(run.id, error, summary);
-        throw error;
+      } finally {
+        digestSendInProgress = false;
       }
     },
     async previewTodayReleaseDigest(now = new Date()) {
@@ -354,8 +382,22 @@ function emptyReleaseSummary() {
     users: 0,
     success: 0,
     errors: 0,
+    skipped: 0,
     blocked: 0
   };
+}
+
+async function retryReleaseDeliveryWrite(write) {
+  let lastError;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      await write();
+      return;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError;
 }
 
 function formatIsoMinute(value) {

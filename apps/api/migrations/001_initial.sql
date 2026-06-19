@@ -344,3 +344,6 @@ CREATE TABLE IF NOT EXISTS release_digest_runs (
 CREATE UNIQUE INDEX IF NOT EXISTS release_digest_runs_auto_date_unique
   ON release_digest_runs (digest_local_date, timezone, trigger)
   WHERE trigger = 'auto' AND status IN ('success', 'skipped', 'running');
+
+CREATE UNIQUE INDEX IF NOT EXISTS release_digest_runs_single_running_unique
+  ON release_digest_runs ((1)) WHERE status = 'running';

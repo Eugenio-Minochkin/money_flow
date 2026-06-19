@@ -489,7 +489,7 @@ test("send since last run creates a skipped run when no public notes exist", asy
   assert.deepEqual(repo.skippedRuns, [[1, "no_public_release_notes"]]);
 });
 
-test("duplicate automatic run exits without sending", async () => {
+test("duplicate or concurrent run exits without sending", async () => {
   const sent = [];
   const repo = fakeReleaseRepository({
     notes: [releaseNote()],
@@ -506,10 +506,52 @@ test("duplicate automatic run exits without sending", async () => {
   );
 
   assert.equal(result.sent, false);
-  assert.equal(result.reason, "duplicate_auto_run");
+  assert.equal(result.reason, "digest_already_running");
   assert.equal(sent.length, 0);
   assert.equal(repo.successRuns.length, 0);
   assert.equal(repo.failedRuns.length, 0);
+});
+
+test("shared in-memory lock prevents overlapping manual and automatic sends", async () => {
+  let releaseFirstSend;
+  const firstSendStarted = new Promise((resolve) => {
+    releaseFirstSend = resolve;
+  });
+  let unblockFirstSend;
+  const firstSendBlocked = new Promise((resolve) => {
+    unblockFirstSend = resolve;
+  });
+  const repo = fakeReleaseRepository({
+    notes: [releaseNote()],
+    users: [{ id: 1, telegram_user_id: 100, interface_language: "ru" }]
+  });
+  let sendCalls = 0;
+  const service = createReleaseNotesService({
+    repository: repo,
+    sendMessage: async () => {
+      sendCalls += 1;
+      if (sendCalls === 1) {
+        releaseFirstSend();
+        await firstSendBlocked;
+      }
+    }
+  });
+
+  const first = service.sendReleaseDigestSinceLastRun(
+    new Date("2026-06-19T14:00:00Z"),
+    { trigger: "manual" }
+  );
+  await firstSendStarted;
+  const second = await service.sendReleaseDigestSinceLastRun(
+    new Date("2026-06-19T14:01:00Z"),
+    { trigger: "auto" }
+  );
+  unblockFirstSend();
+  await first;
+
+  assert.equal(second.sent, false);
+  assert.equal(second.reason, "digest_already_running");
+  assert.equal(repo.createdRuns.length, 1);
 });
 
 test("send since last run sends one combined localized message per user", async () => {
@@ -550,6 +592,7 @@ test("send since last run sends one combined localized message per user", async 
       users: result.users,
       success: result.success,
       errors: result.errors,
+      skipped: result.skipped,
       blocked: result.blocked
     },
     {
@@ -559,10 +602,81 @@ test("send since last run sends one combined localized message per user", async 
       users: 2,
       success: 2,
       errors: 0,
+      skipped: 0,
       blocked: 0
     }
   );
   assert.equal(repo.successRuns.length, 1);
+});
+
+test("already delivered users are counted as skipped", async () => {
+  const repo = fakeReleaseRepository({
+    notes: [releaseNote()],
+    users: [
+      { id: 1, telegram_user_id: 100, interface_language: "ru" },
+      { id: 2, telegram_user_id: 200, interface_language: "en" }
+    ],
+    existingDeliveries: new Set(["1:1"])
+  });
+  const service = createReleaseNotesService({
+    repository: repo,
+    sendMessage: async () => ({ ok: true })
+  });
+
+  const result = await service.sendReleaseDigestSinceLastRun(new Date("2026-06-19T14:00:00Z"));
+
+  assert.deepEqual(
+    {
+      users: result.users,
+      success: result.success,
+      errors: result.errors,
+      skipped: result.skipped
+    },
+    { users: 2, success: 1, errors: 0, skipped: 1 }
+  );
+  assert.equal(result.success + result.errors + result.skipped, result.users);
+});
+
+test("transient delivery persistence failure retries without resending Telegram", async () => {
+  const sent = [];
+  const repo = fakeReleaseRepository({
+    notes: [releaseNote()],
+    users: [{ id: 1, telegram_user_id: 100, interface_language: "ru" }],
+    deliveryWriteFailures: 2
+  });
+  const service = createReleaseNotesService({
+    repository: repo,
+    sendMessage: async (message) => sent.push(message.chatId)
+  });
+
+  const result = await service.sendReleaseDigestSinceLastRun(new Date("2026-06-19T14:00:00Z"));
+
+  assert.deepEqual(sent, [100]);
+  assert.equal(repo.deliveryWriteAttempts, 3);
+  assert.equal(result.success, 1);
+  assert.equal(result.errors, 0);
+  assert.deepEqual(repo.deliveries, [[1, 1]]);
+});
+
+test("permanent delivery persistence failure counts one error without resending Telegram", async () => {
+  const sent = [];
+  const repo = fakeReleaseRepository({
+    notes: [releaseNote()],
+    users: [{ id: 1, telegram_user_id: 100, interface_language: "ru" }],
+    deliveryWriteFailures: Infinity
+  });
+  const service = createReleaseNotesService({
+    repository: repo,
+    sendMessage: async (message) => sent.push(message.chatId)
+  });
+
+  const result = await service.sendReleaseDigestSinceLastRun(new Date("2026-06-19T14:00:00Z"));
+
+  assert.deepEqual(sent, [100]);
+  assert.equal(repo.deliveryWriteAttempts, 3);
+  assert.equal(result.success, 0);
+  assert.equal(result.errors, 1);
+  assert.equal(result.skipped, 0);
 });
 
 test("send since last run leaves compact overflow pending", async () => {
@@ -702,10 +816,13 @@ test("bot blocked persistence failure does not stop the next user", async () => 
 
   assert.deepEqual(sent, [100, 200]);
   assert.equal(result.success, 1);
-  assert.equal(result.errors, 2);
+  assert.equal(result.errors, 1);
   assert.equal(result.blocked, 1);
+  assert.equal(result.skipped, 0);
+  assert.equal(result.success + result.errors + result.skipped, result.users);
   assert.deepEqual(repo.deliveries, [[1, 2]]);
-  assert.equal(repo.failedRuns.length, 1);
+  assert.equal(repo.failedRuns.length, 0);
+  assert.equal(repo.successRuns.length, 1);
 });
 
 test("blocked users are marked without failing the digest run", async () => {
@@ -785,6 +902,7 @@ function releaseNote(patch = {}) {
 
 function fakeReleaseRepository(options = {}) {
   const existingDeliveries = new Set(options.existingDeliveries ?? []);
+  let deliveryWriteFailures = options.deliveryWriteFailures ?? 0;
   return {
     existingDeliveries,
     deliveries: [],
@@ -794,6 +912,7 @@ function fakeReleaseRepository(options = {}) {
     successRuns: [],
     failedRuns: [],
     skippedRuns: [],
+    deliveryWriteAttempts: 0,
     async createReleaseNote(input) {
       return { id: 1, ...input };
     },
@@ -837,6 +956,17 @@ function fakeReleaseRepository(options = {}) {
     async markReleaseNoteDelivered(releaseNoteId, userId) {
       existingDeliveries.add(`${releaseNoteId}:${userId}`);
       this.deliveries.push([releaseNoteId, userId]);
+    },
+    async markReleaseNotesDelivered(releaseNoteIds, userId) {
+      this.deliveryWriteAttempts += 1;
+      if (deliveryWriteFailures > 0) {
+        deliveryWriteFailures -= 1;
+        throw new Error("delivery persistence unavailable");
+      }
+      for (const releaseNoteId of releaseNoteIds) {
+        existingDeliveries.add(`${releaseNoteId}:${userId}`);
+        this.deliveries.push([releaseNoteId, userId]);
+      }
     },
     async countMissingReleaseNoteDeliveries(releaseNoteId) {
       return (options.users ?? []).filter((user) => (
