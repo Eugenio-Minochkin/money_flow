@@ -303,6 +303,8 @@ test("release digest persistence schema includes source metadata and run constra
   assert.match(migration, /WHERE trigger = 'auto' AND status IN \('success', 'skipped', 'running'\)/);
   assert.match(migration, /CREATE UNIQUE INDEX IF NOT EXISTS release_digest_runs_single_running_unique/);
   assert.match(migration, /ON release_digest_runs \(\(1\)\) WHERE status = 'running'/);
+  assert.match(migration, /skipped_count INTEGER NOT NULL DEFAULT 0/);
+  assert.match(migration, /ALTER TABLE release_digest_runs\s+ADD COLUMN IF NOT EXISTS skipped_count INTEGER NOT NULL DEFAULT 0/);
 });
 
 test("creates an idempotent PR-sourced release note", async () => {
@@ -441,24 +443,58 @@ test("records release digest run lifecycle", async () => {
     users: 3,
     success: 3,
     errors: 0,
+    skipped: 0,
     blocked: 0
   });
   await repo.markReleaseDigestRunFailed(run.id, new Error("Telegram unavailable"), {
     users: 3,
     success: 1,
     errors: 2,
+    skipped: 4,
     blocked: 1
   });
   await repo.markReleaseDigestRunSkipped(run.id, "no_public_release_notes");
 
+  assert.match(queries[0].sql, /WITH recovered AS/);
+  assert.match(queries[0].sql, /UPDATE release_digest_runs/);
+  assert.match(queries[0].sql, /status = 'running'/);
+  assert.match(queries[0].sql, /started_at < now\(\) - interval '2 hours'/);
+  assert.match(queries[0].sql, /error_message = 'stale_running_run_recovered'/);
   assert.match(queries[0].sql, /INSERT INTO release_digest_runs/);
   assert.deepEqual(queries[0].params, ["auto", null, sentTo, "2026-06-19", "Asia/Bangkok"]);
   assert.match(queries[1].sql, /status = 'success'/);
-  assert.deepEqual(queries[1].params, ["9", "v.1.19", "v.1.20", 3, 3, 0, 0]);
+  assert.match(queries[1].sql, /skipped_count = \$7/);
+  assert.deepEqual(queries[1].params, ["9", "v.1.19", "v.1.20", 3, 3, 0, 0, 0]);
   assert.match(queries[2].sql, /status = 'failed'/);
-  assert.deepEqual(queries[2].params, ["9", 3, 1, 2, 1, "Telegram unavailable"]);
+  assert.match(queries[2].sql, /skipped_count = \$5/);
+  assert.deepEqual(queries[2].params, ["9", 3, 1, 2, 4, 1, "Telegram unavailable"]);
   assert.match(queries[3].sql, /status = 'skipped'/);
   assert.deepEqual(queries[3].params, ["9", "no_public_release_notes"]);
+});
+
+test("stale running recovery and new run insert share one atomic query", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql: String(sql), params });
+    return { rows: [{ id: "10", status: "running" }] };
+  }));
+
+  const run = await repo.createReleaseDigestRun({
+    trigger: "manual",
+    sentFrom: null,
+    sentTo: new Date("2026-06-19T16:00:00Z"),
+    digestLocalDate: "2026-06-19",
+    timezone: "Asia/Bangkok"
+  });
+
+  assert.equal(run.id, "10");
+  assert.equal(queries.length, 1);
+  assert.match(queries[0].sql, /WITH recovered AS \(\s*UPDATE release_digest_runs/);
+  assert.match(queries[0].sql, /status = 'failed'/);
+  assert.match(queries[0].sql, /finished_at = now\(\)/);
+  assert.match(queries[0].sql, /error_message = 'stale_running_run_recovered'/);
+  assert.match(queries[0].sql, /started_at < now\(\) - interval '2 hours'/);
+  assert.match(queries[0].sql, /INSERT INTO release_digest_runs/);
 });
 
 test("duplicate automatic release digest run returns null", async () => {

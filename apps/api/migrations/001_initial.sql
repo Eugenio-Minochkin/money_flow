@@ -331,6 +331,7 @@ CREATE TABLE IF NOT EXISTS release_digest_runs (
   users_count INTEGER NOT NULL DEFAULT 0,
   success_count INTEGER NOT NULL DEFAULT 0,
   error_count INTEGER NOT NULL DEFAULT 0,
+  skipped_count INTEGER NOT NULL DEFAULT 0,
   blocked_count INTEGER NOT NULL DEFAULT 0,
   error_message TEXT,
   digest_local_date TEXT,
@@ -340,6 +341,9 @@ CREATE TABLE IF NOT EXISTS release_digest_runs (
   CONSTRAINT release_digest_runs_trigger_check
     CHECK (trigger IN ('auto', 'manual', 'preview', 'test'))
 );
+
+ALTER TABLE release_digest_runs
+  ADD COLUMN IF NOT EXISTS skipped_count INTEGER NOT NULL DEFAULT 0;
 
 CREATE UNIQUE INDEX IF NOT EXISTS release_digest_runs_auto_date_unique
   ON release_digest_runs (digest_local_date, timezone, trigger)

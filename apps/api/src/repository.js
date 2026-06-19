@@ -313,7 +313,16 @@ export function createRepository(pool, options = {}) {
     async createReleaseDigestRun(input) {
       try {
         const result = await pool.query(
-          `INSERT INTO release_digest_runs (
+          `WITH recovered AS (
+             UPDATE release_digest_runs
+             SET status = 'failed',
+                 finished_at = now(),
+                 error_message = 'stale_running_run_recovered'
+             WHERE status = 'running'
+               AND started_at < now() - interval '2 hours'
+             RETURNING id
+           )
+           INSERT INTO release_digest_runs (
              trigger, sent_from, sent_to, digest_local_date, timezone
            )
            VALUES ($1, $2, $3, $4, $5)
@@ -345,9 +354,19 @@ export function createRepository(pool, options = {}) {
              users_count = $4,
              success_count = $5,
              error_count = $6,
-             blocked_count = $7
+             skipped_count = $7,
+             blocked_count = $8
          WHERE id = $1`,
-        [id, summary.versionFrom, summary.versionTo, summary.users, summary.success, summary.errors, summary.blocked]
+        [
+          id,
+          summary.versionFrom,
+          summary.versionTo,
+          summary.users,
+          summary.success,
+          summary.errors,
+          summary.skipped ?? 0,
+          summary.blocked
+        ]
       );
     },
 
@@ -359,14 +378,16 @@ export function createRepository(pool, options = {}) {
              users_count = $2,
              success_count = $3,
              error_count = $4,
-             blocked_count = $5,
-             error_message = $6
+             skipped_count = $5,
+             blocked_count = $6,
+             error_message = $7
          WHERE id = $1`,
         [
           id,
           summary.users ?? 0,
           summary.success ?? 0,
           summary.errors ?? 0,
+          summary.skipped ?? 0,
           summary.blocked ?? 0,
           error.message
         ]

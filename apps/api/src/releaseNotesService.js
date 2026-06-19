@@ -223,6 +223,7 @@ export function createReleaseNotesService({ repository, sendMessage } = {}) {
               }
 
               try {
+                // Bot API has no idempotency key; retry only persistence to minimize post-send ambiguity.
                 await retryReleaseDeliveryWrite(() => (
                   repository.markReleaseNotesDelivered(
                     missingNotes.map((note) => note.id),
