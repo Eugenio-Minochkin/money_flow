@@ -88,6 +88,12 @@ test("English digest falls back to Russian text", () => {
   assert.ok(text.length <= MAX_MESSAGE_CHARS);
 });
 
+test("English digest falls back to Russian text when English body is blank", () => {
+  const text = formatReleaseDigest([releaseNote({ body_en: " \n\t " })], "en");
+
+  assert.match(text, /Онбординг стал проще/);
+});
+
 test("release digest exports compact message limits", () => {
   assert.equal(MAX_BULLETS, 6);
   assert.equal(MAX_BULLET_CHARS, 120);
@@ -101,6 +107,16 @@ test("release note content accepts up to six RU and EN bullets", () => {
   };
 
   assert.equal(validateReleaseNoteContent(input), input);
+});
+
+test("release note content requires at least one nonblank Russian bullet", () => {
+  assert.throws(
+    () => validateReleaseNoteContent({
+      bodyRu: " \n\t ",
+      bodyEn: "Visible English text."
+    }),
+    /RU release notes require at least one bullet/
+  );
 });
 
 test("release note content rejects more than six lines", () => {
@@ -123,6 +139,23 @@ test("release note content rejects bullets over 120 characters", () => {
   );
 });
 
+test("release note bullet limits count visible Unicode graphemes", () => {
+  const familyEmoji = "👨‍👩‍👧‍👦";
+  const accepted = {
+    bodyRu: familyEmoji.repeat(120),
+    bodyEn: "Short."
+  };
+
+  assert.equal(validateReleaseNoteContent(accepted), accepted);
+  assert.throws(
+    () => validateReleaseNoteContent({
+      bodyRu: familyEmoji.repeat(121),
+      bodyEn: "Short."
+    }),
+    /RU release note bullet exceeds 120 characters/
+  );
+});
+
 test("selectDigestReleaseNotes keeps a seventh note pending", () => {
   const notes = Array.from({ length: 7 }, (_, index) => releaseNote({
     id: index + 1,
@@ -133,6 +166,15 @@ test("selectDigestReleaseNotes keeps a seventh note pending", () => {
   const selected = selectDigestReleaseNotes(notes);
 
   assert.deepEqual(selected.map((note) => note.id), [1, 2, 3, 4, 5, 6]);
+});
+
+test("selectDigestReleaseNotes rejects stored notes with oversized bullets", () => {
+  assert.throws(
+    () => selectDigestReleaseNotes([
+      releaseNote({ body_ru: "а".repeat(121) })
+    ]),
+    /RU release note bullet exceeds 120 characters/
+  );
 });
 
 test("selectDigestReleaseNotes does not split a note at the English bullet limit", () => {
@@ -174,6 +216,18 @@ test("selectDigestReleaseNotes keeps a whole note pending when either message ex
   assert.ok(formatReleaseDigest(selected, "en").length <= MAX_MESSAGE_CHARS);
 });
 
+test("selectDigestReleaseNotes counts digest length in visible Unicode graphemes", () => {
+  const selected = selectDigestReleaseNotes([
+    releaseNote({
+      version: `v.${"👨‍👩‍👧‍👦".repeat(820)}`,
+      body_ru: "Короткое улучшение.",
+      body_en: "Short improvement."
+    })
+  ]);
+
+  assert.equal(selected.length, 1);
+});
+
 test("hidden release note label includes audience and title", () => {
   assert.equal(
     hiddenReleaseNoteLabel({ audience: "admin", title_ru: "добавлена /admin_stats" }),
@@ -201,6 +255,28 @@ test("release notes service creates normalized release notes", async () => {
 
   assert.equal(note.audience, "admin");
   assert.equal(calls[0].isPublic, true);
+});
+
+test("release notes service rejects invalid content before repository insert", async () => {
+  let repositoryCalls = 0;
+  const service = createReleaseNotesService({
+    repository: {
+      async createReleaseNote() {
+        repositoryCalls += 1;
+      }
+    }
+  });
+
+  await assert.rejects(
+    service.createReleaseNote({
+      version: "v.1.18",
+      titleRu: "Пустая заметка",
+      bodyRu: " \n ",
+      bodyEn: "English only."
+    }),
+    /RU release notes require at least one bullet/
+  );
+  assert.equal(repositoryCalls, 0);
 });
 
 test("send today does nothing when there are no public user notes", async () => {

@@ -40,13 +40,18 @@ export function formatReleaseDigest(releaseNotes, language = "ru") {
 }
 
 export function validateReleaseNoteContent(input) {
+  const ruLines = bodyLines(input.bodyRu);
+  if (ruLines.length === 0) {
+    throw new Error("RU release notes require at least one bullet");
+  }
+
   for (const [label, body] of [["RU", input.bodyRu], ["EN", input.bodyEn]]) {
     if (!body) continue;
     const lines = bodyLines(body);
     if (lines.length > MAX_BULLETS) {
       throw new Error(`${label} release notes exceed ${MAX_BULLETS} bullets`);
     }
-    if (lines.some((line) => line.length > MAX_BULLET_CHARS)) {
+    if (lines.some((line) => graphemeLength(line) > MAX_BULLET_CHARS)) {
       throw new Error(`${label} release note bullet exceeds ${MAX_BULLET_CHARS} characters`);
     }
   }
@@ -56,13 +61,17 @@ export function validateReleaseNoteContent(input) {
 export function selectDigestReleaseNotes(notes) {
   const selected = [];
   for (const note of Array.isArray(notes) ? notes : []) {
+    validateReleaseNoteContent({
+      bodyRu: note.body_ru,
+      bodyEn: note.body_en
+    });
     const candidate = [...selected, note];
     const ruBulletCount = candidate.flatMap((item) => bodyLinesForLanguage(item, "ru")).length;
     const enBulletCount = candidate.flatMap((item) => bodyLinesForLanguage(item, "en")).length;
     if (ruBulletCount > MAX_BULLETS || enBulletCount > MAX_BULLETS) break;
     if (
-      formatReleaseDigest(candidate, "ru").length > MAX_MESSAGE_CHARS ||
-      formatReleaseDigest(candidate, "en").length > MAX_MESSAGE_CHARS
+      graphemeLength(formatReleaseDigest(candidate, "ru")) > MAX_MESSAGE_CHARS ||
+      graphemeLength(formatReleaseDigest(candidate, "en")) > MAX_MESSAGE_CHARS
     ) break;
     selected.push(note);
   }
@@ -76,7 +85,9 @@ export function hiddenReleaseNoteLabel(note) {
 export function createReleaseNotesService({ repository, sendMessage } = {}) {
   return {
     async createReleaseNote(input) {
-      return repository.createReleaseNote(normalizeReleaseNoteInput(input));
+      const normalized = normalizeReleaseNoteInput(input);
+      validateReleaseNoteContent(normalized);
+      return repository.createReleaseNote(normalized);
     },
     async previewTodayReleaseDigest(now = new Date()) {
       const releaseNotes = await repository.getTodayUnsentPublicReleaseNotes(now);
@@ -180,8 +191,17 @@ function defaultAudienceForCategory(category) {
 }
 
 function bodyLinesForLanguage(note, language) {
-  const body = language === "en" ? (note.body_en || note.body_ru) : note.body_ru;
+  const englishLines = bodyLines(note.body_en);
+  const body = language === "en" && englishLines.length > 0 ? note.body_en : note.body_ru;
   return bodyLines(body);
+}
+
+function graphemeLength(value) {
+  const text = String(value ?? "");
+  if (typeof Intl?.Segmenter === "function") {
+    return Array.from(new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(text)).length;
+  }
+  return Array.from(text).length;
 }
 
 function bodyLines(body) {
