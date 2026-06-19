@@ -104,6 +104,132 @@ export function createReleaseNotesService({ repository, sendMessage } = {}) {
       validateReleaseNoteInput(normalized);
       return repository.createReleaseNote(normalized);
     },
+    async previewReleaseDigestSinceLastRun(now = new Date()) {
+      const context = await getPendingReleaseContext(repository, now);
+      const missingEnglish = context.selectedNotes.some(
+        (note) => bodyLines(note.body_en).length === 0
+      );
+      const period = `${formatIsoMinute(context.sentFrom)} -> ${formatIsoMinute(context.sentTo)}`;
+      if (context.selectedNotes.length === 0) {
+        return {
+          hasPublicNotes: false,
+          ...context,
+          text: [
+            "Нет новых публичных изменений для пользователей с прошлого дайджеста — отправлять нечего.",
+            `Период: ${period}`,
+            hiddenNotesBlock(context.hiddenNotes)
+          ].filter(Boolean).join("\n\n")
+        };
+      }
+
+      return {
+        hasPublicNotes: true,
+        ...context,
+        text: [
+          "Пользователям будет отправлено в следующий digest:",
+          "",
+          "RU preview:",
+          formatReleaseDigest(context.selectedNotes, "ru"),
+          "",
+          "EN preview:",
+          formatReleaseDigest(context.selectedNotes, "en"),
+          "",
+          `Период: ${period}`,
+          hiddenNotesBlock(context.hiddenNotes),
+          missingEnglish
+            ? "Предупреждение: у некоторых release notes нет EN-текста. Английские пользователи получат русский fallback."
+            : ""
+        ].filter(Boolean).join("\n")
+      };
+    },
+    async sendReleaseDigestSinceLastRun(now = new Date(), options = {}) {
+      const trigger = options.trigger ?? "manual";
+      const timezone = options.timezone ?? "Asia/Bangkok";
+      const localDate = options.localDate ?? formatLocalDate(now, timezone);
+      const context = await getPendingReleaseContext(repository, now);
+      const run = await repository.createReleaseDigestRun({
+        trigger,
+        sentFrom: context.sentFrom,
+        sentTo: context.sentTo,
+        digestLocalDate: localDate,
+        timezone
+      });
+
+      if (!run) {
+        return { ...emptyReleaseSummary(), reason: "duplicate_auto_run" };
+      }
+      if (context.selectedNotes.length === 0) {
+        await repository.markReleaseDigestRunSkipped(run.id, "no_public_release_notes");
+        return emptyReleaseSummary();
+      }
+
+      const summary = {
+        sent: true,
+        version: context.selectedNotes.at(-1)?.version ?? null,
+        versionFrom: context.selectedNotes[0]?.version ?? null,
+        versionTo: context.selectedNotes.at(-1)?.version ?? null,
+        notes: context.selectedNotes.length,
+        users: 0,
+        success: 0,
+        errors: 0,
+        blocked: 0
+      };
+
+      try {
+        if (!sendMessage) throw new Error("sendMessage is required");
+        const users = await repository.getActiveUsersForReleasePush();
+        summary.users = users.length;
+
+        for (const user of users) {
+          const missingNotes = [];
+          for (const note of context.selectedNotes) {
+            if (!await repository.hasReleaseNoteDelivery(note.id, user.id)) {
+              missingNotes.push(note);
+            }
+          }
+          if (missingNotes.length === 0) continue;
+
+          try {
+            await sendMessage({
+              chatId: Number(user.telegram_user_id),
+              text: formatReleaseDigest(missingNotes, user.interface_language),
+              user,
+              releaseNotes: missingNotes
+            });
+            for (const note of missingNotes) {
+              await repository.markReleaseNoteDelivered(note.id, user.id);
+            }
+            summary.success += 1;
+          } catch (error) {
+            summary.errors += 1;
+            if (isBotBlockedError(error)) {
+              summary.blocked += 1;
+              await repository.markUserBotBlocked(user.id);
+            }
+          }
+        }
+
+        for (const note of context.selectedNotes) {
+          if (await repository.countMissingReleaseNoteDeliveries(note.id) === 0) {
+            await repository.markReleaseNoteSent(note.id);
+          }
+        }
+
+        if (summary.errors > summary.blocked) {
+          await repository.markReleaseDigestRunFailed(
+            run.id,
+            new Error("release_digest_partial_failure"),
+            summary
+          );
+        } else {
+          await repository.markReleaseDigestRunSuccess(run.id, summary);
+        }
+        return summary;
+      } catch (error) {
+        await repository.markReleaseDigestRunFailed(run.id, error, summary);
+        throw error;
+      }
+    },
     async previewTodayReleaseDigest(now = new Date()) {
       const releaseNotes = await repository.getTodayUnsentPublicReleaseNotes(now);
       const hiddenNotes = await repository.getTodayHiddenReleaseNotes(now);
@@ -193,6 +319,52 @@ export function createReleaseNotesService({ repository, sendMessage } = {}) {
 export function isBotBlockedError(error) {
   const text = `${error?.message ?? ""} ${error?.body ?? ""}`.toLowerCase();
   return error?.status === 403 && (text.includes("blocked") || text.includes("forbidden"));
+}
+
+async function getPendingReleaseContext(repository, now) {
+  const lastRun = await repository.getLastSuccessfulReleaseDigestRun();
+  const sentFrom = lastRun?.sent_to ?? null;
+  const releaseNotes = await repository.getUnsentPublicReleaseNotesSince(sentFrom, now);
+  const hiddenNotes = await repository.getHiddenReleaseNotesSince(sentFrom, now);
+  return {
+    sentFrom,
+    sentTo: now,
+    releaseNotes,
+    selectedNotes: selectDigestReleaseNotes(releaseNotes),
+    hiddenNotes
+  };
+}
+
+function emptyReleaseSummary() {
+  return {
+    sent: false,
+    reason: "no_public_release_notes",
+    version: null,
+    versionFrom: null,
+    versionTo: null,
+    notes: 0,
+    users: 0,
+    success: 0,
+    errors: 0,
+    blocked: 0
+  };
+}
+
+function formatIsoMinute(value) {
+  return value
+    ? new Date(value).toISOString().slice(0, 16).replace("T", " ")
+    : "первый digest";
+}
+
+function formatLocalDate(now, timezone) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(now);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
 }
 
 function normalizeAudience(value) {

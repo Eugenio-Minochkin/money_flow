@@ -447,6 +447,249 @@ test("preview includes user digest and hidden admin notes", async () => {
   assert.match(preview.text, /admin: добавлена \/admin_stats/);
 });
 
+test("send since last run creates a skipped run when no public notes exist", async () => {
+  const repo = fakeReleaseRepository({ notes: [] });
+  const service = createReleaseNotesService({
+    repository: repo,
+    sendMessage: async () => {
+      throw new Error("must not send");
+    }
+  });
+
+  const result = await service.sendReleaseDigestSinceLastRun(
+    new Date("2026-06-19T14:00:00Z"),
+    { trigger: "auto", timezone: "Asia/Bangkok", localDate: "2026-06-19" }
+  );
+
+  assert.equal(result.sent, false);
+  assert.equal(result.reason, "no_public_release_notes");
+  assert.equal(repo.createdRuns.length, 1);
+  assert.deepEqual(repo.skippedRuns, [[1, "no_public_release_notes"]]);
+});
+
+test("duplicate automatic run exits without sending", async () => {
+  const sent = [];
+  const repo = fakeReleaseRepository({
+    notes: [releaseNote()],
+    duplicateAutoRun: true
+  });
+  const service = createReleaseNotesService({
+    repository: repo,
+    sendMessage: async (message) => sent.push(message)
+  });
+
+  const result = await service.sendReleaseDigestSinceLastRun(
+    new Date("2026-06-19T14:00:00Z"),
+    { trigger: "auto", timezone: "Asia/Bangkok", localDate: "2026-06-19" }
+  );
+
+  assert.equal(result.sent, false);
+  assert.equal(result.reason, "duplicate_auto_run");
+  assert.equal(sent.length, 0);
+  assert.equal(repo.successRuns.length, 0);
+  assert.equal(repo.failedRuns.length, 0);
+});
+
+test("send since last run sends one combined localized message per user", async () => {
+  const sent = [];
+  const notes = [
+    releaseNote({ id: 1, version: "v.1.19", body_ru: "Первое улучшение.", body_en: "First improvement." }),
+    releaseNote({ id: 2, version: "v.1.20", body_ru: "Второе улучшение.", body_en: "Second improvement." })
+  ];
+  const repo = fakeReleaseRepository({
+    notes,
+    users: [
+      { id: 1, telegram_user_id: 100, interface_language: "ru" },
+      { id: 2, telegram_user_id: 200, interface_language: "en" }
+    ]
+  });
+  const service = createReleaseNotesService({
+    repository: repo,
+    sendMessage: async (message) => sent.push(message)
+  });
+
+  const result = await service.sendReleaseDigestSinceLastRun(
+    new Date("2026-06-19T14:00:00Z"),
+    { trigger: "manual", timezone: "Asia/Bangkok", localDate: "2026-06-19" }
+  );
+
+  assert.equal(sent.length, 2);
+  assert.match(sent[0].text, /Первое улучшение/);
+  assert.match(sent[0].text, /Второе улучшение/);
+  assert.match(sent[1].text, /First improvement/);
+  assert.match(sent[1].text, /Second improvement/);
+  assert.deepEqual(repo.deliveries, [[1, 1], [2, 1], [1, 2], [2, 2]]);
+  assert.deepEqual(repo.sentNotes, [1, 2]);
+  assert.deepEqual(
+    {
+      notes: result.notes,
+      versionFrom: result.versionFrom,
+      versionTo: result.versionTo,
+      users: result.users,
+      success: result.success,
+      errors: result.errors,
+      blocked: result.blocked
+    },
+    {
+      notes: 2,
+      versionFrom: "v.1.19",
+      versionTo: "v.1.20",
+      users: 2,
+      success: 2,
+      errors: 0,
+      blocked: 0
+    }
+  );
+  assert.equal(repo.successRuns.length, 1);
+});
+
+test("send since last run leaves compact overflow pending", async () => {
+  const notes = Array.from({ length: 7 }, (_, index) => releaseNote({
+    id: index + 1,
+    version: `v.1.${19 + index}`,
+    body_ru: `Улучшение ${index + 1}.`,
+    body_en: `Improvement ${index + 1}.`
+  }));
+  const repo = fakeReleaseRepository({
+    notes,
+    users: [{ id: 1, telegram_user_id: 100, interface_language: "ru" }]
+  });
+  const service = createReleaseNotesService({
+    repository: repo,
+    sendMessage: async () => ({ ok: true })
+  });
+
+  const result = await service.sendReleaseDigestSinceLastRun(
+    new Date("2026-06-19T14:00:00Z"),
+    { trigger: "manual", timezone: "Asia/Bangkok", localDate: "2026-06-19" }
+  );
+
+  assert.equal(result.notes, 6);
+  assert.deepEqual(repo.sentNotes, [1, 2, 3, 4, 5, 6]);
+  assert.equal(repo.existingDeliveries.has("7:1"), false);
+});
+
+test("partially delivered user receives only missing notes in one message", async () => {
+  const sent = [];
+  const repo = fakeReleaseRepository({
+    notes: [
+      releaseNote({ id: 1, body_ru: "Уже доставлено.", body_en: "Already delivered." }),
+      releaseNote({ id: 2, version: "v.1.19", body_ru: "Ещё не доставлено.", body_en: "Still pending." })
+    ],
+    users: [{ id: 1, telegram_user_id: 100, interface_language: "ru" }],
+    existingDeliveries: new Set(["1:1"])
+  });
+  const service = createReleaseNotesService({
+    repository: repo,
+    sendMessage: async (message) => sent.push(message)
+  });
+
+  const result = await service.sendReleaseDigestSinceLastRun(new Date("2026-06-19T14:00:00Z"));
+
+  assert.equal(sent.length, 1);
+  assert.doesNotMatch(sent[0].text, /Уже доставлено/);
+  assert.match(sent[0].text, /Ещё не доставлено/);
+  assert.deepEqual(repo.deliveries, [[2, 1]]);
+  assert.equal(result.success, 1);
+});
+
+test("failed delivery is retried without resending successful deliveries", async () => {
+  const sent = [];
+  const repo = fakeReleaseRepository({
+    notes: [releaseNote()],
+    users: [
+      { id: 1, telegram_user_id: 100, interface_language: "ru" },
+      { id: 2, telegram_user_id: 200, interface_language: "ru" }
+    ]
+  });
+  let failFirstUser = true;
+  const service = createReleaseNotesService({
+    repository: repo,
+    sendMessage: async (message) => {
+      sent.push(message.chatId);
+      if (message.chatId === 100 && failFirstUser) {
+        failFirstUser = false;
+        throw new Error("temporary failure");
+      }
+    }
+  });
+
+  const first = await service.sendReleaseDigestSinceLastRun(new Date("2026-06-19T14:00:00Z"));
+  const second = await service.sendReleaseDigestSinceLastRun(new Date("2026-06-19T15:00:00Z"));
+
+  assert.equal(first.errors, 1);
+  assert.equal(repo.failedRuns.length, 1);
+  assert.equal(second.errors, 0);
+  assert.deepEqual(sent, [100, 200, 100]);
+  assert.deepEqual(repo.deliveries, [[1, 2], [1, 1]]);
+  assert.deepEqual(repo.sentNotes, [1]);
+  assert.equal(repo.successRuns.length, 1);
+});
+
+test("blocked users are marked without failing the digest run", async () => {
+  const blockedError = Object.assign(
+    new Error("Telegram sendMessage failed: 403 Forbidden: bot was blocked by the user"),
+    {
+      status: 403,
+      body: JSON.stringify({ description: "Forbidden: bot was blocked by the user" })
+    }
+  );
+  const repo = fakeReleaseRepository({
+    notes: [releaseNote()],
+    users: [{ id: 1, telegram_user_id: 100, interface_language: "ru" }]
+  });
+  const service = createReleaseNotesService({
+    repository: repo,
+    sendMessage: async () => {
+      throw blockedError;
+    }
+  });
+
+  const result = await service.sendReleaseDigestSinceLastRun(new Date("2026-06-19T14:00:00Z"));
+
+  assert.equal(result.errors, 1);
+  assert.equal(result.blocked, 1);
+  assert.deepEqual(repo.blockedUsers, [1]);
+  assert.equal(repo.failedRuns.length, 0);
+  assert.equal(repo.successRuns.length, 1);
+  assert.deepEqual(repo.sentNotes, [1]);
+});
+
+test("missing sender marks an already-created digest run as failed", async () => {
+  const repo = fakeReleaseRepository({ notes: [releaseNote()] });
+  const service = createReleaseNotesService({ repository: repo });
+
+  await assert.rejects(
+    service.sendReleaseDigestSinceLastRun(new Date("2026-06-19T14:00:00Z")),
+    /sendMessage is required/
+  );
+
+  assert.equal(repo.createdRuns.length, 1);
+  assert.equal(repo.failedRuns.length, 1);
+  assert.equal(repo.failedRuns[0][1], "sendMessage is required");
+});
+
+test("preview shows period localized messages hidden notes and missing EN warning without side effects", async () => {
+  const repo = fakeReleaseRepository({
+    lastRun: { sent_to: new Date("2026-06-18T14:00:00Z") },
+    notes: [releaseNote({ body_en: null })],
+    hiddenNotes: [{ audience: "internal", title_ru: "Техническое изменение" }]
+  });
+  const service = createReleaseNotesService({ repository: repo });
+
+  const preview = await service.previewReleaseDigestSinceLastRun(
+    new Date("2026-06-19T14:00:00Z")
+  );
+
+  assert.match(preview.text, /RU preview:/);
+  assert.match(preview.text, /EN preview:/);
+  assert.match(preview.text, /2026-06-18 14:00/);
+  assert.match(preview.text, /internal: Техническое изменение/);
+  assert.match(preview.text, /нет EN-текста/);
+  assert.equal(repo.createdRuns.length, 0);
+  assert.deepEqual(repo.deliveries, []);
+});
+
 function releaseNote(patch = {}) {
   return {
     id: 1,
@@ -459,11 +702,16 @@ function releaseNote(patch = {}) {
 }
 
 function fakeReleaseRepository(options = {}) {
-  const existingDeliveries = options.existingDeliveries ?? new Set();
+  const existingDeliveries = new Set(options.existingDeliveries ?? []);
   return {
+    existingDeliveries,
     deliveries: [],
     sentNotes: [],
     blockedUsers: [],
+    createdRuns: [],
+    successRuns: [],
+    failedRuns: [],
+    skippedRuns: [],
     async createReleaseNote(input) {
       return { id: 1, ...input };
     },
@@ -473,6 +721,29 @@ function fakeReleaseRepository(options = {}) {
     async getTodayHiddenReleaseNotes() {
       return options.hiddenNotes ?? [];
     },
+    async getLastSuccessfulReleaseDigestRun() {
+      return options.lastRun ?? null;
+    },
+    async getUnsentPublicReleaseNotesSince() {
+      return options.notes ?? [];
+    },
+    async getHiddenReleaseNotesSince() {
+      return options.hiddenNotes ?? [];
+    },
+    async createReleaseDigestRun(input) {
+      this.createdRuns.push(input);
+      if (options.duplicateAutoRun) return null;
+      return { id: this.createdRuns.length, ...input };
+    },
+    async markReleaseDigestRunSuccess(id, summary) {
+      this.successRuns.push([id, { ...summary }]);
+    },
+    async markReleaseDigestRunFailed(id, error, summary) {
+      this.failedRuns.push([id, error.message, { ...summary }]);
+    },
+    async markReleaseDigestRunSkipped(id, reason) {
+      this.skippedRuns.push([id, reason]);
+    },
     async getActiveUsersForReleasePush() {
       return options.users ?? [];
     },
@@ -480,7 +751,14 @@ function fakeReleaseRepository(options = {}) {
       return existingDeliveries.has(`${releaseNoteId}:${userId}`);
     },
     async markReleaseNoteDelivered(releaseNoteId, userId) {
+      existingDeliveries.add(`${releaseNoteId}:${userId}`);
       this.deliveries.push([releaseNoteId, userId]);
+    },
+    async countMissingReleaseNoteDeliveries(releaseNoteId) {
+      return (options.users ?? []).filter((user) => (
+        !this.blockedUsers.includes(user.id) &&
+        !existingDeliveries.has(`${releaseNoteId}:${user.id}`)
+      )).length;
     },
     async markReleaseNoteSent(releaseNoteId) {
       this.sentNotes.push(releaseNoteId);

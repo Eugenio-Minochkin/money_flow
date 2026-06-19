@@ -581,6 +581,25 @@ test("records release note deliveries and sent markers", async () => {
   assert.match(queries[2].sql, /UPDATE release_notes SET sent_at = now\(\)/);
 });
 
+test("counts active users missing a release note delivery", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql: String(sql), params });
+    return { rows: [{ count: 2 }] };
+  }));
+
+  const count = await repo.countMissingReleaseNoteDeliveries(7);
+
+  assert.equal(count, 2);
+  assert.match(queries[0].sql, /FROM users u/);
+  assert.match(queries[0].sql, /u\.telegram_user_id IS NOT NULL/);
+  assert.match(queries[0].sql, /u\.onboarding_step = 'completed'/);
+  assert.match(queries[0].sql, /u\.bot_blocked = false/);
+  assert.match(queries[0].sql, /NOT EXISTS/);
+  assert.match(queries[0].sql, /d\.release_note_id = \$1 AND d\.user_id = u\.id/);
+  assert.deepEqual(queries[0].params, [7]);
+});
+
 test("marks user as bot blocked", async () => {
   const repo = createRepository(fakePool((sql, params) => {
     assert.match(String(sql), /UPDATE users SET bot_blocked = true/);

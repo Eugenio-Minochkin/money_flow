@@ -446,6 +446,23 @@ export function createRepository(pool, options = {}) {
       );
     },
 
+    async countMissingReleaseNoteDeliveries(releaseNoteId) {
+      const result = await pool.query(
+        `SELECT count(*)::integer AS count
+         FROM users u
+         WHERE u.telegram_user_id IS NOT NULL
+           AND u.onboarding_step = 'completed'
+           AND u.bot_blocked = false
+           AND NOT EXISTS (
+             SELECT 1
+             FROM release_note_deliveries d
+             WHERE d.release_note_id = $1 AND d.user_id = u.id
+           )`,
+        [releaseNoteId]
+      );
+      return Number(result.rows[0]?.count ?? 0);
+    },
+
     async markReleaseNoteSent(releaseNoteId) {
       await pool.query(
         "UPDATE release_notes SET sent_at = now() WHERE id = $1",
