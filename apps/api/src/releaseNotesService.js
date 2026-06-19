@@ -3,6 +3,10 @@ const ADMIN_AUDIENCE = "admin";
 const INTERNAL_AUDIENCE = "internal";
 const INTERNAL_DEFAULT_CATEGORIES = new Set(["internal", "infra", "analytics"]);
 
+export const MAX_BULLETS = 6;
+export const MAX_BULLET_CHARS = 120;
+export const MAX_MESSAGE_CHARS = 900;
+
 export function normalizeReleaseNoteInput(input = {}) {
   const category = input.category ? String(input.category).trim() : null;
   return {
@@ -20,8 +24,9 @@ export function normalizeReleaseNoteInput(input = {}) {
 export function formatReleaseDigest(releaseNotes, language = "ru") {
   const notes = Array.isArray(releaseNotes) ? releaseNotes : [];
   const lang = language === "en" ? "en" : "ru";
-  const version = notes[0]?.version ?? "";
-  const heading = lang === "en" ? "Today's updates:" : "Что изменилось сегодня:";
+  const versions = notes.map((note) => note.version).filter(Boolean);
+  const version = versions.at(-1) ?? "";
+  const heading = lang === "en" ? "What's new:" : "Что нового:";
   const bullets = notes
     .flatMap((note) => bodyLinesForLanguage(note, lang))
     .map((line) => `• ${line}`);
@@ -33,6 +38,36 @@ export function formatReleaseDigest(releaseNotes, language = "ru") {
     "",
     bullets.join("\n")
   ].join("\n").trim();
+}
+
+export function validateReleaseNoteContent(input) {
+  for (const [label, body] of [["RU", input.bodyRu], ["EN", input.bodyEn]]) {
+    if (!body) continue;
+    const lines = bodyLines(body);
+    if (lines.length > MAX_BULLETS) {
+      throw new Error(`${label} release notes exceed ${MAX_BULLETS} bullets`);
+    }
+    if (lines.some((line) => line.length > MAX_BULLET_CHARS)) {
+      throw new Error(`${label} release note bullet exceeds ${MAX_BULLET_CHARS} characters`);
+    }
+  }
+  return input;
+}
+
+export function selectDigestReleaseNotes(notes) {
+  const selected = [];
+  for (const note of Array.isArray(notes) ? notes : []) {
+    const candidate = [...selected, note];
+    const ruBulletCount = candidate.flatMap((item) => bodyLinesForLanguage(item, "ru")).length;
+    const enBulletCount = candidate.flatMap((item) => bodyLinesForLanguage(item, "en")).length;
+    if (ruBulletCount > MAX_BULLETS || enBulletCount > MAX_BULLETS) break;
+    if (
+      formatReleaseDigest(candidate, "ru").length > MAX_MESSAGE_CHARS ||
+      formatReleaseDigest(candidate, "en").length > MAX_MESSAGE_CHARS
+    ) break;
+    selected.push(note);
+  }
+  return selected;
 }
 
 export function hiddenReleaseNoteLabel(note) {
@@ -147,6 +182,10 @@ function defaultAudienceForCategory(category) {
 
 function bodyLinesForLanguage(note, language) {
   const body = language === "en" ? (note.body_en || note.body_ru) : note.body_ru;
+  return bodyLines(body);
+}
+
+function bodyLines(body) {
   return String(body ?? "")
     .split(/\r?\n/)
     .map((line) => line.trim().replace(/^•\s*/, ""))

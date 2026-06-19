@@ -2,10 +2,15 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  MAX_BULLETS,
+  MAX_BULLET_CHARS,
+  MAX_MESSAGE_CHARS,
   createReleaseNotesService,
   formatReleaseDigest,
   hiddenReleaseNoteLabel,
-  normalizeReleaseNoteInput
+  normalizeReleaseNoteInput,
+  selectDigestReleaseNotes,
+  validateReleaseNoteContent
 } from "../src/releaseNotesService.js";
 
 test("release note input keeps explicit user audience", () => {
@@ -38,9 +43,9 @@ test("digest uses Russian text for ru and unknown languages", () => {
     body_en: "Onboarding is now simpler."
   };
 
-  assert.match(formatReleaseDigest([note], "ru"), /Что изменилось сегодня/);
+  assert.match(formatReleaseDigest([note], "ru"), /Что нового:/);
   assert.match(formatReleaseDigest([note], "ru"), /• Онбординг стал проще/);
-  assert.match(formatReleaseDigest([note], "fr"), /Что изменилось сегодня/);
+  assert.match(formatReleaseDigest([note], "fr"), /Что нового:/);
 });
 
 test("digest uses English text for en users", () => {
@@ -50,9 +55,113 @@ test("digest uses English text for en users", () => {
     body_en: "Onboarding is now simpler.\nVoice works too."
   }], "en");
 
-  assert.match(text, /Today's updates/);
+  assert.match(text, /What's new:/);
   assert.match(text, /• Onboarding is now simpler/);
   assert.match(text, /• Voice works too/);
+});
+
+test("digest uses the latest selected note version", () => {
+  const text = formatReleaseDigest([
+    releaseNote({ id: 1, version: "v.1.18" }),
+    releaseNote({ id: 2, version: "v.1.19" })
+  ], "ru");
+
+  assert.match(text, /Money Flow v\.1\.19/);
+  assert.doesNotMatch(text, /Money Flow v\.1\.18/);
+});
+
+test("English digest falls back to Russian text", () => {
+  const text = formatReleaseDigest([releaseNote({ body_en: null })], "en");
+
+  assert.match(text, /What's new:/);
+  assert.match(text, /Онбординг стал проще/);
+  assert.ok(text.length <= MAX_MESSAGE_CHARS);
+});
+
+test("release digest exports compact message limits", () => {
+  assert.equal(MAX_BULLETS, 6);
+  assert.equal(MAX_BULLET_CHARS, 120);
+  assert.equal(MAX_MESSAGE_CHARS, 900);
+});
+
+test("release note content accepts up to six RU and EN bullets", () => {
+  const input = {
+    bodyRu: Array.from({ length: 6 }, (_, index) => `Улучшение ${index + 1}.`).join("\n"),
+    bodyEn: Array.from({ length: 6 }, (_, index) => `Improvement ${index + 1}.`).join("\n")
+  };
+
+  assert.equal(validateReleaseNoteContent(input), input);
+});
+
+test("release note content rejects more than six lines", () => {
+  assert.throws(
+    () => validateReleaseNoteContent({
+      bodyRu: Array.from({ length: 7 }, (_, index) => `Улучшение ${index + 1}.`).join("\n"),
+      bodyEn: "Short."
+    }),
+    /RU release notes exceed 6 bullets/
+  );
+});
+
+test("release note content rejects bullets over 120 characters", () => {
+  assert.throws(
+    () => validateReleaseNoteContent({
+      bodyRu: "а".repeat(121),
+      bodyEn: "Short."
+    }),
+    /RU release note bullet exceeds 120 characters/
+  );
+});
+
+test("selectDigestReleaseNotes keeps a seventh note pending", () => {
+  const notes = Array.from({ length: 7 }, (_, index) => releaseNote({
+    id: index + 1,
+    body_ru: `Улучшение ${index + 1}.`,
+    body_en: `Improvement ${index + 1}.`
+  }));
+
+  const selected = selectDigestReleaseNotes(notes);
+
+  assert.deepEqual(selected.map((note) => note.id), [1, 2, 3, 4, 5, 6]);
+});
+
+test("selectDigestReleaseNotes does not split a note at the English bullet limit", () => {
+  const notes = [
+    releaseNote({
+      id: 1,
+      body_ru: "Первое улучшение.",
+      body_en: Array.from({ length: 5 }, (_, index) => `Improvement ${index + 1}.`).join("\n")
+    }),
+    releaseNote({
+      id: 2,
+      body_ru: "Второе улучшение.",
+      body_en: "Improvement 6.\nImprovement 7."
+    })
+  ];
+
+  assert.deepEqual(selectDigestReleaseNotes(notes).map((note) => note.id), [1]);
+});
+
+test("selectDigestReleaseNotes keeps a whole note pending when either message exceeds 900 chars", () => {
+  const notes = [
+    releaseNote({
+      id: 1,
+      body_ru: "Короткое улучшение.",
+      body_en: "A".repeat(120)
+    }),
+    releaseNote({
+      id: 2,
+      version: "v.1234567890".repeat(70),
+      body_ru: "Ещё одно улучшение.",
+      body_en: "Another improvement."
+    })
+  ];
+
+  const selected = selectDigestReleaseNotes(notes);
+
+  assert.deepEqual(selected.map((note) => note.id), [1]);
+  assert.ok(formatReleaseDigest(selected, "ru").length <= MAX_MESSAGE_CHARS);
+  assert.ok(formatReleaseDigest(selected, "en").length <= MAX_MESSAGE_CHARS);
 });
 
 test("hidden release note label includes audience and title", () => {
@@ -118,9 +227,9 @@ test("sends localized digest to active users and defaults unknown language to Ru
 
   assert.equal(result.users, 3);
   assert.equal(result.success, 3);
-  assert.match(sent[0].text, /Что изменилось сегодня/);
-  assert.match(sent[1].text, /Today's updates/);
-  assert.match(sent[2].text, /Что изменилось сегодня/);
+  assert.match(sent[0].text, /Что нового:/);
+  assert.match(sent[1].text, /What's new:/);
+  assert.match(sent[2].text, /Что нового:/);
   assert.deepEqual(repo.deliveries, [[1, 1], [1, 2], [1, 3]]);
   assert.deepEqual(repo.sentNotes, [1]);
 });
@@ -208,7 +317,7 @@ test("preview includes user digest and hidden admin notes", async () => {
   const preview = await service.previewTodayReleaseDigest(new Date("2026-06-15T18:00:00+07:00"));
 
   assert.match(preview.text, /Пользователям будет отправлено:/);
-  assert.match(preview.text, /Что изменилось сегодня/);
+  assert.match(preview.text, /Что нового:/);
   assert.match(preview.text, /Скрыто из пользовательского пуша:/);
   assert.match(preview.text, /admin: добавлена \/admin_stats/);
 });
