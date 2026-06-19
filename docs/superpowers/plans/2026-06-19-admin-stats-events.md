@@ -169,7 +169,7 @@ git diff --check
 git status -sb
 ```
 
-- [ ] **Step 4: Commit and push**
+- [x] **Step 4: Commit and push**
 
 Stage only the event instrumentation, fallback, tests, and plan. Commit with:
 
@@ -177,6 +177,6 @@ Stage only the event instrumentation, fallback, tests, and plan. Commit with:
 fix: record admin stats events
 ```
 
-- [ ] **Step 5: Open a draft PR**
+- [x] **Step 5: Open a draft PR**
 
 Target `master`, summarize event instrumentation and historical fallback, list verification evidence, and reference the admin stats issue context.
