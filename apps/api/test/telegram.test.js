@@ -54,6 +54,72 @@ test("text message creates a pending draft response", async () => {
   }
 });
 
+test("normal text message records received draft and processing events", async () => {
+  const repo = fakeRepository();
+  const originalLog = console.log;
+  console.log = () => {};
+  try {
+    const bot = createTelegramBot({
+      token: "",
+      miniAppUrl: "http://localhost:3000",
+      repository: repo
+    });
+
+    await bot.handleUpdate({
+      message: {
+        chat: { id: 10 },
+        from: { id: 100, first_name: "M" },
+        text: "coffee 70 baht"
+      }
+    });
+  } finally {
+    console.log = originalLog;
+  }
+
+  assert.deepEqual(repo.events.slice(0, 2), [
+    { userId: 1, eventName: "message_received", metadata: { inputType: "text" } },
+    { userId: 1, eventName: "expense_draft_created", metadata: { inputType: "text", draftType: "regular" } }
+  ]);
+  assert.equal(repo.events[2].eventName, "message_processing_completed");
+  assert.equal(repo.events[2].metadata.inputType, "text");
+  assert.equal(Number.isFinite(repo.events[2].metadata.processingTotalMs), true);
+});
+
+test("admin stats command is excluded from regular message events", async () => {
+  const repo = fakeRepository();
+  const originalLog = console.log;
+  console.log = () => {};
+  try {
+    const bot = createTelegramBot({
+      token: "",
+      miniAppUrl: "http://localhost:3000",
+      repository: repo,
+      adminTelegramIds: new Set([100]),
+      adminStatsService: {
+        async getAdminStats() {
+          return {
+            today: emptyAdminPeriod(),
+            last7Days: emptyAdminPeriod(),
+            last30Days: emptyAdminPeriod()
+          };
+        }
+      }
+    });
+
+    await bot.handleUpdate({
+      message: {
+        chat: { id: 10 },
+        from: { id: 100, first_name: "M" },
+        text: "/admin_stats"
+      }
+    });
+  } finally {
+    console.log = originalLog;
+  }
+
+  assert.deepEqual(repo.events, []);
+});
+
 test("text message never calls voice transcription", async () => {
   let transcribeCalled = false;
   const originalLog = console.log;
@@ -229,6 +295,10 @@ test("confirm callback saves draft and returns an informative summary", async ()
     });
 
     assert.equal(repo.confirmedDraftId, "42");
+    assert.deepEqual(repo.events, [
+      { userId: 1, eventName: "expense_draft_confirmed", metadata: { draftType: "regular" } },
+      { userId: 1, eventName: "expense_saved", metadata: { draftType: "regular" } }
+    ]);
     assert.match(calls[0][1].text, /Записал/);
     assert.match(calls[0][1].text, /<b>Сегодня<\/b>/);
     assert.match(calls[0][1].text, /<b>Месяц<\/b>/);
@@ -270,6 +340,237 @@ test("voice message is transcribed and creates a draft response", async () => {
   } finally {
     console.log = originalLog;
   }
+});
+
+test("cancel callback records a draft cancellation event", async () => {
+  const repo = fakeRepository();
+  const messages = [];
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: repo,
+    telegramClient: captureTelegramClient(messages)
+  });
+
+  await bot.handleUpdate({
+    callback_query: {
+      id: "callback-cancel",
+      data: "cancel:42",
+      from: { id: 100 },
+      message: { chat: { id: 10 }, message_id: 5 }
+    }
+  });
+
+  assert.deepEqual(repo.events, [
+    { userId: 1, eventName: "expense_draft_cancelled", metadata: { draftType: "regular" } }
+  ]);
+});
+
+test("admin stats shows non-zero metrics after message draft and confirm flow", async () => {
+  const repo = fakeRepository();
+  const messages = [];
+  const statsService = {
+    async getAdminStats() {
+      const count = (name) => repo.events.filter((event) => event.eventName === name).length;
+      const period = emptyAdminPeriod({
+        activeUsers: repo.events.length > 0 ? 1 : 0,
+        messagesTotal: count("message_received"),
+        textMessages: repo.events.filter((event) => event.eventName === "message_received" && event.metadata.inputType === "text").length,
+        expensesSaved: count("expense_saved"),
+        draftsCreated: count("expense_draft_created"),
+        draftsConfirmed: count("expense_draft_confirmed"),
+        avgTextProcessingSeconds: count("message_processing_completed") > 0 ? 0.1 : null
+      });
+      return { today: period, last7Days: period, last30Days: period };
+    }
+  };
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: repo,
+    adminTelegramIds: new Set([100]),
+    adminStatsService: statsService,
+    telegramClient: captureTelegramClient(messages)
+  });
+
+  await bot.handleUpdate({
+    message: {
+      chat: { id: 10 },
+      from: { id: 100, first_name: "M" },
+      text: "coffee 70 baht"
+    }
+  });
+  await bot.handleUpdate({
+    callback_query: {
+      id: "callback-confirm-stats",
+      data: "confirm:42",
+      from: { id: 100 },
+      message: { chat: { id: 10 } }
+    }
+  });
+  await bot.handleUpdate({
+    message: {
+      chat: { id: 10 },
+      from: { id: 100, first_name: "M" },
+      text: "/admin_stats"
+    }
+  });
+
+  const statsMessage = messages.at(-1).text;
+  assert.match(statsMessage, /Users: 1 active/);
+  assert.match(statsMessage, /Messages: 1 total \/ 1 text/);
+  assert.match(statsMessage, /Expenses saved: 1/);
+  assert.match(statsMessage, /Drafts: 1 created \/ 1 confirmed/);
+  assert.match(statsMessage, /Avg processing: text 0\.1s/);
+});
+
+test("empty parse records a parse failure event", async () => {
+  const repo = fakeRepository();
+  const originalLog = console.log;
+  console.log = () => {};
+  try {
+    const bot = createTelegramBot({
+      token: "",
+      miniAppUrl: "http://localhost:3000",
+      repository: repo,
+      expenseParser: {
+        async parse() {
+          return { expenses: [] };
+        }
+      }
+    });
+
+    await bot.handleUpdate({
+      message: {
+        chat: { id: 10 },
+        from: { id: 100, first_name: "M" },
+        text: "no amount here"
+      }
+    });
+  } finally {
+    console.log = originalLog;
+  }
+
+  assert.ok(repo.events.some((event) => event.eventName === "expense_parse_failed"));
+});
+
+test("draft persistence failure is not counted as a parse failure", async () => {
+  const repo = fakeRepository();
+  repo.createDraft = async () => {
+    throw new Error("database unavailable");
+  };
+  const originalLog = console.log;
+  const originalError = console.error;
+  console.log = () => {};
+  console.error = () => {};
+  try {
+    const bot = createTelegramBot({
+      token: "",
+      miniAppUrl: "http://localhost:3000",
+      repository: repo
+    });
+
+    await bot.handleUpdate({
+      message: {
+        chat: { id: 10 },
+        from: { id: 100, first_name: "M" },
+        text: "coffee 70 baht"
+      }
+    });
+  } finally {
+    console.log = originalLog;
+    console.error = originalError;
+  }
+
+  assert.equal(repo.events.some((event) => event.eventName === "expense_parse_failed"), false);
+});
+
+test("voice transcription failure records an event and returns an error response", async () => {
+  const repo = fakeRepository();
+  const messages = [];
+  const originalError = console.error;
+  console.error = () => {};
+  try {
+    const bot = createTelegramBot({
+      token: "test-token",
+      miniAppUrl: "http://localhost:3000",
+      repository: repo,
+      telegramClient: captureTelegramClient(messages),
+      voiceTranscriber: {
+        isConfigured: () => true,
+        async transcribeTelegramVoice() {
+          throw new Error("transcription unavailable");
+        }
+      }
+    });
+
+    await bot.handleUpdate({
+      message: {
+        chat: { id: 10 },
+        from: { id: 100, first_name: "M" },
+        voice: { file_id: "voice-file-id", mime_type: "audio/ogg" }
+      }
+    });
+  } finally {
+    console.error = originalError;
+  }
+
+  assert.ok(repo.events.some((event) => event.eventName === "voice_transcription_failed"));
+  assert.ok(messages.length > 0);
+});
+
+test("photo input is counted and records a parse failure", async () => {
+  const repo = fakeRepository();
+  const messages = [];
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: repo,
+    telegramClient: captureTelegramClient(messages)
+  });
+
+  await bot.handleUpdate({
+    message: {
+      chat: { id: 10 },
+      from: { id: 100, first_name: "M" },
+      photo: [{ file_id: "photo-small" }, { file_id: "photo-large" }]
+    }
+  });
+
+  assert.ok(repo.events.some((event) => event.eventName === "message_received" && event.metadata.inputType === "photo"));
+  assert.ok(repo.events.some((event) => event.eventName === "expense_parse_failed"));
+});
+
+test("throwing event logger does not break expense processing", async () => {
+  const repo = fakeRepository();
+  repo.recordAppEvent = async () => {
+    throw new Error("events unavailable");
+  };
+  const calls = [];
+  const originalLog = console.log;
+  const originalWarn = console.warn;
+  console.log = (...args) => calls.push(args);
+  console.warn = () => {};
+  try {
+    const bot = createTelegramBot({
+      token: "",
+      miniAppUrl: "http://localhost:3000",
+      repository: repo
+    });
+
+    await assert.doesNotReject(() => bot.handleUpdate({
+      message: {
+        chat: { id: 10 },
+        from: { id: 100, first_name: "M" },
+        text: "coffee 70 baht"
+      }
+    }));
+  } finally {
+    console.log = originalLog;
+    console.warn = originalWarn;
+  }
+
+  assert.ok(calls.length >= 2);
 });
 
 test("sendMessage retries as plain text when Telegram rejects HTML", async () => {
@@ -840,6 +1141,8 @@ test("recurring planned text creates a planned draft before saving", async () =>
   assert.match(calls[1][1].text, /Planned expense/i);
   assert.equal(calls[1][1].replyMarkup.inline_keyboard[0][0].callback_data, "plan_confirm:77");
   assert.equal(repo.confirmedPlannedDraftId, "77");
+  assert.ok(repo.events.some((event) => event.eventName === "expense_draft_created" && event.metadata.draftType === "planned"));
+  assert.ok(repo.events.some((event) => event.eventName === "expense_draft_confirmed" && event.metadata.draftType === "planned"));
 });
 
 test("category callback updates the first draft item", async () => {
@@ -1258,6 +1561,7 @@ test("admin release send reports empty public user notes", async () => {
 function fakeRepository() {
   return {
     user: { id: 1, interface_language: "ru", onboarding_step: "completed" },
+    events: [],
     confirmedDraftId: null,
     confirmedPlannedDraftId: null,
     updatedItems: null,
@@ -1271,6 +1575,9 @@ function fakeRepository() {
     },
     async getUserByTelegramId() {
       return this.user;
+    },
+    async recordAppEvent(userId, eventName, metadata = {}) {
+      this.events.push({ userId, eventName, metadata });
     },
     async updateUserSettings(_telegramUserId, settings) {
       this.settings = { ...this.settings, ...settings };
@@ -1329,6 +1636,9 @@ function fakeRepository() {
       return { id: 88, ...this.plannedDraft.item };
     },
     async cancelPlannedDraft() {
+      return null;
+    },
+    async cancelDraft() {
       return null;
     },
     async createDraft() {

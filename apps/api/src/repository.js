@@ -13,6 +13,22 @@ export function createRepository(pool, options = {}) {
       return { db: true };
     },
 
+    async recordAppEvent(userId, eventName, metadata = {}) {
+      try {
+        await pool.query(
+          `INSERT INTO app_events (user_id, event_name, metadata)
+           VALUES ($1, $2, $3::jsonb)`,
+          [userId ?? null, eventName, JSON.stringify(metadata ?? {})]
+        );
+      } catch (error) {
+        console.warn("[events] record failed", {
+          userId: userId ?? null,
+          eventName,
+          message: error.message
+        });
+      }
+    },
+
     async upsertTelegramUser(profile) {
       const result = await pool.query(
         `INSERT INTO users (telegram_user_id, first_name, username, monthly_budget_amount, onboarding_step)

@@ -46,6 +46,10 @@ test("aggregates admin stats from app events and users", async () => {
   assert.equal(stats.today.textMessages, 3);
   assert.equal(stats.today.voiceMessages, 2);
   assert.equal(stats.today.photoMessages, 1);
+  assert.equal(stats.today.expensesSaved, 4);
+  assert.equal(stats.today.draftsCreated, 5);
+  assert.equal(stats.today.draftsConfirmed, 3);
+  assert.equal(stats.today.draftsCancelled, 1);
   assert.equal(stats.today.confirmRate, 60);
   assert.equal(stats.today.parseFailedRate, 33);
   assert.equal(stats.today.avgTextProcessingSeconds, 1.4);
@@ -73,6 +77,66 @@ test("falls back to first app event when users.created_at is unavailable", async
   assert.equal(stats.last7Days.messagesTotal, 0);
   assert.equal(stats.last7Days.avgTextProcessingSeconds, null);
   assert.equal(stats.last7Days.confirmRate, null);
+});
+
+test("falls back to historical expense and regular plus planned draft tables", async () => {
+  const queries = [];
+  const service = createAdminStatsService({
+    pool: fakePool((sql) => {
+      const query = String(sql);
+      queries.push(query);
+      if (query.includes("information_schema.columns")) {
+        return { rows: [{ exists: true }] };
+      }
+      if (query.includes("FROM users")) {
+        return { rows: [{ new_users: 1 }] };
+      }
+      if (query.includes("FROM app_events")) {
+        return {
+          rows: [{
+            active_users: 0,
+            message_received: 0,
+            text_direct: 0,
+            text_from_message: 0,
+            voice_direct: 0,
+            voice_from_message: 0,
+            photo_direct: 0,
+            photo_from_message: 0,
+            expenses_saved: 0,
+            drafts_created: 0,
+            drafts_confirmed: 0,
+            drafts_cancelled: 0,
+            parse_failed: 0,
+            transcription_failed: 0,
+            avg_text_processing_ms: null,
+            avg_voice_processing_ms: null
+          }]
+        };
+      }
+      if (query.includes("FROM expenses")) {
+        return {
+          rows: [{
+            expenses_saved: 4,
+            drafts_created: 7,
+            drafts_confirmed: 5,
+            drafts_cancelled: 2
+          }]
+        };
+      }
+      return { rows: [{}] };
+    }),
+    now: () => new Date("2026-06-15T10:00:00.000Z")
+  });
+
+  const stats = await service.getAdminStats();
+
+  assert.equal(stats.today.newUsers, 1);
+  assert.equal(stats.today.expensesSaved, 4);
+  assert.equal(stats.today.draftsCreated, 7);
+  assert.equal(stats.today.draftsConfirmed, 5);
+  assert.equal(stats.today.draftsCancelled, 2);
+  assert.equal(stats.today.confirmRate, 71);
+  assert.ok(queries.some((query) => query.includes("planned_drafts")));
 });
 
 test("formats admin stats as a compact Telegram message", () => {
