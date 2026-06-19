@@ -217,6 +217,163 @@ export function createRepository(pool, options = {}) {
       return result.rows[0];
     },
 
+    async createReleaseNoteFromSource(input) {
+      const result = await pool.query(
+        `INSERT INTO release_notes (
+           version, audience, category, title_ru, title_en, body_ru, body_en,
+           is_public, source_type, source_id
+         )
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         ON CONFLICT (source_type, source_id, audience)
+           WHERE source_type IS NOT NULL AND source_id IS NOT NULL
+         DO UPDATE SET source_id = EXCLUDED.source_id
+         RETURNING *`,
+        [
+          input.version,
+          input.audience,
+          input.category ?? null,
+          input.titleRu,
+          input.titleEn ?? null,
+          input.bodyRu,
+          input.bodyEn ?? null,
+          input.isPublic !== false,
+          input.sourceType,
+          input.sourceId
+        ]
+      );
+      return result.rows[0];
+    },
+
+    async getLatestPublicReleaseVersion() {
+      const result = await pool.query(
+        `SELECT version
+         FROM release_notes
+         WHERE audience = 'user' AND version ~ '^v\\.1\\.[0-9]+$'
+         ORDER BY split_part(version, '.', 3)::integer DESC
+         LIMIT 1`
+      );
+      return result.rows[0]?.version ?? null;
+    },
+
+    async getUnsentPublicReleaseNotesSince(_since, until = new Date()) {
+      const result = await pool.query(
+        `SELECT *
+         FROM release_notes
+         WHERE created_at <= $1
+           AND sent_at IS NULL
+           AND is_public = true
+           AND audience = 'user'
+         ORDER BY created_at ASC, id ASC`,
+        [until]
+      );
+      return result.rows;
+    },
+
+    async getHiddenReleaseNotesSince(since, until = new Date()) {
+      const result = await pool.query(
+        `SELECT *
+         FROM release_notes
+         WHERE created_at > COALESCE($1, '-infinity'::timestamptz)
+           AND created_at <= $2
+           AND audience IN ('admin', 'internal')
+         ORDER BY created_at ASC, id ASC`,
+        [since, until]
+      );
+      return result.rows;
+    },
+
+    async getLastSuccessfulReleaseDigestRun() {
+      const result = await pool.query(
+        `SELECT *
+         FROM release_digest_runs
+         WHERE status = 'success'
+         ORDER BY sent_to DESC, id DESC
+         LIMIT 1`
+      );
+      return result.rows[0] ?? null;
+    },
+
+    async getReleaseDigestRunForLocalDate(localDate, timezone) {
+      const result = await pool.query(
+        `SELECT *
+         FROM release_digest_runs
+         WHERE trigger = 'auto'
+           AND digest_local_date = $1
+           AND timezone = $2
+           AND status IN ('running', 'success', 'skipped')
+         ORDER BY id DESC
+         LIMIT 1`,
+        [localDate, timezone]
+      );
+      return result.rows[0] ?? null;
+    },
+
+    async createReleaseDigestRun(input) {
+      try {
+        const result = await pool.query(
+          `INSERT INTO release_digest_runs (
+             trigger, sent_from, sent_to, digest_local_date, timezone
+           )
+           VALUES ($1, $2, $3, $4, $5)
+           RETURNING *`,
+          [input.trigger, input.sentFrom, input.sentTo, input.digestLocalDate, input.timezone]
+        );
+        return result.rows[0];
+      } catch (error) {
+        if (error.code === "23505" && input.trigger === "auto") return null;
+        throw error;
+      }
+    },
+
+    async markReleaseDigestRunSuccess(id, summary) {
+      await pool.query(
+        `UPDATE release_digest_runs
+         SET status = 'success',
+             finished_at = now(),
+             version_from = $2,
+             version_to = $3,
+             users_count = $4,
+             success_count = $5,
+             error_count = $6,
+             blocked_count = $7
+         WHERE id = $1`,
+        [id, summary.versionFrom, summary.versionTo, summary.users, summary.success, summary.errors, summary.blocked]
+      );
+    },
+
+    async markReleaseDigestRunFailed(id, error, summary = {}) {
+      await pool.query(
+        `UPDATE release_digest_runs
+         SET status = 'failed',
+             finished_at = now(),
+             users_count = $2,
+             success_count = $3,
+             error_count = $4,
+             blocked_count = $5,
+             error_message = $6
+         WHERE id = $1`,
+        [
+          id,
+          summary.users ?? 0,
+          summary.success ?? 0,
+          summary.errors ?? 0,
+          summary.blocked ?? 0,
+          error.message
+        ]
+      );
+    },
+
+    async markReleaseDigestRunSkipped(id, reason) {
+      await pool.query(
+        `UPDATE release_digest_runs
+         SET status = 'skipped',
+             finished_at = now(),
+             error_message = $2
+         WHERE id = $1`,
+        [id, reason]
+      );
+    },
+
     async getTodayUnsentPublicReleaseNotes(now = new Date()) {
       const bounds = localDayBounds(now);
       const result = await pool.query(

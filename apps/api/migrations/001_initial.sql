@@ -289,6 +289,9 @@ CREATE TABLE IF NOT EXISTS release_notes (
 
 ALTER TABLE release_notes ADD COLUMN IF NOT EXISTS audience TEXT NOT NULL DEFAULT 'user';
 ALTER TABLE release_notes ADD COLUMN IF NOT EXISTS category TEXT;
+ALTER TABLE release_notes ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT now();
+ALTER TABLE release_notes ADD COLUMN IF NOT EXISTS source_type TEXT;
+ALTER TABLE release_notes ADD COLUMN IF NOT EXISTS source_id TEXT;
 
 DO $$
 BEGIN
@@ -304,9 +307,40 @@ BEGIN
 END
 $$;
 
+CREATE UNIQUE INDEX IF NOT EXISTS release_notes_source_unique
+  ON release_notes (source_type, source_id, audience)
+  WHERE source_type IS NOT NULL AND source_id IS NOT NULL;
+
 CREATE TABLE IF NOT EXISTS release_note_deliveries (
   release_note_id BIGINT REFERENCES release_notes(id),
   user_id BIGINT REFERENCES users(id),
   sent_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (release_note_id, user_id)
 );
+
+CREATE TABLE IF NOT EXISTS release_digest_runs (
+  id BIGSERIAL PRIMARY KEY,
+  started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  finished_at TIMESTAMPTZ,
+  status TEXT NOT NULL DEFAULT 'running',
+  trigger TEXT NOT NULL DEFAULT 'auto',
+  sent_from TIMESTAMPTZ,
+  sent_to TIMESTAMPTZ NOT NULL,
+  version_from TEXT,
+  version_to TEXT,
+  users_count INTEGER NOT NULL DEFAULT 0,
+  success_count INTEGER NOT NULL DEFAULT 0,
+  error_count INTEGER NOT NULL DEFAULT 0,
+  blocked_count INTEGER NOT NULL DEFAULT 0,
+  error_message TEXT,
+  digest_local_date TEXT,
+  timezone TEXT,
+  CONSTRAINT release_digest_runs_status_check
+    CHECK (status IN ('running', 'success', 'failed', 'skipped')),
+  CONSTRAINT release_digest_runs_trigger_check
+    CHECK (trigger IN ('auto', 'manual', 'preview', 'test'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS release_digest_runs_auto_date_unique
+  ON release_digest_runs (digest_local_date, timezone, trigger)
+  WHERE trigger = 'auto' AND status IN ('success', 'skipped', 'running');

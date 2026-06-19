@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 
 import { createRepository } from "../src/repository.js";
 
@@ -282,6 +283,214 @@ test("creates a release note with audience and category", async () => {
 
   assert.equal(note.audience, "user");
   assert.equal(note.category, "onboarding");
+});
+
+test("release digest persistence schema includes source metadata and run constraints", async () => {
+  const migration = await readFile(
+    new URL("../migrations/001_initial.sql", import.meta.url),
+    "utf8"
+  );
+
+  assert.match(migration, /ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT now\(\)/);
+  assert.match(migration, /ADD COLUMN IF NOT EXISTS source_type TEXT/);
+  assert.match(migration, /ADD COLUMN IF NOT EXISTS source_id TEXT/);
+  assert.match(migration, /CREATE UNIQUE INDEX IF NOT EXISTS release_notes_source_unique/);
+  assert.match(migration, /ON release_notes \(source_type, source_id, audience\)/);
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS release_digest_runs/);
+  assert.match(migration, /CHECK \(status IN \('running', 'success', 'failed', 'skipped'\)\)/);
+  assert.match(migration, /CHECK \(trigger IN \('auto', 'manual', 'preview', 'test'\)\)/);
+  assert.match(migration, /CREATE UNIQUE INDEX IF NOT EXISTS release_digest_runs_auto_date_unique/);
+  assert.match(migration, /WHERE trigger = 'auto' AND status IN \('success', 'skipped', 'running'\)/);
+});
+
+test("creates an idempotent PR-sourced release note", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql: String(sql), params });
+    return { rows: [{ id: "7", source_type: "github_pr", source_id: "42", audience: "user" }] };
+  }));
+
+  const note = await repo.createReleaseNoteFromSource({
+    version: "v.1.19",
+    audience: "user",
+    category: "history",
+    titleRu: "Обновление",
+    titleEn: "Update",
+    bodyRu: "История стала удобнее.",
+    bodyEn: "History is easier to use.",
+    isPublic: true,
+    sourceType: "github_pr",
+    sourceId: "42"
+  });
+
+  assert.equal(note.source_id, "42");
+  assert.match(queries[0].sql, /ON CONFLICT \(source_type, source_id, audience\)/);
+  assert.match(queries[0].sql, /DO UPDATE SET source_id = EXCLUDED\.source_id/);
+  assert.deepEqual(queries[0].params.slice(-2), ["github_pr", "42"]);
+});
+
+test("returns the latest public release version", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql: String(sql), params });
+    return { rows: [{ version: "v.1.21" }] };
+  }));
+
+  assert.equal(await repo.getLatestPublicReleaseVersion(), "v.1.21");
+  assert.match(queries[0].sql, /audience = 'user'/);
+  assert.match(queries[0].sql, /version ~ '\^v\\\.1\\\.\[0-9\]\+\$'/);
+  assert.match(queries[0].sql, /split_part\(version, '\.', 3\)::integer DESC/);
+  assert.deepEqual(queries[0].params, []);
+});
+
+test("returns null when no public release version exists", async () => {
+  const repo = createRepository(fakePool(() => ({ rows: [] })));
+
+  assert.equal(await repo.getLatestPublicReleaseVersion(), null);
+});
+
+test("lists unsent public notes including older carry-over", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql: String(sql), params });
+    return { rows: [{ id: "1", audience: "user" }] };
+  }));
+  const since = new Date("2026-06-17T14:00:00Z");
+  const until = new Date("2026-06-19T14:00:00Z");
+
+  await repo.getUnsentPublicReleaseNotesSince(since, until);
+
+  assert.match(queries[0].sql, /sent_at IS NULL/);
+  assert.match(queries[0].sql, /created_at <= \$1/);
+  assert.doesNotMatch(queries[0].sql, /created_at > \$2/);
+  assert.match(queries[0].sql, /is_public = true/);
+  assert.match(queries[0].sql, /audience = 'user'/);
+  assert.deepEqual(queries[0].params, [until]);
+});
+
+test("lists hidden release notes inside the requested range", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql: String(sql), params });
+    return { rows: [{ id: "2", audience: "internal" }] };
+  }));
+  const since = new Date("2026-06-17T14:00:00Z");
+  const until = new Date("2026-06-19T14:00:00Z");
+
+  const notes = await repo.getHiddenReleaseNotesSince(since, until);
+
+  assert.equal(notes[0].audience, "internal");
+  assert.match(queries[0].sql, /created_at > COALESCE\(\$1, '-infinity'::timestamptz\)/);
+  assert.match(queries[0].sql, /created_at <= \$2/);
+  assert.match(queries[0].sql, /audience IN \('admin', 'internal'\)/);
+  assert.deepEqual(queries[0].params, [since, until]);
+});
+
+test("returns the last successful release digest run", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql: String(sql), params });
+    return { rows: [{ id: "8", status: "success" }] };
+  }));
+
+  const run = await repo.getLastSuccessfulReleaseDigestRun();
+
+  assert.equal(run.id, "8");
+  assert.match(queries[0].sql, /status = 'success'/);
+  assert.match(queries[0].sql, /ORDER BY sent_to DESC, id DESC/);
+  assert.deepEqual(queries[0].params, []);
+});
+
+test("finds an automatic release digest run for a local date", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql: String(sql), params });
+    return { rows: [{ id: "9", status: "running" }] };
+  }));
+
+  const run = await repo.getReleaseDigestRunForLocalDate("2026-06-19", "Asia/Bangkok");
+
+  assert.equal(run.id, "9");
+  assert.match(queries[0].sql, /trigger = 'auto'/);
+  assert.match(queries[0].sql, /status IN \('running', 'success', 'skipped'\)/);
+  assert.deepEqual(queries[0].params, ["2026-06-19", "Asia/Bangkok"]);
+});
+
+test("records release digest run lifecycle", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql: String(sql), params });
+    if (/INSERT INTO release_digest_runs/.test(String(sql))) return { rows: [{ id: "9" }] };
+    return { rows: [] };
+  }));
+  const sentTo = new Date("2026-06-19T14:00:00Z");
+
+  const run = await repo.createReleaseDigestRun({
+    trigger: "auto",
+    sentFrom: null,
+    sentTo,
+    digestLocalDate: "2026-06-19",
+    timezone: "Asia/Bangkok"
+  });
+  await repo.markReleaseDigestRunSuccess(run.id, {
+    versionFrom: "v.1.19",
+    versionTo: "v.1.20",
+    users: 3,
+    success: 3,
+    errors: 0,
+    blocked: 0
+  });
+  await repo.markReleaseDigestRunFailed(run.id, new Error("Telegram unavailable"), {
+    users: 3,
+    success: 1,
+    errors: 2,
+    blocked: 1
+  });
+  await repo.markReleaseDigestRunSkipped(run.id, "no_public_release_notes");
+
+  assert.match(queries[0].sql, /INSERT INTO release_digest_runs/);
+  assert.deepEqual(queries[0].params, ["auto", null, sentTo, "2026-06-19", "Asia/Bangkok"]);
+  assert.match(queries[1].sql, /status = 'success'/);
+  assert.deepEqual(queries[1].params, ["9", "v.1.19", "v.1.20", 3, 3, 0, 0]);
+  assert.match(queries[2].sql, /status = 'failed'/);
+  assert.deepEqual(queries[2].params, ["9", 3, 1, 2, 1, "Telegram unavailable"]);
+  assert.match(queries[3].sql, /status = 'skipped'/);
+  assert.deepEqual(queries[3].params, ["9", "no_public_release_notes"]);
+});
+
+test("duplicate automatic release digest run returns null", async () => {
+  const duplicate = Object.assign(new Error("duplicate"), { code: "23505" });
+  const repo = createRepository(fakePool(() => {
+    throw duplicate;
+  }));
+
+  const run = await repo.createReleaseDigestRun({
+    trigger: "auto",
+    sentFrom: null,
+    sentTo: new Date("2026-06-19T14:00:00Z"),
+    digestLocalDate: "2026-06-19",
+    timezone: "Asia/Bangkok"
+  });
+
+  assert.equal(run, null);
+});
+
+test("duplicate manual release digest run error is not swallowed", async () => {
+  const duplicate = Object.assign(new Error("duplicate"), { code: "23505" });
+  const repo = createRepository(fakePool(() => {
+    throw duplicate;
+  }));
+
+  await assert.rejects(
+    repo.createReleaseDigestRun({
+      trigger: "manual",
+      sentFrom: null,
+      sentTo: new Date("2026-06-19T14:00:00Z"),
+      digestLocalDate: "2026-06-19",
+      timezone: "Asia/Bangkok"
+    }),
+    duplicate
+  );
 });
 
 test("lists today's unsent public user release notes only", async () => {
