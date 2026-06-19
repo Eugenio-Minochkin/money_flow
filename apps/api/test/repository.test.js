@@ -338,6 +338,7 @@ test("returns the latest public release version", async () => {
 
   assert.equal(await repo.getLatestPublicReleaseVersion(), "v.1.21");
   assert.match(queries[0].sql, /audience = 'user'/);
+  assert.match(queries[0].sql, /is_public = true/);
   assert.match(queries[0].sql, /version ~ '\^v\\\.1\\\.\[0-9\]\+\$'/);
   assert.match(queries[0].sql, /split_part\(version, '\.', 3\)::integer DESC/);
   assert.deepEqual(queries[0].params, []);
@@ -459,7 +460,10 @@ test("records release digest run lifecycle", async () => {
 });
 
 test("duplicate automatic release digest run returns null", async () => {
-  const duplicate = Object.assign(new Error("duplicate"), { code: "23505" });
+  const duplicate = Object.assign(new Error("duplicate"), {
+    code: "23505",
+    constraint: "release_digest_runs_auto_date_unique"
+  });
   const repo = createRepository(fakePool(() => {
     throw duplicate;
   }));
@@ -473,6 +477,27 @@ test("duplicate automatic release digest run returns null", async () => {
   });
 
   assert.equal(run, null);
+});
+
+test("unrelated automatic release digest unique violation is not swallowed", async () => {
+  const duplicate = Object.assign(new Error("duplicate"), {
+    code: "23505",
+    constraint: "other_unique_constraint"
+  });
+  const repo = createRepository(fakePool(() => {
+    throw duplicate;
+  }));
+
+  await assert.rejects(
+    repo.createReleaseDigestRun({
+      trigger: "auto",
+      sentFrom: null,
+      sentTo: new Date("2026-06-19T14:00:00Z"),
+      digestLocalDate: "2026-06-19",
+      timezone: "Asia/Bangkok"
+    }),
+    duplicate
+  );
 });
 
 test("duplicate manual release digest run error is not swallowed", async () => {

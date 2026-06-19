@@ -248,7 +248,9 @@ export function createRepository(pool, options = {}) {
       const result = await pool.query(
         `SELECT version
          FROM release_notes
-         WHERE audience = 'user' AND version ~ '^v\\.1\\.[0-9]+$'
+         WHERE audience = 'user'
+           AND is_public = true
+           AND version ~ '^v\\.1\\.[0-9]+$'
          ORDER BY split_part(version, '.', 3)::integer DESC
          LIMIT 1`
       );
@@ -320,7 +322,12 @@ export function createRepository(pool, options = {}) {
         );
         return result.rows[0];
       } catch (error) {
-        if (error.code === "23505" && input.trigger === "auto") return null;
+        if (
+          error.code === "23505" &&
+          error.constraint === "release_digest_runs_auto_date_unique"
+        ) {
+          return null;
+        }
         throw error;
       }
     },
