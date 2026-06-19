@@ -70,6 +70,16 @@ test("digest uses the latest selected note version", () => {
   assert.doesNotMatch(text, /Money Flow v\.1\.18/);
 });
 
+test("digest does not reuse an earlier version when the last note has none", () => {
+  const text = formatReleaseDigest([
+    releaseNote({ id: 1, version: "v.1.19" }),
+    releaseNote({ id: 2, version: null })
+  ], "ru");
+
+  assert.match(text, /^✨ Money Flow$/m);
+  assert.doesNotMatch(text, /v\.1\.19/);
+});
+
 test("English digest falls back to Russian text", () => {
   const text = formatReleaseDigest([releaseNote({ body_en: null })], "en");
 

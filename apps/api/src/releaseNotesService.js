@@ -24,8 +24,7 @@ export function normalizeReleaseNoteInput(input = {}) {
 export function formatReleaseDigest(releaseNotes, language = "ru") {
   const notes = Array.isArray(releaseNotes) ? releaseNotes : [];
   const lang = language === "en" ? "en" : "ru";
-  const versions = notes.map((note) => note.version).filter(Boolean);
-  const version = versions.at(-1) ?? "";
+  const version = notes.at(-1)?.version ?? "";
   const heading = lang === "en" ? "What's new:" : "Что нового:";
   const bullets = notes
     .flatMap((note) => bodyLinesForLanguage(note, lang))
