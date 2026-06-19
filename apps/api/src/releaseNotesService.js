@@ -58,6 +58,21 @@ export function validateReleaseNoteContent(input) {
   return input;
 }
 
+export function validateReleaseNoteInput(input) {
+  validateReleaseNoteContent(input);
+  const note = {
+    version: input.version,
+    body_ru: input.bodyRu,
+    body_en: input.bodyEn
+  };
+  for (const language of ["ru", "en"]) {
+    if (graphemeLength(formatReleaseDigest([note], language)) > MAX_MESSAGE_CHARS) {
+      throw new Error(`${language.toUpperCase()} release digest exceeds ${MAX_MESSAGE_CHARS} characters`);
+    }
+  }
+  return input;
+}
+
 export function selectDigestReleaseNotes(notes) {
   const selected = [];
   for (const note of Array.isArray(notes) ? notes : []) {
@@ -86,7 +101,7 @@ export function createReleaseNotesService({ repository, sendMessage } = {}) {
   return {
     async createReleaseNote(input) {
       const normalized = normalizeReleaseNoteInput(input);
-      validateReleaseNoteContent(normalized);
+      validateReleaseNoteInput(normalized);
       return repository.createReleaseNote(normalized);
     },
     async previewTodayReleaseDigest(now = new Date()) {

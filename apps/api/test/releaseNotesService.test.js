@@ -10,7 +10,8 @@ import {
   hiddenReleaseNoteLabel,
   normalizeReleaseNoteInput,
   selectDigestReleaseNotes,
-  validateReleaseNoteContent
+  validateReleaseNoteContent,
+  validateReleaseNoteInput
 } from "../src/releaseNotesService.js";
 
 test("release note input keeps explicit user audience", () => {
@@ -275,6 +276,44 @@ test("release notes service rejects invalid content before repository insert", a
       bodyEn: "English only."
     }),
     /RU release notes require at least one bullet/
+  );
+  assert.equal(repositoryCalls, 0);
+});
+
+test("complete release note validation rejects rendered messages over 900 characters", () => {
+  const normalized = normalizeReleaseNoteInput({
+    version: `v.${"x".repeat(900)}`,
+    titleRu: "Короткий заголовок",
+    titleEn: "Short title",
+    bodyRu: "Короткое улучшение.",
+    bodyEn: "Short improvement."
+  });
+
+  assert.throws(
+    () => validateReleaseNoteInput(normalized),
+    /release digest exceeds 900 characters/
+  );
+});
+
+test("release notes service rejects oversized rendered messages before repository insert", async () => {
+  let repositoryCalls = 0;
+  const service = createReleaseNotesService({
+    repository: {
+      async createReleaseNote() {
+        repositoryCalls += 1;
+      }
+    }
+  });
+
+  await assert.rejects(
+    service.createReleaseNote({
+      version: `v.${"x".repeat(900)}`,
+      titleRu: "Короткий заголовок",
+      titleEn: "Short title",
+      bodyRu: "Короткое улучшение.",
+      bodyEn: "Short improvement."
+    }),
+    /release digest exceeds 900 characters/
   );
   assert.equal(repositoryCalls, 0);
 });
