@@ -181,31 +181,35 @@ export function createReleaseNotesService({ repository, sendMessage } = {}) {
         summary.users = users.length;
 
         for (const user of users) {
-          const missingNotes = [];
-          for (const note of context.selectedNotes) {
-            if (!await repository.hasReleaseNoteDelivery(note.id, user.id)) {
-              missingNotes.push(note);
-            }
-          }
-          if (missingNotes.length === 0) continue;
-
           try {
-            await sendMessage({
-              chatId: Number(user.telegram_user_id),
-              text: formatReleaseDigest(missingNotes, user.interface_language),
-              user,
-              releaseNotes: missingNotes
-            });
-            for (const note of missingNotes) {
-              await repository.markReleaseNoteDelivered(note.id, user.id);
+            const missingNotes = [];
+            for (const note of context.selectedNotes) {
+              if (!await repository.hasReleaseNoteDelivery(note.id, user.id)) {
+                missingNotes.push(note);
+              }
             }
-            summary.success += 1;
+            if (missingNotes.length === 0) continue;
+
+            try {
+              await sendMessage({
+                chatId: Number(user.telegram_user_id),
+                text: formatReleaseDigest(missingNotes, user.interface_language),
+                user,
+                releaseNotes: missingNotes
+              });
+              for (const note of missingNotes) {
+                await repository.markReleaseNoteDelivered(note.id, user.id);
+              }
+              summary.success += 1;
+            } catch (error) {
+              summary.errors += 1;
+              if (isBotBlockedError(error)) {
+                summary.blocked += 1;
+                await repository.markUserBotBlocked(user.id);
+              }
+            }
           } catch (error) {
             summary.errors += 1;
-            if (isBotBlockedError(error)) {
-              summary.blocked += 1;
-              await repository.markUserBotBlocked(user.id);
-            }
           }
         }
 
@@ -285,24 +289,28 @@ export function createReleaseNotesService({ repository, sendMessage } = {}) {
       };
 
       for (const user of users) {
-        for (const note of releaseNotes) {
-          if (await repository.hasReleaseNoteDelivery(note.id, user.id)) continue;
-          try {
-            await sendMessage({
-              chatId: Number(user.telegram_user_id),
-              text: formatReleaseDigest([note], user.interface_language),
-              user,
-              releaseNote: note
-            });
-            await repository.markReleaseNoteDelivered(note.id, user.id);
-            summary.success += 1;
-          } catch (error) {
-            summary.errors += 1;
-            if (isBotBlockedError(error)) {
-              summary.blocked += 1;
-              await repository.markUserBotBlocked(user.id);
+        try {
+          for (const note of releaseNotes) {
+            if (await repository.hasReleaseNoteDelivery(note.id, user.id)) continue;
+            try {
+              await sendMessage({
+                chatId: Number(user.telegram_user_id),
+                text: formatReleaseDigest([note], user.interface_language),
+                user,
+                releaseNote: note
+              });
+              await repository.markReleaseNoteDelivered(note.id, user.id);
+              summary.success += 1;
+            } catch (error) {
+              summary.errors += 1;
+              if (isBotBlockedError(error)) {
+                summary.blocked += 1;
+                await repository.markUserBotBlocked(user.id);
+              }
             }
           }
+        } catch (error) {
+          summary.errors += 1;
         }
       }
 

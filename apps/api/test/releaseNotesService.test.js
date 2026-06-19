@@ -408,6 +408,28 @@ test("one user send failure does not stop remaining users", async () => {
   assert.deepEqual(repo.sentNotes, []);
 });
 
+test("legacy release send isolates delivery lookup errors per user", async () => {
+  const sent = [];
+  const repo = fakeReleaseRepository({
+    users: [
+      { id: 1, telegram_user_id: 100, interface_language: "ru" },
+      { id: 2, telegram_user_id: 200, interface_language: "en" }
+    ],
+    deliveryLookupErrors: new Map([[1, new Error("delivery lookup unavailable")]])
+  });
+  const service = createReleaseNotesService({
+    repository: repo,
+    sendMessage: async (message) => sent.push(message.chatId)
+  });
+
+  const result = await service.sendReleaseNotesToActiveUsers([releaseNote()]);
+
+  assert.deepEqual(sent, [200]);
+  assert.equal(result.success, 1);
+  assert.equal(result.errors, 1);
+  assert.deepEqual(repo.deliveries, [[1, 2]]);
+});
+
 test("blocked bot errors mark users as blocked", async () => {
   const error = new Error("Telegram sendMessage failed: 403 Forbidden: bot was blocked by the user");
   error.status = 403;
@@ -626,6 +648,66 @@ test("failed delivery is retried without resending successful deliveries", async
   assert.equal(repo.successRuns.length, 1);
 });
 
+test("delivery lookup failure for one user does not stop the next user", async () => {
+  const sent = [];
+  const repo = fakeReleaseRepository({
+    notes: [releaseNote()],
+    users: [
+      { id: 1, telegram_user_id: 100, interface_language: "ru" },
+      { id: 2, telegram_user_id: 200, interface_language: "en" }
+    ],
+    deliveryLookupErrors: new Map([[1, new Error("delivery lookup unavailable")]])
+  });
+  const service = createReleaseNotesService({
+    repository: repo,
+    sendMessage: async (message) => sent.push(message.chatId)
+  });
+
+  const result = await service.sendReleaseDigestSinceLastRun(new Date("2026-06-19T14:00:00Z"));
+
+  assert.deepEqual(sent, [200]);
+  assert.equal(result.success, 1);
+  assert.equal(result.errors, 1);
+  assert.equal(result.blocked, 0);
+  assert.deepEqual(repo.deliveries, [[1, 2]]);
+  assert.equal(repo.failedRuns.length, 1);
+});
+
+test("bot blocked persistence failure does not stop the next user", async () => {
+  const sent = [];
+  const blockedError = Object.assign(
+    new Error("Telegram sendMessage failed: 403 Forbidden: bot was blocked by the user"),
+    {
+      status: 403,
+      body: JSON.stringify({ description: "Forbidden: bot was blocked by the user" })
+    }
+  );
+  const repo = fakeReleaseRepository({
+    notes: [releaseNote()],
+    users: [
+      { id: 1, telegram_user_id: 100, interface_language: "ru" },
+      { id: 2, telegram_user_id: 200, interface_language: "en" }
+    ],
+    botBlockedErrors: new Map([[1, new Error("bot blocked update unavailable")]])
+  });
+  const service = createReleaseNotesService({
+    repository: repo,
+    sendMessage: async (message) => {
+      sent.push(message.chatId);
+      if (message.chatId === 100) throw blockedError;
+    }
+  });
+
+  const result = await service.sendReleaseDigestSinceLastRun(new Date("2026-06-19T14:00:00Z"));
+
+  assert.deepEqual(sent, [100, 200]);
+  assert.equal(result.success, 1);
+  assert.equal(result.errors, 2);
+  assert.equal(result.blocked, 1);
+  assert.deepEqual(repo.deliveries, [[1, 2]]);
+  assert.equal(repo.failedRuns.length, 1);
+});
+
 test("blocked users are marked without failing the digest run", async () => {
   const blockedError = Object.assign(
     new Error("Telegram sendMessage failed: 403 Forbidden: bot was blocked by the user"),
@@ -748,6 +830,8 @@ function fakeReleaseRepository(options = {}) {
       return options.users ?? [];
     },
     async hasReleaseNoteDelivery(releaseNoteId, userId) {
+      const error = options.deliveryLookupErrors?.get(userId);
+      if (error) throw error;
       return existingDeliveries.has(`${releaseNoteId}:${userId}`);
     },
     async markReleaseNoteDelivered(releaseNoteId, userId) {
@@ -764,6 +848,8 @@ function fakeReleaseRepository(options = {}) {
       this.sentNotes.push(releaseNoteId);
     },
     async markUserBotBlocked(userId) {
+      const error = options.botBlockedErrors?.get(userId);
+      if (error) throw error;
       this.blockedUsers.push(userId);
     }
   };
