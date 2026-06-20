@@ -99,13 +99,35 @@ jobs:
           DEPLOY_REF: ${{ github.event.inputs.ref || github.sha }}
           RELEASE_PR_NUMBER: ${{ steps.release_pr.outputs.pr_number }}
           GITHUB_EVENT_NAME: ${{ github.event_name }}
+          RELEASE_SYNC_GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_SYNC_GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
+
+          release_sync_token_file="$(
+            ssh -i ~/.ssh/money_flow_deploy \
+              -p "$PROD_SSH_PORT" \
+              "$PROD_SSH_USER@$PROD_SSH_HOST" \
+              "umask 077; mktemp /tmp/money-flow-release-sync.XXXXXX"
+          )"
+          cleanup_remote_token() {
+            ssh -i ~/.ssh/money_flow_deploy \
+              -p "$PROD_SSH_PORT" \
+              "$PROD_SSH_USER@$PROD_SSH_HOST" \
+              "rm -f '$release_sync_token_file'" || true
+          }
+          trap cleanup_remote_token EXIT
+
+          printf '%s' "$RELEASE_SYNC_GITHUB_TOKEN" | ssh \
+            -i ~/.ssh/money_flow_deploy \
+            -p "$PROD_SSH_PORT" \
+            "$PROD_SSH_USER@$PROD_SSH_HOST" \
+            "umask 077; cat > '$release_sync_token_file'"
 
           ssh -i ~/.ssh/money_flow_deploy \
             -p "$PROD_SSH_PORT" \
             "$PROD_SSH_USER@$PROD_SSH_HOST" \
-            "APP_DIR='$PROD_APP_DIR' DEPLOY_REF='$DEPLOY_REF' RELEASE_PR_NUMBER='$RELEASE_PR_NUMBER' GITHUB_EVENT_NAME='$GITHUB_EVENT_NAME' bash -s" <<'REMOTE'
+            "APP_DIR='$PROD_APP_DIR' DEPLOY_REF='$DEPLOY_REF' RELEASE_PR_NUMBER='$RELEASE_PR_NUMBER' GITHUB_EVENT_NAME='$GITHUB_EVENT_NAME' RELEASE_SYNC_TOKEN_FILE='$release_sync_token_file' RELEASE_SYNC_GITHUB_REPOSITORY='$RELEASE_SYNC_GITHUB_REPOSITORY' bash -s" <<'REMOTE'
           set -euo pipefail
 
           cd "$APP_DIR"
@@ -115,6 +137,7 @@ jobs:
           restore_release_digest_scheduler() {
             deploy_status=$?
             trap - EXIT
+            rm -f "$RELEASE_SYNC_TOKEN_FILE"
             if ! docker compose --env-file .env.production -f compose.prod.yml up -d --force-recreate api; then
               echo "Failed to restore the release digest scheduler after deploy" >&2
               exit 1
@@ -130,8 +153,17 @@ jobs:
           ./scripts/prod-security-check.sh
 
           if [ -n "$RELEASE_PR_NUMBER" ]; then
-            docker compose --env-file .env.production -f compose.prod.yml exec -T api \
+            release_sync_github_token="$(cat "$RELEASE_SYNC_TOKEN_FILE")"
+            rm -f "$RELEASE_SYNC_TOKEN_FILE"
+            test -n "$release_sync_github_token"
+            export GITHUB_TOKEN="$release_sync_github_token"
+            export GITHUB_REPOSITORY="$RELEASE_SYNC_GITHUB_REPOSITORY"
+            docker compose --env-file .env.production -f compose.prod.yml exec -T \
+              -e GITHUB_TOKEN \
+              -e GITHUB_REPOSITORY \
+              api \
               npm run release-notes:sync-pr -- --pr="$RELEASE_PR_NUMBER"
+            unset GITHUB_TOKEN GITHUB_REPOSITORY release_sync_github_token
           elif [ "$GITHUB_EVENT_NAME" = "push" ]; then
             echo "No merged PR associated with deployed master SHA" >&2
             exit 1
@@ -143,3 +175,6 @@ jobs:
           ./scripts/prod-security-check.sh
           trap - EXIT
           REMOTE
+
+          trap - EXIT
+          cleanup_remote_token
