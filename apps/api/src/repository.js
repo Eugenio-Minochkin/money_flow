@@ -251,7 +251,7 @@ export function createRepository(pool, options = {}) {
          WHERE audience = 'user'
            AND is_public = true
            AND version ~ '^v\\.1\\.[0-9]+$'
-         ORDER BY split_part(version, '.', 3)::integer DESC
+         ORDER BY split_part(version, '.', 3)::numeric DESC
          LIMIT 1`
       );
       return result.rows[0]?.version ?? null;

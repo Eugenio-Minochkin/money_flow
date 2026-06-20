@@ -81,17 +81,14 @@ test("fetches a GitHub pull request with REST API headers", async () => {
   });
 
   assert.deepEqual(result, pullRequest);
-  assert.deepEqual(calls, [{
-    url: "https://api.github.com/repos/owner/repo/pulls/42",
-    options: {
-      method: "GET",
-      headers: {
-        accept: "application/vnd.github+json",
-        authorization: "Bearer top-secret-token",
-        "x-github-api-version": "2022-11-28"
-      }
-    }
-  }]);
+  assert.equal(calls[0].url, "https://api.github.com/repos/owner/repo/pulls/42");
+  assert.equal(calls[0].options.method, "GET");
+  assert.deepEqual(calls[0].options.headers, {
+    accept: "application/vnd.github+json",
+    authorization: "Bearer top-secret-token",
+    "x-github-api-version": "2022-11-28"
+  });
+  assert.ok(calls[0].options.signal instanceof AbortSignal);
 });
 
 test("requires GitHub repository and token", async () => {
@@ -175,6 +172,106 @@ test("sync repairs a user version and validates the final note before insert", a
   }]);
 });
 
+test("sync retries a concurrent public version conflict with the new latest version", async () => {
+  const latestVersions = ["v.1.18", "v.1.19"];
+  const inputs = [];
+  const repository = {
+    async getLatestPublicReleaseVersion() {
+      return latestVersions.shift();
+    },
+    async createReleaseNoteFromSource(input) {
+      inputs.push(input);
+      if (inputs.length === 1) {
+        throw Object.assign(new Error("duplicate public version"), {
+          code: "23505",
+          constraint: "release_notes_public_version_unique"
+        });
+      }
+      return { id: "note-2", ...input };
+    }
+  };
+
+  const result = await syncReleaseNotesFromPr({
+    prNumber: 42,
+    repository,
+    fetchPullRequest: async () => ({
+      title: "History filters",
+      body: releaseBlock({
+        audience: "user",
+        bodyRu: "History improved."
+      })
+    })
+  });
+
+  assert.equal(result.note.version, "v.1.20");
+  assert.deepEqual(inputs.map((input) => input.version), ["v.1.19", "v.1.20"]);
+});
+
+test("sync reports exhausted public version allocation retries", async () => {
+  let latestVersionCalls = 0;
+  let insertCalls = 0;
+  const repository = {
+    async getLatestPublicReleaseVersion() {
+      latestVersionCalls += 1;
+      return `v.1.${17 + latestVersionCalls}`;
+    },
+    async createReleaseNoteFromSource() {
+      insertCalls += 1;
+      throw Object.assign(new Error("duplicate public version"), {
+        code: "23505",
+        constraint: "release_notes_public_version_unique"
+      });
+    }
+  };
+
+  await assert.rejects(
+    syncReleaseNotesFromPr({
+      prNumber: 42,
+      repository,
+      fetchPullRequest: async () => ({
+        title: "History filters",
+        body: releaseBlock({
+          audience: "user",
+          bodyRu: "History improved."
+        })
+      })
+    }),
+    /failed to allocate a unique public release version after 5 attempts/i
+  );
+  assert.equal(latestVersionCalls, 5);
+  assert.equal(insertCalls, 5);
+});
+
+test("sync exposes non-version insert errors unchanged", async () => {
+  const databaseError = Object.assign(new Error("source constraint failed"), {
+    code: "23505",
+    constraint: "release_notes_source_unique"
+  });
+  const repository = {
+    async getLatestPublicReleaseVersion() {
+      return "v.1.18";
+    },
+    async createReleaseNoteFromSource() {
+      throw databaseError;
+    }
+  };
+
+  await assert.rejects(
+    syncReleaseNotesFromPr({
+      prNumber: 42,
+      repository,
+      fetchPullRequest: async () => ({
+        title: "History filters",
+        body: releaseBlock({
+          audience: "user",
+          bodyRu: "History improved."
+        })
+      })
+    }),
+    (error) => error === databaseError
+  );
+});
+
 test("sync rejects an oversized final assigned version before insert", async () => {
   const repository = fakeRepository(`v.1.${"9".repeat(901)}`);
 
@@ -215,6 +312,42 @@ test("admin and internal notes keep the latest version and remain private", asyn
     assert.equal(result.note.isPublic, false);
     assert.equal(repository.inputs[0].audience, audience);
   }
+});
+
+test("admin notes do not retry public version conflicts", async () => {
+  let latestVersionCalls = 0;
+  let insertCalls = 0;
+  const databaseError = Object.assign(new Error("duplicate public version"), {
+    code: "23505",
+    constraint: "release_notes_public_version_unique"
+  });
+  const repository = {
+    async getLatestPublicReleaseVersion() {
+      latestVersionCalls += 1;
+      return "v.1.25";
+    },
+    async createReleaseNoteFromSource() {
+      insertCalls += 1;
+      throw databaseError;
+    }
+  };
+
+  await assert.rejects(
+    syncReleaseNotesFromPr({
+      prNumber: 9,
+      repository,
+      fetchPullRequest: async () => ({
+        title: "Operations",
+        body: releaseBlock({
+          audience: "admin",
+          bodyRu: "Internal improvement."
+        })
+      })
+    }),
+    (error) => error === databaseError
+  );
+  assert.equal(latestVersionCalls, 1);
+  assert.equal(insertCalls, 1);
 });
 
 test("admin notes use the baseline version and fallback title when needed", async () => {

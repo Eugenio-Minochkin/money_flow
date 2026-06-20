@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  fetchGitHubPullRequest,
   nextPublicReleaseVersion,
   parseUserReleaseNotesBlock
 } from "../src/githubReleaseNotes.js";
@@ -310,4 +311,33 @@ test("throws instead of overflowing the latest safe patch", () => {
     () => nextPublicReleaseVersion(`v.1.${Number.MAX_SAFE_INTEGER}`, null),
     /overflow/i
   );
+});
+
+test("GitHub PR fetch aborts after its timeout without exposing the token", async () => {
+  const token = "never-expose-timeout-token";
+  let receivedSignal = null;
+
+  await assert.rejects(
+    fetchGitHubPullRequest({
+      repository: "owner/repo",
+      prNumber: 42,
+      token,
+      timeoutMs: 5,
+      fetchImpl: async (_url, options) => {
+        receivedSignal = options.signal;
+        await new Promise((resolve, reject) => {
+          options.signal.addEventListener("abort", () => {
+            reject(options.signal.reason);
+          }, { once: true });
+        });
+      }
+    }),
+    (error) => {
+      assert.equal(error.message, "GitHub PR fetch timed out");
+      assert.doesNotMatch(error.message, new RegExp(token));
+      return true;
+    }
+  );
+
+  assert.equal(receivedSignal?.aborted, true);
 });

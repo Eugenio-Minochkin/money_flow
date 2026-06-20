@@ -10,24 +10,38 @@ export async function fetchGitHubPullRequest({
   repository,
   prNumber,
   token,
-  fetchImpl = fetch
+  fetchImpl = fetch,
+  timeoutMs = 10000
 }) {
   const repositoryName = String(repository ?? "").trim();
   const accessToken = String(token ?? "").trim();
   if (!repositoryName) throw new Error("GitHub repository is required");
   if (!accessToken) throw new Error("GitHub token is required");
 
-  const response = await fetchImpl(
-    `https://api.github.com/repos/${repositoryName}/pulls/${prNumber}`,
-    {
-      method: "GET",
-      headers: {
-        accept: "application/vnd.github+json",
-        authorization: `Bearer ${accessToken}`,
-        "x-github-api-version": "2022-11-28"
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  let response;
+  try {
+    response = await fetchImpl(
+      `https://api.github.com/repos/${repositoryName}/pulls/${prNumber}`,
+      {
+        method: "GET",
+        headers: {
+          accept: "application/vnd.github+json",
+          authorization: `Bearer ${accessToken}`,
+          "x-github-api-version": "2022-11-28"
+        },
+        signal: controller.signal
       }
+    );
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error("GitHub PR fetch timed out");
     }
-  );
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
   if (!response.ok) {
     throw new Error(`GitHub PR fetch failed with status ${response.status}`);
   }

@@ -311,6 +311,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS release_notes_source_unique
   ON release_notes (source_type, source_id, audience)
   WHERE source_type IS NOT NULL AND source_id IS NOT NULL;
 
+-- Deliberately fail deployment if historical public versions are duplicated.
+-- Automatically choosing a row to keep would risk losing release-note data.
+CREATE UNIQUE INDEX IF NOT EXISTS release_notes_public_version_unique
+  ON release_notes (version)
+  WHERE audience = 'user' AND is_public = true;
+
 CREATE TABLE IF NOT EXISTS release_note_deliveries (
   release_note_id BIGINT REFERENCES release_notes(id),
   user_id BIGINT REFERENCES users(id),

@@ -296,6 +296,9 @@ test("release digest persistence schema includes source metadata and run constra
   assert.match(migration, /ADD COLUMN IF NOT EXISTS source_id TEXT/);
   assert.match(migration, /CREATE UNIQUE INDEX IF NOT EXISTS release_notes_source_unique/);
   assert.match(migration, /ON release_notes \(source_type, source_id, audience\)/);
+  assert.match(migration, /CREATE UNIQUE INDEX IF NOT EXISTS release_notes_public_version_unique/);
+  assert.match(migration, /ON release_notes \(version\)/);
+  assert.match(migration, /WHERE audience = 'user' AND is_public = true/);
   assert.match(migration, /CREATE TABLE IF NOT EXISTS release_digest_runs/);
   assert.match(migration, /CHECK \(status IN \('running', 'success', 'failed', 'skipped'\)\)/);
   assert.match(migration, /CHECK \(trigger IN \('auto', 'manual', 'preview', 'test'\)\)/);
@@ -333,6 +336,32 @@ test("creates an idempotent PR-sourced release note", async () => {
   assert.deepEqual(queries[0].params.slice(-2), ["github_pr", "42"]);
 });
 
+test("exposes release note insert database errors unchanged", async () => {
+  const databaseError = Object.assign(new Error("duplicate public version"), {
+    code: "23505",
+    constraint: "release_notes_public_version_unique"
+  });
+  const repo = createRepository(fakePool(() => {
+    throw databaseError;
+  }));
+
+  await assert.rejects(
+    repo.createReleaseNoteFromSource({
+      version: "v.1.19",
+      audience: "user",
+      category: "history",
+      titleRu: "Update",
+      titleEn: "Update",
+      bodyRu: "Improvement.",
+      bodyEn: "Improvement.",
+      isPublic: true,
+      sourceType: "github_pr",
+      sourceId: "42"
+    }),
+    (error) => error === databaseError
+  );
+});
+
 test("returns the latest public release version", async () => {
   const queries = [];
   const repo = createRepository(fakePool((sql, params) => {
@@ -344,7 +373,8 @@ test("returns the latest public release version", async () => {
   assert.match(queries[0].sql, /audience = 'user'/);
   assert.match(queries[0].sql, /is_public = true/);
   assert.match(queries[0].sql, /version ~ '\^v\\\.1\\\.\[0-9\]\+\$'/);
-  assert.match(queries[0].sql, /split_part\(version, '\.', 3\)::integer DESC/);
+  assert.match(queries[0].sql, /split_part\(version, '\.', 3\)::numeric DESC/);
+  assert.doesNotMatch(queries[0].sql, /::integer/);
   assert.deepEqual(queries[0].params, []);
 });
 

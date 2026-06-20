@@ -9,6 +9,8 @@ import {
 import { validateReleaseNoteInput } from "../src/releaseNotesService.js";
 
 const INTERNAL_VERSION_FALLBACK = "v.1.18";
+const MAX_PUBLIC_VERSION_ATTEMPTS = 5;
+const PUBLIC_VERSION_CONSTRAINT = "release_notes_public_version_unique";
 
 export function parseSyncPrArgs(args) {
   let prNumber = null;
@@ -57,13 +59,51 @@ export async function syncReleaseNotesFromPr({
     return { synced: false, reason: "missing_release_block" };
   }
 
-  const latestVersion = await repository.getLatestPublicReleaseVersion();
   const isPublic = parsed.audience === "user";
-  const version = isPublic
-    ? nextPublicReleaseVersion(latestVersion, parsed.version)
-    : latestVersion ?? INTERNAL_VERSION_FALLBACK;
   const title = String(pullRequest?.title ?? "").trim() || `PR #${prNumber}`;
-  const input = {
+
+  if (isPublic) {
+    for (let attempt = 1; attempt <= MAX_PUBLIC_VERSION_ATTEMPTS; attempt += 1) {
+      const latestVersion = await repository.getLatestPublicReleaseVersion();
+      const input = buildReleaseNoteInput({
+        parsed,
+        prNumber,
+        title,
+        version: nextPublicReleaseVersion(latestVersion, parsed.version),
+        isPublic
+      });
+      validateReleaseNoteInput(input);
+
+      try {
+        const note = await repository.createReleaseNoteFromSource(input);
+        return { synced: true, note };
+      } catch (error) {
+        if (!isPublicVersionConflict(error)) throw error;
+        if (attempt === MAX_PUBLIC_VERSION_ATTEMPTS) {
+          throw new Error(
+            `Failed to allocate a unique public release version after ${MAX_PUBLIC_VERSION_ATTEMPTS} attempts`,
+            { cause: error }
+          );
+        }
+      }
+    }
+  }
+
+  const latestVersion = await repository.getLatestPublicReleaseVersion();
+  const input = buildReleaseNoteInput({
+    parsed,
+    prNumber,
+    title,
+    version: latestVersion ?? INTERNAL_VERSION_FALLBACK,
+    isPublic
+  });
+  validateReleaseNoteInput(input);
+  const note = await repository.createReleaseNoteFromSource(input);
+  return { synced: true, note };
+}
+
+function buildReleaseNoteInput({ parsed, prNumber, title, version, isPublic }) {
+  return {
     version,
     audience: parsed.audience,
     category: parsed.category,
@@ -75,10 +115,10 @@ export async function syncReleaseNotesFromPr({
     sourceType: "github_pr",
     sourceId: String(prNumber)
   };
+}
 
-  validateReleaseNoteInput(input);
-  const note = await repository.createReleaseNoteFromSource(input);
-  return { synced: true, note };
+function isPublicVersionConflict(error) {
+  return error?.code === "23505" && error?.constraint === PUBLIC_VERSION_CONSTRAINT;
 }
 
 async function main() {
