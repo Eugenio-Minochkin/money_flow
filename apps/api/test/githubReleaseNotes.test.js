@@ -341,3 +341,35 @@ test("GitHub PR fetch aborts after its timeout without exposing the token", asyn
 
   assert.equal(receivedSignal?.aborted, true);
 });
+
+test("GitHub PR fetch timeout remains active while consuming the JSON body", async () => {
+  let receivedSignal = null;
+  const fetchPromise = fetchGitHubPullRequest({
+    repository: "owner/repo",
+    prNumber: 42,
+    token: "never-expose-body-timeout-token",
+    timeoutMs: 5,
+    fetchImpl: async (_url, options) => {
+      receivedSignal = options.signal;
+      return {
+        ok: true,
+        async json() {
+          await new Promise((resolve, reject) => {
+            options.signal.addEventListener("abort", () => {
+              reject(options.signal.reason);
+            }, { once: true });
+          });
+        }
+      };
+    }
+  });
+  const watchdog = new Promise((resolve, reject) => {
+    setTimeout(() => reject(new Error("JSON body timeout did not abort")), 50);
+  });
+
+  await assert.rejects(
+    Promise.race([fetchPromise, watchdog]),
+    /GitHub PR fetch timed out/
+  );
+  assert.equal(receivedSignal?.aborted, true);
+});

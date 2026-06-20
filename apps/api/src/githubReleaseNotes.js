@@ -20,9 +20,8 @@ export async function fetchGitHubPullRequest({
 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-  let response;
   try {
-    response = await fetchImpl(
+    const response = await fetchImpl(
       `https://api.github.com/repos/${repositoryName}/pulls/${prNumber}`,
       {
         method: "GET",
@@ -34,6 +33,11 @@ export async function fetchGitHubPullRequest({
         signal: controller.signal
       }
     );
+    if (!response.ok) {
+      await response.text();
+      throw new Error(`GitHub PR fetch failed with status ${response.status}`);
+    }
+    return await response.json();
   } catch (error) {
     if (controller.signal.aborted) {
       throw new Error("GitHub PR fetch timed out");
@@ -42,10 +46,6 @@ export async function fetchGitHubPullRequest({
   } finally {
     clearTimeout(timeoutId);
   }
-  if (!response.ok) {
-    throw new Error(`GitHub PR fetch failed with status ${response.status}`);
-  }
-  return response.json();
 }
 
 export function parseUserReleaseNotesBlock(markdown) {
