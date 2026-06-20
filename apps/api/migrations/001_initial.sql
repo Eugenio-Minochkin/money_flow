@@ -289,6 +289,9 @@ CREATE TABLE IF NOT EXISTS release_notes (
 
 ALTER TABLE release_notes ADD COLUMN IF NOT EXISTS audience TEXT NOT NULL DEFAULT 'user';
 ALTER TABLE release_notes ADD COLUMN IF NOT EXISTS category TEXT;
+ALTER TABLE release_notes ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT now();
+ALTER TABLE release_notes ADD COLUMN IF NOT EXISTS source_type TEXT;
+ALTER TABLE release_notes ADD COLUMN IF NOT EXISTS source_id TEXT;
 
 DO $$
 BEGIN
@@ -304,9 +307,107 @@ BEGIN
 END
 $$;
 
+CREATE UNIQUE INDEX IF NOT EXISTS release_notes_source_unique
+  ON release_notes (source_type, source_id, audience)
+  WHERE source_type IS NOT NULL AND source_id IS NOT NULL;
+
+-- Older schemas allowed duplicate public versions. Keep every note, preserve
+-- the earliest occurrence, and assign later duplicates unused v.1.x versions.
+DO $$
+DECLARE
+  duplicate_note RECORD;
+  next_patch NUMERIC;
+BEGIN
+  SELECT COALESCE(
+           MAX(substring(version FROM '^v\.1\.([0-9]+)$')::numeric)
+             FILTER (
+               WHERE version ~ '^v\.1\.[0-9]+$'
+                 AND substring(version FROM '^v\.1\.([0-9]+)$')::numeric <= 9007199254740991
+             ),
+           17
+         )
+  INTO next_patch
+  FROM release_notes
+  WHERE audience = 'user' AND is_public = true;
+
+  FOR duplicate_note IN
+    WITH ranked AS (
+      SELECT id,
+             released_at,
+             ROW_NUMBER() OVER (
+               PARTITION BY version
+               ORDER BY released_at, id
+             ) AS version_position
+      FROM release_notes
+      WHERE audience = 'user' AND is_public = true
+    )
+    SELECT id
+    FROM ranked
+    WHERE version_position > 1
+    ORDER BY released_at, id
+  LOOP
+    LOOP
+      IF next_patch >= 9007199254740991 THEN
+        RAISE EXCEPTION 'Cannot allocate a unique public release version';
+      END IF;
+      next_patch := next_patch + 1;
+      EXIT WHEN NOT EXISTS (
+        SELECT 1
+        FROM release_notes
+        WHERE audience = 'user'
+          AND is_public = true
+          AND version = 'v.1.' || next_patch
+      );
+    END LOOP;
+
+    UPDATE release_notes
+    SET version = 'v.1.' || next_patch
+    WHERE id = duplicate_note.id;
+  END LOOP;
+END
+$$;
+
+CREATE UNIQUE INDEX IF NOT EXISTS release_notes_public_version_unique
+  ON release_notes (version)
+  WHERE audience = 'user' AND is_public = true;
+
 CREATE TABLE IF NOT EXISTS release_note_deliveries (
   release_note_id BIGINT REFERENCES release_notes(id),
   user_id BIGINT REFERENCES users(id),
   sent_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (release_note_id, user_id)
 );
+
+CREATE TABLE IF NOT EXISTS release_digest_runs (
+  id BIGSERIAL PRIMARY KEY,
+  started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  finished_at TIMESTAMPTZ,
+  status TEXT NOT NULL DEFAULT 'running',
+  trigger TEXT NOT NULL DEFAULT 'auto',
+  sent_from TIMESTAMPTZ,
+  sent_to TIMESTAMPTZ NOT NULL,
+  version_from TEXT,
+  version_to TEXT,
+  users_count INTEGER NOT NULL DEFAULT 0,
+  success_count INTEGER NOT NULL DEFAULT 0,
+  error_count INTEGER NOT NULL DEFAULT 0,
+  skipped_count INTEGER NOT NULL DEFAULT 0,
+  blocked_count INTEGER NOT NULL DEFAULT 0,
+  error_message TEXT,
+  digest_local_date TEXT,
+  timezone TEXT,
+  CONSTRAINT release_digest_runs_status_check
+    CHECK (status IN ('running', 'success', 'failed', 'skipped')),
+  CONSTRAINT release_digest_runs_trigger_check
+    CHECK (trigger IN ('auto', 'manual', 'preview', 'test'))
+);
+
+ALTER TABLE release_digest_runs
+  ADD COLUMN IF NOT EXISTS skipped_count INTEGER NOT NULL DEFAULT 0;
+
+CREATE UNIQUE INDEX IF NOT EXISTS release_digest_runs_auto_date_unique
+  ON release_digest_runs (digest_local_date, timezone, trigger)
+  WHERE trigger = 'auto' AND status IN ('success', 'skipped', 'running');
+
+CREATE UNIQUE INDEX IF NOT EXISTS release_digest_runs_single_running_unique
+  ON release_digest_runs ((1)) WHERE status = 'running';
