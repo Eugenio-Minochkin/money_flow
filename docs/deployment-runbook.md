@@ -40,6 +40,47 @@ Optional:
 
 Do not put Telegram, database, OpenAI, or Deepgram secrets in GitHub Actions. They stay on the server in `.env.production`.
 
+## Automatic Release Digest
+
+Every PR with user-visible changes includes this block:
+
+```markdown
+## User Release Notes
+
+audience: user
+version: v.1.19
+category: history
+
+RU:
+- В истории расходов появился выбор периода.
+
+EN:
+- Expense history now has a period picker.
+```
+
+`version` is optional. If it is missing, malformed, stale, or already used,
+the sync script assigns the next `v.1.x` version. Use `audience: admin` or
+`audience: internal` for changes that must never reach normal users.
+
+After production health and security checks, the workflow resolves the merged
+PR associated with the deployed SHA and synchronizes its release block into
+PostgreSQL. The API sends pending public notes at the configured local hour.
+
+Add these values to production `.env.production`:
+
+```env
+RELEASE_DIGEST_AUTO_SEND_ENABLED=true
+RELEASE_DIGEST_TIMEZONE=Asia/Bangkok
+RELEASE_DIGEST_SEND_HOUR=21
+RELEASE_DIGEST_CHECK_INTERVAL_MINUTES=15
+GITHUB_TOKEN=<read-only GitHub token>
+GITHUB_REPOSITORY=Eugenio-Minochkin/money_flow
+```
+
+`GITHUB_TOKEN` needs read access to pull requests. It remains on the production
+server and is passed only to the API container. The deploy workflow never logs
+the token.
+
 ## First-Time Server Setup
 
 On your local machine, create a deploy key:
@@ -83,6 +124,8 @@ git fetch origin --prune --tags
 git checkout --force <commit-sha>
 docker compose --env-file .env.production -f compose.prod.yml up -d --build
 ./scripts/prod-security-check.sh
+docker compose --env-file .env.production -f compose.prod.yml exec -T api \
+  npm run release-notes:sync-pr -- --pr=<pull-request-number>
 ```
 
 ## What Deploy Does
@@ -95,6 +138,8 @@ git fetch origin --prune --tags
 git checkout --force "$DEPLOY_REF"
 docker compose --env-file .env.production -f compose.prod.yml up -d --build
 ./scripts/prod-security-check.sh
+docker compose --env-file .env.production -f compose.prod.yml exec -T api \
+  npm run release-notes:sync-pr -- --pr="$RELEASE_PR_NUMBER"
 ```
 
 The production database remains in the Docker volume. Application secrets remain in `.env.production`.

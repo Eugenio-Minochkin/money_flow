@@ -15,6 +15,10 @@ concurrency:
   group: money-flow-deploy
   cancel-in-progress: false
 
+permissions:
+  contents: read
+  pull-requests: read
+
 jobs:
   ci:
     name: Test
@@ -44,6 +48,22 @@ jobs:
     environment: production
 
     steps:
+      - name: Resolve deployed pull request
+        id: release_pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEPLOY_SHA: ${{ github.event.inputs.ref || github.sha }}
+        run: |
+          set -euo pipefail
+
+          pr_number="$(
+            gh api \
+              -H 'Accept: application/vnd.github+json' \
+              "/repos/${GITHUB_REPOSITORY}/commits/${DEPLOY_SHA}/pulls" \
+              --jq '[.[] | select(.merged_at != null and .base.ref == "master")] | first | .number // empty'
+          )"
+          echo "pr_number=$pr_number" >> "$GITHUB_OUTPUT"
+
       - name: Configure SSH
         env:
           PROD_SSH_HOST: ${{ secrets.PROD_SSH_HOST }}
@@ -77,13 +97,15 @@ jobs:
           PROD_SSH_PORT: ${{ secrets.PROD_SSH_PORT || '22' }}
           PROD_APP_DIR: ${{ secrets.PROD_APP_DIR || '/opt/money-flow' }}
           DEPLOY_REF: ${{ github.event.inputs.ref || github.sha }}
+          RELEASE_PR_NUMBER: ${{ steps.release_pr.outputs.pr_number }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
         run: |
           set -euo pipefail
 
           ssh -i ~/.ssh/money_flow_deploy \
             -p "$PROD_SSH_PORT" \
             "$PROD_SSH_USER@$PROD_SSH_HOST" \
-            "APP_DIR='$PROD_APP_DIR' DEPLOY_REF='$DEPLOY_REF' bash -s" <<'REMOTE'
+            "APP_DIR='$PROD_APP_DIR' DEPLOY_REF='$DEPLOY_REF' RELEASE_PR_NUMBER='$RELEASE_PR_NUMBER' GITHUB_EVENT_NAME='$GITHUB_EVENT_NAME' bash -s" <<'REMOTE'
           set -euo pipefail
 
           cd "$APP_DIR"
@@ -91,4 +113,14 @@ jobs:
           git checkout --force "$DEPLOY_REF"
           docker compose --env-file .env.production -f compose.prod.yml up -d --build
           ./scripts/prod-security-check.sh
+
+          if [ -n "$RELEASE_PR_NUMBER" ]; then
+            docker compose --env-file .env.production -f compose.prod.yml exec -T api \
+              npm run release-notes:sync-pr -- --pr="$RELEASE_PR_NUMBER"
+          elif [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            echo "No merged PR associated with deployed master SHA" >&2
+            exit 1
+          else
+            echo "Warning: no PR associated with manual deploy ref; release note sync skipped" >&2
+          fi
           REMOTE
