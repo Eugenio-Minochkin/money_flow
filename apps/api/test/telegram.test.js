@@ -1464,14 +1464,17 @@ test("admin release send is denied to non-admin users", async () => {
   assert.match(messages[0].text, /доступна только администратору/i);
 });
 
-test("admin release preview shows user digest and hidden notes", async () => {
+test("admin release preview uses pending notes since the last digest", async () => {
   const messages = [];
+  const calls = [];
+  const now = new Date("2026-06-20T14:00:00Z");
   const bot = createTelegramBot({
     token: "test-token",
     miniAppUrl: "http://localhost:3000",
     repository: fakeRepository(),
     adminTelegramIds: new Set([100]),
     releaseNotesService: fakeReleaseNotesService({
+      calls,
       previewText: [
         "Пользователям будет отправлено:",
         "",
@@ -1485,6 +1488,7 @@ test("admin release preview shows user digest and hidden notes", async () => {
         "• admin: добавлена /admin_stats"
       ].join("\n")
     }),
+    now: () => now,
     telegramClient: captureTelegramClient(messages)
   });
 
@@ -1496,27 +1500,34 @@ test("admin release preview shows user digest and hidden notes", async () => {
     }
   });
 
+  assert.deepEqual(calls, [{ method: "preview", now }]);
   assert.match(messages[0].text, /Пользователям будет отправлено/);
   assert.match(messages[0].text, /Скрыто из пользовательского пуша/);
 });
 
-test("admin release send returns summary", async () => {
+test("admin release send uses manual trigger and returns a range summary", async () => {
   const messages = [];
+  const calls = [];
+  const now = new Date("2026-06-20T14:00:00Z");
   const bot = createTelegramBot({
     token: "test-token",
     miniAppUrl: "http://localhost:3000",
     repository: fakeRepository(),
     adminTelegramIds: new Set([100]),
     releaseNotesService: fakeReleaseNotesService({
+      calls,
       sendResult: {
         sent: true,
-        version: "v.1.18",
+        versionFrom: "v.1.18",
+        versionTo: "v.1.20",
         users: 12,
         success: 11,
         errors: 1,
+        skipped: 2,
         blocked: 1
       }
     }),
+    now: () => now,
     telegramClient: captureTelegramClient(messages)
   });
 
@@ -1528,10 +1539,13 @@ test("admin release send returns summary", async () => {
     }
   });
 
+  assert.deepEqual(calls, [{ method: "send", now, options: { trigger: "manual" } }]);
   assert.match(messages[0].text, /Release digest отправлен/);
-  assert.match(messages[0].text, /Версия: v\.1\.18/);
+  assert.match(messages[0].text, /Версии: v\.1\.18 — v\.1\.20/);
   assert.match(messages[0].text, /Пользователей: 12/);
+  assert.match(messages[0].text, /Пропущено: 2/);
   assert.match(messages[0].text, /Заблокировали бота: 1/);
+  assert.doesNotMatch(messages[0].text, /undefined/);
 });
 
 test("admin release send reports empty public user notes", async () => {
@@ -1555,7 +1569,7 @@ test("admin release send reports empty public user notes", async () => {
     }
   });
 
-  assert.equal(messages[0].text, "Сегодня нет публичных release notes для пользователей — отправлять нечего.");
+  assert.equal(messages[0].text, "Нет новых публичных изменений для пользователей с прошлого дайджеста — отправлять нечего.");
 });
 
 function fakeRepository() {
@@ -1776,12 +1790,14 @@ function controlledExpenseParser() {
 
 function fakeReleaseNotesService(options = {}) {
   return {
-    async previewTodayReleaseDigest() {
+    async previewReleaseDigestSinceLastRun(now) {
+      options.calls?.push({ method: "preview", now });
       return {
         text: options.previewText ?? "Сегодня нет release notes — пуш пользователям отправляться не будет."
       };
     },
-    async sendTodayReleaseDigest() {
+    async sendReleaseDigestSinceLastRun(now, sendOptions) {
+      options.calls?.push({ method: "send", now, options: sendOptions });
       return options.sendResult ?? {
         sent: false,
         reason: "no_public_release_notes"

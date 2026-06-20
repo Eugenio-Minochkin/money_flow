@@ -364,26 +364,41 @@ async function handleAdminReleaseCommand({ text, from, chatId, token, telegramCl
   }
 
   if (text === "/admin_release_preview") {
-    const preview = await releaseNotesService.previewTodayReleaseDigest(now());
+    const preview = await releaseNotesService.previewReleaseDigestSinceLastRun(now());
     return sendTelegramResponse(trace, () => sendMessage(token, chatId, preview.text, null, telegramClient));
   }
 
-  const result = await releaseNotesService.sendTodayReleaseDigest(now());
+  const result = await releaseNotesService.sendReleaseDigestSinceLastRun(now(), {
+    trigger: "manual"
+  });
   if (!result.sent && result.reason === "no_public_release_notes") {
-    return sendTelegramResponse(trace, () => sendMessage(token, chatId, "Сегодня нет публичных release notes для пользователей — отправлять нечего.", null, telegramClient));
+    return sendTelegramResponse(trace, () => sendMessage(token, chatId, "Нет новых публичных изменений для пользователей с прошлого дайджеста — отправлять нечего.", null, telegramClient));
   }
   return sendTelegramResponse(trace, () => sendMessage(token, chatId, formatReleaseSendSummary(result), null, telegramClient));
 }
 
 function formatReleaseSendSummary(result) {
+  const versionLine = formatReleaseVersionLine(result);
   return [
     "Release digest отправлен.",
-    `Версия: ${result.version}`,
+    versionLine,
     `Пользователей: ${result.users}`,
     `Успешно: ${result.success}`,
     `Ошибки: ${result.errors}`,
+    `Пропущено: ${result.skipped ?? 0}`,
     `Заблокировали бота: ${result.blocked}`
-  ].join("\n");
+  ].filter(Boolean).join("\n");
+}
+
+function formatReleaseVersionLine(result) {
+  const versionFrom = result.versionFrom ?? result.version ?? null;
+  const versionTo = result.versionTo ?? result.version ?? null;
+  if (!versionFrom && !versionTo) return null;
+  if (!versionFrom || versionFrom === versionTo) {
+    return `Версия: ${versionTo ?? versionFrom}`;
+  }
+  if (!versionTo) return `Версия: ${versionFrom}`;
+  return `Версии: ${versionFrom} — ${versionTo}`;
 }
 
 async function transcribeVoice(message, voiceTranscriber, trace) {
