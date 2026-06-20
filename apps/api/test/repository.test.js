@@ -296,6 +296,8 @@ test("release digest persistence schema includes source metadata and run constra
   assert.match(migration, /ADD COLUMN IF NOT EXISTS source_id TEXT/);
   assert.match(migration, /CREATE UNIQUE INDEX IF NOT EXISTS release_notes_source_unique/);
   assert.match(migration, /ON release_notes \(source_type, source_id, audience\)/);
+  assert.match(migration, /ROW_NUMBER\(\) OVER \(\s*PARTITION BY version/);
+  assert.match(migration, /UPDATE release_notes\s+SET version = 'v\.1\.' \|\| next_patch/);
   assert.match(migration, /CREATE UNIQUE INDEX IF NOT EXISTS release_notes_public_version_unique/);
   assert.match(migration, /ON release_notes \(version\)/);
   assert.match(migration, /WHERE audience = 'user' AND is_public = true/);

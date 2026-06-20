@@ -111,7 +111,22 @@ jobs:
           cd "$APP_DIR"
           git fetch origin --prune --tags
           git checkout --force "$DEPLOY_REF"
-          docker compose --env-file .env.production -f compose.prod.yml up -d --build
+
+          restore_release_digest_scheduler() {
+            deploy_status=$?
+            trap - EXIT
+            if ! docker compose --env-file .env.production -f compose.prod.yml up -d --force-recreate api; then
+              echo "Failed to restore the release digest scheduler after deploy" >&2
+              exit 1
+            fi
+            if [ "$deploy_status" -ne 0 ]; then
+              exit "$deploy_status"
+            fi
+          }
+          trap restore_release_digest_scheduler EXIT
+
+          RELEASE_DIGEST_AUTO_SEND_ENABLED=false \
+            docker compose --env-file .env.production -f compose.prod.yml up -d --build
           ./scripts/prod-security-check.sh
 
           if [ -n "$RELEASE_PR_NUMBER" ]; then
@@ -123,4 +138,8 @@ jobs:
           else
             echo "Warning: no PR associated with manual deploy ref; release note sync skipped" >&2
           fi
+
+          docker compose --env-file .env.production -f compose.prod.yml up -d --force-recreate api
+          ./scripts/prod-security-check.sh
+          trap - EXIT
           REMOTE

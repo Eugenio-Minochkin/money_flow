@@ -32,16 +32,29 @@ test('production compose passes configured admin Telegram ids to the API', () =>
 
 test('production deploy resolves a PR and syncs release notes after security checks', () => {
   const workflow = readText('.github/workflows/deploy.yml');
+  const restoreTrapIndex = workflow.indexOf('trap restore_release_digest_scheduler EXIT');
+  const disabledStartIndex = workflow.indexOf('RELEASE_DIGEST_AUTO_SEND_ENABLED=false');
   const securityCheckIndex = workflow.indexOf('./scripts/prod-security-check.sh');
   const releaseSyncIndex = workflow.indexOf('release-notes:sync-pr');
+  const enabledRestartIndex = workflow.lastIndexOf('up -d --force-recreate api');
+  const clearTrapIndex = workflow.lastIndexOf('trap - EXIT');
 
   assert.match(workflow, /commits\/\$\{DEPLOY_SHA\}\/pulls/);
   assert.match(workflow, /select\(\.merged_at != null and \.base\.ref == "master"\)/);
   assert.match(workflow, /RELEASE_PR_NUMBER/);
   assert.match(workflow, /GITHUB_EVENT_NAME/);
   assert.match(workflow, /GH_TOKEN:\s*\$\{\{\s*github\.token\s*\}\}/);
+  assert.ok(restoreTrapIndex >= 0);
+  assert.ok(disabledStartIndex > restoreTrapIndex);
+  assert.ok(disabledStartIndex >= 0);
   assert.ok(securityCheckIndex >= 0);
   assert.ok(releaseSyncIndex > securityCheckIndex);
+  assert.ok(enabledRestartIndex > releaseSyncIndex);
+  assert.ok(clearTrapIndex > enabledRestartIndex);
+  assert.match(
+    workflow.slice(enabledRestartIndex),
+    /\.\/scripts\/prod-security-check\.sh/
+  );
 });
 
 test('production compose passes automatic release digest settings to the API', () => {

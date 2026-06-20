@@ -311,8 +311,62 @@ CREATE UNIQUE INDEX IF NOT EXISTS release_notes_source_unique
   ON release_notes (source_type, source_id, audience)
   WHERE source_type IS NOT NULL AND source_id IS NOT NULL;
 
--- Deliberately fail deployment if historical public versions are duplicated.
--- Automatically choosing a row to keep would risk losing release-note data.
+-- Older schemas allowed duplicate public versions. Keep every note, preserve
+-- the earliest occurrence, and assign later duplicates unused v.1.x versions.
+DO $$
+DECLARE
+  duplicate_note RECORD;
+  next_patch NUMERIC;
+BEGIN
+  SELECT COALESCE(
+           MAX(substring(version FROM '^v\.1\.([0-9]+)$')::numeric)
+             FILTER (
+               WHERE version ~ '^v\.1\.[0-9]+$'
+                 AND substring(version FROM '^v\.1\.([0-9]+)$')::numeric <= 9007199254740991
+             ),
+           17
+         )
+  INTO next_patch
+  FROM release_notes
+  WHERE audience = 'user' AND is_public = true;
+
+  FOR duplicate_note IN
+    WITH ranked AS (
+      SELECT id,
+             released_at,
+             ROW_NUMBER() OVER (
+               PARTITION BY version
+               ORDER BY released_at, id
+             ) AS version_position
+      FROM release_notes
+      WHERE audience = 'user' AND is_public = true
+    )
+    SELECT id
+    FROM ranked
+    WHERE version_position > 1
+    ORDER BY released_at, id
+  LOOP
+    LOOP
+      IF next_patch >= 9007199254740991 THEN
+        RAISE EXCEPTION 'Cannot allocate a unique public release version';
+      END IF;
+      next_patch := next_patch + 1;
+      EXIT WHEN NOT EXISTS (
+        SELECT 1
+        FROM release_notes
+        WHERE audience = 'user'
+          AND is_public = true
+          AND version = 'v.1.' || next_patch
+      );
+    END LOOP;
+
+    UPDATE release_notes
+    SET version = 'v.1.' || next_patch
+    WHERE id = duplicate_note.id;
+  END LOOP;
+END
+$$;
+
 CREATE UNIQUE INDEX IF NOT EXISTS release_notes_public_version_unique
   ON release_notes (version)
   WHERE audience = 'user' AND is_public = true;
