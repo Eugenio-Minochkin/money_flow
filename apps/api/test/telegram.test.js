@@ -1572,6 +1572,56 @@ test("admin release send reports empty public user notes", async () => {
   assert.equal(messages[0].text, "Нет новых публичных изменений для пользователей с прошлого дайджеста — отправлять нечего.");
 });
 
+test("admin release send reports an in-progress digest without a success summary", async () => {
+  const messages = [];
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: fakeRepository(),
+    adminTelegramIds: new Set([100]),
+    releaseNotesService: fakeReleaseNotesService({
+      sendResult: { sent: false, reason: "digest_already_running" }
+    }),
+    telegramClient: captureTelegramClient(messages)
+  });
+
+  await bot.handleUpdate({
+    message: {
+      chat: { id: 10 },
+      from: { id: 100, first_name: "M" },
+      text: "/admin_release_send"
+    }
+  });
+
+  assert.equal(messages[0].text, "Release digest уже выполняется — повторный запуск не нужен.");
+  assert.doesNotMatch(messages[0].text, /отправлен/);
+});
+
+test("admin release send reports a duplicate automatic run without a success summary", async () => {
+  const messages = [];
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: fakeRepository(),
+    adminTelegramIds: new Set([100]),
+    releaseNotesService: fakeReleaseNotesService({
+      sendResult: { sent: false, reason: "duplicate_auto_run" }
+    }),
+    telegramClient: captureTelegramClient(messages)
+  });
+
+  await bot.handleUpdate({
+    message: {
+      chat: { id: 10 },
+      from: { id: 100, first_name: "M" },
+      text: "/admin_release_send"
+    }
+  });
+
+  assert.equal(messages[0].text, "Release digest уже выполняется — повторный запуск не нужен.");
+  assert.doesNotMatch(messages[0].text, /отправлен/);
+});
+
 function fakeRepository() {
   return {
     user: { id: 1, interface_language: "ru", onboarding_step: "completed" },

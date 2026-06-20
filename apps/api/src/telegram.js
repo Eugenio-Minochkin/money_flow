@@ -371,6 +371,9 @@ async function handleAdminReleaseCommand({ text, from, chatId, token, telegramCl
   const result = await releaseNotesService.sendReleaseDigestSinceLastRun(now(), {
     trigger: "manual"
   });
+  if (!result.sent && (result.reason === "digest_already_running" || result.reason === "duplicate_auto_run")) {
+    return sendTelegramResponse(trace, () => sendMessage(token, chatId, "Release digest уже выполняется — повторный запуск не нужен.", null, telegramClient));
+  }
   if (!result.sent && result.reason === "no_public_release_notes") {
     return sendTelegramResponse(trace, () => sendMessage(token, chatId, "Нет новых публичных изменений для пользователей с прошлого дайджеста — отправлять нечего.", null, telegramClient));
   }
