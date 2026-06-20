@@ -43,6 +43,27 @@ test("returns null when the exact release heading is absent", () => {
   assert.equal(parseUserReleaseNotesBlock("Regular PR description"), null);
   assert.equal(parseUserReleaseNotesBlock("## User Release Notes extra"), null);
   assert.equal(parseUserReleaseNotesBlock("### User Release Notes"), null);
+  assert.equal(parseUserReleaseNotesBlock("    ## User Release Notes"), null);
+});
+
+test("accepts the exact release heading and next H2 with up to three leading spaces", () => {
+  const parsed = parseUserReleaseNotesBlock(`
+   ## User Release Notes
+audience: admin
+RU:
+- Visible note.
+
+   ## Testing
+not release content
+`);
+
+  assert.deepEqual(parsed, {
+    audience: "admin",
+    version: null,
+    category: null,
+    bodyRu: "Visible note.",
+    bodyEn: null
+  });
 });
 
 test("defaults audience to internal and optional values to null", () => {
@@ -130,6 +151,39 @@ not a bullet
   });
 });
 
+test("supports tilde fences and matching fence marker lengths", () => {
+  const parsed = parseUserReleaseNotesBlock(`
+~~~markdown
+## User Release Notes
+RU:
+- Tilde example only.
+\`\`\`
+~~
+~~~
+
+\`\`\`\`markdown
+## User Release Notes
+RU:
+- Backtick example only.
+\`\`\`
+~~~~
+\`\`\`\`
+
+## User Release Notes
+audience: admin
+RU:
+- Real note.
+`);
+
+  assert.deepEqual(parsed, {
+    audience: "admin",
+    version: null,
+    category: null,
+    bodyRu: "Real note.",
+    bodyEn: null
+  });
+});
+
 test("requires at least one RU dash bullet", () => {
   assert.throws(
     () => parseUserReleaseNotesBlock(`
@@ -176,6 +230,25 @@ audience: user
   );
 });
 
+test("rejects duplicate release note metadata fields", () => {
+  for (const [field, first, second] of [
+    ["audience", "admin", "admin"],
+    ["version", "v.1.19", "v.1.20"],
+    ["category", "history", "history"]
+  ]) {
+    assert.throws(
+      () => parseUserReleaseNotesBlock(`
+## User Release Notes
+${field}: ${first}
+${field}: ${second}
+RU:
+- Valid.
+`),
+      new RegExp(`duplicate ${field}`, "i")
+    );
+  }
+});
+
 test("propagates release note bullet count and length limits", () => {
   const sevenBullets = Array.from({ length: 7 }, (_, index) => `- Change ${index + 1}.`).join("\n");
 
@@ -198,17 +271,18 @@ RU:
   );
 });
 
-test("rejects a version that makes the rendered release digest exceed 900 characters", () => {
-  assert.throws(
-    () => parseUserReleaseNotesBlock(`
+test("preserves malformed oversized versions for sync to repair", () => {
+  const version = `v.${"x".repeat(900)}`;
+  const parsed = parseUserReleaseNotesBlock(`
 ## User Release Notes
 audience: user
-version: v.${"x".repeat(900)}
+version: ${version}
 RU:
-- Короткое улучшение.
-`),
-    /release digest exceeds 900 characters/
-  );
+- Short improvement.
+`);
+
+  assert.equal(parsed.version, version);
+  assert.equal(parsed.bodyRu, "Short improvement.");
 });
 
 test("uses a valid requested public version only when it advances latest", () => {

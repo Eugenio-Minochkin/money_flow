@@ -1,10 +1,10 @@
 import { validateReleaseNoteInput } from "./releaseNotesService.js";
 
 const AUDIENCES = new Set(["user", "admin", "internal"]);
-const RELEASE_HEADING_PATTERN = /^## User Release Notes\s*$/;
-const LEVEL_TWO_HEADING_PATTERN = /^##(?:\s|$)/;
+const RELEASE_HEADING_PATTERN = /^ {0,3}## User Release Notes\s*$/;
+const LEVEL_TWO_HEADING_PATTERN = /^ {0,3}##(?:\s|$)/;
 const VERSION_PATTERN = /^v\.1\.(\d+)$/;
-const VALIDATION_VERSION_FALLBACK = "v.1.0";
+const VALIDATION_VERSION_FALLBACK = "v.1.18";
 
 export function parseUserReleaseNotesBlock(markdown) {
   const lines = stripFencedCodeBlocks(String(markdown ?? "")).split(/\r?\n/);
@@ -65,11 +65,15 @@ export function parseUserReleaseNotesBlock(markdown) {
     bodyEn
   };
   validateReleaseNoteInput({
-    version: parsed.version ?? VALIDATION_VERSION_FALLBACK,
+    version: releaseNoteParserValidationVersion(parsed.version),
     bodyRu: parsed.bodyRu,
     bodyEn: parsed.bodyEn
   });
   return parsed;
+}
+
+function releaseNoteParserValidationVersion(version) {
+  return parseVersionPatch(version) === null ? VALIDATION_VERSION_FALLBACK : version;
 }
 
 export function nextPublicReleaseVersion(latestVersion, requestedVersion) {
@@ -87,14 +91,30 @@ export function nextPublicReleaseVersion(latestVersion, requestedVersion) {
 
 function stripFencedCodeBlocks(markdown) {
   const keptLines = [];
-  let inFence = false;
+  let fence = null;
 
   for (const line of markdown.split(/\r?\n/)) {
-    if (/^ {0,3}```/.test(line)) {
-      inFence = !inFence;
+    if (fence) {
+      const closing = /^ {0,3}(`{3,}|~{3,})[ \t]*$/.exec(line);
+      if (
+        closing &&
+        closing[1][0] === fence.marker &&
+        closing[1].length >= fence.length
+      ) {
+        fence = null;
+      }
       continue;
     }
-    if (!inFence) keptLines.push(line);
+
+    const opening = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+    if (opening) {
+      fence = {
+        marker: opening[1][0],
+        length: opening[1].length
+      };
+      continue;
+    }
+    keptLines.push(line);
   }
 
   return keptLines.join("\n");
@@ -102,11 +122,15 @@ function stripFencedCodeBlocks(markdown) {
 
 function metadataField(lines, name) {
   const pattern = new RegExp(`^${name}:\\s*(.*?)\\s*$`);
+  const values = [];
   for (const line of lines) {
     const match = pattern.exec(line);
-    if (match) return match[1];
+    if (match) values.push(match[1]);
   }
-  return "";
+  if (values.length > 1) {
+    throw new Error(`Duplicate ${name} release note metadata`);
+  }
+  return values[0] ?? "";
 }
 
 function languageBullets(lines, language) {
