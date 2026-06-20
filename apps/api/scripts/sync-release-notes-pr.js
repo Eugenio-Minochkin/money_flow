@@ -34,6 +34,18 @@ export function parseSyncPrArgs(args) {
   return { prNumber };
 }
 
+export function validateSyncEnvironment(env) {
+  const databaseUrl = String(env?.DATABASE_URL ?? "").trim();
+  const token = String(env?.GITHUB_TOKEN ?? "").trim();
+  const githubRepository = String(env?.GITHUB_REPOSITORY ?? "").trim();
+
+  if (!databaseUrl) throw new Error("DATABASE_URL is required");
+  if (!token) throw new Error("GITHUB_TOKEN is required");
+  if (!githubRepository) throw new Error("GITHUB_REPOSITORY is required");
+
+  return { databaseUrl, token, githubRepository };
+}
+
 export async function syncReleaseNotesFromPr({
   prNumber,
   repository,
@@ -71,10 +83,7 @@ export async function syncReleaseNotesFromPr({
 
 async function main() {
   const { prNumber } = parseSyncPrArgs(process.argv.slice(2));
-  const token = String(process.env.GITHUB_TOKEN ?? "").trim();
-  const githubRepository = String(process.env.GITHUB_REPOSITORY ?? "").trim();
-  if (!token) throw new Error("GITHUB_TOKEN is required");
-  if (!githubRepository) throw new Error("GITHUB_REPOSITORY is required");
+  const { token, githubRepository } = validateSyncEnvironment(process.env);
 
   const [{ closeDb, pool }, { createRepository }] = await Promise.all([
     import("../src/db.js"),

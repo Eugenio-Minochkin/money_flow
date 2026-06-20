@@ -4,7 +4,8 @@ import assert from "node:assert/strict";
 import { fetchGitHubPullRequest } from "../src/githubReleaseNotes.js";
 import {
   parseSyncPrArgs,
-  syncReleaseNotesFromPr
+  syncReleaseNotesFromPr,
+  validateSyncEnvironment
 } from "../scripts/sync-release-notes-pr.js";
 
 test("parses one exact positive PR number", () => {
@@ -22,6 +23,41 @@ test("parses one exact positive PR number", () => {
     ["--pr=1", "--unknown=value"]
   ]) {
     assert.throws(() => parseSyncPrArgs(args), /--pr|unknown|duplicate/i);
+  }
+});
+
+test("validates all release sync runtime environment values", () => {
+  assert.deepEqual(validateSyncEnvironment({
+    DATABASE_URL: "postgres://user:password@db/release",
+    GITHUB_TOKEN: "github-secret-token",
+    GITHUB_REPOSITORY: "owner/repo"
+  }), {
+    databaseUrl: "postgres://user:password@db/release",
+    token: "github-secret-token",
+    githubRepository: "owner/repo"
+  });
+});
+
+test("requires each release sync runtime environment value without exposing secrets", () => {
+  const values = {
+    DATABASE_URL: "postgres://secret-user:secret-password@db/release",
+    GITHUB_TOKEN: "github-secret-token",
+    GITHUB_REPOSITORY: "secret-owner/secret-repo"
+  };
+
+  for (const missingName of Object.keys(values)) {
+    const env = { ...values, [missingName]: "   " };
+
+    assert.throws(
+      () => validateSyncEnvironment(env),
+      (error) => {
+        assert.match(error.message, new RegExp(`${missingName} is required`));
+        for (const secret of Object.values(values)) {
+          assert.doesNotMatch(error.message, new RegExp(secret));
+        }
+        return true;
+      }
+    );
   }
 });
 
