@@ -6,6 +6,34 @@ const LEVEL_TWO_HEADING_PATTERN = /^ {0,3}##(?:\s|$)/;
 const VERSION_PATTERN = /^v\.1\.(\d+)$/;
 const VALIDATION_VERSION_FALLBACK = "v.1.18";
 
+export async function fetchGitHubPullRequest({
+  repository,
+  prNumber,
+  token,
+  fetchImpl = fetch
+}) {
+  const repositoryName = String(repository ?? "").trim();
+  const accessToken = String(token ?? "").trim();
+  if (!repositoryName) throw new Error("GitHub repository is required");
+  if (!accessToken) throw new Error("GitHub token is required");
+
+  const response = await fetchImpl(
+    `https://api.github.com/repos/${repositoryName}/pulls/${prNumber}`,
+    {
+      method: "GET",
+      headers: {
+        accept: "application/vnd.github+json",
+        authorization: `Bearer ${accessToken}`,
+        "x-github-api-version": "2022-11-28"
+      }
+    }
+  );
+  if (!response.ok) {
+    throw new Error(`GitHub PR fetch failed with status ${response.status}`);
+  }
+  return response.json();
+}
+
 export function parseUserReleaseNotesBlock(markdown) {
   const lines = stripFencedCodeBlocks(String(markdown ?? "")).split(/\r?\n/);
   const headingIndexes = [];
