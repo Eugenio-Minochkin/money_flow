@@ -44,6 +44,19 @@ test('production deploy resolves a PR and syncs release notes after security che
   assert.match(workflow, /RELEASE_PR_NUMBER/);
   assert.match(workflow, /GITHUB_EVENT_NAME/);
   assert.match(workflow, /GH_TOKEN:\s*\$\{\{\s*github\.token\s*\}\}/);
+  assert.match(workflow, /RELEASE_SYNC_GITHUB_TOKEN:\s*\$\{\{\s*github\.token\s*\}\}/);
+  assert.match(workflow, /RELEASE_SYNC_GITHUB_REPOSITORY:\s*\$\{\{\s*github\.repository\s*\}\}/);
+  assert.doesNotMatch(workflow, /RELEASE_SYNC_GITHUB_TOKEN_B64/);
+  assert.match(workflow, /mktemp \/tmp\/money-flow-release-sync\.XXXXXX/);
+  assert.match(workflow, /printf '%s' "\$RELEASE_SYNC_GITHUB_TOKEN" \| ssh/);
+  assert.match(workflow, /umask 077; cat > '\$release_sync_token_file'/);
+  assert.match(workflow, /release_sync_github_token="\$\(cat "\$RELEASE_SYNC_TOKEN_FILE"\)"/);
+  assert.match(workflow, /rm -f "\$RELEASE_SYNC_TOKEN_FILE"/);
+  assert.doesNotMatch(workflow, /-e GITHUB_TOKEN="\$release_sync_github_token"/);
+  assert.match(
+    workflow,
+    /export GITHUB_TOKEN="\$release_sync_github_token"[\s\S]*exec -T\s+[\s\S]*-e GITHUB_TOKEN\s+[\s\S]*-e GITHUB_REPOSITORY\s+[\s\S]*api/
+  );
   assert.ok(restoreTrapIndex >= 0);
   assert.ok(disabledStartIndex > restoreTrapIndex);
   assert.ok(disabledStartIndex >= 0);
