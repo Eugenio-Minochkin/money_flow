@@ -1,9 +1,10 @@
-import { validateReleaseNoteContent } from "./releaseNotesService.js";
+import { validateReleaseNoteInput } from "./releaseNotesService.js";
 
 const AUDIENCES = new Set(["user", "admin", "internal"]);
 const RELEASE_HEADING_PATTERN = /^## User Release Notes\s*$/;
 const LEVEL_TWO_HEADING_PATTERN = /^##(?:\s|$)/;
 const VERSION_PATTERN = /^v\.1\.(\d+)$/;
+const VALIDATION_VERSION_FALLBACK = "v.1.0";
 
 export function parseUserReleaseNotesBlock(markdown) {
   const lines = stripFencedCodeBlocks(String(markdown ?? "")).split(/\r?\n/);
@@ -63,7 +64,11 @@ export function parseUserReleaseNotesBlock(markdown) {
     bodyRu,
     bodyEn
   };
-  validateReleaseNoteContent(parsed);
+  validateReleaseNoteInput({
+    version: parsed.version ?? VALIDATION_VERSION_FALLBACK,
+    bodyRu: parsed.bodyRu,
+    bodyEn: parsed.bodyEn
+  });
   return parsed;
 }
 

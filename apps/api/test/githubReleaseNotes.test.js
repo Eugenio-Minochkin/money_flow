@@ -198,6 +198,19 @@ RU:
   );
 });
 
+test("rejects a version that makes the rendered release digest exceed 900 characters", () => {
+  assert.throws(
+    () => parseUserReleaseNotesBlock(`
+## User Release Notes
+audience: user
+version: v.${"x".repeat(900)}
+RU:
+- Короткое улучшение.
+`),
+    /release digest exceeds 900 characters/
+  );
+});
+
 test("uses a valid requested public version only when it advances latest", () => {
   assert.equal(nextPublicReleaseVersion("v.1.18", "v.1.20"), "v.1.20");
   assert.equal(nextPublicReleaseVersion("v.1.18", "v.1.18"), "v.1.19");
