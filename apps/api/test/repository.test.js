@@ -114,7 +114,7 @@ test("updates monthly budget for a Telegram user", async () => {
   const queries = [];
   const repo = createRepository(fakePool((sql, params) => {
     queries.push({ sql, params });
-    return { rows: [{ monthly_budget_amount: "60000" }] };
+    return { rows: [{ id: 1, monthly_budget_amount: "60000" }] };
   }));
 
   const user = await repo.updateMonthlyBudget(100, 60000);
@@ -122,6 +122,22 @@ test("updates monthly budget for a Telegram user", async () => {
   assert.equal(Number(user.monthly_budget_amount), 60000);
   assert.equal(queries[0].params[0], 60000);
   assert.equal(queries[0].params[1], 100);
+});
+
+test("updateMonthlyBudget deletes daily_budget_snapshots for current day after user update", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql: String(sql), params });
+    return { rows: [{ id: 7, monthly_budget_amount: "60000" }] };
+  }));
+
+  await repo.updateMonthlyBudget(100, 60000);
+
+  const deleteQuery = queries.find((query) => query.sql.includes("DELETE FROM daily_budget_snapshots"));
+  assert.ok(deleteQuery, "expected a DELETE FROM daily_budget_snapshots query");
+  assert.match(deleteQuery.sql, /WHERE user_id = \$1 AND day_key = \$2/);
+  assert.equal(deleteQuery.params[0], 7);
+  assert.match(String(deleteQuery.params[1]), /^\d{4}-\d{2}-\d{2}$/);
 });
 
 test("updates user budget and display currency settings", async () => {
@@ -166,6 +182,33 @@ test("updates user budget and display currency settings", async () => {
   assert.equal(queries[0].params[6], false);
   assert.equal(queries[0].params[7], "light");
   assert.equal(queries[0].params[8], 100);
+});
+
+test("updateUserSettings deletes daily_budget_snapshots for current day after settings update", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql: String(sql), params });
+    if (String(sql).startsWith("UPDATE users")) {
+      return { rows: [{ id: 7, monthly_budget_amount: params[0] }] };
+    }
+    return { rows: [] };
+  }));
+
+  await repo.updateUserSettings(100, {
+    monthlyBudgetAmount: 60000,
+    baseCurrency: "THB",
+    displayCurrency: "USD",
+    usdThbRate: 32.65,
+    interfaceLanguage: "en",
+    budgetAdviceEnabled: true,
+    interfaceTheme: "dark"
+  });
+
+  const deleteQuery = queries.find((query) => query.sql.includes("DELETE FROM daily_budget_snapshots"));
+  assert.ok(deleteQuery, "expected a DELETE FROM daily_budget_snapshots query");
+  assert.match(deleteQuery.sql, /WHERE user_id = \$1 AND day_key = \$2/);
+  assert.equal(deleteQuery.params[0], 7);
+  assert.match(String(deleteQuery.params[1]), /^\d{4}-\d{2}-\d{2}$/);
 });
 
 test("persists dark interface theme without normalizing it back to light", async () => {
@@ -233,6 +276,31 @@ test("updates only the current month budget override for a Telegram user", async
   assert.equal(override.month_key, "2026-06");
   assert.equal(override.is_partial_month, true);
   assert.ok(!queries.some((query) => /UPDATE users\s+SET monthly_budget_amount/i.test(query.sql)));
+});
+
+test("setCurrentMonthBudget deletes daily_budget_snapshots after override upsert", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql: String(sql), params });
+    if (String(sql).startsWith("SELECT * FROM users")) {
+      return { rows: [{ id: 7, telegram_user_id: "100", base_currency: "THB" }] };
+    }
+    if (String(sql).startsWith("INSERT INTO monthly_budget_overrides")) {
+      return { rows: [{ user_id: params[0], month_key: params[1], budget_amount_base: params[2] }] };
+    }
+    return { rows: [] };
+  }));
+
+  await repo.setCurrentMonthBudget(100, {
+    amount: 12000,
+    currency: "THB"
+  }, new Date("2026-06-12T10:00:00+07:00"));
+
+  const deleteQuery = queries.find((query) => query.sql.includes("DELETE FROM daily_budget_snapshots"));
+  assert.ok(deleteQuery, "expected a DELETE FROM daily_budget_snapshots query");
+  assert.match(deleteQuery.sql, /WHERE user_id = \$1 AND day_key = \$2/);
+  assert.equal(deleteQuery.params[0], 7);
+  assert.equal(deleteQuery.params[1], "2026-06-12");
 });
 
 test("checks database health", async () => {

@@ -97,7 +97,9 @@ export function createRepository(pool, options = {}) {
          RETURNING *`,
         [baseCurrency, monthlyBudgetAmount, nextStep, telegramUserId]
       );
-      return result.rows[0] ?? null;
+      const user = result.rows[0] ?? null;
+      if (user) await invalidateDailyBudgetSnapshot(pool, user.id);
+      return user;
     },
 
     async updateOnboardingBaseCurrency(telegramUserId, currency) {
@@ -126,7 +128,9 @@ export function createRepository(pool, options = {}) {
          RETURNING *`,
         [monthlyBudgetAmount, nextStep, telegramUserId]
       );
-      return result.rows[0] ?? null;
+      const user = result.rows[0] ?? null;
+      if (user) await invalidateDailyBudgetSnapshot(pool, user.id);
+      return user;
     },
 
     async setCurrentMonthBudget(telegramUserId, input, now = new Date()) {
@@ -151,6 +155,7 @@ export function createRepository(pool, options = {}) {
         [user.id, monthKey(now), moneyAmounts.amountBase, input.source ?? "manual", input.isPartialMonth === true]
       );
       if (input.completeOnboarding) await this.setOnboardingStep(telegramUserId, "completed");
+      await invalidateDailyBudgetSnapshot(pool, user.id, now);
       return result.rows[0] ?? null;
     },
 
@@ -169,6 +174,7 @@ export function createRepository(pool, options = {}) {
         [user.id, monthKey(now), moneyAmounts.amountBase, input.sourceText ?? null]
       );
       await this.setOnboardingStep(telegramUserId, "completed");
+      await invalidateDailyBudgetSnapshot(pool, user.id, now);
       return result.rows[0] ?? null;
     },
 
@@ -523,7 +529,9 @@ export function createRepository(pool, options = {}) {
          RETURNING *`,
         [amount, telegramUserId]
       );
-      return result.rows[0] ?? null;
+      const user = result.rows[0] ?? null;
+      if (user) await invalidateDailyBudgetSnapshot(pool, user.id);
+      return user;
     },
 
     async updateUserSettings(telegramUserId, settings) {
@@ -560,7 +568,9 @@ export function createRepository(pool, options = {}) {
          RETURNING *`,
         [monthlyBudgetAmount, baseCurrency, displayCurrency, usdThbRate, weeklyBudgetAmount, interfaceLanguage, budgetAdviceEnabled, interfaceTheme, telegramUserId]
       );
-      return result.rows[0] ?? null;
+      const user = result.rows[0] ?? null;
+      if (user) await invalidateDailyBudgetSnapshot(pool, user.id);
+      return user;
     },
 
     async createDraft(userId, sourceText, items) {
@@ -1273,6 +1283,15 @@ async function paidPlannedTotalForMonth(pool, userId, now) {
     [userId, bounds.start, bounds.end]
   );
   return Number(result.rows[0]?.total ?? 0);
+}
+
+async function invalidateDailyBudgetSnapshot(pool, userId, now = new Date()) {
+  if (userId == null) return;
+  await pool.query(
+    `DELETE FROM daily_budget_snapshots
+     WHERE user_id = $1 AND day_key = $2`,
+    [userId, localDayKey(now)]
+  );
 }
 
 async function getOrCreateDailyBudgetSnapshot(pool, user, now, input) {
