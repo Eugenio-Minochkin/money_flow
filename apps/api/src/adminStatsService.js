@@ -1,12 +1,5 @@
 const BANGKOK_OFFSET_MS = 7 * 60 * 60_000;
 
-export function parseAdminTelegramIds(value) {
-  return new Set(String(value ?? "")
-    .split(",")
-    .map((item) => Number(String(item).trim()))
-    .filter((item) => Number.isSafeInteger(item) && item > 0));
-}
-
 export function createAdminStatsService({ pool, now = () => new Date() }) {
   return {
     async getAdminStats() {
@@ -40,8 +33,9 @@ export function formatAdminStats(stats) {
 }
 
 async function periodStats(pool, period, usersCreatedAtAvailable) {
-  const [events, newUsers] = await Promise.all([
+  const [events, historical, newUsers] = await Promise.all([
     aggregateEvents(pool, period),
+    aggregateHistoricalActivity(pool, period),
     countNewUsers(pool, period, usersCreatedAtAvailable)
   ]);
   const textMessages = fallbackCount(events.textDirect, events.textFromMessage);
@@ -50,7 +44,10 @@ async function periodStats(pool, period, usersCreatedAtAvailable) {
   const messagesTotal = Number(events.messageReceived) > 0
     ? Number(events.messageReceived)
     : textMessages + voiceMessages + photoMessages;
-  const draftsCreated = Number(events.draftsCreated);
+  const expensesSaved = fallbackCount(events.expensesSaved, historical.expensesSaved);
+  const draftsCreated = fallbackCount(events.draftsCreated, historical.draftsCreated);
+  const draftsConfirmed = fallbackCount(events.draftsConfirmed, historical.draftsConfirmed);
+  const draftsCancelled = fallbackCount(events.draftsCancelled, historical.draftsCancelled);
   const parseFailed = Number(events.parseFailed);
 
   return {
@@ -60,16 +57,57 @@ async function periodStats(pool, period, usersCreatedAtAvailable) {
     textMessages,
     voiceMessages,
     photoMessages,
-    expensesSaved: Number(events.expensesSaved),
+    expensesSaved,
     draftsCreated,
-    draftsConfirmed: Number(events.draftsConfirmed),
-    draftsCancelled: Number(events.draftsCancelled),
+    draftsConfirmed,
+    draftsCancelled,
     parseFailed,
     transcriptionFailed: Number(events.transcriptionFailed),
     avgTextProcessingSeconds: secondsOrNull(events.avgTextProcessingMs),
     avgVoiceProcessingSeconds: secondsOrNull(events.avgVoiceProcessingMs),
-    confirmRate: draftsCreated > 0 ? Math.round((Number(events.draftsConfirmed) / draftsCreated) * 100) : null,
+    confirmRate: draftsCreated > 0 ? Math.round((draftsConfirmed / draftsCreated) * 100) : null,
     parseFailedRate: messagesTotal > 0 ? Math.round((parseFailed / messagesTotal) * 100) : null
+  };
+}
+
+async function aggregateHistoricalActivity(pool, period) {
+  const result = await pool.query(
+    `SELECT
+       (SELECT COUNT(*)::int
+        FROM expenses
+        WHERE created_at >= $1 AND created_at < $2) AS expenses_saved,
+       ((SELECT COUNT(*)::int
+         FROM drafts
+         WHERE created_at >= $1 AND created_at < $2)
+        +
+        (SELECT COUNT(*)::int
+         FROM planned_drafts
+         WHERE created_at >= $1 AND created_at < $2)) AS drafts_created,
+       ((SELECT COUNT(*)::int
+         FROM drafts
+         WHERE confirmed_at >= $1 AND confirmed_at < $2)
+        +
+        (SELECT COUNT(*)::int
+         FROM planned_drafts
+         WHERE confirmed_at >= $1 AND confirmed_at < $2)) AS drafts_confirmed,
+       ((SELECT COUNT(*)::int
+         FROM drafts
+         WHERE status = 'cancelled'
+           AND created_at >= $1 AND created_at < $2)
+        +
+        (SELECT COUNT(*)::int
+         FROM planned_drafts
+         WHERE status = 'cancelled'
+           AND created_at >= $1 AND created_at < $2)) AS drafts_cancelled`,
+    [period.start, period.end]
+  );
+
+  const row = result.rows[0] ?? {};
+  return {
+    expensesSaved: numeric(row.expenses_saved),
+    draftsCreated: numeric(row.drafts_created),
+    draftsConfirmed: numeric(row.drafts_confirmed),
+    draftsCancelled: numeric(row.drafts_cancelled)
   };
 }
 

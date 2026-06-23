@@ -2,8 +2,9 @@ import { createServer } from "node:http";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { parseAdminTelegramIds } from "./adminAccess.js";
 import { config, requireRuntimeConfig } from "./config.js";
-import { createAdminStatsService, parseAdminTelegramIds } from "./adminStatsService.js";
+import { createAdminStatsService } from "./adminStatsService.js";
 import { createApiSecurity } from "./apiSecurity.js";
 import { migrate, pool } from "./db.js";
 import { createExchangeRateProvider } from "./exchangeRates.js";
@@ -11,6 +12,7 @@ import { createExpenseParser } from "./expenseParser.js";
 import { createJsonReader, createStaticHandler, sendJson } from "./http.js";
 import { handleDevRoute } from "./devRoutes.js";
 import { createRateLimiter } from "./rateLimit.js";
+import { createReleaseDigestScheduler } from "./releaseDigestScheduler.js";
 import { createReleaseNotesService } from "./releaseNotesService.js";
 import { createRepository } from "./repository.js";
 import { shouldRateLimitRequest } from "./routing.js";
@@ -54,6 +56,21 @@ const releaseNotesService = createReleaseNotesService({
     ...message
   })
 });
+if (config.releaseDigestAutoSendEnabled && !config.telegramBotToken) {
+  console.warn("[release-digest] automatic sending is enabled but TELEGRAM_BOT_TOKEN is missing; scheduler is disabled");
+}
+const releaseDigestScheduler = createReleaseDigestScheduler({
+  enabled: config.releaseDigestAutoSendEnabled && Boolean(config.telegramBotToken),
+  timezone: config.releaseDigestTimezone,
+  sendHour: config.releaseDigestSendHour,
+  checkIntervalMinutes: config.releaseDigestCheckIntervalMinutes,
+  repository,
+  releaseNotesService,
+  onError(error) {
+    console.error("[release-digest] scheduler failed", error);
+  }
+});
+releaseDigestScheduler.start();
 function createBot(telegramClient) {
   return createTelegramBot({
     repository,

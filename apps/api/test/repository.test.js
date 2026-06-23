@@ -1,7 +1,43 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 
 import { createRepository } from "../src/repository.js";
+
+test("records app events with JSON metadata", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql: String(sql), params });
+    return { rows: [] };
+  }));
+
+  await repo.recordAppEvent(7, "message_received", { inputType: "text" });
+
+  assert.match(queries[0].sql, /INSERT INTO app_events/);
+  assert.deepEqual(queries[0].params, [7, "message_received", JSON.stringify({ inputType: "text" })]);
+});
+
+test("app event logging failures do not reject user operations", async () => {
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = (...args) => warnings.push(args);
+  try {
+    const repo = createRepository(fakePool(() => {
+      throw new Error("events unavailable");
+    }));
+
+    await assert.doesNotReject(() => repo.recordAppEvent(7, "message_received", { inputType: "text" }));
+  } finally {
+    console.warn = originalWarn;
+  }
+
+  assert.equal(warnings[0][0], "[events] record failed");
+  assert.deepEqual(warnings[0][1], {
+    userId: 7,
+    eventName: "message_received",
+    message: "events unavailable"
+  });
+});
 
 test("creates new Telegram users at the language onboarding step", async () => {
   const queries = [];
@@ -78,7 +114,7 @@ test("updates monthly budget for a Telegram user", async () => {
   const queries = [];
   const repo = createRepository(fakePool((sql, params) => {
     queries.push({ sql, params });
-    return { rows: [{ monthly_budget_amount: "60000" }] };
+    return { rows: [{ id: 1, monthly_budget_amount: "60000" }] };
   }));
 
   const user = await repo.updateMonthlyBudget(100, 60000);
@@ -86,6 +122,22 @@ test("updates monthly budget for a Telegram user", async () => {
   assert.equal(Number(user.monthly_budget_amount), 60000);
   assert.equal(queries[0].params[0], 60000);
   assert.equal(queries[0].params[1], 100);
+});
+
+test("updateMonthlyBudget deletes daily_budget_snapshots for current day after user update", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql: String(sql), params });
+    return { rows: [{ id: 7, monthly_budget_amount: "60000" }] };
+  }));
+
+  await repo.updateMonthlyBudget(100, 60000);
+
+  const deleteQuery = queries.find((query) => query.sql.includes("DELETE FROM daily_budget_snapshots"));
+  assert.ok(deleteQuery, "expected a DELETE FROM daily_budget_snapshots query");
+  assert.match(deleteQuery.sql, /WHERE user_id = \$1 AND day_key = \$2/);
+  assert.equal(deleteQuery.params[0], 7);
+  assert.match(String(deleteQuery.params[1]), /^\d{4}-\d{2}-\d{2}$/);
 });
 
 test("updates user budget and display currency settings", async () => {
@@ -130,6 +182,33 @@ test("updates user budget and display currency settings", async () => {
   assert.equal(queries[0].params[6], false);
   assert.equal(queries[0].params[7], "light");
   assert.equal(queries[0].params[8], 100);
+});
+
+test("updateUserSettings deletes daily_budget_snapshots for current day after settings update", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql: String(sql), params });
+    if (String(sql).startsWith("UPDATE users")) {
+      return { rows: [{ id: 7, monthly_budget_amount: params[0] }] };
+    }
+    return { rows: [] };
+  }));
+
+  await repo.updateUserSettings(100, {
+    monthlyBudgetAmount: 60000,
+    baseCurrency: "THB",
+    displayCurrency: "USD",
+    usdThbRate: 32.65,
+    interfaceLanguage: "en",
+    budgetAdviceEnabled: true,
+    interfaceTheme: "dark"
+  });
+
+  const deleteQuery = queries.find((query) => query.sql.includes("DELETE FROM daily_budget_snapshots"));
+  assert.ok(deleteQuery, "expected a DELETE FROM daily_budget_snapshots query");
+  assert.match(deleteQuery.sql, /WHERE user_id = \$1 AND day_key = \$2/);
+  assert.equal(deleteQuery.params[0], 7);
+  assert.match(String(deleteQuery.params[1]), /^\d{4}-\d{2}-\d{2}$/);
 });
 
 test("persists dark interface theme without normalizing it back to light", async () => {
@@ -199,6 +278,31 @@ test("updates only the current month budget override for a Telegram user", async
   assert.ok(!queries.some((query) => /UPDATE users\s+SET monthly_budget_amount/i.test(query.sql)));
 });
 
+test("setCurrentMonthBudget deletes daily_budget_snapshots after override upsert", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql: String(sql), params });
+    if (String(sql).startsWith("SELECT * FROM users")) {
+      return { rows: [{ id: 7, telegram_user_id: "100", base_currency: "THB" }] };
+    }
+    if (String(sql).startsWith("INSERT INTO monthly_budget_overrides")) {
+      return { rows: [{ user_id: params[0], month_key: params[1], budget_amount_base: params[2] }] };
+    }
+    return { rows: [] };
+  }));
+
+  await repo.setCurrentMonthBudget(100, {
+    amount: 12000,
+    currency: "THB"
+  }, new Date("2026-06-12T10:00:00+07:00"));
+
+  const deleteQuery = queries.find((query) => query.sql.includes("DELETE FROM daily_budget_snapshots"));
+  assert.ok(deleteQuery, "expected a DELETE FROM daily_budget_snapshots query");
+  assert.match(deleteQuery.sql, /WHERE user_id = \$1 AND day_key = \$2/);
+  assert.equal(deleteQuery.params[0], 7);
+  assert.equal(deleteQuery.params[1], "2026-06-12");
+});
+
 test("checks database health", async () => {
   const repo = createRepository(fakePool((sql) => {
     assert.match(sql, /SELECT 1 AS ok/);
@@ -247,6 +351,329 @@ test("creates a release note with audience and category", async () => {
 
   assert.equal(note.audience, "user");
   assert.equal(note.category, "onboarding");
+});
+
+test("release digest persistence schema includes source metadata and run constraints", async () => {
+  const migration = await readFile(
+    new URL("../migrations/001_initial.sql", import.meta.url),
+    "utf8"
+  );
+
+  assert.match(migration, /ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT now\(\)/);
+  assert.match(migration, /ADD COLUMN IF NOT EXISTS source_type TEXT/);
+  assert.match(migration, /ADD COLUMN IF NOT EXISTS source_id TEXT/);
+  assert.match(migration, /CREATE UNIQUE INDEX IF NOT EXISTS release_notes_source_unique/);
+  assert.match(migration, /ON release_notes \(source_type, source_id, audience\)/);
+  assert.match(migration, /ROW_NUMBER\(\) OVER \(\s*PARTITION BY version/);
+  assert.match(migration, /UPDATE release_notes\s+SET version = 'v\.1\.' \|\| next_patch/);
+  assert.match(migration, /CREATE UNIQUE INDEX IF NOT EXISTS release_notes_public_version_unique/);
+  assert.match(migration, /ON release_notes \(version\)/);
+  assert.match(migration, /WHERE audience = 'user' AND is_public = true/);
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS release_digest_runs/);
+  assert.match(migration, /CHECK \(status IN \('running', 'success', 'failed', 'skipped'\)\)/);
+  assert.match(migration, /CHECK \(trigger IN \('auto', 'manual', 'preview', 'test'\)\)/);
+  assert.match(migration, /CREATE UNIQUE INDEX IF NOT EXISTS release_digest_runs_auto_date_unique/);
+  assert.match(migration, /WHERE trigger = 'auto' AND status IN \('success', 'skipped', 'running'\)/);
+  assert.match(migration, /CREATE UNIQUE INDEX IF NOT EXISTS release_digest_runs_single_running_unique/);
+  assert.match(migration, /ON release_digest_runs \(\(1\)\) WHERE status = 'running'/);
+  assert.match(migration, /skipped_count INTEGER NOT NULL DEFAULT 0/);
+  assert.match(migration, /ALTER TABLE release_digest_runs\s+ADD COLUMN IF NOT EXISTS skipped_count INTEGER NOT NULL DEFAULT 0/);
+});
+
+test("creates an idempotent PR-sourced release note", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql: String(sql), params });
+    return { rows: [{ id: "7", source_type: "github_pr", source_id: "42", audience: "user" }] };
+  }));
+
+  const note = await repo.createReleaseNoteFromSource({
+    version: "v.1.19",
+    audience: "user",
+    category: "history",
+    titleRu: "Обновление",
+    titleEn: "Update",
+    bodyRu: "История стала удобнее.",
+    bodyEn: "History is easier to use.",
+    isPublic: true,
+    sourceType: "github_pr",
+    sourceId: "42"
+  });
+
+  assert.equal(note.source_id, "42");
+  assert.match(queries[0].sql, /ON CONFLICT \(source_type, source_id, audience\)/);
+  assert.match(queries[0].sql, /DO UPDATE SET source_id = EXCLUDED\.source_id/);
+  assert.deepEqual(queries[0].params.slice(-2), ["github_pr", "42"]);
+});
+
+test("exposes release note insert database errors unchanged", async () => {
+  const databaseError = Object.assign(new Error("duplicate public version"), {
+    code: "23505",
+    constraint: "release_notes_public_version_unique"
+  });
+  const repo = createRepository(fakePool(() => {
+    throw databaseError;
+  }));
+
+  await assert.rejects(
+    repo.createReleaseNoteFromSource({
+      version: "v.1.19",
+      audience: "user",
+      category: "history",
+      titleRu: "Update",
+      titleEn: "Update",
+      bodyRu: "Improvement.",
+      bodyEn: "Improvement.",
+      isPublic: true,
+      sourceType: "github_pr",
+      sourceId: "42"
+    }),
+    (error) => error === databaseError
+  );
+});
+
+test("returns the latest public release version", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql: String(sql), params });
+    return { rows: [{ version: "v.1.21" }] };
+  }));
+
+  assert.equal(await repo.getLatestPublicReleaseVersion(), "v.1.21");
+  assert.match(queries[0].sql, /audience = 'user'/);
+  assert.match(queries[0].sql, /is_public = true/);
+  assert.match(queries[0].sql, /version ~ '\^v\\\.1\\\.\[0-9\]\+\$'/);
+  assert.match(queries[0].sql, /split_part\(version, '\.', 3\)::numeric DESC/);
+  assert.doesNotMatch(queries[0].sql, /::integer/);
+  assert.deepEqual(queries[0].params, []);
+});
+
+test("returns null when no public release version exists", async () => {
+  const repo = createRepository(fakePool(() => ({ rows: [] })));
+
+  assert.equal(await repo.getLatestPublicReleaseVersion(), null);
+});
+
+test("lists unsent public notes including older carry-over", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql: String(sql), params });
+    return { rows: [{ id: "1", audience: "user" }] };
+  }));
+  const since = new Date("2026-06-17T14:00:00Z");
+  const until = new Date("2026-06-19T14:00:00Z");
+
+  await repo.getUnsentPublicReleaseNotesSince(since, until);
+
+  assert.match(queries[0].sql, /sent_at IS NULL/);
+  assert.match(queries[0].sql, /created_at <= \$1/);
+  assert.doesNotMatch(queries[0].sql, /created_at > \$2/);
+  assert.match(queries[0].sql, /is_public = true/);
+  assert.match(queries[0].sql, /audience = 'user'/);
+  assert.deepEqual(queries[0].params, [until]);
+});
+
+test("lists hidden release notes inside the requested range", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql: String(sql), params });
+    return { rows: [{ id: "2", audience: "internal" }] };
+  }));
+  const since = new Date("2026-06-17T14:00:00Z");
+  const until = new Date("2026-06-19T14:00:00Z");
+
+  const notes = await repo.getHiddenReleaseNotesSince(since, until);
+
+  assert.equal(notes[0].audience, "internal");
+  assert.match(queries[0].sql, /created_at > COALESCE\(\$1, '-infinity'::timestamptz\)/);
+  assert.match(queries[0].sql, /created_at <= \$2/);
+  assert.match(queries[0].sql, /audience IN \('admin', 'internal'\)/);
+  assert.deepEqual(queries[0].params, [since, until]);
+});
+
+test("returns the last successful release digest run", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql: String(sql), params });
+    return { rows: [{ id: "8", status: "success" }] };
+  }));
+
+  const run = await repo.getLastSuccessfulReleaseDigestRun();
+
+  assert.equal(run.id, "8");
+  assert.match(queries[0].sql, /status = 'success'/);
+  assert.match(queries[0].sql, /ORDER BY sent_to DESC, id DESC/);
+  assert.deepEqual(queries[0].params, []);
+});
+
+test("finds an automatic release digest run for a local date", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql: String(sql), params });
+    return { rows: [{ id: "9", status: "running" }] };
+  }));
+
+  const run = await repo.getReleaseDigestRunForLocalDate("2026-06-19", "Asia/Bangkok");
+
+  assert.equal(run.id, "9");
+  assert.match(queries[0].sql, /trigger = 'auto'/);
+  assert.match(queries[0].sql, /status IN \('running', 'success', 'skipped'\)/);
+  assert.deepEqual(queries[0].params, ["2026-06-19", "Asia/Bangkok"]);
+});
+
+test("records release digest run lifecycle", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql: String(sql), params });
+    if (/INSERT INTO release_digest_runs/.test(String(sql))) return { rows: [{ id: "9" }] };
+    return { rows: [] };
+  }));
+  const sentTo = new Date("2026-06-19T14:00:00Z");
+
+  const run = await repo.createReleaseDigestRun({
+    trigger: "auto",
+    sentFrom: null,
+    sentTo,
+    digestLocalDate: "2026-06-19",
+    timezone: "Asia/Bangkok"
+  });
+  await repo.markReleaseDigestRunSuccess(run.id, {
+    versionFrom: "v.1.19",
+    versionTo: "v.1.20",
+    users: 3,
+    success: 3,
+    errors: 0,
+    skipped: 0,
+    blocked: 0
+  });
+  await repo.markReleaseDigestRunFailed(run.id, new Error("Telegram unavailable"), {
+    users: 3,
+    success: 1,
+    errors: 2,
+    skipped: 4,
+    blocked: 1
+  });
+  await repo.markReleaseDigestRunSkipped(run.id, "no_public_release_notes");
+
+  assert.match(queries[0].sql, /WITH recovered AS/);
+  assert.match(queries[0].sql, /UPDATE release_digest_runs/);
+  assert.match(queries[0].sql, /status = 'running'/);
+  assert.match(queries[0].sql, /started_at < now\(\) - interval '2 hours'/);
+  assert.match(queries[0].sql, /error_message = 'stale_running_run_recovered'/);
+  assert.match(queries[0].sql, /INSERT INTO release_digest_runs/);
+  assert.deepEqual(queries[0].params, ["auto", null, sentTo, "2026-06-19", "Asia/Bangkok"]);
+  assert.match(queries[1].sql, /status = 'success'/);
+  assert.match(queries[1].sql, /skipped_count = \$7/);
+  assert.deepEqual(queries[1].params, ["9", "v.1.19", "v.1.20", 3, 3, 0, 0, 0]);
+  assert.match(queries[2].sql, /status = 'failed'/);
+  assert.match(queries[2].sql, /skipped_count = \$5/);
+  assert.deepEqual(queries[2].params, ["9", 3, 1, 2, 4, 1, "Telegram unavailable"]);
+  assert.match(queries[3].sql, /status = 'skipped'/);
+  assert.deepEqual(queries[3].params, ["9", "no_public_release_notes"]);
+});
+
+test("stale running recovery and new run insert share one atomic query", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql: String(sql), params });
+    return { rows: [{ id: "10", status: "running" }] };
+  }));
+
+  const run = await repo.createReleaseDigestRun({
+    trigger: "manual",
+    sentFrom: null,
+    sentTo: new Date("2026-06-19T16:00:00Z"),
+    digestLocalDate: "2026-06-19",
+    timezone: "Asia/Bangkok"
+  });
+
+  assert.equal(run.id, "10");
+  assert.equal(queries.length, 1);
+  assert.match(queries[0].sql, /WITH recovered AS \(\s*UPDATE release_digest_runs/);
+  assert.match(queries[0].sql, /status = 'failed'/);
+  assert.match(queries[0].sql, /finished_at = now\(\)/);
+  assert.match(queries[0].sql, /error_message = 'stale_running_run_recovered'/);
+  assert.match(queries[0].sql, /started_at < now\(\) - interval '2 hours'/);
+  assert.match(queries[0].sql, /INSERT INTO release_digest_runs/);
+});
+
+test("duplicate automatic release digest run returns null", async () => {
+  const duplicate = Object.assign(new Error("duplicate"), {
+    code: "23505",
+    constraint: "release_digest_runs_auto_date_unique"
+  });
+  const repo = createRepository(fakePool(() => {
+    throw duplicate;
+  }));
+
+  const run = await repo.createReleaseDigestRun({
+    trigger: "auto",
+    sentFrom: null,
+    sentTo: new Date("2026-06-19T14:00:00Z"),
+    digestLocalDate: "2026-06-19",
+    timezone: "Asia/Bangkok"
+  });
+
+  assert.equal(run, null);
+});
+
+test("concurrent running release digest run returns null", async () => {
+  const duplicate = Object.assign(new Error("duplicate"), {
+    code: "23505",
+    constraint: "release_digest_runs_single_running_unique"
+  });
+  const repo = createRepository(fakePool(() => {
+    throw duplicate;
+  }));
+
+  const run = await repo.createReleaseDigestRun({
+    trigger: "manual",
+    sentFrom: null,
+    sentTo: new Date("2026-06-19T14:00:00Z"),
+    digestLocalDate: "2026-06-19",
+    timezone: "Asia/Bangkok"
+  });
+
+  assert.equal(run, null);
+});
+
+test("unrelated automatic release digest unique violation is not swallowed", async () => {
+  const duplicate = Object.assign(new Error("duplicate"), {
+    code: "23505",
+    constraint: "other_unique_constraint"
+  });
+  const repo = createRepository(fakePool(() => {
+    throw duplicate;
+  }));
+
+  await assert.rejects(
+    repo.createReleaseDigestRun({
+      trigger: "auto",
+      sentFrom: null,
+      sentTo: new Date("2026-06-19T14:00:00Z"),
+      digestLocalDate: "2026-06-19",
+      timezone: "Asia/Bangkok"
+    }),
+    duplicate
+  );
+});
+
+test("duplicate manual release digest run error is not swallowed", async () => {
+  const duplicate = Object.assign(new Error("duplicate"), { code: "23505" });
+  const repo = createRepository(fakePool(() => {
+    throw duplicate;
+  }));
+
+  await assert.rejects(
+    repo.createReleaseDigestRun({
+      trigger: "manual",
+      sentFrom: null,
+      sentTo: new Date("2026-06-19T14:00:00Z"),
+      digestLocalDate: "2026-06-19",
+      timezone: "Asia/Bangkok"
+    }),
+    duplicate
+  );
 });
 
 test("lists today's unsent public user release notes only", async () => {
@@ -310,6 +737,42 @@ test("records release note deliveries and sent markers", async () => {
   assert.deepEqual(queries[0].params, [1, 2]);
   assert.match(queries[1].sql, /INSERT INTO release_note_deliveries/);
   assert.match(queries[2].sql, /UPDATE release_notes SET sent_at = now\(\)/);
+});
+
+test("records multiple release note deliveries atomically", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql: String(sql), params });
+    return { rows: [] };
+  }));
+
+  await repo.markReleaseNotesDelivered([1, 2, 3], 7);
+
+  assert.equal(queries.length, 1);
+  assert.match(queries[0].sql, /INSERT INTO release_note_deliveries/);
+  assert.match(queries[0].sql, /SELECT release_note_id, \$2/);
+  assert.match(queries[0].sql, /unnest\(\$1::bigint\[\]\)/);
+  assert.match(queries[0].sql, /ON CONFLICT DO NOTHING/);
+  assert.deepEqual(queries[0].params, [[1, 2, 3], 7]);
+});
+
+test("counts active users missing a release note delivery", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql: String(sql), params });
+    return { rows: [{ count: 2 }] };
+  }));
+
+  const count = await repo.countMissingReleaseNoteDeliveries(7);
+
+  assert.equal(count, 2);
+  assert.match(queries[0].sql, /FROM users u/);
+  assert.match(queries[0].sql, /u\.telegram_user_id IS NOT NULL/);
+  assert.match(queries[0].sql, /u\.onboarding_step = 'completed'/);
+  assert.match(queries[0].sql, /u\.bot_blocked = false/);
+  assert.match(queries[0].sql, /NOT EXISTS/);
+  assert.match(queries[0].sql, /d\.release_note_id = \$1 AND d\.user_id = u\.id/);
+  assert.deepEqual(queries[0].params, [7]);
 });
 
 test("marks user as bot blocked", async () => {
@@ -1031,6 +1494,46 @@ test("paying a monthly expense with a stale occurrence_date rejects as already_p
   assert.ok(!queries.some((query) => String(query.sql).includes("INSERT INTO expenses")));
 });
 
+test("date-mismatched linked expense blocks duplicate planned payment", async () => {
+  const queries = [];
+  const repo = createRepository({
+    async connect() {
+      return fakePayClient({
+        planned: {
+          id: "17",
+          user_id: "26",
+          amount: "300",
+          currency: "THB",
+          amount_base: "300",
+          description: "Simcard",
+          category_slug: "subscriptions",
+          tags: [],
+          recurrence: "monthly",
+          due_day: 14,
+          due_days: [14],
+          base_currency: "THB"
+        },
+        paidOccurrences: [{ occurrence_date: "2026-06-14", paid_key: "2026-06" }],
+        queries
+      });
+    }
+  }, { exchangeRates: fixedRates() });
+
+  await assert.rejects(
+    repo.payPlannedExpenseForTelegramUser(
+      17,
+      222386362,
+      new Date("2026-06-18T09:00:00+07:00"),
+      { occurrenceDate: "2026-06-14" }
+    ),
+    (error) => error.code === "already_paid"
+  );
+
+  const paidLookup = queries.find((query) => String(query.sql).includes("pep.occurrence_date"));
+  assert.doesNotMatch(String(paidLookup.sql), /e\.spent_at/);
+  assert.ok(!queries.some((query) => String(query.sql).includes("INSERT INTO expenses")));
+});
+
 test("paying a planned expense uses paid_key as the conflict arbiter", async () => {
   const queries = [];
   const repo = createRepository({
@@ -1381,10 +1884,50 @@ test("listing planned expenses only counts payments backed by a matching expense
 
   assert.match(listSql, /JOIN expenses e ON e\.id = pep\.expense_id/);
   assert.match(listSql, /e\.user_id = pe\.user_id/);
-  assert.match(listSql, /\(e\.spent_at \+ interval '7 hours'\)::date = pep\.occurrence_date/);
+  assert.doesNotMatch(listSql, /e\.spent_at/);
   assert.match(listSql, /paid_occurrences/);
   assert.equal(planned[0].paid_count, 0);
   assert.deepEqual(planned[0].paid_occurrence_dates, []);
+});
+
+test("listing planned expenses accepts a date-mismatched same-user expense", async () => {
+  let listSql = "";
+  const repo = createRepository(fakePool((sql) => {
+    const query = String(sql);
+    if (query.includes("planned_expense_payments")) {
+      listSql = query;
+      return {
+        rows: [{
+          id: "17",
+          amount: "300",
+          currency: "THB",
+          amount_base: "300",
+          description: "Simcard",
+          category_slug: "subscriptions",
+          recurrence: "monthly",
+          due_day: 14,
+          due_days: [14],
+          paid_count: 1,
+          paid_occurrence_dates: ["2026-06-14"],
+          paid_occurrences: {
+            "2026-06-14": {
+              expense_id: "187",
+              paid_at: "2026-06-15T06:53:14.825Z"
+            }
+          }
+        }]
+      };
+    }
+    return { rows: [] };
+  }));
+
+  const planned = await repo.listPlannedExpensesForTelegramUser(222386362);
+
+  assert.match(listSql, /JOIN expenses e ON e\.id = pep\.expense_id/);
+  assert.match(listSql, /e\.user_id = pe\.user_id/);
+  assert.doesNotMatch(listSql, /e\.spent_at/);
+  assert.deepEqual(planned[0].paid_occurrence_dates, ["2026-06-14"]);
+  assert.equal(planned[0].paid_occurrences["2026-06-14"].expense_id, "187");
 });
 
 test("dashboard keeps unpaid twice-monthly occurrences in planned reserve", async () => {

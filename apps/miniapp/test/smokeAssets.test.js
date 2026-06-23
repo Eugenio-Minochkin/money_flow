@@ -24,6 +24,44 @@ test("Mini App local module imports resolve to files", async () => {
   }
 });
 
+test("history period picker uses a fixed dates action and one calendar dialog", async () => {
+  const html = await readFile(join(miniAppRoot, "index.html"), "utf8");
+
+  assert.match(html, /id="historyQuickPeriods"/);
+  assert.match(html, /id="openHistoryDatePicker"/);
+  assert.match(html, /id="historyDateSheet"[^>]+role="dialog"[^>]+aria-modal="true"/);
+  assert.match(html, /id="historyCalendarGrid"/);
+  assert.doesNotMatch(html, /id="historyFromDate"/);
+  assert.doesNotMatch(html, /id="historyToDate"/);
+  assert.doesNotMatch(html, /id="historyCustomRange"/);
+  assert.doesNotMatch(html, /data-history-period="previous_month"/);
+});
+
+test("history date picker wires draft interactions without removed date inputs", async () => {
+  const app = await readFile(join(miniAppRoot, "app.js"), "utf8");
+
+  assert.match(app, /#openHistoryDatePicker/);
+  assert.match(app, /data-calendar-date/);
+  assert.match(app, /#closeHistoryDatePicker/);
+  assert.match(app, /#historyDateBackdrop/);
+  assert.match(app, /event\.key === "Escape"/);
+  assert.match(app, /closeHistoryDatePicker/);
+  assert.doesNotMatch(app, /#historyFromDate/);
+  assert.doesNotMatch(app, /#historyToDate/);
+  assert.doesNotMatch(app, /#historyCustomRange/);
+});
+
+test("history period picker CSS isolates horizontal scroll and respects safe areas", async () => {
+  const css = await readFile(join(miniAppRoot, "styles.css"), "utf8");
+
+  assert.match(css, /\.history-period-row\s*{[^}]*min-width:\s*0/s);
+  assert.match(css, /\.history-filter-chips\s*{[^}]*min-width:\s*0[^}]*overflow-x:\s*auto/s);
+  assert.match(css, /\.history-date-action\s*{[^}]*flex:\s*0 0 auto/s);
+  assert.match(css, /\.history-date-sheet\s*{[^}]*position:\s*fixed[^}]*bottom:\s*0/s);
+  assert.match(css, /\.history-date-sheet\s*{[^}]*env\(safe-area-inset-bottom\)/s);
+  assert.doesNotMatch(css, /\.history-custom-range\s*{/);
+});
+
 test("Mini App has a documented local preview server", async () => {
   const packageJson = JSON.parse(await readFile("package.json", "utf8"));
   const readme = await readFile("README.md", "utf8");

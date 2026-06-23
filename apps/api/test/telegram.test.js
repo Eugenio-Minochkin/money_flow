@@ -1,7 +1,30 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { createTelegramBot, sendWeeklyReports } from "../src/telegram.js";
+import { parseAdminTelegramIds } from "../src/adminAccess.js";
+import { createTelegramBot, sendTelegramMessage, sendWeeklyReports } from "../src/telegram.js";
+
+test("exports the Telegram message sender used by the production server", async () => {
+  const calls = [];
+  const telegramClient = {
+    async sendMessage(message) {
+      calls.push(message);
+      return { ok: true, result: { message_id: 42 } };
+    }
+  };
+  const replyMarkup = { inline_keyboard: [[{ text: "Open", url: "https://example.com" }]] };
+
+  const result = await sendTelegramMessage({
+    token: "unused-with-client",
+    chatId: 100,
+    text: "Release digest",
+    replyMarkup,
+    telegramClient
+  });
+
+  assert.deepEqual(calls, [{ chatId: 100, text: "Release digest", replyMarkup }]);
+  assert.deepEqual(result, { ok: true, result: { message_id: 42 } });
+});
 
 test("text message creates a pending draft response", async () => {
   const calls = [];
@@ -29,6 +52,72 @@ test("text message creates a pending draft response", async () => {
   } finally {
     console.log = originalLog;
   }
+});
+
+test("normal text message records received draft and processing events", async () => {
+  const repo = fakeRepository();
+  const originalLog = console.log;
+  console.log = () => {};
+  try {
+    const bot = createTelegramBot({
+      token: "",
+      miniAppUrl: "http://localhost:3000",
+      repository: repo
+    });
+
+    await bot.handleUpdate({
+      message: {
+        chat: { id: 10 },
+        from: { id: 100, first_name: "M" },
+        text: "coffee 70 baht"
+      }
+    });
+  } finally {
+    console.log = originalLog;
+  }
+
+  assert.deepEqual(repo.events.slice(0, 2), [
+    { userId: 1, eventName: "message_received", metadata: { inputType: "text" } },
+    { userId: 1, eventName: "expense_draft_created", metadata: { inputType: "text", draftType: "regular" } }
+  ]);
+  assert.equal(repo.events[2].eventName, "message_processing_completed");
+  assert.equal(repo.events[2].metadata.inputType, "text");
+  assert.equal(Number.isFinite(repo.events[2].metadata.processingTotalMs), true);
+});
+
+test("admin stats command is excluded from regular message events", async () => {
+  const repo = fakeRepository();
+  const originalLog = console.log;
+  console.log = () => {};
+  try {
+    const bot = createTelegramBot({
+      token: "",
+      miniAppUrl: "http://localhost:3000",
+      repository: repo,
+      adminTelegramIds: new Set([100]),
+      adminStatsService: {
+        async getAdminStats() {
+          return {
+            today: emptyAdminPeriod(),
+            last7Days: emptyAdminPeriod(),
+            last30Days: emptyAdminPeriod()
+          };
+        }
+      }
+    });
+
+    await bot.handleUpdate({
+      message: {
+        chat: { id: 10 },
+        from: { id: 100, first_name: "M" },
+        text: "/admin_stats"
+      }
+    });
+  } finally {
+    console.log = originalLog;
+  }
+
+  assert.deepEqual(repo.events, []);
 });
 
 test("text message never calls voice transcription", async () => {
@@ -206,6 +295,10 @@ test("confirm callback saves draft and returns an informative summary", async ()
     });
 
     assert.equal(repo.confirmedDraftId, "42");
+    assert.deepEqual(repo.events, [
+      { userId: 1, eventName: "expense_draft_confirmed", metadata: { draftType: "regular" } },
+      { userId: 1, eventName: "expense_saved", metadata: { draftType: "regular" } }
+    ]);
     assert.match(calls[0][1].text, /Записал/);
     assert.match(calls[0][1].text, /<b>Сегодня<\/b>/);
     assert.match(calls[0][1].text, /<b>Месяц<\/b>/);
@@ -247,6 +340,237 @@ test("voice message is transcribed and creates a draft response", async () => {
   } finally {
     console.log = originalLog;
   }
+});
+
+test("cancel callback records a draft cancellation event", async () => {
+  const repo = fakeRepository();
+  const messages = [];
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: repo,
+    telegramClient: captureTelegramClient(messages)
+  });
+
+  await bot.handleUpdate({
+    callback_query: {
+      id: "callback-cancel",
+      data: "cancel:42",
+      from: { id: 100 },
+      message: { chat: { id: 10 }, message_id: 5 }
+    }
+  });
+
+  assert.deepEqual(repo.events, [
+    { userId: 1, eventName: "expense_draft_cancelled", metadata: { draftType: "regular" } }
+  ]);
+});
+
+test("admin stats shows non-zero metrics after message draft and confirm flow", async () => {
+  const repo = fakeRepository();
+  const messages = [];
+  const statsService = {
+    async getAdminStats() {
+      const count = (name) => repo.events.filter((event) => event.eventName === name).length;
+      const period = emptyAdminPeriod({
+        activeUsers: repo.events.length > 0 ? 1 : 0,
+        messagesTotal: count("message_received"),
+        textMessages: repo.events.filter((event) => event.eventName === "message_received" && event.metadata.inputType === "text").length,
+        expensesSaved: count("expense_saved"),
+        draftsCreated: count("expense_draft_created"),
+        draftsConfirmed: count("expense_draft_confirmed"),
+        avgTextProcessingSeconds: count("message_processing_completed") > 0 ? 0.1 : null
+      });
+      return { today: period, last7Days: period, last30Days: period };
+    }
+  };
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: repo,
+    adminTelegramIds: new Set([100]),
+    adminStatsService: statsService,
+    telegramClient: captureTelegramClient(messages)
+  });
+
+  await bot.handleUpdate({
+    message: {
+      chat: { id: 10 },
+      from: { id: 100, first_name: "M" },
+      text: "coffee 70 baht"
+    }
+  });
+  await bot.handleUpdate({
+    callback_query: {
+      id: "callback-confirm-stats",
+      data: "confirm:42",
+      from: { id: 100 },
+      message: { chat: { id: 10 } }
+    }
+  });
+  await bot.handleUpdate({
+    message: {
+      chat: { id: 10 },
+      from: { id: 100, first_name: "M" },
+      text: "/admin_stats"
+    }
+  });
+
+  const statsMessage = messages.at(-1).text;
+  assert.match(statsMessage, /Users: 1 active/);
+  assert.match(statsMessage, /Messages: 1 total \/ 1 text/);
+  assert.match(statsMessage, /Expenses saved: 1/);
+  assert.match(statsMessage, /Drafts: 1 created \/ 1 confirmed/);
+  assert.match(statsMessage, /Avg processing: text 0\.1s/);
+});
+
+test("empty parse records a parse failure event", async () => {
+  const repo = fakeRepository();
+  const originalLog = console.log;
+  console.log = () => {};
+  try {
+    const bot = createTelegramBot({
+      token: "",
+      miniAppUrl: "http://localhost:3000",
+      repository: repo,
+      expenseParser: {
+        async parse() {
+          return { expenses: [] };
+        }
+      }
+    });
+
+    await bot.handleUpdate({
+      message: {
+        chat: { id: 10 },
+        from: { id: 100, first_name: "M" },
+        text: "no amount here"
+      }
+    });
+  } finally {
+    console.log = originalLog;
+  }
+
+  assert.ok(repo.events.some((event) => event.eventName === "expense_parse_failed"));
+});
+
+test("draft persistence failure is not counted as a parse failure", async () => {
+  const repo = fakeRepository();
+  repo.createDraft = async () => {
+    throw new Error("database unavailable");
+  };
+  const originalLog = console.log;
+  const originalError = console.error;
+  console.log = () => {};
+  console.error = () => {};
+  try {
+    const bot = createTelegramBot({
+      token: "",
+      miniAppUrl: "http://localhost:3000",
+      repository: repo
+    });
+
+    await bot.handleUpdate({
+      message: {
+        chat: { id: 10 },
+        from: { id: 100, first_name: "M" },
+        text: "coffee 70 baht"
+      }
+    });
+  } finally {
+    console.log = originalLog;
+    console.error = originalError;
+  }
+
+  assert.equal(repo.events.some((event) => event.eventName === "expense_parse_failed"), false);
+});
+
+test("voice transcription failure records an event and returns an error response", async () => {
+  const repo = fakeRepository();
+  const messages = [];
+  const originalError = console.error;
+  console.error = () => {};
+  try {
+    const bot = createTelegramBot({
+      token: "test-token",
+      miniAppUrl: "http://localhost:3000",
+      repository: repo,
+      telegramClient: captureTelegramClient(messages),
+      voiceTranscriber: {
+        isConfigured: () => true,
+        async transcribeTelegramVoice() {
+          throw new Error("transcription unavailable");
+        }
+      }
+    });
+
+    await bot.handleUpdate({
+      message: {
+        chat: { id: 10 },
+        from: { id: 100, first_name: "M" },
+        voice: { file_id: "voice-file-id", mime_type: "audio/ogg" }
+      }
+    });
+  } finally {
+    console.error = originalError;
+  }
+
+  assert.ok(repo.events.some((event) => event.eventName === "voice_transcription_failed"));
+  assert.ok(messages.length > 0);
+});
+
+test("photo input is counted and records a parse failure", async () => {
+  const repo = fakeRepository();
+  const messages = [];
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: repo,
+    telegramClient: captureTelegramClient(messages)
+  });
+
+  await bot.handleUpdate({
+    message: {
+      chat: { id: 10 },
+      from: { id: 100, first_name: "M" },
+      photo: [{ file_id: "photo-small" }, { file_id: "photo-large" }]
+    }
+  });
+
+  assert.ok(repo.events.some((event) => event.eventName === "message_received" && event.metadata.inputType === "photo"));
+  assert.ok(repo.events.some((event) => event.eventName === "expense_parse_failed"));
+});
+
+test("throwing event logger does not break expense processing", async () => {
+  const repo = fakeRepository();
+  repo.recordAppEvent = async () => {
+    throw new Error("events unavailable");
+  };
+  const calls = [];
+  const originalLog = console.log;
+  const originalWarn = console.warn;
+  console.log = (...args) => calls.push(args);
+  console.warn = () => {};
+  try {
+    const bot = createTelegramBot({
+      token: "",
+      miniAppUrl: "http://localhost:3000",
+      repository: repo
+    });
+
+    await assert.doesNotReject(() => bot.handleUpdate({
+      message: {
+        chat: { id: 10 },
+        from: { id: 100, first_name: "M" },
+        text: "coffee 70 baht"
+      }
+    }));
+  } finally {
+    console.log = originalLog;
+    console.warn = originalWarn;
+  }
+
+  assert.ok(calls.length >= 2);
 });
 
 test("sendMessage retries as plain text when Telegram rejects HTML", async () => {
@@ -378,17 +702,54 @@ test("admin stats command sends stats only to configured admin ids", async () =>
   assert.match(calls[0][1].text, /Users: 1 active \/ 0 new/);
 });
 
+test("admin stats accepts numeric-string ids and bot command suffixes", async () => {
+  const messages = [];
+  let serviceCalls = 0;
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: fakeRepository(),
+    adminTelegramIds: new Set([100]),
+    adminStatsService: {
+      async getAdminStats() {
+        serviceCalls += 1;
+        return {
+          today: emptyAdminPeriod(),
+          last7Days: emptyAdminPeriod(),
+          last30Days: emptyAdminPeriod()
+        };
+      }
+    },
+    telegramClient: captureTelegramClient(messages)
+  });
+
+  await bot.handleUpdate({
+    message: {
+      chat: { id: 10 },
+      from: { id: "100", first_name: "M" },
+      text: "/admin_stats@MoneyFlowBot"
+    }
+  });
+
+  assert.equal(serviceCalls, 1);
+  assert.match(messages[0].text, /Admin stats/);
+});
+
 test("admin stats command does not reveal stats to non-admin users", async () => {
   const calls = [];
+  const warnings = [];
+  const rawAdminEnv = "\"100\"";
   let serviceCalled = false;
   const originalLog = console.log;
+  const originalWarn = console.warn;
   console.log = (...args) => calls.push(args);
+  console.warn = (...args) => warnings.push(args);
   try {
     const bot = createTelegramBot({
       token: "",
       miniAppUrl: "http://localhost:3000",
       repository: fakeRepository(),
-      adminTelegramIds: new Set([100]),
+      adminTelegramIds: parseAdminTelegramIds(rawAdminEnv),
       adminStatsService: {
         async getAdminStats() {
           serviceCalled = true;
@@ -400,17 +761,30 @@ test("admin stats command does not reveal stats to non-admin users", async () =>
     await bot.handleUpdate({
       message: {
         chat: { id: 10 },
-        from: { id: 200, first_name: "M" },
+        from: { id: 200, first_name: "M", username: "not_admin" },
         text: "/admin_stats"
       }
     });
   } finally {
     console.log = originalLog;
+    console.warn = originalWarn;
   }
 
   assert.equal(serviceCalled, false);
   assert.equal(calls.length, 1);
   assert.equal(calls[0][1].text, "Access denied");
+  assert.deepEqual(warnings, [[
+    "[admin] access denied",
+    {
+      command: "/admin_stats",
+      fromId: 200,
+      username: "not_admin",
+      chatId: 10,
+      adminIdsCount: 1,
+      adminEnvConfigured: true
+    }
+  ]]);
+  assert.doesNotMatch(JSON.stringify(warnings), new RegExp(rawAdminEnv.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 });
 
 test("text parsing uses user's base currency as default", async () => {
@@ -767,6 +1141,8 @@ test("recurring planned text creates a planned draft before saving", async () =>
   assert.match(calls[1][1].text, /Planned expense/i);
   assert.equal(calls[1][1].replyMarkup.inline_keyboard[0][0].callback_data, "plan_confirm:77");
   assert.equal(repo.confirmedPlannedDraftId, "77");
+  assert.ok(repo.events.some((event) => event.eventName === "expense_draft_created" && event.metadata.draftType === "planned"));
+  assert.ok(repo.events.some((event) => event.eventName === "expense_draft_confirmed" && event.metadata.draftType === "planned"));
 });
 
 test("category callback updates the first draft item", async () => {
@@ -1088,14 +1464,17 @@ test("admin release send is denied to non-admin users", async () => {
   assert.match(messages[0].text, /доступна только администратору/i);
 });
 
-test("admin release preview shows user digest and hidden notes", async () => {
+test("admin release preview uses pending notes since the last digest", async () => {
   const messages = [];
+  const calls = [];
+  const now = new Date("2026-06-20T14:00:00Z");
   const bot = createTelegramBot({
     token: "test-token",
     miniAppUrl: "http://localhost:3000",
     repository: fakeRepository(),
     adminTelegramIds: new Set([100]),
     releaseNotesService: fakeReleaseNotesService({
+      calls,
       previewText: [
         "Пользователям будет отправлено:",
         "",
@@ -1109,6 +1488,7 @@ test("admin release preview shows user digest and hidden notes", async () => {
         "• admin: добавлена /admin_stats"
       ].join("\n")
     }),
+    now: () => now,
     telegramClient: captureTelegramClient(messages)
   });
 
@@ -1116,31 +1496,38 @@ test("admin release preview shows user digest and hidden notes", async () => {
     message: {
       chat: { id: 10 },
       from: { id: 100, first_name: "M" },
-      text: "/admin_release_preview"
+      text: "/admin_release_preview@MoneyFlowBot"
     }
   });
 
+  assert.deepEqual(calls, [{ method: "preview", now }]);
   assert.match(messages[0].text, /Пользователям будет отправлено/);
   assert.match(messages[0].text, /Скрыто из пользовательского пуша/);
 });
 
-test("admin release send returns summary", async () => {
+test("admin release send uses manual trigger and returns a range summary", async () => {
   const messages = [];
+  const calls = [];
+  const now = new Date("2026-06-20T14:00:00Z");
   const bot = createTelegramBot({
     token: "test-token",
     miniAppUrl: "http://localhost:3000",
     repository: fakeRepository(),
     adminTelegramIds: new Set([100]),
     releaseNotesService: fakeReleaseNotesService({
+      calls,
       sendResult: {
         sent: true,
-        version: "v.1.18",
+        versionFrom: "v.1.18",
+        versionTo: "v.1.20",
         users: 12,
         success: 11,
         errors: 1,
+        skipped: 2,
         blocked: 1
       }
     }),
+    now: () => now,
     telegramClient: captureTelegramClient(messages)
   });
 
@@ -1148,14 +1535,17 @@ test("admin release send returns summary", async () => {
     message: {
       chat: { id: 10 },
       from: { id: 100, first_name: "M" },
-      text: "/admin_release_send"
+      text: "/admin_release_send@MoneyFlowBot"
     }
   });
 
+  assert.deepEqual(calls, [{ method: "send", now, options: { trigger: "manual" } }]);
   assert.match(messages[0].text, /Release digest отправлен/);
-  assert.match(messages[0].text, /Версия: v\.1\.18/);
+  assert.match(messages[0].text, /Версии: v\.1\.18 — v\.1\.20/);
   assert.match(messages[0].text, /Пользователей: 12/);
+  assert.match(messages[0].text, /Пропущено: 2/);
   assert.match(messages[0].text, /Заблокировали бота: 1/);
+  assert.doesNotMatch(messages[0].text, /undefined/);
 });
 
 test("admin release send reports empty public user notes", async () => {
@@ -1179,12 +1569,63 @@ test("admin release send reports empty public user notes", async () => {
     }
   });
 
-  assert.equal(messages[0].text, "Сегодня нет публичных release notes для пользователей — отправлять нечего.");
+  assert.equal(messages[0].text, "Нет новых публичных изменений для пользователей с прошлого дайджеста — отправлять нечего.");
+});
+
+test("admin release send reports an in-progress digest without a success summary", async () => {
+  const messages = [];
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: fakeRepository(),
+    adminTelegramIds: new Set([100]),
+    releaseNotesService: fakeReleaseNotesService({
+      sendResult: { sent: false, reason: "digest_already_running" }
+    }),
+    telegramClient: captureTelegramClient(messages)
+  });
+
+  await bot.handleUpdate({
+    message: {
+      chat: { id: 10 },
+      from: { id: 100, first_name: "M" },
+      text: "/admin_release_send"
+    }
+  });
+
+  assert.equal(messages[0].text, "Release digest уже выполняется — повторный запуск не нужен.");
+  assert.doesNotMatch(messages[0].text, /отправлен/);
+});
+
+test("admin release send reports a duplicate automatic run without a success summary", async () => {
+  const messages = [];
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: fakeRepository(),
+    adminTelegramIds: new Set([100]),
+    releaseNotesService: fakeReleaseNotesService({
+      sendResult: { sent: false, reason: "duplicate_auto_run" }
+    }),
+    telegramClient: captureTelegramClient(messages)
+  });
+
+  await bot.handleUpdate({
+    message: {
+      chat: { id: 10 },
+      from: { id: 100, first_name: "M" },
+      text: "/admin_release_send"
+    }
+  });
+
+  assert.equal(messages[0].text, "Release digest уже выполняется — повторный запуск не нужен.");
+  assert.doesNotMatch(messages[0].text, /отправлен/);
 });
 
 function fakeRepository() {
   return {
     user: { id: 1, interface_language: "ru", onboarding_step: "completed" },
+    events: [],
     confirmedDraftId: null,
     confirmedPlannedDraftId: null,
     updatedItems: null,
@@ -1198,6 +1639,9 @@ function fakeRepository() {
     },
     async getUserByTelegramId() {
       return this.user;
+    },
+    async recordAppEvent(userId, eventName, metadata = {}) {
+      this.events.push({ userId, eventName, metadata });
     },
     async updateUserSettings(_telegramUserId, settings) {
       this.settings = { ...this.settings, ...settings };
@@ -1256,6 +1700,9 @@ function fakeRepository() {
       return { id: 88, ...this.plannedDraft.item };
     },
     async cancelPlannedDraft() {
+      return null;
+    },
+    async cancelDraft() {
       return null;
     },
     async createDraft() {
@@ -1393,12 +1840,14 @@ function controlledExpenseParser() {
 
 function fakeReleaseNotesService(options = {}) {
   return {
-    async previewTodayReleaseDigest() {
+    async previewReleaseDigestSinceLastRun(now) {
+      options.calls?.push({ method: "preview", now });
       return {
         text: options.previewText ?? "Сегодня нет release notes — пуш пользователям отправляться не будет."
       };
     },
-    async sendTodayReleaseDigest() {
+    async sendReleaseDigestSinceLastRun(now, sendOptions) {
+      options.calls?.push({ method: "send", now, options: sendOptions });
       return options.sendResult ?? {
         sent: false,
         reason: "no_public_release_notes"
