@@ -1,7 +1,7 @@
 import { calculateBudgetSnapshot } from "../../../packages/shared/src/budget.js";
 import { SUPPORTED_CURRENCY_CODES, fallbackThbRate, normalizeCurrency } from "../../../packages/shared/src/currencies.js";
 import { localDateRangeBounds, localPeriodBounds } from "../../../packages/shared/src/time.js";
-import { normalizeTimeZone, timeZoneMonthBounds, timeZoneMonthKey } from "../../../packages/shared/src/time.js";
+import { normalizeTimeZone, timeZoneMonthBounds, timeZoneMonthKey, timeZoneMonthState } from "../../../packages/shared/src/time.js";
 import { calculateReserveState, validateReserveCapacity } from "../../../packages/shared/src/reserve.js";
 import { createExchangeRateProvider } from "./exchangeRates.js";
 
@@ -361,14 +361,14 @@ export function createRepository(pool, options = {}) {
         `INSERT INTO monthly_budget_overrides (
            user_id, month_key, budget_amount_base, source, is_partial_month, updated_at
          )
-         VALUES ($1, $2, $3, $4, $5, now())
+         VALUES ($1, $2, $3, $4, $5, $6)
          ON CONFLICT (user_id, month_key)
          DO UPDATE SET budget_amount_base = EXCLUDED.budget_amount_base,
                        source = EXCLUDED.source,
                        is_partial_month = EXCLUDED.is_partial_month,
-                       updated_at = now()
+                       updated_at = EXCLUDED.updated_at
          RETURNING *`,
-        [user.id, monthKey(now), moneyAmounts.amountBase, input.source ?? "manual", input.isPartialMonth === true]
+        [user.id, monthKey(now), moneyAmounts.amountBase, input.source ?? "manual", input.isPartialMonth === true, now]
       );
       await updateOpenReserveBudget(pool, user.id, moneyAmounts.amountBase);
       if (input.completeOnboarding) await this.setOnboardingStep(telegramUserId, "completed");
@@ -734,7 +734,7 @@ export function createRepository(pool, options = {}) {
       );
     },
 
-    async updateMonthlyBudget(telegramUserId, monthlyBudgetAmount) {
+    async updateMonthlyBudget(telegramUserId, monthlyBudgetAmount, now = new Date()) {
       const amount = Number(monthlyBudgetAmount);
       if (!Number.isFinite(amount) || amount <= 0) {
         throw new Error("Monthly budget must be positive");
@@ -752,11 +752,11 @@ export function createRepository(pool, options = {}) {
         [amount, telegramUserId]
       );
       const user = result.rows[0] ?? null;
-      if (user) await invalidateDailyBudgetSnapshot(pool, user.id);
+      if (user) await invalidateDailyBudgetSnapshot(pool, user.id, now);
       return user;
     },
 
-    async updateUserSettings(telegramUserId, settings) {
+    async updateUserSettings(telegramUserId, settings, now = new Date()) {
       const monthlyBudgetAmount = Number(settings.monthlyBudgetAmount);
       const weeklyBudgetAmount = settings.weeklyBudgetAmount === "" || settings.weeklyBudgetAmount == null
         ? null
@@ -799,7 +799,7 @@ export function createRepository(pool, options = {}) {
         [monthlyBudgetAmount, baseCurrency, displayCurrency, usdThbRate, weeklyBudgetAmount, interfaceLanguage, budgetAdviceEnabled, interfaceTheme, telegramUserId]
       );
       const user = result.rows[0] ?? null;
-      if (user) await invalidateDailyBudgetSnapshot(pool, user.id);
+      if (user) await invalidateDailyBudgetSnapshot(pool, user.id, now);
       return user;
     },
 
@@ -1378,6 +1378,7 @@ export function createRepository(pool, options = {}) {
         todayDisplayTotal: totals.todayDisplay,
         monthDisplayTotal: totals.monthDisplay,
         monthlyBudget: currentBudget.amount,
+        dayPlanDays: currentBudget.partialPeriodDays,
         weeklyBudget: user.weekly_budget_amount == null ? null : Number(user.weekly_budget_amount),
         plannedRemainingTotal,
         plannedRemainingDisplayTotal: displayFromBase(plannedRemainingTotal, user),
@@ -1409,6 +1410,7 @@ export function createRepository(pool, options = {}) {
         monthDisplayTotal: totals.monthDisplay,
         displayCurrency: user.display_currency ?? "USD",
         monthlyBudget: currentBudget.amount,
+        dayPlanDays: currentBudget.partialPeriodDays,
         weeklyBudget: user.weekly_budget_amount == null ? null : Number(user.weekly_budget_amount),
         budgetAdviceEnabled: user.budget_advice_enabled !== false,
         reserveAmount: reserveInstance?.status === "active" ? Number(reserveInstance.reserve_amount) : 0,
@@ -1635,24 +1637,42 @@ async function currentMonthBudget(pool, user, now) {
   const regularAmount = roundMoney(Number(user.monthly_budget_amount ?? 0));
   const result = await pool.query(
     `SELECT COALESCE(budget_amount_base, 0)::float AS budget_amount_base,
-            is_partial_month
+            is_partial_month,
+            created_at,
+            updated_at
      FROM monthly_budget_overrides
      WHERE user_id = $1 AND month_key = $2`,
     [user.id, monthKey(now)]
   );
   const override = result.rows[0];
   const amount = override ? roundMoney(Number(override.budget_amount_base ?? 0)) : regularAmount;
+  const isPartialMonth = Boolean(override?.is_partial_month);
+  const effectiveDate = override?.updated_at ?? override?.created_at ?? null;
+  const partialPeriodDays = isPartialMonth
+    ? partialMonthPeriodDays(effectiveDate ?? now, now, normalizeTimeZone(user.timezone))
+    : null;
   return {
     monthKey: monthKey(now),
     amount,
     regularMonthlyBudget: regularAmount,
-    isPartialMonth: Boolean(override?.is_partial_month),
+    isPartialMonth,
     hasOverride: Boolean(override),
+    effectiveDate,
+    partialPeriodDays,
     display: {
       currency: user.display_currency ?? "USD",
       amount: displayFromBase(amount, user)
     }
   };
+}
+
+function partialMonthPeriodDays(effectiveDate, now, timeZone) {
+  const effectiveMonth = timeZoneMonthState(new Date(effectiveDate), timeZone);
+  const currentMonth = timeZoneMonthState(now, timeZone);
+  const effectiveDay = effectiveMonth.period === currentMonth.period
+    ? effectiveMonth.dayOfMonth
+    : currentMonth.dayOfMonth;
+  return Math.max(currentMonth.daysInMonth - effectiveDay + 1, 1);
 }
 
 async function moveExpiredPendingDraftsToInbox(pool, telegramUserId, expireAfterMinutes) {

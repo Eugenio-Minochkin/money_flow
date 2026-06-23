@@ -21,6 +21,7 @@ export function calculateBudgetSnapshot({
   reserveAmount = 0,
   dayPlanLimit: fixedDayPlanLimit = null,
   dayDisplayPlanLimit: fixedDayDisplayPlanLimit = null,
+  dayPlanDays = null,
   baseCurrency = "THB",
   displayCurrency = "USD",
   budgetAdviceEnabled = true,
@@ -38,9 +39,13 @@ export function calculateBudgetSnapshot({
   const daysLeftInMonth = monthState?.remainingDays ?? monthDaysLeft(now);
   const elapsedDaysInMonth = monthState?.dayOfMonth ?? elapsedMonthDays(now);
   const daysInMonth = monthState?.daysInMonth ?? monthDays(now);
+  const resolvedDayPlanDays = Number.isFinite(Number(dayPlanDays)) && Number(dayPlanDays) > 0
+    ? Number(dayPlanDays)
+    : daysInMonth;
   const daysInWeek = 7;
   const elapsedDaysInWeek = elapsedWeekDays(now);
-  const dailyPlanLimit = roundMoney(monthlyBudget / daysInMonth);
+  const dailyPlanLimit = roundMoney(monthlyBudget / resolvedDayPlanDays);
+  const dailyPlanDisplayLimit = roundMoney(displayFromBase(dailyPlanLimit, monthTotal, monthDisplayTotal));
   const resolvedWeeklyBudget = roundMoney(resolveWeeklyBudget({ monthlyBudget, weeklyBudget, daysInMonth }));
   const nonDailyMonthTotal = Number(paidPlannedMonthTotal ?? 0) + Number(largeOneOffMonthTotal ?? 0);
   const regularMonthTotal = Math.max(monthTotal - nonDailyMonthTotal, 0);
@@ -72,12 +77,12 @@ export function calculateBudgetSnapshot({
   const safeToSpendPerDay = roundMoney(Math.max(freeRemaining, 0) / daysLeftInMonth);
   const safeToSpendDisplayPerDay = roundMoney(freeRemainingDisplay / daysLeftInMonth);
   const dayPlanLimit = fixedDayPlanLimit == null
-    ? roundMoney(todayTotal + safeToSpendPerDay)
+    ? dailyPlanLimit
     : roundMoney(Number(fixedDayPlanLimit));
   const dayRemaining = roundMoney(Math.max(dayPlanLimit - todayTotal, 0));
   const dayOverrun = roundMoney(Math.max(todayTotal - dayPlanLimit, 0));
   const dayDisplayPlanLimit = fixedDayDisplayPlanLimit == null
-    ? roundMoney(todayDisplayTotal + safeToSpendDisplayPerDay)
+    ? dailyPlanDisplayLimit
     : roundMoney(Number(fixedDayDisplayPlanLimit));
   const dayDisplayRemaining = roundMoney(Math.max(dayDisplayPlanLimit - todayDisplayTotal, 0));
   const dayDisplayOverrun = roundMoney(Math.max(todayDisplayTotal - dayDisplayPlanLimit, 0));
@@ -87,7 +92,6 @@ export function calculateBudgetSnapshot({
   const weekRemaining = roundMoney(Math.max(weekPlanLimit - weekTotal - plannedThisWeek, 0));
   const weekProgressPercent = percent(weekTotal, weekPlanLimit);
   const monthRemaining = roundMoney(Math.max(remaining, 0));
-  const dailyPlanDisplayLimit = roundMoney(displayFromBase(dailyPlanLimit, monthTotal, monthDisplayTotal));
   const monthlyBudgetDisplay = roundMoney(displayFromBase(monthlyBudget, monthTotal, monthDisplayTotal));
   const weeklyBudgetDisplay = roundMoney(displayFromBase(resolvedWeeklyBudget, monthTotal, monthDisplayTotal));
   const plannedThisWeekDisplay = roundMoney(plannedThisWeekDisplayTotal);
