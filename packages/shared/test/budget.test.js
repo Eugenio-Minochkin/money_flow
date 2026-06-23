@@ -334,3 +334,22 @@ test("averageDailyRegularSpending display excludes non-daily impacts", () => {
 
   assert.equal(snapshot.display.averageDailyRegularSpending, 15);
 });
+
+test("subtracts reserve from regular spending availability and reports reserve state", () => {
+  const snapshot = calculateBudgetSnapshot({
+    todayTotal: 1000,
+    monthTotal: 45000,
+    monthlyBudget: 60000,
+    plannedRemainingTotal: 12500,
+    reserveAmount: 4000,
+    paidPlannedMonthTotal: 0,
+    now: new Date("2026-06-10T10:00:00+07:00")
+  });
+
+  assert.equal(snapshot.freeRemaining, 0);
+  assert.equal(snapshot.availableRegular, 43500);
+  assert.equal(snapshot.reserve.amount, 4000);
+  assert.equal(snapshot.reserve.savedAmount, 2500);
+  assert.equal(snapshot.reserve.eatenAmount, 1500);
+  assert.equal(snapshot.reserve.status, "partially_used");
+});

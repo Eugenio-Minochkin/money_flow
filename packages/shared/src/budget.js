@@ -1,4 +1,5 @@
-import { monthDaysLeft } from "./time.js";
+import { monthDaysLeft, timeZoneMonthState } from "./time.js";
+import { calculateReserveForecast, calculateReserveState } from "./reserve.js";
 
 export function calculateBudgetSnapshot({
   todayTotal,
@@ -17,28 +18,51 @@ export function calculateBudgetSnapshot({
   monthDisplayTotal = 0,
   plannedRemainingDisplayTotal = 0,
   plannedThisWeekDisplayTotal = 0,
+  reserveAmount = 0,
   dayPlanLimit: fixedDayPlanLimit = null,
   dayDisplayPlanLimit: fixedDayDisplayPlanLimit = null,
   baseCurrency = "THB",
   displayCurrency = "USD",
   budgetAdviceEnabled = true,
+  timeZone = null,
   now
 }) {
   const remaining = monthlyBudget - monthTotal;
   const budgetProgressPercent = monthlyBudget > 0 ? roundMoney((monthTotal / monthlyBudget) * 100) : 0;
-  const freeRemaining = remaining - plannedRemainingTotal;
+  const reserve = Math.max(Number(reserveAmount ?? 0), 0);
+  const freeRemaining = Math.max(remaining - plannedRemainingTotal - reserve, 0);
   const freeRemainingDisplay = Math.max(monthDisplayTotal, 0) === 0 && monthTotal === 0
     ? 0
     : Math.max(displayFromBase(freeRemaining, monthTotal, monthDisplayTotal), 0);
-  const daysLeftInMonth = monthDaysLeft(now);
-  const elapsedDaysInMonth = elapsedMonthDays(now);
-  const daysInMonth = monthDays(now);
+  const monthState = timeZone ? timeZoneMonthState(now, timeZone) : null;
+  const daysLeftInMonth = monthState?.remainingDays ?? monthDaysLeft(now);
+  const elapsedDaysInMonth = monthState?.dayOfMonth ?? elapsedMonthDays(now);
+  const daysInMonth = monthState?.daysInMonth ?? monthDays(now);
   const daysInWeek = 7;
   const elapsedDaysInWeek = elapsedWeekDays(now);
   const dailyPlanLimit = roundMoney(monthlyBudget / daysInMonth);
   const resolvedWeeklyBudget = roundMoney(resolveWeeklyBudget({ monthlyBudget, weeklyBudget, daysInMonth }));
   const nonDailyMonthTotal = Number(paidPlannedMonthTotal ?? 0) + Number(largeOneOffMonthTotal ?? 0);
   const regularMonthTotal = Math.max(monthTotal - nonDailyMonthTotal, 0);
+  const plannedMonthTotal = Number(paidPlannedMonthTotal ?? 0) + Number(plannedRemainingTotal ?? 0);
+  const reserveState = reserve > 0
+    ? calculateReserveState({
+        budgetAmount: monthlyBudget,
+        plannedAmount: plannedMonthTotal,
+        reserveAmount: reserve,
+        regularSpentAmount: regularMonthTotal
+      })
+    : null;
+  const reserveForecast = reserve > 0
+    ? calculateReserveForecast({
+        dayOfMonth: elapsedDaysInMonth,
+        daysInMonth,
+        regularSpentAmount: regularMonthTotal,
+        budgetAmount: monthlyBudget,
+        plannedAmount: plannedMonthTotal,
+        reserveAmount: reserve
+      })
+    : null;
   const averageDailyRegularSpending = elapsedDaysInMonth > 0
     ? roundMoney(regularMonthTotal / elapsedDaysInMonth)
     : 0;
@@ -107,6 +131,14 @@ export function calculateBudgetSnapshot({
     remaining: roundMoney(remaining),
     plannedRemaining: roundMoney(plannedRemainingTotal),
     freeRemaining: roundMoney(freeRemaining),
+    ...(reserveState ? {
+      availableRegular: reserveState.availableRegular,
+      reserve: {
+        amount: roundMoney(reserve),
+        ...reserveState,
+        forecast: reserveForecast
+      }
+    } : {}),
     budgetProgressPercent,
     daysInMonth,
     elapsedDaysInMonth,

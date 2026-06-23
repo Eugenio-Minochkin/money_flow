@@ -1,7 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { localDateRangeBounds, localPeriodBounds } from "../src/time.js";
+import {
+  localDateRangeBounds,
+  localPeriodBounds,
+  normalizeTimeZone,
+  timeZoneMonthBounds,
+  timeZoneMonthKey,
+  timeZoneMonthState
+} from "../src/time.js";
 
 test("returns current week bounds from Monday in local timezone", () => {
   const bounds = localPeriodBounds(new Date("2026-06-07T10:00:00+07:00"), "week");
@@ -57,4 +64,30 @@ test("localDateRangeBounds returns end at the start of the day after toDate", ()
 test("localDateRangeBounds returns null for invalid or reversed ranges", () => {
   assert.equal(localDateRangeBounds("not-a-date", "2026-06-15"), null);
   assert.equal(localDateRangeBounds("2026-06-15", "2026-06-01"), null);
+});
+
+test("normalizes missing or invalid timezones to UTC", () => {
+  assert.equal(normalizeTimeZone(), "UTC");
+  assert.equal(normalizeTimeZone("Not/A_Timezone"), "UTC");
+  assert.equal(normalizeTimeZone("Asia/Bangkok"), "Asia/Bangkok");
+});
+
+test("derives month key and day state from an IANA timezone", () => {
+  const now = new Date("2026-06-30T18:30:00.000Z");
+
+  assert.equal(timeZoneMonthKey(now, "UTC"), "2026-06");
+  assert.equal(timeZoneMonthKey(now, "Asia/Bangkok"), "2026-07");
+  assert.deepEqual(timeZoneMonthState(now, "Asia/Bangkok"), {
+    period: "2026-07",
+    dayOfMonth: 1,
+    daysInMonth: 31,
+    remainingDays: 31
+  });
+});
+
+test("returns DST-aware month bounds for an IANA timezone", () => {
+  const bounds = timeZoneMonthBounds("2026-03", "America/New_York");
+
+  assert.equal(bounds.start.toISOString(), "2026-03-01T05:00:00.000Z");
+  assert.equal(bounds.end.toISOString(), "2026-04-01T04:00:00.000Z");
 });

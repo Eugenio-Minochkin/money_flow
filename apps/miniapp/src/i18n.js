@@ -170,7 +170,27 @@ export const translations = {
     "monthlyForecast.withinBudget": "В пределах бюджета",
     "monthlyForecast.perDay": "/день",
     "monthlyForecast.weekVsPrevious": "Неделя vs прошлая",
-    "monthlyForecast.noData": "Нет данных"
+    "monthlyForecast.noData": "Нет данных",
+    "reserve.saved": "Резерв сохранён",
+    "reserve.atRisk": "Резерв под угрозой",
+    "reserve.usedUp": "Резерв съеден",
+    "reserve.used": "съедено",
+    "reserve.total": "резерв",
+    "reserve.blocked": "Резерв на этот месяц не создан: сумма резерва больше свободного бюджета. Уменьшите резерв или измените бюджет/плановые траты.",
+    "reserve.validationError": "Резерв больше свободного бюджета. Уменьшите сумму или измените бюджет/плановые траты."
+    ,"reserve.settingsTitle": "Резерв бюджета"
+    ,"reserve.title": "Название"
+    ,"reserve.repeatMonthly": "Повторять каждый месяц"
+    ,"reserve.scope": "Область изменения"
+    ,"reserve.currentOnly": "Только этот месяц"
+    ,"reserve.currentAndFuture": "Этот и будущие месяцы"
+    ,"reserve.save": "Сохранить резерв"
+    ,"reserve.disable": "Отключить резерв"
+    ,"reserve.savedAction": "Резерв сохранён"
+    ,"reserve.disabledAction": "Резерв отключён"
+    ,"reserve.closedSaved": "Месяц закрыт. Сохранено: {amount}"
+    ,"reserve.closedUsed": "Месяц закрыт. Резерв использован: {amount}"
+    ,"reserve.plannedChangeError": "После этого изменения резерв станет больше свободного бюджета. Сначала уменьшите резерв или измените плановые траты."
   },
   en: {
     "actions.add": "Add",
@@ -343,7 +363,27 @@ export const translations = {
     "monthlyForecast.withinBudget": "Within budget",
     "monthlyForecast.perDay": "/day",
     "monthlyForecast.weekVsPrevious": "Week vs previous",
-    "monthlyForecast.noData": "No data"
+    "monthlyForecast.noData": "No data",
+    "reserve.saved": "Reserve saved",
+    "reserve.atRisk": "Reserve at risk",
+    "reserve.usedUp": "Reserve used up",
+    "reserve.used": "used",
+    "reserve.total": "reserve",
+    "reserve.blocked": "This month’s reserve wasn’t created: the reserve is higher than your free budget. Please reduce the reserve or adjust your budget/planned expenses.",
+    "reserve.validationError": "The reserve is higher than your free budget. Please reduce the amount or adjust your budget/planned expenses."
+    ,"reserve.settingsTitle": "Budget reserve"
+    ,"reserve.title": "Title"
+    ,"reserve.repeatMonthly": "Repeat every month"
+    ,"reserve.scope": "Change scope"
+    ,"reserve.currentOnly": "This month only"
+    ,"reserve.currentAndFuture": "This and future months"
+    ,"reserve.save": "Save reserve"
+    ,"reserve.disable": "Disable reserve"
+    ,"reserve.savedAction": "Reserve saved"
+    ,"reserve.disabledAction": "Reserve disabled"
+    ,"reserve.closedSaved": "Month closed. Reserve saved: {amount}"
+    ,"reserve.closedUsed": "Month closed. Reserve used: {amount}"
+    ,"reserve.plannedChangeError": "After this change, the reserve would be higher than your free budget. Please reduce the reserve or adjust planned expenses first."
   }
 };
 

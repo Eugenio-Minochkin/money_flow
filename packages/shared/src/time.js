@@ -1,5 +1,47 @@
 const DEFAULT_OFFSET_MINUTES = 7 * 60;
 
+export function normalizeTimeZone(value) {
+  const candidate = String(value ?? "").trim() || "UTC";
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: candidate }).format(new Date());
+    return candidate;
+  } catch {
+    return "UTC";
+  }
+}
+
+export function timeZoneMonthKey(date, timeZone = "UTC") {
+  const parts = timeZoneDateParts(date, timeZone);
+  return `${parts.year}-${String(parts.month).padStart(2, "0")}`;
+}
+
+export function timeZoneMonthState(date, timeZone = "UTC") {
+  const parts = timeZoneDateParts(date, timeZone);
+  const daysInMonth = new Date(Date.UTC(parts.year, parts.month, 0)).getUTCDate();
+  return {
+    period: `${parts.year}-${String(parts.month).padStart(2, "0")}`,
+    dayOfMonth: parts.day,
+    daysInMonth,
+    remainingDays: daysInMonth - parts.day + 1
+  };
+}
+
+export function timeZoneMonthBounds(period, timeZone = "UTC") {
+  const match = /^(\d{4})-(\d{2})$/.exec(String(period));
+  if (!match) throw new Error(`Invalid month period: ${period}`);
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  if (month < 1 || month > 12) throw new Error(`Invalid month period: ${period}`);
+  return {
+    start: zonedDateTimeToUtc({ year, month, day: 1 }, timeZone),
+    end: zonedDateTimeToUtc({
+      year: month === 12 ? year + 1 : year,
+      month: month === 12 ? 1 : month + 1,
+      day: 1
+    }, timeZone)
+  };
+}
+
 export function toOffsetIso(date, offsetMinutes = DEFAULT_OFFSET_MINUTES) {
   const shifted = new Date(date.getTime() + offsetMinutes * 60_000);
   const base = shifted.toISOString().replace("Z", "");
@@ -80,4 +122,63 @@ function parseDateParts(value) {
   const day = Number(match[3]);
   if (month < 0 || month > 11 || day < 1 || day > 31) return null;
   return { year, month, day, ms: Date.UTC(year, month, day) };
+}
+
+function timeZoneDateParts(date, timeZone) {
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone: normalizeTimeZone(timeZone),
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  });
+  const values = Object.fromEntries(
+    formatter.formatToParts(date)
+      .filter((part) => part.type !== "literal")
+      .map((part) => [part.type, part.value])
+  );
+  return {
+    year: Number(values.year),
+    month: Number(values.month),
+    day: Number(values.day)
+  };
+}
+
+function zonedDateTimeToUtc({ year, month, day }, timeZone) {
+  const zone = normalizeTimeZone(timeZone);
+  const target = Date.UTC(year, month - 1, day);
+  let guess = target;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const offset = timeZoneOffsetMs(new Date(guess), zone);
+    const next = target - offset;
+    if (next === guess) break;
+    guess = next;
+  }
+  return new Date(guess);
+}
+
+function timeZoneOffsetMs(date, timeZone) {
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23"
+  });
+  const values = Object.fromEntries(
+    formatter.formatToParts(date)
+      .filter((part) => part.type !== "literal")
+      .map((part) => [part.type, part.value])
+  );
+  const representedAsUtc = Date.UTC(
+    Number(values.year),
+    Number(values.month) - 1,
+    Number(values.day),
+    Number(values.hour),
+    Number(values.minute),
+    Number(values.second)
+  );
+  return representedAsUtc - date.getTime();
 }

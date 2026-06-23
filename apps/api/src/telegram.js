@@ -5,7 +5,7 @@ import { normalizeCurrency, SUPPORTED_CURRENCY_CODES } from "../../../packages/s
 import { formatAdminStats } from "./adminStatsService.js";
 import { isAdminTelegramId } from "./releaseNotesService.js";
 import { createTelegramJobQueue } from "./telegramJobQueue.js";
-import { formatDraft, formatPlannedDraft, formatSavedSummary, formatTotals, formatWeeklyReport } from "./telegramFormat.js";
+import { formatDraft, formatPlannedDraft, formatReserveClosedEvent, formatSavedSummary, formatTotals, formatWeeklyReport } from "./telegramFormat.js";
 import { appKeyboard, draftKeyboard, inboxDraftKeyboard, plannedDraftKeyboard } from "./telegramKeyboards.js";
 
 const ONBOARDING_STEPS = ["language", "budget_setup", "base_currency", "monthly_budget", "current_month_budget", "month_opening_spend"];
@@ -125,7 +125,13 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
 
     if (rawText === "/today" || rawText === "/week" || rawText === "/month" || rawText === "/budget") {
       const dashboard = await repository.dashboard(from.id);
-      return sendTelegramResponse(trace, () => sendMessage(token, chatId, formatTotals(rawText, dashboard.snapshot, { language }), appKeyboard(miniAppUrl, from.id, language), telegramClient));
+      const event = await repository.latestPendingTelegramReserveEvent?.(from.id);
+      const text = event
+        ? `${formatReserveClosedEvent(event, { language })}\n\n${formatTotals(rawText, dashboard.snapshot, { language })}`
+        : formatTotals(rawText, dashboard.snapshot, { language });
+      const sent = await sendTelegramResponse(trace, () => sendMessage(token, chatId, text, appKeyboard(miniAppUrl, from.id, language), telegramClient));
+      if (event) await repository.markTelegramReserveEventDelivered?.(event.id);
+      return sent;
     }
 
     if (rawText === "/app" || rawText === "/settings") {

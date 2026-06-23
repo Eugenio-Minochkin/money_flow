@@ -1723,6 +1723,84 @@ test("dashboard weekComparison ignores planned and large one-off spending", asyn
   assert.equal(dashboard.analytics.weekComparison.delta, -1000);
 });
 
+test("syncs a valid user timezone and falls back to UTC", async () => {
+  const calls = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    calls.push({ sql: String(sql), params });
+    return { rows: [{ timezone: params[0] }] };
+  }));
+
+  const updated = await repo.syncUserTimezone(100, "Europe/Moscow");
+  const fallback = await repo.syncUserTimezone(100, "Not/A_Zone");
+
+  assert.equal(updated.timezone, "Europe/Moscow");
+  assert.equal(fallback.timezone, "UTC");
+  assert.match(calls[0].sql, /SET timezone/);
+});
+
+test("upserts the current reserve and recurring template with explicit scope", async () => {
+  const calls = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    const query = String(sql);
+    calls.push({ query, params });
+    if (query.startsWith("SELECT * FROM users")) {
+      return { rows: [{ id: "1", telegram_user_id: "100", base_currency: "THB", timezone: "UTC", monthly_budget_amount: "60000" }] };
+    }
+    if (query.includes("monthly_budget_overrides")) return { rows: [] };
+    if (query.includes("FROM planned_expenses")) return { rows: [] };
+    if (query.includes("monthly_reserve_instances")) {
+      return { rows: [{ id: "9", period: "2026-06", reserve_amount: "4000", status: "active" }] };
+    }
+    if (query.includes("recurring_reserve_templates")) return { rows: [{ id: "5", is_active: true }] };
+    return { rows: [] };
+  }));
+
+  const result = await repo.upsertCurrentReserve(100, {
+    amount: 4000,
+    title: "camera",
+    scope: "current_and_future"
+  }, new Date("2026-06-10T10:00:00Z"));
+
+  assert.equal(result.reserve.status, "active");
+  assert.equal(result.template.is_active, true);
+  assert.ok(calls.some((call) => call.query.includes("ON CONFLICT (user_id, period)")));
+  assert.ok(calls.some((call) => call.query.includes("ON CONFLICT (user_id)")));
+});
+
+test("disables current reserve and recurrence with current_and_future scope", async () => {
+  const calls = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    calls.push({ query: String(sql), params });
+    if (String(sql).startsWith("SELECT * FROM users")) {
+      return { rows: [{ id: "1", telegram_user_id: "100", timezone: "UTC" }] };
+    }
+    return { rows: [{ id: "9", status: "disabled", is_active: false }] };
+  }));
+
+  const result = await repo.disableCurrentReserve(
+    100,
+    "current_and_future",
+    new Date("2026-06-10T10:00:00Z")
+  );
+
+  assert.equal(result.reserve.status, "disabled");
+  assert.equal(result.template.is_active, false);
+  assert.ok(calls.some((call) => call.query.includes("SET status = 'disabled'")));
+  assert.ok(calls.some((call) => call.query.includes("SET is_active = false")));
+});
+
+test("acks only reserve events owned by the user", async () => {
+  const repo = createRepository(fakePool((sql, params) => {
+    assert.match(String(sql), /miniapp_delivered_at = now\(\)/);
+    assert.deepEqual(params, [[3, 4], 100]);
+    return { rows: [{ id: "3" }, { id: "4" }] };
+  }));
+
+  const events = await repo.ackReserveEvents(100, [3, 4]);
+
+  assert.deepEqual(events.map((event) => event.id), ["3", "4"]);
+});
+
 function fakePool(handler) {
   return {
     async query(sql, params = []) {

@@ -76,3 +76,13 @@ test("translator falls back to English and formats count labels", () => {
   assert.equal(createTranslator("unknown")("actions.pay"), "Pay");
   assert.equal(createTranslator("en")("history.inboxCount", { count: 2 }), "Needs review: 2");
 });
+
+test("translations cover budget reserve states and actions", () => {
+  for (const language of ["ru", "en"]) {
+    assert.notEqual(translations[language]["reserve.saved"], undefined);
+    assert.notEqual(translations[language]["reserve.atRisk"], undefined);
+    assert.notEqual(translations[language]["reserve.usedUp"], undefined);
+    assert.notEqual(translations[language]["reserve.blocked"], undefined);
+    assert.notEqual(translations[language]["reserve.validationError"], undefined);
+  }
+});

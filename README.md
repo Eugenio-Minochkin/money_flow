@@ -239,3 +239,17 @@ https://<public-url>/telegram/webhook
 ```
 
 For local dry runs without a token, Telegram send calls are logged to stdout.
+
+## Budget Reserve MVP
+
+Budget Reserve protects part of the effective monthly budget from regular spending. It is not an expense or savings account. Reserve calculations use only `budget_impact = regular`; planned obligations and `large_oneoff` expenses remain separate buckets.
+
+The MVP includes one monthly reserve instance per user/period, one reusable recurring template per user, lazy timezone-aware month opening, immutable close snapshots, Mini App management, and `/budget`/close-event Telegram output.
+
+Deferred work:
+
+- timezone settings UI;
+- free-text and voice reserve intents;
+- reconcile warnings after historical expense edits;
+- multiple simultaneous reserves;
+- savings-goal progress across months.

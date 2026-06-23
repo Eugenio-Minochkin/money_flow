@@ -52,6 +52,8 @@ if (window.Telegram?.WebApp) {
 }
 
 document.querySelector("#settingsForm").addEventListener("submit", saveSettings);
+document.querySelector("#reserveForm")?.addEventListener("submit", saveReserve);
+document.querySelector("#disableReserveButton")?.addEventListener("click", disableReserve);
 document.querySelector("#saveCurrentMonthBudgetButton")?.addEventListener("click", saveCurrentMonthBudget);
 document.querySelector("#historySearchForm").addEventListener("submit", (event) => {
   event.preventDefault();
@@ -110,6 +112,8 @@ async function loadDashboard() {
   renderPlannedMonthSummary(data.plannedExpenses ?? []);
   renderPlannedExpenses(data.plannedExpenses ?? []);
   renderLatest(data.latestExpenses ?? []);
+  await renderClosedReserveEvents(data.closedReserveEvents ?? []);
+  if (data.recurringReserveBlocked) showToast(t("reserve.blocked"));
 }
 
 function renderAnalytics(snapshot, analytics) {
@@ -439,6 +443,16 @@ function renderSettings(user) {
   document.querySelector("#interfaceThemeInput").value = currentTheme;
   document.querySelector("#usdThbRateInput").value = Number(user.usd_thb_rate ?? 32.65);
   document.querySelector("#budgetAdviceInput").checked = user.budget_advice_enabled !== false;
+  const reserve = dashboardState?.reserveInstance;
+  const template = dashboardState?.reserveTemplate;
+  document.querySelector("#reserveAmountInput").value = reserve?.status === "active"
+    ? Math.round(Number(reserve.reserve_amount))
+    : "";
+  document.querySelector("#reserveTitleInput").value = reserve?.title ?? "";
+  document.querySelector("#reserveRecurringInput").checked = template?.is_active === true;
+  document.querySelector("#reserveScopeInput").value = template?.is_active === true
+    ? "current_and_future"
+    : "current";
   updateCurrencyFlags();
 }
 
@@ -1121,6 +1135,52 @@ async function saveCurrentMonthBudget() {
   showToast(t("toast.settingsSaved"));
 }
 
+async function saveReserve(event) {
+  event.preventDefault();
+  const recurring = document.querySelector("#reserveRecurringInput").checked;
+  const scope = recurring ? document.querySelector("#reserveScopeInput").value : "current";
+  try {
+    await api("/api/reserve/current", {
+      method: "PUT",
+      body: {
+        telegramUserId,
+        reserve: {
+          amount: Number(document.querySelector("#reserveAmountInput").value),
+          title: document.querySelector("#reserveTitleInput").value,
+          scope
+        }
+      }
+    });
+    await loadDashboard();
+    showToast(t("reserve.savedAction"));
+  } catch (error) {
+    showToast(error.message === "reserve_exceeds_free_budget" ? t("reserve.validationError") : error.message);
+  }
+}
+
+async function disableReserve() {
+  const scope = document.querySelector("#reserveScopeInput").value;
+  await api("/api/reserve/current/disable", {
+    method: "POST",
+    body: { telegramUserId, scope }
+  });
+  await loadDashboard();
+  showToast(t("reserve.disabledAction"));
+}
+
+async function renderClosedReserveEvents(events) {
+  if (!events.length) return;
+  const latest = events.at(-1);
+  const amount = latest.saved_amount > 0 ? latest.saved_amount : latest.reserve_amount;
+  showToast(latest.status === "saved"
+    ? t("reserve.closedSaved", { amount: moneyBase(amount) })
+    : t("reserve.closedUsed", { amount: moneyBase(amount) }));
+  await api("/api/reserve-events/ack", {
+    method: "POST",
+    body: { telegramUserId, eventIds: events.map((event) => event.id) }
+  });
+}
+
 async function saveDraft(event) {
   event.preventDefault();
   await saveDraftItems({ showFeedback: true });
@@ -1158,7 +1218,15 @@ async function savePlanned(event, plannedId) {
   event.preventDefault();
   const method = plannedId ? "PATCH" : "POST";
   const path = plannedId ? `/api/planned-expenses/${plannedId}` : "/api/planned-expenses";
-  await api(path, { method, body: { telegramUserId, plannedExpense: collectPlanned() } });
+  try {
+    await api(path, { method, body: { telegramUserId, plannedExpense: collectPlanned() } });
+  } catch (error) {
+    if (error.message === "reserve_conflicts_with_planned_change") {
+      showToast(t("reserve.plannedChangeError"));
+      return;
+    }
+    throw error;
+  }
   renderPlannedForm();
   document.querySelector("#plannedForm").classList.add("hidden");
   await loadDashboard();

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { formatDraft, formatSavedSummary, formatTotals, formatWeeklyReport } from "../src/telegramFormat.js";
+import { formatDraft, formatReserveClosedEvent, formatSavedSummary, formatTotals, formatWeeklyReport } from "../src/telegramFormat.js";
 
 test("formats a draft with total and review warning", () => {
   const text = formatDraft([
@@ -112,6 +112,38 @@ test("formats saved summary with planned and large daily aggregates", () => {
 test("formats command totals for month and budget", () => {
   assert.match(normalizeSpaces(formatTotals("/month", snapshot())), /735 THB \/ 42 000 THB/);
   assert.match(normalizeSpaces(formatTotals("/budget", snapshot())), /15 270 THB/);
+});
+
+test("formats reserve and available regular spending in budget command", () => {
+  const text = normalizeSpaces(formatTotals("/budget", {
+    ...snapshot(),
+    availableRegular: 26000,
+    reserve: {
+      amount: 4000,
+      savedAmount: 2800,
+      eatenAmount: 1200,
+      status: "partially_used"
+    }
+  }, { language: "en" }));
+
+  assert.match(text, /Reserve at risk/);
+  assert.match(text, /1,200 THB/);
+  assert.match(text, /Available for regular spending/);
+  assert.match(text, /26,000 THB/);
+});
+
+test("formats a partially used reserve close event in both languages", () => {
+  const event = {
+    currency: "THB",
+    reserve_amount: 4000,
+    saved_amount: 2800,
+    eaten_amount: 1200,
+    over_budget_amount: 0,
+    status: "partially_used"
+  };
+
+  assert.match(normalizeSpaces(formatReserveClosedEvent(event, { language: "ru" })), /2 800 THB из 4 000 THB/);
+  assert.match(formatReserveClosedEvent(event, { language: "en" }), /2,800 THB out of your 4,000 THB/);
 });
 
 test("formats money decimals by currency in Telegram UI", () => {

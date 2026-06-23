@@ -27,9 +27,11 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS budget_advice_enabled BOOLEAN NOT NUL
 ALTER TABLE users ADD COLUMN IF NOT EXISTS onboarding_step TEXT NOT NULL DEFAULT 'completed';
 ALTER TABLE users ADD COLUMN IF NOT EXISTS bot_blocked BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS onboarding_data JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS timezone TEXT NOT NULL DEFAULT 'UTC';
 ALTER TABLE users ALTER COLUMN usd_thb_rate SET DEFAULT 32.65;
 UPDATE users SET usd_thb_rate = 32.65 WHERE usd_thb_rate = 36;
 UPDATE users SET interface_language = 'ru' WHERE telegram_user_id = 428925787;
+UPDATE users SET timezone = 'Asia/Bangkok' WHERE telegram_user_id = 428925787;
 
 CREATE TABLE IF NOT EXISTS drafts (
   id BIGSERIAL PRIMARY KEY,
@@ -264,6 +266,60 @@ CREATE TABLE IF NOT EXISTS app_events (
 CREATE INDEX IF NOT EXISTS app_events_created_at_idx ON app_events(created_at);
 CREATE INDEX IF NOT EXISTS app_events_event_created_at_idx ON app_events(event_name, created_at);
 CREATE INDEX IF NOT EXISTS app_events_user_created_at_idx ON app_events(user_id, created_at);
+
+CREATE TABLE IF NOT EXISTS recurring_reserve_templates (
+  id BIGSERIAL PRIMARY KEY,
+  user_id BIGINT NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+  amount NUMERIC(14, 2) NOT NULL CHECK (amount > 0),
+  title TEXT,
+  currency TEXT NOT NULL,
+  is_active BOOLEAN NOT NULL DEFAULT true,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS monthly_reserve_instances (
+  id BIGSERIAL PRIMARY KEY,
+  user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  period TEXT NOT NULL,
+  timezone TEXT NOT NULL,
+  currency TEXT NOT NULL,
+  budget_amount NUMERIC(14, 2) NOT NULL,
+  reserve_amount NUMERIC(14, 2) NOT NULL CHECK (reserve_amount > 0),
+  title TEXT,
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'disabled', 'closed')),
+  disabled_at TIMESTAMPTZ,
+  planned_amount NUMERIC(14, 2),
+  regular_spent_amount NUMERIC(14, 2),
+  saved_amount NUMERIC(14, 2),
+  eaten_amount NUMERIC(14, 2),
+  over_budget_amount NUMERIC(14, 2),
+  closed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(user_id, period)
+);
+
+CREATE INDEX IF NOT EXISTS monthly_reserve_instances_user_status_idx
+  ON monthly_reserve_instances(user_id, status, period);
+
+CREATE TABLE IF NOT EXISTS closed_reserve_events (
+  id BIGSERIAL PRIMARY KEY,
+  monthly_reserve_instance_id BIGINT NOT NULL UNIQUE REFERENCES monthly_reserve_instances(id) ON DELETE CASCADE,
+  user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  period TEXT NOT NULL,
+  title TEXT,
+  currency TEXT NOT NULL,
+  reserve_amount NUMERIC(14, 2) NOT NULL,
+  saved_amount NUMERIC(14, 2) NOT NULL,
+  eaten_amount NUMERIC(14, 2) NOT NULL,
+  over_budget_amount NUMERIC(14, 2) NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('saved', 'partially_used', 'used_up', 'used_up_and_over_budget')),
+  closed_at TIMESTAMPTZ NOT NULL,
+  miniapp_delivered_at TIMESTAMPTZ,
+  telegram_delivered_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 
 CREATE TABLE IF NOT EXISTS weekly_reports (
   id BIGSERIAL PRIMARY KEY,
