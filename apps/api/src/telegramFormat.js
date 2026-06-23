@@ -100,14 +100,53 @@ export function formatTotals(command, snapshot, options = {}) {
       `🔮 <b>${t(language, "forecast")}:</b> ${formatMoney(snapshot.forecastMonthTotal ?? 0, currency, language)}`
     ].join("\n");
   }
-  return [
+  const lines = [
     `💰 <b>${t(language, "budget")}:</b> ${formatMoney(snapshot.monthlyBudget, currency, language)}`,
     `📅 <b>${t(language, "month")}:</b> ${formatMoney(snapshot.month, currency, language)}`,
     `🧾 <b>${t(language, "planned")}:</b> ${formatMoney(snapshot.plannedRemaining, currency, language)}`,
     `🟢 <b>${t(language, "free")}:</b> ${formatMoney(snapshot.freeRemaining, currency, language)}`,
     `⚡️ <b>${t(language, "safeToSpend")}:</b> ${formatMoney(snapshot.safeToSpendPerDay, currency, language)}/${t(language, "day")}`,
     `${t(language, "status")}: ${escapeHtml(statusLabel(snapshot.status, language))}`
-  ].join("\n");
+  ];
+  if (snapshot.reserve) {
+    const reserveStatus = snapshot.reserve.status === "saved"
+      ? (language === "en" ? "Reserve saved" : "Резерв сохранён")
+      : snapshot.reserve.status === "partially_used"
+        ? (language === "en" ? "Reserve at risk" : "Резерв под угрозой")
+        : (language === "en" ? "Reserve used up" : "Резерв съеден");
+    lines.splice(4, 0,
+      `🛡 <b>${reserveStatus}:</b> ${formatMoney(snapshot.reserve.eatenAmount, currency, language)}`,
+      `💵 <b>${language === "en" ? "Available for regular spending" : "Доступно на обычные расходы"}:</b> ${formatMoney(snapshot.availableRegular, currency, language)}`
+    );
+  }
+  return lines.join("\n");
+}
+
+export function formatReserveClosedEvent(event, options = {}) {
+  const language = normalizeLanguage(options.language);
+  const currency = event.currency ?? "THB";
+  const reserve = formatMoney(event.reserve_amount, currency, language);
+  const saved = formatMoney(event.saved_amount, currency, language);
+  const over = formatMoney(event.over_budget_amount, currency, language);
+  const title = event.title ? ` ${language === "en" ? "for" : "на"} ${escapeHtml(event.title)}` : "";
+  if (event.status === "saved") {
+    return language === "en"
+      ? `Great job, the month is closed 🔥\nYou stayed within budget and kept your ${reserve} reserve${title}.`
+      : `Красава, месяц закрыт 🔥\nТы уложился в бюджет и сохранил резерв ${reserve}${title}.`;
+  }
+  if (event.status === "partially_used") {
+    return language === "en"
+      ? `Month closed.\nYou kept ${saved} out of your ${reserve} reserve.`
+      : `Месяц закрыт.\nЧасть резерва удалось сохранить: ${saved} из ${reserve}.`;
+  }
+  if (event.status === "used_up_and_over_budget") {
+    return language === "en"
+      ? `This month, the reserve couldn’t be kept.\nThe ${reserve} reserve was used up, and you also went over budget by ${over}.`
+      : `В этом месяце резерв сохранить не получилось.\nРезерв ${reserve} съеден, плюс есть перерасход бюджета на ${over}.`;
+  }
+  return language === "en"
+    ? `This month, the reserve couldn’t be kept.\n${reserve} was used for regular spending.`
+    : `В этом месяце резерв сохранить не получилось.\n${reserve} ушли на обычные расходы.`;
 }
 
 export function formatWeeklyReport(dashboard, options = {}) {

@@ -258,6 +258,32 @@
               <button type="submit" data-i18n="actions.save">Сохранить</button>
             </div>
           </form>
+          <form class="form-stack nested-form" id="reserveForm">
+            <h3 data-i18n="reserve.settingsTitle">Резерв бюджета</h3>
+            <label>
+              <span data-i18n="forms.amount">Сумма</span>
+              <input id="reserveAmountInput" type="number" min="1" step="1" inputmode="decimal" />
+            </label>
+            <label>
+              <span data-i18n="reserve.title">Название</span>
+              <input id="reserveTitleInput" type="text" />
+            </label>
+            <label class="toggle-setting">
+              <span data-i18n="reserve.repeatMonthly">Повторять каждый месяц</span>
+              <input id="reserveRecurringInput" type="checkbox" />
+            </label>
+            <label>
+              <span data-i18n="reserve.scope">Область изменения</span>
+              <select id="reserveScopeInput">
+                <option value="current" data-i18n="reserve.currentOnly">Только этот месяц</option>
+                <option value="current_and_future" data-i18n="reserve.currentAndFuture">Этот и будущие месяцы</option>
+              </select>
+            </label>
+            <div class="button-row">
+              <button type="submit" data-i18n="reserve.save">Сохранить резерв</button>
+              <button type="button" class="danger-button" id="disableReserveButton" data-i18n="reserve.disable">Отключить резерв</button>
+            </div>
+          </form>
         </section>
       </section>
     </main>

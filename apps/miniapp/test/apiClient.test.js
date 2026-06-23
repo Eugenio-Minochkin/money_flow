@@ -35,6 +35,22 @@ test("API client raises API error message from response body", async () => {
   );
 });
 
+test("API client sends the detected IANA timezone", async () => {
+  let request;
+  const api = createApiClient({
+    getInitData: () => "signed",
+    getTimeZone: () => "Europe/Moscow",
+    fetchImpl: async (path, options) => {
+      request = { path, options };
+      return { ok: true, json: async () => ({ ok: true }) };
+    }
+  });
+
+  await api("/api/dashboard");
+
+  assert.equal(request.options.headers["x-user-timezone"], "Europe/Moscow");
+});
+
 function response(status, body) {
   return {
     ok: status >= 200 && status < 300,

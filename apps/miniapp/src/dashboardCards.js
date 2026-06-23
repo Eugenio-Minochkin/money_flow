@@ -21,7 +21,7 @@ export function buildDashboardCards(snapshot, helpers) {
   const weekProgress = snapshot.progress?.week ?? { percent: snapshot.weekProgressPercent ?? 0, state: "good" };
   const monthProgress = snapshot.progress?.month ?? { percent: snapshot.budgetProgressPercent ?? 0, state: "good" };
 
-  return [
+  const cards = [
     {
       title: helpers.t("dashboard.today"),
       amount: helpers.moneyBase(snapshot.today),
@@ -67,6 +67,21 @@ export function buildDashboardCards(snapshot, helpers) {
       progress: monthProgress
     }
   ];
+  if (snapshot.reserve) {
+    const statusKey = snapshot.reserve.status === "saved"
+      ? "reserve.saved"
+      : snapshot.reserve.status === "partially_used"
+        ? "reserve.atRisk"
+        : "reserve.usedUp";
+    cards.splice(3, 0, {
+      title: helpers.t(statusKey),
+      amount: helpers.moneyBase(snapshot.reserve.savedAmount),
+      lines: snapshot.reserve.eatenAmount > 0
+        ? [remainingLine(helpers.t("reserve.used"), helpers.moneyBase(snapshot.reserve.eatenAmount))]
+        : [remainingLine(helpers.t("reserve.total"), helpers.moneyBase(snapshot.reserve.amount))]
+    });
+  }
+  return cards;
 }
 
 export function renderDashboardCards(container, cards) {

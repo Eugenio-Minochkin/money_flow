@@ -153,9 +153,47 @@ async function route(req, res) {
     const auth = apiSecurity.resolveTelegramUserId(req, url);
     if (auth.error) return sendJson(res, 400, { error: auth.error });
     const telegramUserId = auth.telegramUserId;
+    const timeZone = req.headers["x-user-timezone"];
+    if (timeZone) await repository.syncUserTimezone(telegramUserId, timeZone);
     const dashboard = await repository.dashboard(telegramUserId);
     if (!dashboard) return sendJson(res, 404, { error: "user_not_found" });
     return sendJson(res, 200, dashboard);
+  }
+
+  if (req.method === "PUT" && url.pathname === "/api/reserve/current") {
+    const body = await readJson(req);
+    const auth = apiSecurity.resolveTelegramUserId(req, url, body);
+    if (auth.error) return sendJson(res, 400, { error: auth.error });
+    try {
+      const result = await repository.upsertCurrentReserve(auth.telegramUserId, body.reserve ?? {});
+      if (!result) return sendJson(res, 404, { error: "user_not_found" });
+      return sendJson(res, 200, result);
+    } catch (error) {
+      if (error.code === "reserve_exceeds_free_budget") {
+        return sendJson(res, 409, { error: error.code });
+      }
+      throw error;
+    }
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/reserve/current/disable") {
+    const body = await readJson(req);
+    const auth = apiSecurity.resolveTelegramUserId(req, url, body);
+    if (auth.error) return sendJson(res, 400, { error: auth.error });
+    const result = await repository.disableCurrentReserve(
+      auth.telegramUserId,
+      body.scope ?? "current"
+    );
+    if (!result) return sendJson(res, 404, { error: "user_not_found" });
+    return sendJson(res, 200, result);
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/reserve-events/ack") {
+    const body = await readJson(req);
+    const auth = apiSecurity.resolveTelegramUserId(req, url, body);
+    if (auth.error) return sendJson(res, 400, { error: auth.error });
+    const events = await repository.ackReserveEvents(auth.telegramUserId, body.eventIds ?? []);
+    return sendJson(res, 200, { events });
   }
 
   if (req.method === "GET" && url.pathname === "/api/expenses") {
@@ -217,7 +255,15 @@ async function route(req, res) {
     const body = await readJson(req);
     const auth = apiSecurity.resolveTelegramUserId(req, url, body);
     if (auth.error) return sendJson(res, 400, { error: auth.error });
-    const plannedExpense = await repository.createPlannedExpense(auth.telegramUserId, body.plannedExpense);
+    let plannedExpense;
+    try {
+      plannedExpense = await repository.createPlannedExpense(auth.telegramUserId, body.plannedExpense);
+    } catch (error) {
+      if (error.code === "reserve_conflicts_with_planned_change") {
+        return sendJson(res, 409, { error: error.code });
+      }
+      throw error;
+    }
     if (!plannedExpense) return sendJson(res, 404, { error: "user_not_found" });
     return sendJson(res, 201, { plannedExpense });
   }
@@ -227,9 +273,17 @@ async function route(req, res) {
     const body = await readJson(req);
     const auth = apiSecurity.resolveTelegramUserId(req, url, body);
     if (auth.error) return sendJson(res, 400, { error: auth.error });
-    const plannedExpense = req.method === "PATCH"
-      ? await repository.updatePlannedExpense(auth.telegramUserId, Number(plannedMatch[1]), body.plannedExpense)
-      : await repository.deactivatePlannedExpense(auth.telegramUserId, Number(plannedMatch[1]));
+    let plannedExpense;
+    try {
+      plannedExpense = req.method === "PATCH"
+        ? await repository.updatePlannedExpense(auth.telegramUserId, Number(plannedMatch[1]), body.plannedExpense)
+        : await repository.deactivatePlannedExpense(auth.telegramUserId, Number(plannedMatch[1]));
+    } catch (error) {
+      if (error.code === "reserve_conflicts_with_planned_change") {
+        return sendJson(res, 409, { error: error.code });
+      }
+      throw error;
+    }
     if (!plannedExpense) return sendJson(res, 404, { error: "planned_expense_not_found" });
     return sendJson(res, 200, { plannedExpense });
   }
@@ -247,12 +301,20 @@ async function route(req, res) {
     const body = await readJson(req);
     const auth = apiSecurity.resolveTelegramUserId(req, url, body);
     if (auth.error) return sendJson(res, 400, { error: auth.error });
-    const currentMonthBudget = await repository.setCurrentMonthBudget(auth.telegramUserId, {
-      amount: Number(body.currentMonthBudgetAmount),
-      currency: body.currency,
-      source: "manual",
-      isPartialMonth: true
-    });
+    let currentMonthBudget;
+    try {
+      currentMonthBudget = await repository.setCurrentMonthBudget(auth.telegramUserId, {
+        amount: Number(body.currentMonthBudgetAmount),
+        currency: body.currency,
+        source: "manual",
+        isPartialMonth: true
+      });
+    } catch (error) {
+      if (error.code === "reserve_conflicts_with_budget_change") {
+        return sendJson(res, 409, { error: error.code });
+      }
+      throw error;
+    }
     if (!currentMonthBudget) return sendJson(res, 404, { error: "user_not_found" });
     return sendJson(res, 200, { currentMonthBudget });
   }
@@ -261,7 +323,15 @@ async function route(req, res) {
     const body = await readJson(req);
     const auth = apiSecurity.resolveTelegramUserId(req, url, body);
     if (auth.error) return sendJson(res, 400, { error: auth.error });
-    const user = await repository.updateUserSettings(auth.telegramUserId, body.settings ?? {});
+    let user;
+    try {
+      user = await repository.updateUserSettings(auth.telegramUserId, body.settings ?? {});
+    } catch (error) {
+      if (["reserve_conflicts_with_budget_change", "reserve_blocks_base_currency_change"].includes(error.code)) {
+        return sendJson(res, 409, { error: error.code });
+      }
+      throw error;
+    }
     if (!user) return sendJson(res, 404, { error: "user_not_found" });
     return sendJson(res, 200, { user });
   }

@@ -1,6 +1,8 @@
 import { calculateBudgetSnapshot } from "../../../packages/shared/src/budget.js";
 import { SUPPORTED_CURRENCY_CODES, fallbackThbRate, normalizeCurrency } from "../../../packages/shared/src/currencies.js";
 import { localDateRangeBounds, localPeriodBounds } from "../../../packages/shared/src/time.js";
+import { normalizeTimeZone, timeZoneMonthBounds, timeZoneMonthKey } from "../../../packages/shared/src/time.js";
+import { calculateReserveState, validateReserveCapacity } from "../../../packages/shared/src/reserve.js";
 import { createExchangeRateProvider } from "./exchangeRates.js";
 
 export function createRepository(pool, options = {}) {
@@ -44,6 +46,219 @@ export function createRepository(pool, options = {}) {
     async getUserByTelegramId(telegramUserId) {
       const result = await pool.query("SELECT * FROM users WHERE telegram_user_id = $1", [telegramUserId]);
       return result.rows[0] ?? null;
+    },
+
+    async syncUserTimezone(telegramUserId, timeZone) {
+      const normalized = normalizeTimeZone(timeZone);
+      const result = await pool.query(
+        `UPDATE users SET timezone = $1 WHERE telegram_user_id = $2 RETURNING *`,
+        [normalized, telegramUserId]
+      );
+      return result.rows[0] ?? null;
+    },
+
+    async upsertCurrentReserve(telegramUserId, input, now = new Date()) {
+      const user = await this.getUserByTelegramId(telegramUserId);
+      if (!user) return null;
+      const timeZone = normalizeTimeZone(user.timezone);
+      const period = timeZoneMonthKey(now, timeZone);
+      const currentBudget = await currentMonthBudget(pool, user, now);
+      const plannedExpenses = await listPlannedExpensesForTelegramUserAt(pool, telegramUserId, now);
+      const plannedAmount = calculatePlannedTotal(plannedExpenses, now);
+      const amount = Number(input.amount);
+      const capacity = validateReserveCapacity({
+        budgetAmount: currentBudget.amount,
+        plannedAmount,
+        reserveAmount: amount
+      });
+      if (!Number.isFinite(amount) || amount <= 0 || !capacity.valid) {
+        throw Object.assign(new Error("reserve_exceeds_free_budget"), {
+          code: "reserve_exceeds_free_budget"
+        });
+      }
+      const title = normalizeReserveTitle(input.title);
+      const reserveResult = await pool.query(
+        `INSERT INTO monthly_reserve_instances (
+           user_id, period, timezone, currency, budget_amount, reserve_amount, title, status, disabled_at, updated_at
+         )
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 'active', NULL, now())
+         ON CONFLICT (user_id, period)
+         DO UPDATE SET timezone = EXCLUDED.timezone,
+                       currency = EXCLUDED.currency,
+                       budget_amount = EXCLUDED.budget_amount,
+                       reserve_amount = EXCLUDED.reserve_amount,
+                       title = EXCLUDED.title,
+                       status = 'active',
+                       disabled_at = NULL,
+                       updated_at = now()
+         WHERE monthly_reserve_instances.status <> 'closed'
+         RETURNING *`,
+        [user.id, period, timeZone, user.base_currency, currentBudget.amount, amount, title]
+      );
+      const reserveRow = reserveResult.rows[0] ?? null;
+      if (!reserveRow) throw Object.assign(new Error("reserve_period_closed"), { code: "reserve_period_closed" });
+
+      let template = null;
+      if (input.scope === "current_and_future" || input.scope === "future") {
+        const templateResult = await pool.query(
+          `INSERT INTO recurring_reserve_templates (
+             user_id, amount, title, currency, is_active, updated_at
+           )
+           VALUES ($1, $2, $3, $4, true, now())
+           ON CONFLICT (user_id)
+           DO UPDATE SET amount = EXCLUDED.amount,
+                         title = EXCLUDED.title,
+                         currency = EXCLUDED.currency,
+                         is_active = true,
+                         updated_at = now()
+           RETURNING *`,
+          [user.id, amount, title, user.base_currency]
+        );
+        template = templateResult.rows[0] ?? null;
+      }
+      return { reserve: reserveRow, template };
+    },
+
+    async disableCurrentReserve(telegramUserId, scope = "current", now = new Date()) {
+      const user = await this.getUserByTelegramId(telegramUserId);
+      if (!user) return null;
+      const period = timeZoneMonthKey(now, normalizeTimeZone(user.timezone));
+      const reserveResult = await pool.query(
+        `UPDATE monthly_reserve_instances
+         SET status = 'disabled', disabled_at = now(), updated_at = now()
+         WHERE user_id = $1 AND period = $2 AND status = 'active'
+         RETURNING *`,
+        [user.id, period]
+      );
+      let template = null;
+      if (scope === "current_and_future") {
+        const templateResult = await pool.query(
+          `UPDATE recurring_reserve_templates
+           SET is_active = false, updated_at = now()
+           WHERE user_id = $1
+           RETURNING *`,
+          [user.id]
+        );
+        template = templateResult.rows[0] ?? null;
+      }
+      return { reserve: reserveResult.rows[0] ?? null, template };
+    },
+
+    async ackReserveEvents(telegramUserId, eventIds) {
+      const ids = [...new Set((eventIds ?? []).map(Number).filter(Number.isInteger))];
+      if (!ids.length) return [];
+      const result = await pool.query(
+        `UPDATE closed_reserve_events
+         SET miniapp_delivered_at = now()
+         WHERE id = ANY($1::bigint[])
+           AND user_id = (SELECT id FROM users WHERE telegram_user_id = $2)
+           AND miniapp_delivered_at IS NULL
+         RETURNING id`,
+        [ids, telegramUserId]
+      );
+      return result.rows;
+    },
+
+    async latestPendingTelegramReserveEvent(telegramUserId) {
+      const result = await pool.query(
+        `SELECT closed_reserve_events.*
+         FROM closed_reserve_events
+         JOIN users ON users.id = closed_reserve_events.user_id
+         WHERE users.telegram_user_id = $1
+           AND closed_reserve_events.telegram_delivered_at IS NULL
+         ORDER BY closed_reserve_events.period DESC, closed_reserve_events.id DESC
+         LIMIT 1`,
+        [telegramUserId]
+      );
+      return result.rows[0] ?? null;
+    },
+
+    async markTelegramReserveEventDelivered(eventId) {
+      const result = await pool.query(
+        `UPDATE closed_reserve_events
+         SET telegram_delivered_at = now()
+         WHERE id = $1 AND telegram_delivered_at IS NULL
+         RETURNING *`,
+        [eventId]
+      );
+      return result.rows[0] ?? null;
+    },
+
+    async openReserveMonth(telegramUserId, now = new Date()) {
+      if (typeof pool.connect !== "function") return null;
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        const userResult = await client.query(
+          `SELECT * FROM users WHERE telegram_user_id = $1 FOR UPDATE`,
+          [telegramUserId]
+        );
+        const user = userResult.rows[0];
+        if (!user) {
+          await client.query("ROLLBACK");
+          return null;
+        }
+        const userTimeZone = normalizeTimeZone(user.timezone);
+        const currentPeriod = timeZoneMonthKey(now, userTimeZone);
+        const pastResult = await client.query(
+          `SELECT * FROM monthly_reserve_instances
+           WHERE user_id = $1 AND status = 'active' AND period < $2
+           ORDER BY period
+           FOR UPDATE`,
+          [user.id, currentPeriod]
+        );
+        for (const instance of pastResult.rows) {
+          await closeReserveInstance(client, user, instance, now);
+        }
+
+        const currentResult = await client.query(
+          `SELECT * FROM monthly_reserve_instances
+           WHERE user_id = $1 AND period = $2
+           FOR UPDATE`,
+          [user.id, currentPeriod]
+        );
+        let current = currentResult.rows[0] ?? null;
+        let recurringReserveBlocked = false;
+        if (!current) {
+          const templateResult = await client.query(
+            `SELECT * FROM recurring_reserve_templates
+             WHERE user_id = $1 AND is_active = true
+             FOR UPDATE`,
+            [user.id]
+          );
+          const template = templateResult.rows[0];
+          if (template) {
+            const currentBudget = await currentMonthBudget(client, user, now);
+            const plannedAmount = await plannedObligationsForPeriod(client, user.id, currentPeriod, userTimeZone);
+            const capacity = validateReserveCapacity({
+              budgetAmount: currentBudget.amount,
+              plannedAmount,
+              reserveAmount: template.amount
+            });
+            if (capacity.valid) {
+              const inserted = await client.query(
+                `INSERT INTO monthly_reserve_instances (
+                   user_id, period, timezone, currency, budget_amount, reserve_amount, title, status
+                 )
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, 'active')
+                 ON CONFLICT (user_id, period) DO NOTHING
+                 RETURNING *`,
+                [user.id, currentPeriod, userTimeZone, template.currency, currentBudget.amount, template.amount, template.title]
+              );
+              current = inserted.rows[0] ?? null;
+            } else {
+              recurringReserveBlocked = true;
+            }
+          }
+        }
+        await client.query("COMMIT");
+        return { current, recurringReserveBlocked };
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
     },
 
     async setOnboardingStep(telegramUserId, step) {
@@ -141,6 +356,7 @@ export function createRepository(pool, options = {}) {
         throw new Error("Current month budget must be positive");
       }
       const moneyAmounts = await buildMoneyAmounts(exchangeRates, amount, input.currency ?? user.base_currency, now, user);
+      await assertReserveBudgetCapacity(pool, user, moneyAmounts.amountBase, now);
       const result = await pool.query(
         `INSERT INTO monthly_budget_overrides (
            user_id, month_key, budget_amount_base, source, is_partial_month, updated_at
@@ -154,6 +370,7 @@ export function createRepository(pool, options = {}) {
          RETURNING *`,
         [user.id, monthKey(now), moneyAmounts.amountBase, input.source ?? "manual", input.isPartialMonth === true]
       );
+      await updateOpenReserveBudget(pool, user.id, moneyAmounts.amountBase);
       if (input.completeOnboarding) await this.setOnboardingStep(telegramUserId, "completed");
       await invalidateDailyBudgetSnapshot(pool, user.id, now);
       return result.rows[0] ?? null;
@@ -522,6 +739,11 @@ export function createRepository(pool, options = {}) {
       if (!Number.isFinite(amount) || amount <= 0) {
         throw new Error("Monthly budget must be positive");
       }
+      if (typeof pool.connect === "function") {
+        const user = await this.getUserByTelegramId(telegramUserId);
+        if (!user) return null;
+        await assertReserveBudgetCapacity(pool, user, amount, new Date());
+      }
       const result = await pool.query(
         `UPDATE users
          SET monthly_budget_amount = $1
@@ -554,6 +776,14 @@ export function createRepository(pool, options = {}) {
       const interfaceLanguage = normalizeLanguage(settings.interfaceLanguage);
       const interfaceTheme = normalizeTheme(settings.interfaceTheme);
       const budgetAdviceEnabled = settings.budgetAdviceEnabled !== false;
+      if (typeof pool.connect === "function") {
+        const currentUser = await this.getUserByTelegramId(telegramUserId);
+        if (!currentUser) return null;
+        if (baseCurrency !== currentUser.base_currency) {
+          await assertReserveCurrencyChangeAllowed(pool, currentUser.id);
+        }
+        await assertReserveBudgetCapacity(pool, currentUser, monthlyBudgetAmount, new Date());
+      }
       const result = await pool.query(
         `UPDATE users
          SET monthly_budget_amount = $1,
@@ -891,7 +1121,13 @@ export function createRepository(pool, options = {}) {
       const user = await this.getUserByTelegramId(telegramUserId);
       if (!user) return null;
       const planned = normalizePlannedExpense(input);
-      const moneyAmounts = await buildMoneyAmounts(exchangeRates, planned.amount, planned.currency, new Date(), user);
+      const now = new Date();
+      const moneyAmounts = await buildMoneyAmounts(exchangeRates, planned.amount, planned.currency, now, user);
+      await assertPlannedMutationCapacity(pool, user, {
+        ...planned,
+        amount_base: moneyAmounts.amountBase,
+        active: true
+      }, null, now);
       const result = await pool.query(
         `INSERT INTO planned_expenses (
            user_id, amount, currency, amount_base, description, category_slug, tags,
@@ -920,7 +1156,12 @@ export function createRepository(pool, options = {}) {
     async updatePlannedExpense(telegramUserId, plannedExpenseId, input) {
       const planned = normalizePlannedExpense(input);
       const user = await this.getUserByTelegramId(telegramUserId);
-      const moneyAmounts = await buildMoneyAmounts(exchangeRates, planned.amount, planned.currency, new Date(), user);
+      const now = new Date();
+      const moneyAmounts = await buildMoneyAmounts(exchangeRates, planned.amount, planned.currency, now, user);
+      await assertPlannedMutationCapacity(pool, user, {
+        ...planned,
+        amount_base: moneyAmounts.amountBase
+      }, plannedExpenseId, now);
       const result = await pool.query(
         `UPDATE planned_expenses
          SET amount = $1,
@@ -1057,13 +1298,13 @@ export function createRepository(pool, options = {}) {
       }
     },
 
-    async totals(userId, now = new Date()) {
+    async totals(userId, now = new Date(), timeZone = null) {
       const userResult = await pool.query("SELECT * FROM users WHERE id = $1", [userId]);
       const user = userResult.rows[0] ?? {};
       const [today, week, month] = await Promise.all([
         totalForPeriod(pool, userId, "today", now, user),
         totalForPeriod(pool, userId, "week", now, user),
-        totalForPeriod(pool, userId, "month", now, user)
+        totalForPeriod(pool, userId, "month", now, { ...user, calculation_time_zone: timeZone })
       ]);
       return {
         today: today.regularTotal,
@@ -1092,8 +1333,36 @@ export function createRepository(pool, options = {}) {
     async dashboard(telegramUserId, now = new Date()) {
       const user = await this.getUserByTelegramId(telegramUserId);
       if (!user) return null;
+      const reserveOpening = typeof pool.connect === "function"
+        ? await this.openReserveMonth(telegramUserId, now)
+        : null;
+      const reserveInstanceResult = typeof pool.connect === "function"
+        ? await pool.query(
+            `SELECT * FROM monthly_reserve_instances
+             WHERE user_id = $1 AND period = $2`,
+            [user.id, timeZoneMonthKey(now, normalizeTimeZone(user.timezone))]
+          )
+        : { rows: [] };
+      const reserveInstance = reserveInstanceResult.rows[0] ?? null;
+      const calculationTimeZone = reserveInstance?.status === "active"
+        ? reserveInstance.timezone
+        : normalizeTimeZone(user.timezone);
+      const reserveTemplateResult = typeof pool.connect === "function"
+        ? await pool.query(
+            `SELECT * FROM recurring_reserve_templates WHERE user_id = $1`,
+            [user.id]
+          )
+        : { rows: [] };
+      const pendingReserveEventsResult = typeof pool.connect === "function"
+        ? await pool.query(
+            `SELECT * FROM closed_reserve_events
+             WHERE user_id = $1 AND miniapp_delivered_at IS NULL
+             ORDER BY period, id`,
+            [user.id]
+          )
+        : { rows: [] };
       const currentBudget = await currentMonthBudget(pool, user, now);
-      const totals = await this.totals(user.id, now);
+      const totals = await this.totals(user.id, now, calculationTimeZone);
       const monthBaseline = await monthBaselineTotal(pool, user.id, now);
       totals.month += monthBaseline;
       totals.monthDisplay += displayFromBase(monthBaseline, user);
@@ -1116,6 +1385,8 @@ export function createRepository(pool, options = {}) {
         plannedThisWeekDisplayTotal: displayFromBase(plannedThisWeekTotal, user),
         paidPlannedMonthTotal,
         largeOneOffMonthTotal: totals.largeMonth,
+        reserveAmount: reserveInstance?.status === "active" ? Number(reserveInstance.reserve_amount) : 0,
+        timeZone: calculationTimeZone,
         baseCurrency: user.base_currency ?? "THB",
         displayCurrency: user.display_currency ?? "USD",
         budgetAdviceEnabled: user.budget_advice_enabled !== false
@@ -1140,6 +1411,7 @@ export function createRepository(pool, options = {}) {
         monthlyBudget: currentBudget.amount,
         weeklyBudget: user.weekly_budget_amount == null ? null : Number(user.weekly_budget_amount),
         budgetAdviceEnabled: user.budget_advice_enabled !== false,
+        reserveAmount: reserveInstance?.status === "active" ? Number(reserveInstance.reserve_amount) : 0,
         plannedRemainingTotal,
         plannedRemainingDisplayTotal: displayFromBase(plannedRemainingTotal, user),
         plannedThisWeekTotal,
@@ -1151,6 +1423,7 @@ export function createRepository(pool, options = {}) {
         dayPlanLimit: dayBudgetSnapshot.budgetAmountBase,
         dayDisplayPlanLimit: dayBudgetSnapshot.budgetDisplayAmount,
         baseCurrency: user.base_currency ?? "THB",
+        timeZone: calculationTimeZone,
         now
       });
       snapshot.todayTotal = roundMoney(totals.todayTotal);
@@ -1164,6 +1437,10 @@ export function createRepository(pool, options = {}) {
       return {
         user,
         currentMonthBudget: currentBudget,
+        reserveInstance,
+        reserveTemplate: reserveTemplateResult.rows[0] ?? null,
+        recurringReserveBlocked: reserveOpening?.recurringReserveBlocked === true,
+        closedReserveEvents: pendingReserveEventsResult.rows,
         snapshot,
         latestExpenses: latest.rows.map((row) => withDisplay(row, user)),
         topCategories,
@@ -1581,6 +1858,229 @@ function calculatePlannedRemaining(plannedExpenses, now) {
   }, 0);
 }
 
+function calculatePlannedTotal(plannedExpenses, now) {
+  return plannedExpenses.reduce((sum, item) => {
+    return sum + Number(item.amount_base) * plannedDueDatesThisMonth(item, now).length;
+  }, 0);
+}
+
+function normalizeReserveTitle(value) {
+  const title = String(value ?? "").trim();
+  return title || null;
+}
+
+async function assertReserveBudgetCapacity(pool, user, budgetAmount, now) {
+  if (typeof pool.connect !== "function") return;
+  const result = await pool.query(
+    `SELECT * FROM monthly_reserve_instances
+     WHERE user_id = $1 AND status = 'active'
+     ORDER BY period DESC
+     LIMIT 1`,
+    [user.id]
+  );
+  const reserve = result.rows[0];
+  if (!reserve) return;
+  const plannedAmount = await plannedObligationsForPeriod(
+    pool,
+    user.id,
+    reserve.period,
+    reserve.timezone
+  );
+  const capacity = validateReserveCapacity({
+    budgetAmount,
+    plannedAmount,
+    reserveAmount: reserve.reserve_amount
+  });
+  if (!capacity.valid) {
+    throw Object.assign(new Error("reserve_conflicts_with_budget_change"), {
+      code: "reserve_conflicts_with_budget_change"
+    });
+  }
+}
+
+async function updateOpenReserveBudget(pool, userId, budgetAmount) {
+  if (typeof pool.connect !== "function") return;
+  await pool.query(
+    `UPDATE monthly_reserve_instances
+     SET budget_amount = $2, updated_at = now()
+     WHERE user_id = $1 AND status = 'active'`,
+    [userId, budgetAmount]
+  );
+}
+
+async function assertReserveCurrencyChangeAllowed(pool, userId) {
+  if (typeof pool.connect !== "function") return;
+  const result = await pool.query(
+    `SELECT EXISTS (
+       SELECT 1 FROM monthly_reserve_instances
+       WHERE user_id = $1 AND status = 'active'
+     ) OR EXISTS (
+       SELECT 1 FROM recurring_reserve_templates
+       WHERE user_id = $1 AND is_active = true
+     ) AS blocked`,
+    [userId]
+  );
+  if (result.rows[0]?.blocked) {
+    throw Object.assign(new Error("reserve_blocks_base_currency_change"), {
+      code: "reserve_blocks_base_currency_change"
+    });
+  }
+}
+
+async function assertPlannedMutationCapacity(pool, user, changedPlan, changedPlanId, now) {
+  if (typeof pool.connect !== "function" || changedPlan.active === false) return;
+  const reserveResult = await pool.query(
+    `SELECT * FROM monthly_reserve_instances
+     WHERE user_id = $1 AND status = 'active'
+     ORDER BY period DESC
+     LIMIT 1`,
+    [user.id]
+  );
+  const reserve = reserveResult.rows[0];
+  if (!reserve) return;
+  const plansResult = await pool.query(
+    `SELECT * FROM planned_expenses
+     WHERE user_id = $1 AND active = true`,
+    [user.id]
+  );
+  const plans = plansResult.rows.filter((item) => String(item.id) !== String(changedPlanId));
+  plans.push(changedPlan);
+  const plannedAmount = roundMoney(plans.reduce((sum, item) => (
+    sum + Number(item.amount_base) * plannedOccurrenceCountForPeriod(item, reserve.period)
+  ), 0));
+  const capacity = validateReserveCapacity({
+    budgetAmount: reserve.budget_amount,
+    plannedAmount,
+    reserveAmount: reserve.reserve_amount
+  });
+  if (!capacity.valid) {
+    throw Object.assign(new Error("reserve_conflicts_with_planned_change"), {
+      code: "reserve_conflicts_with_planned_change"
+    });
+  }
+}
+
+async function closeReserveInstance(client, user, instance, now) {
+  const plannedAmount = await plannedObligationsForPeriod(
+    client,
+    user.id,
+    instance.period,
+    instance.timezone
+  );
+  const bounds = timeZoneMonthBounds(instance.period, instance.timezone);
+  const spentResult = await client.query(
+    `SELECT COALESCE(SUM(amount_base), 0)::float AS regular_spent_amount
+     FROM expenses
+     WHERE user_id = $1
+       AND spent_at >= $2
+       AND spent_at < $3
+       AND budget_impact = 'regular'`,
+    [user.id, bounds.start, bounds.end]
+  );
+  const regularSpentAmount = Number(spentResult.rows[0]?.regular_spent_amount ?? 0);
+  const state = calculateReserveState({
+    budgetAmount: Number(instance.budget_amount),
+    plannedAmount,
+    reserveAmount: Number(instance.reserve_amount),
+    regularSpentAmount
+  });
+  const closedResult = await client.query(
+    `UPDATE monthly_reserve_instances
+     SET status = 'closed',
+         planned_amount = $2,
+         regular_spent_amount = $3,
+         saved_amount = $4,
+         eaten_amount = $5,
+         over_budget_amount = $6,
+         closed_at = $7,
+         updated_at = now()
+     WHERE id = $1 AND status = 'active'
+     RETURNING *`,
+    [
+      instance.id,
+      plannedAmount,
+      regularSpentAmount,
+      state.savedAmount,
+      state.eatenAmount,
+      state.overBudgetAmount,
+      now
+    ]
+  );
+  const closed = closedResult.rows[0];
+  if (!closed) return null;
+  await client.query(
+    `INSERT INTO closed_reserve_events (
+       monthly_reserve_instance_id, user_id, period, title, currency,
+       reserve_amount, saved_amount, eaten_amount, over_budget_amount, status, closed_at
+     )
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+     ON CONFLICT (monthly_reserve_instance_id) DO NOTHING`,
+    [
+      closed.id,
+      user.id,
+      closed.period,
+      closed.title,
+      closed.currency,
+      closed.reserve_amount,
+      state.savedAmount,
+      state.eatenAmount,
+      state.overBudgetAmount,
+      state.status,
+      now
+    ]
+  );
+  return closed;
+}
+
+async function plannedObligationsForPeriod(client, userId, period, timeZone) {
+  const [year, month] = period.split("-").map(Number);
+  const nextPeriod = month === 12
+    ? `${year + 1}-01`
+    : `${year}-${String(month + 1).padStart(2, "0")}`;
+  const plansResult = await client.query(
+    `SELECT planned_expenses.*,
+            COUNT(planned_expense_payments.id)::int AS paid_count
+     FROM planned_expenses
+     LEFT JOIN planned_expense_payments
+       ON planned_expense_payments.planned_expense_id = planned_expenses.id
+      AND planned_expense_payments.occurrence_date >= $2::date
+      AND planned_expense_payments.occurrence_date < $3::date
+     WHERE planned_expenses.user_id = $1
+     GROUP BY planned_expenses.id`,
+    [
+      userId,
+      `${period}-01`,
+      `${nextPeriod}-01`
+    ]
+  );
+  return roundMoney(plansResult.rows.reduce((sum, item) => {
+    const occurrenceCount = plannedOccurrenceCountForPeriod(item, period);
+    const paidCount = Math.min(Number(item.paid_count ?? 0), occurrenceCount);
+    const includedCount = item.active === false ? paidCount : occurrenceCount;
+    return sum + Number(item.amount_base) * includedCount;
+  }, 0));
+}
+
+function plannedOccurrenceCountForPeriod(item, period) {
+  const [year, month] = period.split("-").map(Number);
+  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  if (item.recurrence === "weekly") {
+    let count = 0;
+    for (let day = 1; day <= daysInMonth; day += 1) {
+      const weekday = new Date(Date.UTC(year, month - 1, day)).getUTCDay() || 7;
+      if (weekday === Number(item.weekday)) count += 1;
+    }
+    return count;
+  }
+  if (item.recurrence === "one_off" || item.recurrence === "one_time") {
+    return String(item.due_date ?? "").slice(0, 7) === period ? 1 : 0;
+  }
+  const days = Array.isArray(item.due_days) && item.due_days.length
+    ? item.due_days
+    : [Number(item.due_day ?? 1)];
+  return new Set(days.map(Number).filter((day) => day >= 1).map((day) => Math.min(day, daysInMonth))).size;
+}
+
 function calculatePlannedThisWeek(plannedExpenses, now) {
   const bounds = localFullWeekBounds(now);
   return plannedExpenses.reduce((sum, item) => {
@@ -1759,7 +2259,9 @@ function plannedPaymentKey(planned, occurrenceDate) {
 }
 
 async function totalForPeriod(pool, userId, period, now, user = {}) {
-  const bounds = localPeriodBounds(now, period);
+  const bounds = period === "month" && user.calculation_time_zone
+    ? timeZoneMonthBounds(timeZoneMonthKey(now, user.calculation_time_zone), user.calculation_time_zone)
+    : localPeriodBounds(now, period);
   const result = await pool.query(
     `SELECT COALESCE(SUM(amount_base), 0)::float AS total,
             COALESCE(SUM(amount_base) FILTER (WHERE budget_impact = 'regular'), 0)::float AS regular_total,

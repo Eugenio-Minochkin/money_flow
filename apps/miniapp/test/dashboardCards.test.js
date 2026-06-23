@@ -94,3 +94,27 @@ test("renders dashboard cards with explicit component classes and progress state
   assert.match(container.innerHTML, /class="dashboard-card__display">~\$519\.2/);
   assert.match(container.innerHTML, /class="dashboard-card__progress-fill" data-state="warn" style="width: 80\.61%"/);
 });
+
+test("adds a reserve card when an active reserve is present", () => {
+  const cards = buildDashboardCards({
+    today: 100,
+    week: 500,
+    month: 45000,
+    freeRemaining: 0,
+    monthlyBudget: 60000,
+    reserve: {
+      amount: 4000,
+      savedAmount: 2500,
+      eatenAmount: 1500,
+      status: "partially_used"
+    },
+    progress: {}
+  }, {
+    ...helpers,
+    t: (key) => key === "reserve.atRisk" ? "Reserve at risk" : helpers.t(key)
+  });
+
+  const reserve = cards.find((card) => card.title === "Reserve at risk");
+  assert.ok(reserve);
+  assert.equal(reserve.amount, "2500 THB");
+});
