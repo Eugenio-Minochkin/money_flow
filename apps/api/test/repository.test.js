@@ -124,6 +124,88 @@ test("updates monthly budget for a Telegram user", async () => {
   assert.equal(queries[0].params[1], 100);
 });
 
+test("recreates an invalidated daily snapshot from the updated monthly budget", async () => {
+  let monthlyBudget = 42000;
+  let storedDayBudget = 785;
+  let totalsCall = 0;
+  const repo = createRepository(fakePool((sql, params) => {
+    const query = String(sql);
+    if (query.startsWith("UPDATE users")) {
+      monthlyBudget = Number(params[0]);
+      return { rows: [{ id: "1", telegram_user_id: "100", monthly_budget_amount: monthlyBudget }] };
+    }
+    if (query.includes("DELETE FROM daily_budget_snapshots")) {
+      storedDayBudget = null;
+      return { rows: [] };
+    }
+    if (query.startsWith("SELECT * FROM users")) {
+      return {
+        rows: [{
+          id: "1",
+          telegram_user_id: "100",
+          monthly_budget_amount: String(monthlyBudget),
+          base_currency: "THB",
+          display_currency: "USD",
+          usd_thb_rate: "32.65"
+        }]
+      };
+    }
+    if (query.includes("FROM monthly_budget_overrides")) return { rows: [] };
+    if (query.includes("FROM daily_budget_snapshots")) {
+      return storedDayBudget == null
+        ? { rows: [] }
+        : { rows: [{ budget_amount_base: storedDayBudget, budget_display_amount: 0 }] };
+    }
+    if (query.includes("INSERT INTO daily_budget_snapshots")) {
+      storedDayBudget = Number(params[2]);
+      return { rows: [{ budget_amount_base: params[2], budget_display_amount: params[3] }] };
+    }
+    if (query.includes("COALESCE(SUM(amount_base)") && query.includes("FILTER")) {
+      totalsCall += 1;
+      const total = totalsCall === 1 ? 383 : totalsCall === 3 ? 42811 : 383;
+      return {
+        rows: [{
+          total,
+          regular_total: total,
+          planned_total: 0,
+          large_oneoff_total: 0,
+          display_total: 0,
+          regular_display_total: 0,
+          planned_display_total: 0,
+          large_oneoff_display_total: 0
+        }]
+      };
+    }
+    if (query.includes("FROM planned_expenses")) {
+      return {
+        rows: [{
+          id: "5",
+          amount_base: "1977",
+          recurrence: "monthly",
+          due_day: 30,
+          due_days: [30],
+          paid_count: 0,
+          paid_occurrence_dates: [],
+          paid_occurrences: {}
+        }]
+      };
+    }
+    if (query.includes("planned_expense_payments")) return { rows: [] };
+    if (query.includes("FROM expenses") && query.includes("ORDER BY spent_at")) return { rows: [] };
+    if (query.includes("GROUP BY category_slug")) return { rows: [] };
+    return { rows: [] };
+  }));
+  const now = new Date("2026-06-23T10:00:00+07:00");
+
+  await repo.updateMonthlyBudget(100, 48000, now);
+  const dashboard = await repo.dashboard(100, now);
+
+  assert.equal(storedDayBudget, 1600);
+  assert.equal(dashboard.snapshot.dayPlanLimit, 1600);
+  assert.equal(dashboard.snapshot.dayRemaining, 1217);
+  assert.equal(dashboard.snapshot.safeToSpendPerDay, 401.5);
+});
+
 test("updateMonthlyBudget deletes daily_budget_snapshots for current day after user update", async () => {
   const queries = [];
   const repo = createRepository(fakePool((sql, params) => {
@@ -1978,7 +2060,11 @@ test("dashboard uses current month override only for the matching calendar month
     }
     if (query.includes("FROM monthly_budget_overrides")) {
       return params[1] === "2026-06"
-        ? { rows: [{ budget_amount_base: "12000", is_partial_month: true }] }
+        ? { rows: [{
+            budget_amount_base: "12000",
+            is_partial_month: true,
+            updated_at: "2026-06-12T03:00:00.000Z"
+          }] }
         : { rows: [] };
     }
     if (query.includes("planned_expense_payments")) return { rows: [] };
@@ -1990,12 +2076,14 @@ test("dashboard uses current month override only for the matching calendar month
     return { rows: [] };
   }));
 
-  const june = await repo.dashboard(100, new Date("2026-06-12T10:00:00+07:00"));
+  const june = await repo.dashboard(100, new Date("2026-06-23T10:00:00+07:00"));
   const july = await repo.dashboard(100, new Date("2026-07-01T10:00:00+07:00"));
 
   assert.equal(june.snapshot.monthlyBudget, 12000);
   assert.equal(june.currentMonthBudget.amount, 12000);
   assert.equal(june.currentMonthBudget.isPartialMonth, true);
+  assert.equal(june.currentMonthBudget.partialPeriodDays, 19);
+  assert.equal(june.snapshot.dayPlanLimit, 631.58);
   assert.equal(july.snapshot.monthlyBudget, 45000);
   assert.equal(july.currentMonthBudget.amount, 45000);
   assert.equal(july.currentMonthBudget.isPartialMonth, false);
