@@ -31,6 +31,8 @@ export const translations = {
     "dashboard.onPlan": "Идешь по плану",
     "dashboard.limitPrefix": "лимит",
     "dashboard.leftTodayPrefix": "можно еще",
+    "dashboard.dayBudget": "Бюджет дня",
+    "dashboard.paceUntilMonthEnd": "Темп до конца месяца",
     "dashboard.plan": "план",
     "dashboard.overPlan": "Идешь выше плана",
     "dashboard.overrun": "перерасход",
@@ -182,9 +184,18 @@ export const translations = {
     "reserve.usedUp": "Резерв съеден",
     "reserve.used": "съедено",
     "reserve.total": "резерв",
+    "reserve.dashboardSaved": "Резерв: {amount} сохранён",
+    "reserve.dashboardPartiallyUsed": "Резерв: съедено {eaten} из {amount}",
+    "reserve.dashboardUsedUp": "Резерв съеден",
     "reserve.blocked": "Резерв на этот месяц не создан: сумма резерва больше свободного бюджета. Уменьшите резерв или измените бюджет/плановые траты.",
     "reserve.validationError": "Резерв больше свободного бюджета. Уменьшите сумму или измените бюджет/плановые траты."
     ,"reserve.settingsTitle": "Резерв бюджета"
+    ,"reserve.add": "Добавить"
+    ,"reserve.enableAgain": "Включить снова"
+    ,"reserve.disabledThisMonth": "Резерв отключён на этот месяц"
+    ,"reserve.statusSaved": "Сохранён"
+    ,"reserve.statusAtRisk": "Под угрозой"
+    ,"reserve.statusUsedUp": "Съеден"
     ,"reserve.title": "Название"
     ,"reserve.repeatMonthly": "Повторять каждый месяц"
     ,"reserve.scope": "Область изменения"
@@ -230,6 +241,8 @@ export const translations = {
     "dashboard.onPlan": "On plan",
     "dashboard.limitPrefix": "limit",
     "dashboard.leftTodayPrefix": "left today",
+    "dashboard.dayBudget": "Day budget",
+    "dashboard.paceUntilMonthEnd": "Pace until month end",
     "dashboard.plan": "plan",
     "dashboard.overPlan": "Above plan",
     "dashboard.overrun": "overrun",
@@ -381,9 +394,18 @@ export const translations = {
     "reserve.usedUp": "Reserve used up",
     "reserve.used": "used",
     "reserve.total": "reserve",
+    "reserve.dashboardSaved": "Reserve: {amount} saved",
+    "reserve.dashboardPartiallyUsed": "Reserve: used {eaten} of {amount}",
+    "reserve.dashboardUsedUp": "Reserve used up",
     "reserve.blocked": "This month’s reserve wasn’t created: the reserve is higher than your free budget. Please reduce the reserve or adjust your budget/planned expenses.",
     "reserve.validationError": "The reserve is higher than your free budget. Please reduce the amount or adjust your budget/planned expenses."
     ,"reserve.settingsTitle": "Budget reserve"
+    ,"reserve.add": "Add"
+    ,"reserve.enableAgain": "Enable again"
+    ,"reserve.disabledThisMonth": "Reserve disabled this month"
+    ,"reserve.statusSaved": "Saved"
+    ,"reserve.statusAtRisk": "At risk"
+    ,"reserve.statusUsedUp": "Used up"
     ,"reserve.title": "Title"
     ,"reserve.repeatMonthly": "Repeat every month"
     ,"reserve.scope": "Change scope"

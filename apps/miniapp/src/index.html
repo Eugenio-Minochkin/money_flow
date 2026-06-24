@@ -258,8 +258,20 @@
               <button type="submit" data-i18n="actions.save">Сохранить</button>
             </div>
           </form>
-          <form class="form-stack nested-form" id="reserveForm">
-            <h3 data-i18n="reserve.settingsTitle">Резерв бюджета</h3>
+          <section class="reserve-settings" id="reserveSettingsBlock">
+            <button class="reserve-summary" id="reserveSummaryButton" type="button" aria-expanded="false" aria-controls="reserveForm">
+              <span class="reserve-summary__text">
+                <strong id="reserveSummaryTitle" data-i18n="reserve.settingsTitle">Резерв бюджета</strong>
+                <small id="reserveSummaryMeta"></small>
+              </span>
+              <span class="reserve-summary__status">
+                <span id="reserveSummaryStatus" data-i18n="reserve.add">Добавить</span>
+                <span class="reserve-summary__chevron" aria-hidden="true">›</span>
+              </span>
+            </button>
+            <p class="reserve-summary__note hidden" id="reserveDisabledNote" data-i18n="reserve.disabledThisMonth">Резерв отключён на этот месяц</p>
+          </section>
+          <form class="form-stack nested-form hidden" id="reserveForm">
             <label>
               <span data-i18n="forms.amount">Сумма</span>
               <input id="reserveAmountInput" type="number" min="1" step="1" inputmode="decimal" />
@@ -272,7 +284,7 @@
               <span data-i18n="reserve.repeatMonthly">Повторять каждый месяц</span>
               <input id="reserveRecurringInput" type="checkbox" />
             </label>
-            <label>
+            <label id="reserveScopeField">
               <span data-i18n="reserve.scope">Область изменения</span>
               <select id="reserveScopeInput">
                 <option value="current" data-i18n="reserve.currentOnly">Только этот месяц</option>

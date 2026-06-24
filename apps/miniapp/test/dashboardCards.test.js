@@ -11,6 +11,7 @@ const helpers = {
     "dashboard.remainingPrefix": "осталось",
     "dashboard.limitPrefix": "лимит",
     "dashboard.budget": "бюджет",
+    "dashboard.dayBudget": "бюджет дня",
     "dashboard.overrun": "перерасход",
     "dashboard.safeToSpendPerDay": "Можно в день до конца месяца",
     "dashboard.afterExpensesAndPlanned": "после расходов и плановых оплат"
@@ -45,8 +46,8 @@ test("builds dashboard cards with remaining before limit and budget lines", () =
   }, helpers);
 
   assert.equal(cards.length, 4);
-  assert.deepEqual(cards[0].lines.map((line) => line.label), ["Можно в день до конца месяца"]);
-  assert.deepEqual(cards[0].lines.map((line) => line.amount), ["650 THB"]);
+  assert.deepEqual(cards[0].lines.map((line) => line.label), ["осталось", "бюджет дня"]);
+  assert.deepEqual(cards[0].lines.map((line) => line.amount), ["650 THB", "750 THB"]);
   assert.deepEqual(cards[1].lines.map((line) => line.label), ["осталось", "лимит"]);
   assert.deepEqual(cards[3].lines.map((line) => line.label), ["осталось", "бюджет"]);
 });
@@ -61,30 +62,27 @@ test("builds today's card as overrun when regular spend exceeds today's budget",
     dayProgressPercent: 130.41
   }, helpers);
 
-  assert.deepEqual(cards[0].lines.map((line) => line.label), ["Можно в день до конца месяца"]);
-  assert.deepEqual(cards[0].lines.map((line) => line.amount), ["428 THB"]);
+  assert.deepEqual(cards[0].lines.map((line) => line.label), ["перерасход", "бюджет дня"]);
+  assert.deepEqual(cards[0].lines.map((line) => line.amount), ["187 THB", "615 THB"]);
 });
 
-test("today card shows safe-to-spend pace instead of stable day plan limit", () => {
+test("today card shows the fixed daily budget and remaining, not the live pace", () => {
   const cards = buildDashboardCards({
     today: 10,
-    dayPlanLimit: 1600,
-    dayRemaining: 1590,
+    dayPlanLimit: 427,
+    dayRemaining: 417,
+    dayOverrun: 0,
     safeToSpendPerDay: 428,
-    dayProgressPercent: 0.625,
+    dayProgressPercent: 2.34,
     progress: {
-      day: { percent: 0.625, state: "good" }
+      day: { percent: 2.34, state: "good" }
     }
-  }, {
-    ...helpers,
-    t: (key) => key === "dashboard.safeToSpendPerDay"
-      ? "Можно в день до конца месяца"
-      : helpers.t(key)
-  });
+  }, helpers);
 
   assert.equal(cards[0].amount, "10 THB");
-  assert.deepEqual(cards[0].lines.map((line) => line.label), ["Можно в день до конца месяца"]);
-  assert.deepEqual(cards[0].lines.map((line) => line.amount), ["428 THB"]);
+  assert.deepEqual(cards[0].lines.map((line) => line.label), ["осталось", "бюджет дня"]);
+  assert.deepEqual(cards[0].lines.map((line) => line.amount), ["417 THB", "427 THB"]);
+  assert.ok(!cards[0].lines.some((line) => line.amount === "428 THB"));
   assert.equal(cards[0].progress, null);
   assert.equal(cards[0].percent, null);
 });
@@ -123,7 +121,7 @@ test("renders dashboard cards with explicit component classes and progress state
   assert.match(container.innerHTML, /class="dashboard-card__progress-fill" data-state="warn" style="width: 80\.61%"/);
 });
 
-test("adds a reserve card when an active reserve is present", () => {
+test("adds an active reserve row inside the remaining card without adding a fifth card", () => {
   const cards = buildDashboardCards({
     today: 100,
     week: 500,
@@ -139,10 +137,28 @@ test("adds a reserve card when an active reserve is present", () => {
     progress: {}
   }, {
     ...helpers,
-    t: (key) => key === "reserve.atRisk" ? "Reserve at risk" : helpers.t(key)
+    t: (key, values = {}) => {
+      if (key === "reserve.dashboardPartiallyUsed") return `Reserve: used ${values.eaten} of ${values.amount}`;
+      return helpers.t(key);
+    }
   });
 
-  const reserve = cards.find((card) => card.title === "Reserve at risk");
-  assert.ok(reserve);
-  assert.equal(reserve.amount, "2500 THB");
+  assert.equal(cards.length, 4);
+  assert.equal(cards[2].title, helpers.t("dashboard.remaining"));
+  assert.equal(cards[2].reserveLine, "Reserve: used 1500 THB of 4000 THB");
+  assert.equal(cards.some((card) => card.title === "Reserve at risk"), false);
+});
+
+test("does not render any reserve placeholder when reserve is absent", () => {
+  const cards = buildDashboardCards({
+    today: 100,
+    week: 500,
+    month: 45000,
+    freeRemaining: 3000,
+    monthlyBudget: 60000,
+    progress: {}
+  }, helpers);
+
+  assert.equal(cards.length, 4);
+  assert.equal(cards[2].reserveLine, undefined);
 });
