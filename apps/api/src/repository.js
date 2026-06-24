@@ -1,7 +1,7 @@
 import { calculateBudgetSnapshot } from "../../../packages/shared/src/budget.js";
 import { SUPPORTED_CURRENCY_CODES, fallbackThbRate, normalizeCurrency } from "../../../packages/shared/src/currencies.js";
 import { localDateRangeBounds, localPeriodBounds } from "../../../packages/shared/src/time.js";
-import { normalizeTimeZone, timeZoneMonthBounds, timeZoneMonthKey, timeZoneMonthState } from "../../../packages/shared/src/time.js";
+import { normalizeTimeZone, resolveUserTimeZone, timeZoneDayBounds, timeZoneDayKey, timeZoneMonthBounds, timeZoneMonthKey, timeZoneMonthState } from "../../../packages/shared/src/time.js";
 import { calculateReserveState, validateReserveCapacity } from "../../../packages/shared/src/reserve.js";
 import { createExchangeRateProvider } from "./exchangeRates.js";
 
@@ -313,7 +313,7 @@ export function createRepository(pool, options = {}) {
         [baseCurrency, monthlyBudgetAmount, nextStep, telegramUserId]
       );
       const user = result.rows[0] ?? null;
-      if (user) await invalidateDailyBudgetSnapshot(pool, user.id);
+      if (user) await invalidateDailyBudgetSnapshot(pool, user.id, new Date(), resolveUserTimeZone(user));
       return user;
     },
 
@@ -344,7 +344,7 @@ export function createRepository(pool, options = {}) {
         [monthlyBudgetAmount, nextStep, telegramUserId]
       );
       const user = result.rows[0] ?? null;
-      if (user) await invalidateDailyBudgetSnapshot(pool, user.id);
+      if (user) await invalidateDailyBudgetSnapshot(pool, user.id, new Date(), resolveUserTimeZone(user));
       return user;
     },
 
@@ -372,7 +372,7 @@ export function createRepository(pool, options = {}) {
       );
       await updateOpenReserveBudget(pool, user.id, moneyAmounts.amountBase);
       if (input.completeOnboarding) await this.setOnboardingStep(telegramUserId, "completed");
-      await invalidateDailyBudgetSnapshot(pool, user.id, now);
+      await invalidateDailyBudgetSnapshot(pool, user.id, now, resolveUserTimeZone(user));
       return result.rows[0] ?? null;
     },
 
@@ -391,7 +391,7 @@ export function createRepository(pool, options = {}) {
         [user.id, monthKey(now), moneyAmounts.amountBase, input.sourceText ?? null]
       );
       await this.setOnboardingStep(telegramUserId, "completed");
-      await invalidateDailyBudgetSnapshot(pool, user.id, now);
+      await invalidateDailyBudgetSnapshot(pool, user.id, now, resolveUserTimeZone(user));
       return result.rows[0] ?? null;
     },
 
@@ -752,7 +752,7 @@ export function createRepository(pool, options = {}) {
         [amount, telegramUserId]
       );
       const user = result.rows[0] ?? null;
-      if (user) await invalidateDailyBudgetSnapshot(pool, user.id, now);
+      if (user) await invalidateDailyBudgetSnapshot(pool, user.id, now, resolveUserTimeZone(user));
       return user;
     },
 
@@ -799,7 +799,7 @@ export function createRepository(pool, options = {}) {
         [monthlyBudgetAmount, baseCurrency, displayCurrency, usdThbRate, weeklyBudgetAmount, interfaceLanguage, budgetAdviceEnabled, interfaceTheme, telegramUserId]
       );
       const user = result.rows[0] ?? null;
-      if (user) await invalidateDailyBudgetSnapshot(pool, user.id, now);
+      if (user) await invalidateDailyBudgetSnapshot(pool, user.id, now, resolveUserTimeZone(user));
       return user;
     },
 
@@ -1302,7 +1302,7 @@ export function createRepository(pool, options = {}) {
       const userResult = await pool.query("SELECT * FROM users WHERE id = $1", [userId]);
       const user = userResult.rows[0] ?? {};
       const [today, week, month] = await Promise.all([
-        totalForPeriod(pool, userId, "today", now, user),
+        totalForPeriod(pool, userId, "today", now, { ...user, calculation_time_zone: timeZone }),
         totalForPeriod(pool, userId, "week", now, user),
         totalForPeriod(pool, userId, "month", now, { ...user, calculation_time_zone: timeZone })
       ]);
@@ -1564,17 +1564,18 @@ async function paidPlannedTotalForMonth(pool, userId, now) {
   return Number(result.rows[0]?.total ?? 0);
 }
 
-async function invalidateDailyBudgetSnapshot(pool, userId, now = new Date()) {
+async function invalidateDailyBudgetSnapshot(pool, userId, now = new Date(), timeZone = "Asia/Bangkok") {
   if (userId == null) return;
   await pool.query(
     `DELETE FROM daily_budget_snapshots
      WHERE user_id = $1 AND day_key = $2`,
-    [userId, localDayKey(now)]
+    [userId, timeZoneDayKey(now, timeZone)]
   );
 }
 
 async function getOrCreateDailyBudgetSnapshot(pool, user, now, input) {
-  const dayKey = localDayKey(now);
+  const timeZone = resolveUserTimeZone(user);
+  const dayKey = timeZoneDayKey(now, timeZone);
   const existing = await pool.query(
     `SELECT budget_amount_base, budget_display_amount
      FROM daily_budget_snapshots
@@ -1593,17 +1594,19 @@ async function getOrCreateDailyBudgetSnapshot(pool, user, now, input) {
     ...input,
     now
   });
+  const dayBudgetBase = Number(snapshot.safeToSpendPerDay ?? snapshot.dayPlanLimit ?? 0);
+  const dayBudgetDisplay = Number(snapshot.display?.safeToSpendPerDay ?? snapshot.display?.dayPlanLimit ?? 0);
   const inserted = await pool.query(
     `INSERT INTO daily_budget_snapshots (user_id, day_key, budget_amount_base, budget_display_amount)
      VALUES ($1, $2, $3, $4)
      ON CONFLICT (user_id, day_key)
      DO UPDATE SET budget_amount_base = daily_budget_snapshots.budget_amount_base
      RETURNING budget_amount_base, budget_display_amount`,
-    [user.id, dayKey, snapshot.dayPlanLimit, snapshot.display.dayPlanLimit]
+    [user.id, dayKey, dayBudgetBase, dayBudgetDisplay]
   );
   return {
-    budgetAmountBase: Number(inserted.rows[0]?.budget_amount_base ?? snapshot.dayPlanLimit),
-    budgetDisplayAmount: Number(inserted.rows[0]?.budget_display_amount ?? snapshot.display.dayPlanLimit)
+    budgetAmountBase: Number(inserted.rows[0]?.budget_amount_base ?? dayBudgetBase),
+    budgetDisplayAmount: Number(inserted.rows[0]?.budget_display_amount ?? dayBudgetDisplay)
   };
 }
 
@@ -2279,9 +2282,14 @@ function plannedPaymentKey(planned, occurrenceDate) {
 }
 
 async function totalForPeriod(pool, userId, period, now, user = {}) {
-  const bounds = period === "month" && user.calculation_time_zone
-    ? timeZoneMonthBounds(timeZoneMonthKey(now, user.calculation_time_zone), user.calculation_time_zone)
-    : localPeriodBounds(now, period);
+  let bounds;
+  if (period === "month" && user.calculation_time_zone) {
+    bounds = timeZoneMonthBounds(timeZoneMonthKey(now, user.calculation_time_zone), user.calculation_time_zone);
+  } else if (period === "today" && user.calculation_time_zone) {
+    bounds = timeZoneDayBounds(now, user.calculation_time_zone);
+  } else {
+    bounds = localPeriodBounds(now, period);
+  }
   const result = await pool.query(
     `SELECT COALESCE(SUM(amount_base), 0)::float AS total,
             COALESCE(SUM(amount_base) FILTER (WHERE budget_impact = 'regular'), 0)::float AS regular_total,

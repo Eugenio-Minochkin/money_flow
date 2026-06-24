@@ -5,6 +5,9 @@ import {
   localDateRangeBounds,
   localPeriodBounds,
   normalizeTimeZone,
+  resolveUserTimeZone,
+  timeZoneDayBounds,
+  timeZoneDayKey,
   timeZoneMonthBounds,
   timeZoneMonthKey,
   timeZoneMonthState
@@ -90,4 +93,41 @@ test("returns DST-aware month bounds for an IANA timezone", () => {
 
   assert.equal(bounds.start.toISOString(), "2026-03-01T05:00:00.000Z");
   assert.equal(bounds.end.toISOString(), "2026-04-01T04:00:00.000Z");
+});
+
+test("resolves user timezone with Asia/Bangkok fallback", () => {
+  assert.equal(resolveUserTimeZone({ timezone: "Europe/Moscow" }), "Europe/Moscow");
+  assert.equal(resolveUserTimeZone({ timezone: "Asia/Bangkok" }), "Asia/Bangkok");
+  assert.equal(resolveUserTimeZone({ timezone: null }), "Asia/Bangkok");
+  assert.equal(resolveUserTimeZone({ timezone: "" }), "Asia/Bangkok");
+  assert.equal(resolveUserTimeZone({}), "Asia/Bangkok");
+  assert.equal(resolveUserTimeZone({ timezone: "Not/A_Timezone" }), "Asia/Bangkok");
+});
+
+test("derives the local day key from an IANA timezone", () => {
+  // 2026-06-23T17:00:00Z is 2026-06-24 00:00 in Bangkok but still 2026-06-23 in Moscow
+  const now = new Date("2026-06-23T17:00:00.000Z");
+
+  assert.equal(timeZoneDayKey(now, "Asia/Bangkok"), "2026-06-24");
+  assert.equal(timeZoneDayKey(now, "Europe/Moscow"), "2026-06-23");
+  assert.equal(timeZoneDayKey(now, "UTC"), "2026-06-23");
+});
+
+test("daily snapshot day key changes at the user's local midnight", () => {
+  // Bangkok midnight is 17:00Z the previous day
+  assert.equal(timeZoneDayKey(new Date("2026-06-23T16:59:00.000Z"), "Asia/Bangkok"), "2026-06-23");
+  assert.equal(timeZoneDayKey(new Date("2026-06-23T17:00:00.000Z"), "Asia/Bangkok"), "2026-06-24");
+  // Moscow (UTC+3, no DST in 2026) midnight is 21:00Z the previous day
+  assert.equal(timeZoneDayKey(new Date("2026-06-23T20:59:00.000Z"), "Europe/Moscow"), "2026-06-23");
+  assert.equal(timeZoneDayKey(new Date("2026-06-23T21:00:00.000Z"), "Europe/Moscow"), "2026-06-24");
+});
+
+test("timeZoneDayBounds spans a single local day in the given timezone", () => {
+  const bangkok = timeZoneDayBounds(new Date("2026-06-24T03:00:00.000Z"), "Asia/Bangkok");
+  assert.equal(bangkok.start.toISOString(), "2026-06-23T17:00:00.000Z");
+  assert.equal(bangkok.end.toISOString(), "2026-06-24T17:00:00.000Z");
+
+  const moscow = timeZoneDayBounds(new Date("2026-06-23T22:00:00.000Z"), "Europe/Moscow");
+  assert.equal(moscow.start.toISOString(), "2026-06-23T21:00:00.000Z");
+  assert.equal(moscow.end.toISOString(), "2026-06-24T21:00:00.000Z");
 });

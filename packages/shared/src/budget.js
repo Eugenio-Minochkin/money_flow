@@ -77,12 +77,12 @@ export function calculateBudgetSnapshot({
   const safeToSpendPerDay = roundMoney(Math.max(freeRemaining, 0) / daysLeftInMonth);
   const safeToSpendDisplayPerDay = roundMoney(freeRemainingDisplay / daysLeftInMonth);
   const dayPlanLimit = fixedDayPlanLimit == null
-    ? dailyPlanLimit
+    ? safeToSpendPerDay
     : roundMoney(Number(fixedDayPlanLimit));
   const dayRemaining = roundMoney(Math.max(dayPlanLimit - todayTotal, 0));
   const dayOverrun = roundMoney(Math.max(todayTotal - dayPlanLimit, 0));
   const dayDisplayPlanLimit = fixedDayDisplayPlanLimit == null
-    ? dailyPlanDisplayLimit
+    ? safeToSpendDisplayPerDay
     : roundMoney(Number(fixedDayDisplayPlanLimit));
   const dayDisplayRemaining = roundMoney(Math.max(dayDisplayPlanLimit - todayDisplayTotal, 0));
   const dayDisplayOverrun = roundMoney(Math.max(todayDisplayTotal - dayDisplayPlanLimit, 0));
