@@ -12,6 +12,7 @@ const helpers = {
     "dashboard.limitPrefix": "лимит",
     "dashboard.budget": "бюджет",
     "dashboard.overrun": "перерасход",
+    "dashboard.safeToSpendPerDay": "Можно в день до конца месяца",
     "dashboard.afterExpensesAndPlanned": "после расходов и плановых оплат"
   })[key] ?? key,
   moneyBase: (value) => `${value} THB`,
@@ -26,6 +27,7 @@ test("builds dashboard cards with remaining before limit and budget lines", () =
     month: 3000,
     dayRemaining: 650,
     dayPlanLimit: 750,
+    safeToSpendPerDay: 650,
     weekRemaining: 1200,
     weekPlanLimit: 1900,
     freeRemaining: 16000,
@@ -43,8 +45,8 @@ test("builds dashboard cards with remaining before limit and budget lines", () =
   }, helpers);
 
   assert.equal(cards.length, 4);
-  assert.deepEqual(cards[0].lines.map((line) => line.label), ["осталось", "бюджет"]);
-  assert.deepEqual(cards[0].lines.map((line) => line.amount), ["650 THB", "750 THB"]);
+  assert.deepEqual(cards[0].lines.map((line) => line.label), ["Можно в день до конца месяца"]);
+  assert.deepEqual(cards[0].lines.map((line) => line.amount), ["650 THB"]);
   assert.deepEqual(cards[1].lines.map((line) => line.label), ["осталось", "лимит"]);
   assert.deepEqual(cards[3].lines.map((line) => line.label), ["осталось", "бюджет"]);
 });
@@ -55,11 +57,36 @@ test("builds today's card as overrun when regular spend exceeds today's budget",
     dayRemaining: 0,
     dayOverrun: 187,
     dayPlanLimit: 615,
+    safeToSpendPerDay: 428,
     dayProgressPercent: 130.41
   }, helpers);
 
-  assert.deepEqual(cards[0].lines.map((line) => line.label), ["перерасход", "бюджет"]);
-  assert.deepEqual(cards[0].lines.map((line) => line.amount), ["187 THB", "615 THB"]);
+  assert.deepEqual(cards[0].lines.map((line) => line.label), ["Можно в день до конца месяца"]);
+  assert.deepEqual(cards[0].lines.map((line) => line.amount), ["428 THB"]);
+});
+
+test("today card shows safe-to-spend pace instead of stable day plan limit", () => {
+  const cards = buildDashboardCards({
+    today: 10,
+    dayPlanLimit: 1600,
+    dayRemaining: 1590,
+    safeToSpendPerDay: 428,
+    dayProgressPercent: 0.625,
+    progress: {
+      day: { percent: 0.625, state: "good" }
+    }
+  }, {
+    ...helpers,
+    t: (key) => key === "dashboard.safeToSpendPerDay"
+      ? "Можно в день до конца месяца"
+      : helpers.t(key)
+  });
+
+  assert.equal(cards[0].amount, "10 THB");
+  assert.deepEqual(cards[0].lines.map((line) => line.label), ["Можно в день до конца месяца"]);
+  assert.deepEqual(cards[0].lines.map((line) => line.amount), ["428 THB"]);
+  assert.equal(cards[0].progress, null);
+  assert.equal(cards[0].percent, null);
 });
 
 test("renders dashboard cards with explicit component classes and progress state", () => {
@@ -69,6 +96,7 @@ test("renders dashboard cards with explicit component classes and progress state
     month: 3000,
     dayRemaining: 650,
     dayPlanLimit: 750,
+    safeToSpendPerDay: 650,
     weekRemaining: 1200,
     weekPlanLimit: 1900,
     freeRemaining: 16000,

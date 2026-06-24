@@ -500,12 +500,11 @@ function switchTab(tab) {
 
 function renderSnapshot(snapshot) {
   setBaseCurrency(snapshot.baseCurrency ?? dashboardState?.user?.base_currency ?? "THB");
-  const dayRemaining = snapshot.dayRemaining ?? snapshot.safeToSpendPerDay;
-  const dayProgress = snapshot.progress?.day ?? { percent: snapshot.dayProgressPercent ?? 0, state: "good" };
+  const safeToSpendPerDay = snapshot.safeToSpendPerDay ?? 0;
   const hero = document.querySelector(".hero-metric");
-  if (hero) hero.dataset.state = dayProgress.state ?? "good";
-  setText("#safeToSpend", moneyBase(dayRemaining));
-  setText("#safeToSpendDisplay", moneyDisplay(snapshot.display?.dayRemaining ?? snapshot.display?.safeToSpendPerDay, snapshot.display?.currency));
+  if (hero) hero.dataset.state = "good";
+  setText("#safeToSpend", moneyBase(safeToSpendPerDay));
+  setText("#safeToSpendDisplay", moneyDisplay(snapshot.display?.safeToSpendPerDay, snapshot.display?.currency));
   renderDashboardCards(document.querySelector("#dashboardCards"), buildDashboardCards(snapshot, {
     t,
     moneyBase,

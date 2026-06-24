@@ -310,6 +310,52 @@ test("confirm callback saves draft and returns an informative summary", async ()
   }
 });
 
+test("confirm callback edits the original draft message into saved summary and removes keyboard", async () => {
+  const calls = [];
+  const repo = fakeRepository();
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: repo,
+    telegramClient: {
+      async sendMessage(message) {
+        calls.push({ method: "sendMessage", ...message });
+        return { ok: true };
+      },
+      async editMessageText(message) {
+        calls.push({ method: "editMessageText", ...message });
+        return { ok: true };
+      },
+      async answerCallbackQuery(message) {
+        calls.push({ method: "answerCallbackQuery", ...message });
+        return { ok: true };
+      },
+      async deleteMessage(message) {
+        calls.push({ method: "deleteMessage", ...message });
+        return { ok: true };
+      }
+    }
+  });
+
+  await bot.handleUpdate({
+    callback_query: {
+      id: "callback-confirm-edit",
+      data: "confirm:42",
+      from: { id: 100 },
+      message: { chat: { id: 10 }, message_id: 55 }
+    }
+  });
+
+  const edit = calls.find((call) => call.method === "editMessageText");
+  assert.ok(edit);
+  assert.equal(edit.chatId, 10);
+  assert.equal(edit.messageId, 55);
+  assert.match(edit.text, /Записал|Saved/);
+  assert.deepEqual(edit.replyMarkup, { inline_keyboard: [] });
+  assert.ok(calls.some((call) => call.method === "answerCallbackQuery"));
+  assert.equal(calls.some((call) => call.method === "sendMessage" && /Записал|Saved/.test(call.text)), false);
+});
+
 test("voice message is transcribed and creates a draft response", async () => {
   const calls = [];
   const originalLog = console.log;
