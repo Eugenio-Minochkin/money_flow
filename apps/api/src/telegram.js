@@ -212,6 +212,8 @@ async function processQueuedMessage({ message, from, user, rawText, hasVoice, in
   const processingStartedAt = performance.now();
   const language = user.interface_language ?? "en";
   const chatId = message.chat.id;
+  let processingResult = inputType ? "processing_failed" : undefined;
+  let processingDraftType;
 
   try {
     if (isOnboardingActive(user)) {
@@ -238,17 +240,19 @@ async function processQueuedMessage({ message, from, user, rawText, hasVoice, in
         try {
           text = await transcribeVoice(message, voiceTranscriber, trace);
         } catch (error) {
-          await safeRecordAppEvent(repository, user.id, "voice_transcription_failed", {});
+          processingResult = "transcription_failed";
+          await safeRecordAppEvent(repository, user.id, "voice_transcription_failed", { result: "transcription_failed" });
           throw error;
         }
       }
       if (!text && inputType === "photo") {
-        await safeRecordAppEvent(repository, user.id, "expense_parse_failed", { inputType });
+        processingResult = "unsupported_photo";
+        await safeRecordAppEvent(repository, user.id, "unsupported_photo_input", { inputType: "photo" });
         return deliverResultMessage({
           token,
           chatId,
           loaderMessageId: loader.messageId,
-          text: botText(language, "unsupported"),
+          text: botText(language, "unsupportedPhoto"),
           replyMarkup: null,
           telegramClient,
           trace
@@ -262,6 +266,7 @@ async function processQueuedMessage({ message, from, user, rawText, hasVoice, in
       try {
         planned = parsePlannedExpenseText(text, { defaultCurrency: user.base_currency ?? "THB" });
       } catch (error) {
+        processingResult = "parser_failed";
         await safeRecordAppEvent(repository, user.id, "expense_parse_failed", { inputType });
         throw error;
       }
@@ -270,6 +275,8 @@ async function processQueuedMessage({ message, from, user, rawText, hasVoice, in
         const draft = await repository.createPlannedDraft(user.id, text, planned);
         trace.end("db_save");
         await safeRecordAppEvent(repository, user.id, "expense_draft_created", { inputType, draftType: "planned" });
+        processingResult = "planned_draft_created";
+        processingDraftType = "planned";
         return deliverResultMessage({
           token,
           chatId,
@@ -295,17 +302,21 @@ async function processQueuedMessage({ message, from, user, rawText, hasVoice, in
           }
         });
       } catch (error) {
+        processingResult = "parser_failed";
         await safeRecordAppEvent(repository, user.id, "expense_parse_failed", { inputType });
         throw error;
       }
       trace.end("llm_parse", llmMetadata);
       if (parsed.expenses.length === 0) {
+        processingResult = "amount_not_found";
         await safeRecordAppEvent(repository, user.id, "expense_parse_failed", { inputType });
         return deliverResultMessage({
           token,
           chatId,
           loaderMessageId: loader.messageId,
-          text: botText(language, "amountNotFound"),
+          text: inputType === "voice" && text
+            ? botText(language, "amountNotFoundWithTranscript", { transcript: text })
+            : botText(language, "amountNotFound"),
           replyMarkup: null,
           telegramClient,
           trace
@@ -316,6 +327,8 @@ async function processQueuedMessage({ message, from, user, rawText, hasVoice, in
       const draft = await repository.createDraft(user.id, text, parsed.expenses);
       trace.end("db_save");
       await safeRecordAppEvent(repository, user.id, "expense_draft_created", { inputType, draftType: "regular" });
+      processingResult = "draft_created";
+      processingDraftType = "regular";
       return deliverResultMessage({
         token,
         chatId,
@@ -332,7 +345,9 @@ async function processQueuedMessage({ message, from, user, rawText, hasVoice, in
         token,
         chatId,
         loaderMessageId: loader.messageId,
-        text: botText(language, "jobProcessingFailed"),
+        text: processingResult === "transcription_failed"
+          ? botText(language, "transcriptionFailed")
+          : (processingResult === "parser_failed" ? botText(language, "parseFailed") : botText(language, "jobProcessingFailed")),
         replyMarkup: null,
         telegramClient,
         trace
@@ -344,6 +359,9 @@ async function processQueuedMessage({ message, from, user, rawText, hasVoice, in
       const traceMetadata = trace.getMetadata();
       await safeRecordAppEvent(repository, user.id, "message_processing_completed", {
         inputType,
+        result: processingResult,
+        status: processingResult,
+        draftType: processingDraftType,
         processingTotalMs: Math.max(0, Math.round(performance.now() - processingStartedAt)),
         queueWaitMs: traceMetadata.queueWaitMs,
         telegramResponseMs: stageDurations.telegram_response,
@@ -746,9 +764,18 @@ async function handleCallback({ update, repository, token, miniAppUrl, telegramC
     await repository.cancelPlannedDraft(draftId, telegramUserId);
     trace.end("db_save");
     await safeRecordAppEvent(repository, user?.id, "expense_draft_cancelled", { draftType: "planned" });
+    const chatId = callback.message.chat.id;
+    const messageId = callback.message.message_id;
     return sendTelegramResponse(trace, async () => {
       await answerCallback(token, callback.id, botText(language, "cancelledCallback"), telegramClient);
-      return sendMessage(token, callback.message.chat.id, botText(language, "plannedCancelled"), null, telegramClient);
+      if (messageId) {
+        try {
+          return await editMessageText(token, chatId, messageId, botText(language, "plannedCancelMessage"), { inline_keyboard: [] }, telegramClient);
+        } catch (error) {
+          console.error("[telegram] editing cancelled planned draft failed, falling back to new message", error.message);
+        }
+      }
+      return sendMessage(token, chatId, botText(language, "plannedCancelMessage"), null, telegramClient);
     });
   }
 
@@ -1302,7 +1329,7 @@ function onboardingText(language, key, values = {}) {
   return messages[lang][key];
 }
 
-function botText(language, key) {
+function botText(language, key, values = {}) {
   const lang = language === "ru" ? "ru" : "en";
   const messages = {
     ru: {
@@ -1311,10 +1338,15 @@ function botText(language, key) {
       globalQueueDelayed: "Сейчас обработка может занять чуть больше времени. Я принял сообщение и разберу его по очереди.",
       globalQueueFull: "Сейчас обработка временно занята. Дождись, пожалуйста, результата по предыдущим сообщениям и отправь это ещё раз чуть позже.",
       jobProcessingFailed: "Не получилось обработать это сообщение. Попробуй отправить его ещё раз.",
+      parseFailed: "Не получилось разобрать расход. Попробуй написать проще: <b>кофе 70 бат</b>.",
+      transcriptionFailed: "Не смог разобрать голосовое. Попробуй ещё раз или напиши текстом: кофе 70 бат",
       amountNotFound: "Не нашел сумму. Напиши так: <b>кофе 70 бат</b>.",
+      amountNotFoundWithTranscript: `Я услышал: «${formatTranscriptForTelegram(values.transcript)}». Но не нашёл сумму. Напиши, например: <b>кофе 70 бат</b>`,
+      unsupportedPhoto: "Фото чеков пока не умею читать. Отправь расход текстом или голосом: кофе 70 бат",
       amountUpdatedCallback: "Сумма обновлена",
       cancelledCallback: "Отменено",
       cancelDraftMessage: "❌ Запись отменена",
+      plannedCancelMessage: "❌ Плановая трата отменена",
       categoryUpdatedCallback: "Категория обновлена",
       draftCancelled: "Черновик отменен.",
       editInMiniApp: "Редактирование доступно в Mini App.",
@@ -1343,10 +1375,15 @@ function botText(language, key) {
       globalQueueDelayed: "Processing may take a little longer right now. I’ve received your message and will handle it in order.",
       globalQueueFull: "Processing is temporarily busy right now. Please wait for the previous messages to finish and send this again a bit later.",
       jobProcessingFailed: "I couldn’t process this message. Please try sending it again.",
+      parseFailed: "I couldn’t parse the expense. Try a simpler message: <b>coffee 70 baht</b>.",
+      transcriptionFailed: "I couldn’t understand the voice message. Try again or type it: coffee 70 baht",
       amountNotFound: "I did not find an amount. Try: <b>coffee 70 baht</b>.",
+      amountNotFoundWithTranscript: `I heard: “${formatTranscriptForTelegram(values.transcript)}”. But I couldn’t find an amount. Try: <b>coffee 70 baht</b>`,
+      unsupportedPhoto: "I can’t read receipt photos yet. Send the expense by text or voice: coffee 70 baht",
       amountUpdatedCallback: "Amount updated",
       cancelledCallback: "Cancelled",
       cancelDraftMessage: "❌ Entry cancelled",
+      plannedCancelMessage: "❌ Planned expense cancelled",
       categoryUpdatedCallback: "Category updated",
       draftCancelled: "Draft cancelled.",
       editInMiniApp: "Editing is available in Mini App.",
@@ -1371,4 +1408,20 @@ function botText(language, key) {
     }
   };
   return messages[lang][key];
+}
+
+function formatTranscriptForTelegram(transcript) {
+  return escapeTelegramHtml(truncateText(String(transcript ?? "").trim(), 140));
+}
+
+function truncateText(text, maxLength) {
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
+}
+
+function escapeTelegramHtml(text) {
+  return String(text ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
 }

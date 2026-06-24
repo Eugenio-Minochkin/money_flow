@@ -157,6 +157,35 @@ test("message processing completed event includes stage performance metadata", a
   assert.equal(Number.isFinite(completed.metadata.dbSaveMs), true);
 });
 
+test("successful draft processing records a completed result", async () => {
+  const repo = fakeRepository();
+  const originalLog = console.log;
+  console.log = () => {};
+  try {
+    const bot = createTelegramBot({
+      token: "",
+      miniAppUrl: "http://localhost:3000",
+      repository: repo
+    });
+
+    await bot.handleUpdate({
+      message: {
+        chat: { id: 10 },
+        from: { id: 100, first_name: "M" },
+        text: "coffee 70 baht"
+      }
+    });
+  } finally {
+    console.log = originalLog;
+  }
+
+  const completed = repo.events.find((event) => event.eventName === "message_processing_completed");
+  assert.equal(completed.metadata.result, "draft_created");
+  assert.equal(completed.metadata.status, "draft_created");
+  assert.equal(completed.metadata.draftType, "regular");
+  assert.equal(completed.metadata.inputType, "text");
+});
+
 test("admin stats command is excluded from regular message events", async () => {
   const repo = fakeRepository();
   const originalLog = console.log;
@@ -489,6 +518,100 @@ test("cancel callback records a draft cancellation event", async () => {
   ]);
 });
 
+test("planned cancel edits the original message and removes buttons", async () => {
+  const repo = fakeRepository();
+  let cancelled = null;
+  repo.cancelPlannedDraft = async (draftId, telegramUserId) => {
+    cancelled = { draftId, telegramUserId };
+    return null;
+  };
+  const calls = [];
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: repo,
+    telegramClient: {
+      async sendMessage(message) {
+        calls.push({ method: "sendMessage", ...message });
+        return { ok: true };
+      },
+      async editMessageText(message) {
+        calls.push({ method: "editMessageText", ...message });
+        return { ok: true };
+      },
+      async answerCallbackQuery(message) {
+        calls.push({ method: "answerCallbackQuery", ...message });
+        return { ok: true };
+      },
+      async deleteMessage() {
+        return { ok: true };
+      }
+    }
+  });
+
+  await bot.handleUpdate({
+    callback_query: {
+      id: "callback-plan-cancel",
+      data: "plan_cancel:77",
+      from: { id: 100 },
+      message: { chat: { id: 10 }, message_id: 55 }
+    }
+  });
+
+  assert.deepEqual(cancelled, { draftId: "77", telegramUserId: 100 });
+  const edit = calls.find((call) => call.method === "editMessageText");
+  assert.ok(edit);
+  assert.equal(edit.chatId, 10);
+  assert.equal(edit.messageId, 55);
+  assert.match(edit.text, /Плановая трата отменена|Planned expense cancelled/);
+  assert.deepEqual(edit.replyMarkup, { inline_keyboard: [] });
+  assert.equal(calls.some((call) => call.method === "sendMessage"), false);
+  assert.deepEqual(repo.events, [
+    { userId: 1, eventName: "expense_draft_cancelled", metadata: { draftType: "planned" } }
+  ]);
+});
+
+test("planned cancel sends a fallback message if editing fails", async () => {
+  const repo = fakeRepository();
+  const calls = [];
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: repo,
+    telegramClient: {
+      async sendMessage(message) {
+        calls.push({ method: "sendMessage", ...message });
+        return { ok: true };
+      },
+      async editMessageText(message) {
+        calls.push({ method: "editMessageText", ...message });
+        throw new Error("edit failed");
+      },
+      async answerCallbackQuery(message) {
+        calls.push({ method: "answerCallbackQuery", ...message });
+        return { ok: true };
+      },
+      async deleteMessage() {
+        return { ok: true };
+      }
+    }
+  });
+
+  await bot.handleUpdate({
+    callback_query: {
+      id: "callback-plan-cancel-fallback",
+      data: "plan_cancel:77",
+      from: { id: 100 },
+      message: { chat: { id: 10 }, message_id: 55 }
+    }
+  });
+
+  assert.ok(calls.some((call) => call.method === "editMessageText"));
+  const fallback = calls.find((call) => call.method === "sendMessage");
+  assert.ok(fallback);
+  assert.match(fallback.text, /Плановая трата отменена|Planned expense cancelled/);
+});
+
 test("admin stats shows non-zero metrics after message draft and confirm flow", async () => {
   const repo = fakeRepository();
   const messages = [];
@@ -639,12 +762,60 @@ test("voice transcription failure records an event and returns an error response
   }
 
   assert.ok(repo.events.some((event) => event.eventName === "voice_transcription_failed"));
-  assert.ok(messages.length > 0);
+  assert.match(messages.at(-1).text, /Не смог разобрать голосовое|couldn.t understand the voice message/i);
+  const completed = repo.events.find((event) => event.eventName === "message_processing_completed");
+  assert.equal(completed.metadata.result, "transcription_failed");
+  assert.equal(completed.metadata.status, "transcription_failed");
 });
 
-test("photo input is counted and records a parse failure", async () => {
+test("voice amount-not-found response includes the escaped transcript", async () => {
   const repo = fakeRepository();
   const messages = [];
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: repo,
+    telegramClient: captureTelegramClient(messages),
+    voiceTranscriber: {
+      isConfigured: () => true,
+      async transcribeTelegramVoice() {
+        return "<b>rent reminder</b> ".repeat(10);
+      }
+    },
+    expenseParser: {
+      async parse() {
+        return { expenses: [] };
+      }
+    }
+  });
+
+  await bot.handleUpdate({
+    message: {
+      chat: { id: 10 },
+      from: { id: 100, first_name: "M" },
+      voice: { file_id: "voice-file-id", mime_type: "audio/ogg" }
+    }
+  });
+
+  const response = messages.at(-1).text;
+  assert.match(response, /Я услышал|I heard/);
+  assert.match(response, /&lt;b&gt;rent reminder&lt;\/b&gt;/);
+  assert.doesNotMatch(response, /<b>rent reminder<\/b>/);
+  assert.match(response, /…/);
+  assert.ok((response.match(/rent reminder/g) ?? []).length < 10);
+  const completed = repo.events.find((event) => event.eventName === "message_processing_completed");
+  assert.equal(completed.metadata.result, "amount_not_found");
+  assert.equal(completed.metadata.status, "amount_not_found");
+});
+
+test("photo input returns a friendly unsupported-photo response without creating a draft", async () => {
+  const repo = fakeRepository();
+  const messages = [];
+  let draftCreated = false;
+  repo.createDraft = async () => {
+    draftCreated = true;
+    return { id: 42 };
+  };
   const bot = createTelegramBot({
     token: "test-token",
     miniAppUrl: "http://localhost:3000",
@@ -661,7 +832,12 @@ test("photo input is counted and records a parse failure", async () => {
   });
 
   assert.ok(repo.events.some((event) => event.eventName === "message_received" && event.metadata.inputType === "photo"));
-  assert.ok(repo.events.some((event) => event.eventName === "expense_parse_failed"));
+  assert.equal(draftCreated, false);
+  assert.match(messages.at(-1).text, /Фото чеков пока не умею читать|can.t read receipt photos yet/i);
+  assert.ok(repo.events.some((event) => event.eventName === "unsupported_photo_input" && event.metadata.inputType === "photo"));
+  const completed = repo.events.find((event) => event.eventName === "message_processing_completed");
+  assert.equal(completed.metadata.result, "unsupported_photo");
+  assert.equal(completed.metadata.status, "unsupported_photo");
 });
 
 test("throwing event logger does not break expense processing", async () => {
