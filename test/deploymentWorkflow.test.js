@@ -70,6 +70,21 @@ test('production deploy resolves a PR and syncs release notes after security che
   );
 });
 
+test('release note sync warnings do not fail a successful production deploy', () => {
+  const workflow = readText('.github/workflows/deploy.yml');
+  const releaseSyncIndex = workflow.indexOf('release-notes:sync-pr');
+  const releaseSyncWarningIndex = workflow.indexOf('Warning: release note sync failed');
+  const releaseSyncBlock = workflow.slice(releaseSyncIndex, releaseSyncWarningIndex);
+
+  assert.ok(releaseSyncIndex >= 0);
+  assert.ok(releaseSyncWarningIndex > releaseSyncIndex);
+  assert.match(
+    workflow,
+    /if ! docker compose --env-file \.env\.production -f compose\.prod\.yml exec -T\s+[\s\S]*release-notes:sync-pr -- --pr="\$RELEASE_PR_NUMBER"[\s\S]*then[\s\S]*Warning: release note sync failed/
+  );
+  assert.doesNotMatch(releaseSyncBlock, /exit 1/);
+});
+
 test('production compose passes automatic release digest settings to the API', () => {
   const compose = readText('compose.prod.yml');
 

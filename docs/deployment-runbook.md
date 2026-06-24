@@ -65,6 +65,10 @@ the sync script assigns the next `v.1.x` version. Use `audience: admin` or
 After production health and security checks, the workflow resolves the merged
 PR associated with the deployed SHA and synchronizes its release block into
 PostgreSQL. The API sends pending public notes at the configured local hour.
+Release note synchronization is best-effort: if the release block is malformed
+or GitHub lookup fails after the application is already healthy, deploy logs a
+warning and continues. Fix the PR body and run the sync command manually if the
+release note still needs to be published.
 
 Add these values to production `.env.production`:
 
@@ -143,6 +147,8 @@ docker compose --env-file .env.production -f compose.prod.yml exec -T api \
 ```
 
 The production database remains in the Docker volume. Application secrets remain in `.env.production`.
+The release-note sync step is intentionally non-blocking after health checks:
+it should not roll back or fail a healthy application deploy.
 
 ## Rollback
 
@@ -165,6 +171,10 @@ Common causes:
 - Deploy user cannot run Docker.
 - `.env.production` is missing on the server.
 - `scripts/prod-security-check.sh` detects a failed health check or exposed Postgres port.
+
+If only `release-notes:sync-pr` fails, the application deploy has already
+passed health checks. Correct the `## User Release Notes` block in the PR body
+and run the release sync command manually if needed.
 
 Manual server check:
 

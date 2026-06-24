@@ -158,11 +158,13 @@ jobs:
             test -n "$release_sync_github_token"
             export GITHUB_TOKEN="$release_sync_github_token"
             export GITHUB_REPOSITORY="$RELEASE_SYNC_GITHUB_REPOSITORY"
-            docker compose --env-file .env.production -f compose.prod.yml exec -T \
+            if ! docker compose --env-file .env.production -f compose.prod.yml exec -T \
               -e GITHUB_TOKEN \
               -e GITHUB_REPOSITORY \
               api \
-              npm run release-notes:sync-pr -- --pr="$RELEASE_PR_NUMBER"
+              npm run release-notes:sync-pr -- --pr="$RELEASE_PR_NUMBER"; then
+              echo "Warning: release note sync failed for PR #$RELEASE_PR_NUMBER; deploy will continue." >&2
+            fi
             unset GITHUB_TOKEN GITHUB_REPOSITORY release_sync_github_token
           elif [ "$GITHUB_EVENT_NAME" = "push" ]; then
             echo "No merged PR associated with deployed master SHA" >&2
