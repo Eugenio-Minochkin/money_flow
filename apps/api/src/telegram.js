@@ -868,7 +868,14 @@ async function handleCallback({ update, repository, token, miniAppUrl, telegramC
     const messageId = callback.message.message_id;
     return sendTelegramResponse(trace, async () => {
       await answerCallback(token, callback.id, botText(language, "cancelledCallback"), telegramClient);
-      return editMessageText(token, chatId, messageId, botText(language, "cancelDraftMessage"), { inline_keyboard: [] }, telegramClient);
+      if (messageId) {
+        try {
+          return await editMessageText(token, chatId, messageId, botText(language, "cancelDraftMessage"), { inline_keyboard: [] }, telegramClient);
+        } catch (error) {
+          console.error("[telegram] editing cancelled draft failed, falling back to new message", error.message);
+        }
+      }
+      return sendMessage(token, chatId, botText(language, "cancelDraftMessage"), null, telegramClient);
     });
   }
 

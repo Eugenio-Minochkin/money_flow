@@ -1606,6 +1606,17 @@ button:disabled {
   padding-bottom: 0;
 }
 
+.history-saved-heading {
+  padding: 10px 14px 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.history-saved-heading h3 {
+  font-size: 14px;
+  margin: 0;
+  color: var(--ink);
+}
+
 .history-date-backdrop {
   position: fixed;
   inset: 0;

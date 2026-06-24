@@ -26,7 +26,7 @@ import {
   shiftCalendarMonth
 } from "./history.js";
 import { createTranslator } from "./i18n.js";
-import { inboxDraftDescription, inboxDraftTotal, shouldShowInboxOnDashboard, updateFirstInboxItemCategory } from "./inbox.js";
+import { inboxCountLabel, inboxDraftDescription, inboxDraftTotal, shouldShowInboxOnDashboard, updateFirstInboxItemCategory } from "./inbox.js";
 import { buildReserveSettingsView } from "./reserveSettings.js";
 import {
   buildPlannedOccurrences,
@@ -737,12 +737,15 @@ function renderLatest(expenses) {
 
 function renderHistory(expenses) {
   const list = document.querySelector("#historyList");
+  const savedHeading = document.querySelector("#historySavedHeading");
   if (!expenses.length) {
     const searching = document.querySelector("#historySearch")?.value.trim();
     list.innerHTML = `<div class="empty">${escapeHtml(searching ? t("history.empty") : t("history.periodEmpty"))}</div>`;
+    savedHeading?.classList.add("hidden");
     return;
   }
 
+  savedHeading?.classList.remove("hidden");
   const groups = groupByDay(expenses);
   list.innerHTML = groups.map((group) => `
     <section class="history-day">
@@ -766,7 +769,7 @@ function renderInboxDrafts(drafts) {
     return;
   }
   block.classList.remove("hidden");
-  title.textContent = t("history.inboxCount", { count: drafts.length });
+  title.textContent = inboxCountLabel(drafts.length, currentLanguage);
   list.innerHTML = drafts.map((draft) => {
     const total = inboxDraftTotal(draft);
     const description = inboxDraftDescription(draft);
@@ -802,7 +805,7 @@ function renderDashboardInboxDrafts(drafts) {
     return;
   }
   block.classList.remove("hidden");
-  title.textContent = t("history.inboxCount", { count: drafts.length });
+  title.textContent = inboxCountLabel(drafts.length, currentLanguage);
   list.innerHTML = drafts.slice(0, 2).map((draft) => {
     const total = inboxDraftTotal(draft);
     const description = inboxDraftDescription(draft);

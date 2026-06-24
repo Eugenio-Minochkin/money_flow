@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  inboxCountLabel,
   inboxDraftDescription,
   inboxDraftTotal,
   shouldShowInboxOnDashboard,
@@ -41,4 +42,28 @@ test("updates first inbox item category and marks it reviewed", () => {
 test("shows dashboard inbox when there are drafts to review", () => {
   assert.equal(shouldShowInboxOnDashboard([]), false);
   assert.equal(shouldShowInboxOnDashboard([{ id: 1, status: "inbox" }]), true);
+});
+
+test("inboxCountLabel formats Russian draft counts with correct pluralization", () => {
+  assert.equal(inboxCountLabel(1, "ru"), "Нужно проверить 1 трату");
+  assert.equal(inboxCountLabel(2, "ru"), "Нужно проверить 2 траты");
+  assert.equal(inboxCountLabel(5, "ru"), "Нужно проверить 5 трат");
+  assert.equal(inboxCountLabel(11, "ru"), "Нужно проверить 11 трат");
+  assert.equal(inboxCountLabel(21, "ru"), "Нужно проверить 21 трату");
+  assert.equal(inboxCountLabel(22, "ru"), "Нужно проверить 22 траты");
+  assert.equal(inboxCountLabel(25, "ru"), "Нужно проверить 25 трат");
+});
+
+test("inboxCountLabel formats English draft counts with singular/plural", () => {
+  assert.equal(inboxCountLabel(1, "en"), "Review 1 expense");
+  assert.equal(inboxCountLabel(2, "en"), "Review 2 expenses");
+  assert.equal(inboxCountLabel(5, "en"), "Review 5 expenses");
+});
+
+test("inboxCountLabel never leaves a bare count placeholder", () => {
+  for (const language of ["ru", "en"]) {
+    assert.doesNotMatch(inboxCountLabel(2, language), /:\s*\d/);
+    assert.doesNotMatch(inboxCountLabel(2, language), /\{count\}/);
+  }
+  assert.equal(inboxCountLabel(0, "ru"), "Нужно проверить 0 трат");
 });
