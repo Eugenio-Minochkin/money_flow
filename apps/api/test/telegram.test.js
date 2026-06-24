@@ -1184,6 +1184,34 @@ test("new user chooses language and completes budget setup in one message before
   assert.equal(repo.currentMonthBudget, null);
 });
 
+test("Russian language callback sends Russian budget setup text", async () => {
+  const messages = [];
+  const repo = fakeRepository();
+  repo.user = { id: 1, interface_language: "en", base_currency: "THB", onboarding_step: "language", onboarding_data: {} };
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: repo,
+    telegramClient: captureTelegramClient(messages)
+  });
+
+  await bot.handleUpdate({
+    callback_query: {
+      id: "callback-1",
+      data: "onboard_lang:ru",
+      from: { id: 100 },
+      message: { chat: { id: 10 } }
+    }
+  });
+
+  assert.match(messages[0].text, /Money Flow помогает/);
+  assert.match(messages[0].text, /Теперь отправь валюту и месячный бюджет/);
+  assert.doesNotMatch(messages[0].text, /helps you save expenses/i);
+  assert.doesNotMatch(messages[0].text, /currency and monthly budget/i);
+  assert.equal(repo.user.interface_language, "ru");
+  assert.equal(repo.user.onboarding_step, "budget_setup");
+});
+
 test("budget setup can collect currency and monthly budget step by step", async () => {
   const calls = [];
   const repo = fakeRepository();
@@ -1261,6 +1289,94 @@ test("budget setup after the 5th asks for current partial-month budget", async (
   assert.equal(repo.settings.monthlyBudgetAmount, 2000);
   assert.equal(repo.currentMonthBudget.amount, 900);
   assert.equal(repo.currentMonthBudget.currency, "USD");
+});
+
+test("completed budget setup before and after the 5th allows the next expense to become a regular draft", async () => {
+  for (const scenario of [
+    { name: "before the 5th", now: "2026-06-05T10:00:00+07:00", onboardingMessages: ["English", "THB 42000"] },
+    { name: "after the 5th", now: "2026-06-12T10:00:00+07:00", onboardingMessages: ["English", "THB 42000", "skip"] }
+  ]) {
+    const calls = [];
+    const parserCalls = [];
+    const repo = fakeRepository();
+    repo.user = { id: 1, interface_language: "en", base_currency: "THB", onboarding_step: "language", onboarding_data: {} };
+    const originalLog = console.log;
+    console.log = (...args) => calls.push(args);
+    try {
+      const bot = createTelegramBot({
+        token: "",
+        miniAppUrl: "http://localhost:3000",
+        repository: repo,
+        now: () => new Date(scenario.now),
+        expenseParser: {
+          async parse(text, options) {
+            parserCalls.push({ text, options });
+            return {
+              expenses: [{
+                amount: 70,
+                currency: options.defaultCurrency,
+                description: "coffee",
+                category_slug: "food_cafe",
+                tags: [],
+                spent_at: "2026-06-02T10:00:00+07:00",
+                confidence: 0.9,
+                needs_review: false
+              }]
+            };
+          }
+        }
+      });
+
+      for (const text of scenario.onboardingMessages) {
+        await bot.handleUpdate(textUpdate(text, 100));
+      }
+      await bot.handleUpdate(textUpdate("coffee 70", 100));
+      await bot.handleUpdate(textUpdate("/start", 100));
+    } finally {
+      console.log = originalLog;
+    }
+
+    assert.equal(repo.user.onboarding_step, "completed", scenario.name);
+    assert.equal(parserCalls.length, 1, scenario.name);
+    assert.equal(parserCalls[0].text, "coffee 70", scenario.name);
+    assert.equal(repo.currentMonthBudget, null, scenario.name);
+    assert.ok(calls.at(-1)[1].replyMarkup.inline_keyboard[0][0].web_app, scenario.name);
+  }
+});
+
+test("current month budget can be skipped without creating a monthly override", async () => {
+  for (const skipText of ["skip", "пропустить", "0"]) {
+    const calls = [];
+    const repo = fakeRepository();
+    repo.user = {
+      id: 1,
+      interface_language: skipText === "пропустить" ? "ru" : "en",
+      base_currency: "THB",
+      monthly_budget_amount: 42000,
+      onboarding_step: "current_month_budget",
+      onboarding_data: {}
+    };
+    const originalLog = console.log;
+    console.log = (...args) => calls.push(args);
+    try {
+      const bot = createTelegramBot({
+        token: "",
+        miniAppUrl: "http://localhost:3000",
+        repository: repo,
+        now: () => new Date("2026-06-12T10:00:00+07:00")
+      });
+
+      await bot.handleUpdate(textUpdate(skipText, 100));
+    } finally {
+      console.log = originalLog;
+    }
+
+    assert.equal(repo.user.onboarding_step, "completed", skipText);
+    assert.equal(repo.currentMonthBudget, null, skipText);
+    assert.equal(repo.setCurrentMonthBudgetCalls, 0, skipText);
+    assert.match(calls[0][1].text, /setup is complete|Готово/i, skipText);
+    assert.ok(calls[0][1].replyMarkup.inline_keyboard[0][0].web_app, skipText);
+  }
 });
 
 test("text message does not call voice transcription during onboarding", async () => {
@@ -1932,6 +2048,7 @@ function fakeRepository() {
     settings: {},
     monthBaseline: null,
     currentMonthBudget: null,
+    setCurrentMonthBudgetCalls: 0,
     plannedDraft: null,
     async upsertTelegramUser() {
       return this.user;
@@ -1986,6 +2103,7 @@ function fakeRepository() {
       return baseline;
     },
     async setCurrentMonthBudget(_telegramUserId, budget) {
+      this.setCurrentMonthBudgetCalls += 1;
       this.currentMonthBudget = budget;
       this.user = { ...this.user, onboarding_step: "completed" };
       return budget;

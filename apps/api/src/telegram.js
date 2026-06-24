@@ -8,6 +8,7 @@ import { createTelegramJobQueue } from "./telegramJobQueue.js";
 import { formatDraft, formatPlannedDraft, formatReserveClosedEvent, formatSavedSummary, formatTotals, formatWeeklyReport } from "./telegramFormat.js";
 import { appKeyboard, draftKeyboard, inboxDraftKeyboard, plannedDraftKeyboard } from "./telegramKeyboards.js";
 
+// budget_setup is the primary onboarding path; base_currency/monthly_budget/month_opening_spend are legacy fallback states.
 const ONBOARDING_STEPS = ["language", "budget_setup", "base_currency", "monthly_budget", "current_month_budget", "month_opening_spend"];
 
 export function createTelegramBot({
@@ -558,6 +559,12 @@ async function handleOnboardingMessage({ text, user, repository, token, chatId, 
   }
 
   if (step === "current_month_budget" || step === "month_opening_spend") {
+    if (isSkip(text)) {
+      trace.start("db_save");
+      await repository.setOnboardingStep?.(telegramUserId, "completed");
+      trace.end("db_save");
+      return sendTelegramResponse(trace, () => sendMessage(token, chatId, onboardingText(language, "complete"), appKeyboard(miniAppUrl, telegramUserId, language), telegramClient));
+    }
     const amount = parseSingleAmount(text, user.base_currency ?? "THB");
     if (!amount || amount.amount <= 0) {
       return sendTelegramResponse(trace, () => sendMessage(token, chatId, onboardingText(language, "currentMonthBudgetRetry", { currency: user.base_currency ?? "THB" }), null, telegramClient));
@@ -708,7 +715,7 @@ function parseSingleAmount(text, defaultCurrency) {
 }
 
 function isSkip(text) {
-  return /^(0|skip|пропустить|нет)$/iu.test(String(text ?? "").trim());
+  return /^(0|skip|пропустить|нет|как обычно)$/iu.test(String(text ?? "").trim());
 }
 
 function normalizeOnboardingData(value) {
@@ -1247,15 +1254,15 @@ function onboardingText(language, key, values = {}) {
       language: "Choose language / Выбери язык:",
       languageRetry: "Please choose a language: English or Русский.",
       introBudgetSetup: [
-        "Money Flow helps you save expenses from text or voice.",
-        "Send expenses like: <b>coffee 70 baht and lunch 180</b>.",
-        "I will show a draft first and save only after confirmation.",
+        "Money Flow помогает заносить расходы текстом или голосом.",
+        "Например: <b>кофе 70 бат и обед 180</b>.",
+        "Сначала я покажу черновик, а сохраню только после подтверждения.",
         "",
-        "Now send your currency and monthly budget in one message, for example: <b>THB 42000</b> or <b>USD 2000</b>."
+        "Теперь отправь валюту и месячный бюджет одним сообщением: <b>THB 42000</b> или <b>USD 2000</b>."
       ].join("\n"),
-      budgetSetupRetry: "I did not understand the currency and monthly budget. Send, for example: <b>THB 42000</b> or <b>USD 2000</b>.",
-      budgetSetupCurrencyMissing: "Got the monthly budget. Now send the currency: <b>THB</b>, <b>USD</b>, <b>RUB</b>, <b>IDR</b>, <b>EUR</b>, <b>BYN</b>, or <b>GEL</b>.",
-      budgetSetupAmountMissing: `Good, I will count in <b>${currency}</b>. Now send your monthly budget, for example: <b>42000</b> or <b>42k</b>.`,
+      budgetSetupRetry: "Не понял валюту и месячный бюджет. Напиши, например: <b>THB 42000</b> или <b>USD 2000</b>.",
+      budgetSetupCurrencyMissing: "Бюджет понял. Теперь отправь валюту: <b>THB</b>, <b>USD</b>, <b>RUB</b>, <b>IDR</b>, <b>EUR</b>, <b>BYN</b> или <b>GEL</b>.",
+      budgetSetupAmountMissing: `Ок, считаем в <b>${currency}</b>. Теперь отправь месячный бюджет, например: <b>42000</b> или <b>42k</b>.`,
       baseCurrency: [
         "Сначала быстро настроим учет.",
         "",
