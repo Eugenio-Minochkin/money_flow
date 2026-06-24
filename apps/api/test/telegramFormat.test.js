@@ -82,8 +82,9 @@ test("formats saved summary with budget context", () => {
 
   assert.match(text, /75 THB/);
   assert.match(text, /Обычные/);
-  assert.match(normalized, /Обычные: <b>75 THB \/ 1 475 THB<\/b>/);
-  assert.match(normalized, /Осталось: <b>1 400 THB<\/b>/);
+  assert.match(normalized, /Обычные: <b>75 THB<\/b>/);
+  assert.match(normalized, /896 THB\/день/);
+  assert.doesNotMatch(normalized, /75 THB \/ 1 475 THB/);
   assert.match(normalized, /735 THB \/ 42 000 THB/);
   assert.match(text, /1,75%/);
   assert.match(text, /Плановые сегодня/);
@@ -93,7 +94,7 @@ test("formats saved summary with budget context", () => {
   assert.match(text, /675 THB/);
 });
 
-test("formats saved summary with daily plan context and saved expense details", () => {
+test("formats saved summary with safe-to-spend pace and saved expense details", () => {
   const text = formatSavedSummary(10, {
     ...snapshot(),
     today: 10,
@@ -116,9 +117,10 @@ test("formats saved summary with daily plan context and saved expense details", 
   });
   const normalized = normalizeSpaces(text);
 
-  assert.match(normalized, /10 THB \/ 1 600 THB/);
-  assert.match(normalized, /1 590 THB/);
-  assert.doesNotMatch(normalized, /428 THB/);
+  assert.match(normalized, /Обычные: <b>10 THB<\/b>/);
+  assert.match(normalized, /428 THB\/день/);
+  assert.doesNotMatch(normalized, /10 THB \/ 1 600 THB/);
+  assert.doesNotMatch(normalized, /1 590 THB/);
   assert.match(normalized, /Продукты · Молоко · 10 THB/);
 });
 
@@ -150,8 +152,9 @@ test("formats saved summary with planned and large daily aggregates", () => {
   });
   const normalized = normalizeSpaces(text);
 
-  assert.match(normalized, /802 THB \/ 615 THB/);
-  assert.match(normalized, /187 THB/);
+  assert.match(normalized, /Обычные: <b>802 THB<\/b>/);
+  assert.match(normalized, /896 THB\/день/);
+  assert.doesNotMatch(normalized, /802 THB \/ 615 THB/);
   assert.match(normalized, /Плановые сегодня: <b>1 000 THB<\/b>/);
   assert.match(normalized, /Крупные сегодня: <b>2 000 THB<\/b>/);
   assert.match(normalized, /Всего за день: <b>3 802 THB<\/b>/);
