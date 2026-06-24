@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildDashboardCards, renderDashboardCards } from "../src/dashboardCards.js";
+import { buildDashboardCards, buildHeroMetric, renderDashboardCards } from "../src/dashboardCards.js";
 
 const helpers = {
   t: (key) => ({
@@ -12,6 +12,9 @@ const helpers = {
     "dashboard.limitPrefix": "лимит",
     "dashboard.budget": "бюджет",
     "dashboard.dayBudget": "бюджет дня",
+    "dashboard.ofDayBudget": "из бюджета дня",
+    "dashboard.canStillSpendToday": "Можно ещё сегодня",
+    "dashboard.todayOverrun": "Перерасход сегодня",
     "dashboard.overrun": "перерасход",
     "dashboard.safeToSpendPerDay": "Можно в день до конца месяца",
     "dashboard.afterExpensesAndPlanned": "после расходов и плановых оплат"
@@ -83,8 +86,109 @@ test("today card shows the fixed daily budget and remaining, not the live pace",
   assert.deepEqual(cards[0].lines.map((line) => line.label), ["осталось", "бюджет дня"]);
   assert.deepEqual(cards[0].lines.map((line) => line.amount), ["417 THB", "427 THB"]);
   assert.ok(!cards[0].lines.some((line) => line.amount === "428 THB"));
-  assert.equal(cards[0].progress, null);
-  assert.equal(cards[0].percent, null);
+  assert.equal(cards[0].percent, "2.34%");
+  assert.deepEqual(cards[0].progress, { percent: 2.34, state: "good" });
+});
+
+test("today card restores percent and visible progress from daily budget fields", () => {
+  const cards = buildDashboardCards({
+    today: 120,
+    dayPlanLimit: 214,
+    dayRemaining: 94,
+    dayOverrun: 0,
+    safeToSpendPerDay: 180,
+    dayProgressPercent: 56.07,
+    progress: {
+      day: { percent: 56.07, state: "good" }
+    }
+  }, helpers);
+  const container = { innerHTML: "" };
+
+  renderDashboardCards(container, [cards[0]]);
+
+  assert.equal(cards[0].amount, "120 THB");
+  assert.equal(cards[0].percent, "56.07%");
+  assert.equal(cards[0].state, "good");
+  assert.deepEqual(cards[0].lines.map((line) => `${line.label} ${line.amount}`), [
+    "осталось 94 THB",
+    "бюджет дня 214 THB"
+  ]);
+  assert.deepEqual(cards[0].progress, { percent: 56.07, state: "good" });
+  assert.doesNotMatch(container.innerHTML, /dashboard-card__progress--hidden/);
+  assert.match(container.innerHTML, /style="width: 56\.07%"/);
+});
+
+test("today card shows overrun percent while capping red progress width", () => {
+  const cards = buildDashboardCards({
+    today: 235,
+    dayPlanLimit: 214,
+    dayRemaining: 0,
+    dayOverrun: 21,
+    safeToSpendPerDay: 180,
+    dayProgressPercent: 109.92,
+    progress: {
+      day: { percent: 109.92, state: "bad" }
+    }
+  }, helpers);
+  const container = { innerHTML: "" };
+
+  renderDashboardCards(container, [cards[0]]);
+
+  assert.equal(cards[0].amount, "235 THB");
+  assert.equal(cards[0].percent, "109.92%");
+  assert.equal(cards[0].state, "bad");
+  assert.deepEqual(cards[0].lines.map((line) => `${line.label} ${line.amount}`), [
+    "перерасход 21 THB",
+    "бюджет дня 214 THB"
+  ]);
+  assert.deepEqual(cards[0].progress, { percent: 109.92, state: "bad" });
+  assert.doesNotMatch(container.innerHTML, /dashboard-card__progress--hidden/);
+  assert.match(container.innerHTML, /data-state="bad" style="width: 100%"/);
+  assert.match(container.innerHTML, />109\.92%<\/b>/);
+});
+
+test("builds hero metric from day remaining instead of safe-to-spend pace", () => {
+  const hero = buildHeroMetric({
+    dayRemaining: 94,
+    dayPlanLimit: 214,
+    dayOverrun: 0,
+    safeToSpendPerDay: 180,
+    display: {
+      currency: "USD",
+      dayRemaining: 2.88,
+      safeToSpendPerDay: 5.51
+    }
+  }, helpers);
+
+  assert.deepEqual(hero, {
+    title: "Можно ещё сегодня",
+    amount: "94 THB",
+    display: "~$2.88",
+    caption: "из бюджета дня 214 THB",
+    state: "good"
+  });
+});
+
+test("builds hero metric from day overrun when today is over budget", () => {
+  const hero = buildHeroMetric({
+    dayRemaining: 0,
+    dayPlanLimit: 214,
+    dayOverrun: 21,
+    safeToSpendPerDay: 180,
+    display: {
+      currency: "USD",
+      dayOverrun: 0.64,
+      safeToSpendPerDay: 5.51
+    }
+  }, helpers);
+
+  assert.deepEqual(hero, {
+    title: "Перерасход сегодня",
+    amount: "21 THB",
+    display: "~$0.64",
+    caption: "бюджет дня 214 THB",
+    state: "bad"
+  });
 });
 
 test("renders dashboard cards with explicit component classes and progress state", () => {

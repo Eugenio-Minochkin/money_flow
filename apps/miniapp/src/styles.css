@@ -230,7 +230,8 @@ h2 {
   box-shadow: 0 18px 38px rgb(154 92 18 / 18%);
 }
 
-.hero-metric[data-state="danger"] {
+.hero-metric[data-state="danger"],
+.hero-metric[data-state="bad"] {
   background: #8f2f3a;
   box-shadow: 0 18px 38px rgb(143 47 58 / 18%);
 }
@@ -384,7 +385,8 @@ body[data-theme="dark"] .monthly-forecast {
   color: var(--amber);
 }
 
-.dashboard-card__percent[data-state="danger"] {
+.dashboard-card__percent[data-state="danger"],
+.dashboard-card__percent[data-state="bad"] {
   color: var(--red);
 }
 
@@ -416,6 +418,7 @@ body[data-theme="dark"] .monthly-forecast {
 }
 
 .dashboard-card__progress-fill[data-state="danger"],
+.dashboard-card__progress-fill[data-state="bad"],
 .bar-fill[data-state="danger"] {
   background: var(--red);
 }

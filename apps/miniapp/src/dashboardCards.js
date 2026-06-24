@@ -12,10 +12,35 @@ export function budgetLine(label, amount) {
   return cardLine(label, amount);
 }
 
-export function buildDashboardCards(snapshot, helpers) {
-  const dayPlanLimit = Number(snapshot.dayPlanLimit ?? 0);
+export function buildHeroMetric(snapshot, helpers) {
   const dayRemaining = Number(snapshot.dayRemaining ?? 0);
   const dayOverrun = Number(snapshot.dayOverrun ?? 0);
+  const dayPlanLimit = Number(snapshot.dayPlanLimit ?? 0);
+  const hasOverrun = dayOverrun > 0;
+  const amount = hasOverrun ? dayOverrun : dayRemaining;
+  const displayAmount = hasOverrun ? snapshot.display?.dayOverrun : snapshot.display?.dayRemaining;
+  const captionKey = hasOverrun ? "dashboard.dayBudget" : "dashboard.ofDayBudget";
+
+  return {
+    title: helpers.t(hasOverrun ? "dashboard.todayOverrun" : "dashboard.canStillSpendToday"),
+    amount: helpers.moneyBase(amount),
+    display: helpers.moneyDisplay(displayAmount, snapshot.display?.currency),
+    caption: `${helpers.t(captionKey)} ${helpers.moneyBase(dayPlanLimit)}`,
+    state: hasOverrun ? "bad" : "good"
+  };
+}
+
+export function buildDashboardCards(snapshot, helpers) {
+  const dayPlanLimit = Number(snapshot.dayPlanLimit ?? 0);
+  const todayTotal = Number(snapshot.today ?? 0);
+  const dayRemaining = Number(snapshot.dayRemaining ?? 0);
+  const dayOverrun = Number(snapshot.dayOverrun ?? Math.max(todayTotal - dayPlanLimit, 0));
+  const computedDayPercent = dayPlanLimit > 0 ? (todayTotal / dayPlanLimit) * 100 : 0;
+  const dayProgressPercent = Number(snapshot.dayProgressPercent ?? computedDayPercent);
+  const dayProgress = snapshot.progress?.day ?? {
+    percent: dayProgressPercent,
+    state: dayOverrun > 0 || dayProgressPercent > 100 ? "bad" : "good"
+  };
   const weekProgress = snapshot.progress?.week ?? { percent: snapshot.weekProgressPercent ?? 0, state: "good" };
   const monthProgress = snapshot.progress?.month ?? { percent: snapshot.budgetProgressPercent ?? 0, state: "good" };
 
@@ -33,10 +58,10 @@ export function buildDashboardCards(snapshot, helpers) {
     {
       title: helpers.t("dashboard.today"),
       amount: helpers.moneyBase(snapshot.today),
-      percent: null,
-      state: null,
+      percent: helpers.percent(dayProgressPercent),
+      state: dayProgress.state,
       lines: todayLines,
-      progress: null
+      progress: dayProgress
     },
     {
       title: helpers.t("dashboard.week"),
