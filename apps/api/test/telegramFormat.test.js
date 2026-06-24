@@ -82,8 +82,8 @@ test("formats saved summary with budget context", () => {
 
   assert.match(text, /75 THB/);
   assert.match(text, /Обычные/);
-  assert.match(normalized, /Обычные: <b>75 THB<\/b>/);
-  assert.match(normalized, /896 THB\/день/);
+  assert.match(normalized, /Обычные: <b>75 THB \/ 1 475 THB<\/b>/);
+  assert.match(normalized, /Осталось: <b>1 400 THB<\/b>/);
   assert.match(normalized, /735 THB \/ 42 000 THB/);
   assert.match(text, /1,75%/);
   assert.match(text, /Плановые сегодня/);
@@ -93,7 +93,7 @@ test("formats saved summary with budget context", () => {
   assert.match(text, /675 THB/);
 });
 
-test("formats saved summary with safe-to-spend daily pace instead of day plan limit", () => {
+test("formats saved summary with daily plan context and saved expense details", () => {
   const text = formatSavedSummary(10, {
     ...snapshot(),
     today: 10,
@@ -116,9 +116,28 @@ test("formats saved summary with safe-to-spend daily pace instead of day plan li
   });
   const normalized = normalizeSpaces(text);
 
-  assert.doesNotMatch(normalized, /10 THB \/ 1 600 THB/);
-  assert.match(normalized, /Можно в день до конца месяца: <b>428 THB\/день<\/b>/);
+  assert.match(normalized, /10 THB \/ 1 600 THB/);
+  assert.match(normalized, /1 590 THB/);
+  assert.doesNotMatch(normalized, /428 THB/);
   assert.match(normalized, /Продукты · Молоко · 10 THB/);
+});
+
+test("formats saved summary month plan delta from forecast minus monthly budget", () => {
+  const text = formatSavedSummary(10, {
+    ...snapshot(),
+    month: 44035,
+    monthlyBudget: 48000,
+    freeRemaining: 2987,
+    plannedRemaining: 977,
+    budgetProgressPercent: 91.74,
+    forecastMonthTotal: 49699,
+    planDeviation: 5635
+  }, { language: "ru" });
+  const normalized = normalizeSpaces(text);
+
+  assert.match(normalized, /49 699 THB/);
+  assert.match(normalized, /1 699 THB/);
+  assert.doesNotMatch(normalized, /5 635 THB/);
 });
 
 test("formats saved summary with planned and large daily aggregates", () => {
@@ -131,8 +150,8 @@ test("formats saved summary with planned and large daily aggregates", () => {
   });
   const normalized = normalizeSpaces(text);
 
-  assert.match(normalized, /Обычные: <b>802 THB<\/b>/);
-  assert.match(normalized, /896 THB\/день/);
+  assert.match(normalized, /802 THB \/ 615 THB/);
+  assert.match(normalized, /187 THB/);
   assert.match(normalized, /Плановые сегодня: <b>1 000 THB<\/b>/);
   assert.match(normalized, /Крупные сегодня: <b>2 000 THB<\/b>/);
   assert.match(normalized, /Всего за день: <b>3 802 THB<\/b>/);
