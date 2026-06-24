@@ -1,4 +1,13 @@
 const DEFAULT_OFFSET_MINUTES = 7 * 60;
+const FALLBACK_USER_TIME_ZONE = "Asia/Bangkok";
+
+export function resolveUserTimeZone(user) {
+  const raw = String(user?.timezone ?? "").trim();
+  if (!raw) return FALLBACK_USER_TIME_ZONE;
+  return normalizeTimeZone(raw) === "UTC" && raw.toUpperCase() !== "UTC"
+    ? FALLBACK_USER_TIME_ZONE
+    : normalizeTimeZone(raw);
+}
 
 export function normalizeTimeZone(value) {
   const candidate = String(value ?? "").trim() || "UTC";
@@ -13,6 +22,26 @@ export function normalizeTimeZone(value) {
 export function timeZoneMonthKey(date, timeZone = "UTC") {
   const parts = timeZoneDateParts(date, timeZone);
   return `${parts.year}-${String(parts.month).padStart(2, "0")}`;
+}
+
+export function timeZoneDayKey(date, timeZone = "UTC") {
+  const parts = timeZoneDateParts(date, timeZone);
+  return `${parts.year}-${String(parts.month).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}`;
+}
+
+export function timeZoneDayBounds(date, timeZone = "UTC") {
+  const parts = timeZoneDateParts(date, timeZone);
+  return {
+    start: zonedDateTimeToUtc({ year: parts.year, month: parts.month, day: parts.day }, timeZone),
+    end: zonedDateTimeToUtc(nextCalendarDay({ year: parts.year, month: parts.month, day: parts.day }), timeZone)
+  };
+}
+
+function nextCalendarDay({ year, month, day }) {
+  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  if (day < daysInMonth) return { year, month, day: day + 1 };
+  if (month < 12) return { year, month: month + 1, day: 1 };
+  return { year: year + 1, month: 1, day: 1 };
 }
 
 export function timeZoneMonthState(date, timeZone = "UTC") {

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
 import { createRepository } from "../src/repository.js";
+import { formatSavedSummary } from "../src/telegramFormat.js";
 
 test("records app events with JSON metadata", async () => {
   const queries = [];
@@ -200,9 +201,9 @@ test("recreates an invalidated daily snapshot from the updated monthly budget", 
   await repo.updateMonthlyBudget(100, 48000, now);
   const dashboard = await repo.dashboard(100, now);
 
-  assert.equal(storedDayBudget, 1600);
-  assert.equal(dashboard.snapshot.dayPlanLimit, 1600);
-  assert.equal(dashboard.snapshot.dayRemaining, 1217);
+  assert.equal(storedDayBudget, 401.5);
+  assert.equal(dashboard.snapshot.dayPlanLimit, 401.5);
+  assert.equal(dashboard.snapshot.dayRemaining, 18.5);
   assert.equal(dashboard.snapshot.safeToSpendPerDay, 401.5);
 });
 
@@ -2083,7 +2084,7 @@ test("dashboard uses current month override only for the matching calendar month
   assert.equal(june.currentMonthBudget.amount, 12000);
   assert.equal(june.currentMonthBudget.isPartialMonth, true);
   assert.equal(june.currentMonthBudget.partialPeriodDays, 19);
-  assert.equal(june.snapshot.dayPlanLimit, 631.58);
+  assert.equal(june.snapshot.dayPlanLimit, 1125);
   assert.equal(july.snapshot.monthlyBudget, 45000);
   assert.equal(july.currentMonthBudget.amount, 45000);
   assert.equal(july.currentMonthBudget.isPartialMonth, false);
@@ -2431,6 +2432,117 @@ test("acks only reserve events owned by the user", async () => {
 
   assert.deepEqual(events.map((event) => event.id), ["3", "4"]);
 });
+
+test("daily budget snapshot is fixed on day start and does not change after expenses", async () => {
+  let storedDayBudget = null;
+  let todaySpent = 0;
+  const MONTH_BASE = 44035; // month total excluding today's regular spending
+  const userRow = {
+    id: "1",
+    telegram_user_id: "100",
+    monthly_budget_amount: "48000",
+    base_currency: "THB",
+    display_currency: "USD",
+    usd_thb_rate: "32.65",
+    timezone: "Asia/Bangkok"
+  };
+  const totalsRow = (total) => ({
+    total,
+    regular_total: total,
+    planned_total: 0,
+    large_oneoff_total: 0,
+    display_total: 0,
+    regular_display_total: 0,
+    planned_display_total: 0,
+    large_oneoff_display_total: 0
+  });
+  const repo = createRepository(fakePool((sql, params) => {
+    const query = String(sql);
+    if (query.includes("FROM users WHERE telegram_user_id")) return { rows: [userRow] };
+    if (query.startsWith("SELECT * FROM users")) return { rows: [userRow] };
+    if (query.includes("FROM monthly_budget_overrides")) return { rows: [] };
+    if (query.includes("FROM recurring_reserve_templates")) return { rows: [] };
+    if (query.includes("FROM closed_reserve_events")) return { rows: [] };
+    if (query.includes("FROM month_baselines")) return { rows: [] };
+    if (query.includes("FROM daily_budget_snapshots")) {
+      return storedDayBudget == null
+        ? { rows: [] }
+        : { rows: [{ budget_amount_base: storedDayBudget, budget_display_amount: 0 }] };
+    }
+    if (query.includes("INSERT INTO daily_budget_snapshots")) {
+      storedDayBudget = Number(params[2]);
+      return { rows: [{ budget_amount_base: params[2], budget_display_amount: params[3] }] };
+    }
+    if (query.includes("COALESCE(SUM(amount_base)") && query.includes("FILTER")) {
+      const spanDays = (Number(params[2]) - Number(params[1])) / (24 * 60 * 60_000);
+      if (spanDays >= 20) return { rows: [totalsRow(MONTH_BASE + todaySpent)] };
+      return { rows: [totalsRow(todaySpent)] };
+    }
+    if (query.includes("FROM planned_expenses")) {
+      return {
+        rows: [{
+          id: "5",
+          amount_base: "977",
+          recurrence: "monthly",
+          due_day: 30,
+          due_days: [30],
+          paid_count: 0,
+          paid_occurrence_dates: [],
+          paid_occurrences: {}
+        }]
+      };
+    }
+    if (query.includes("planned_expense_payments")) return { rows: [] };
+    return { rows: [] };
+  }));
+
+  const now = new Date("2026-06-24T10:00:00+07:00"); // Bangkok June 24 -> daysLeftInMonth = 7
+
+  todaySpent = 0;
+  let dashboard = await repo.dashboard(100, now);
+  const fixedDayBudget = dashboard.snapshot.dayPlanLimit;
+  assert.equal(storedDayBudget, fixedDayBudget, "snapshot stores the fixed day budget");
+  assert.equal(dashboard.snapshot.dailyPlanLimit, 1600, "analytical monthly/day metric stays 48000/30");
+  assert.notEqual(dashboard.snapshot.dayPlanLimit, 1600);
+  assert.equal(dashboard.snapshot.dayPlanLimit, dashboard.snapshot.safeToSpendPerDay, "created from freeRemaining/daysLeftInMonth");
+
+  todaySpent = 10;
+  dashboard = await repo.dashboard(100, now);
+  assert.equal(storedDayBudget, fixedDayBudget, "snapshot is not recreated after an expense");
+  assert.equal(dashboard.snapshot.dayPlanLimit, fixedDayBudget);
+  assert.equal(dashboard.snapshot.dayRemaining, roundBase(fixedDayBudget - 10));
+  assert.equal(dashboard.snapshot.dayOverrun, 0);
+  assertSummary(dashboard.snapshot, 10, "427", "417");
+
+  todaySpent = 37;
+  dashboard = await repo.dashboard(100, now);
+  assert.equal(dashboard.snapshot.dayPlanLimit, fixedDayBudget);
+  assert.equal(dashboard.snapshot.dayRemaining, roundBase(fixedDayBudget - 37));
+  assertSummary(dashboard.snapshot, 37, "427", "390");
+
+  todaySpent = 500;
+  dashboard = await repo.dashboard(100, now);
+  assert.equal(dashboard.snapshot.dayPlanLimit, fixedDayBudget);
+  assert.equal(dashboard.snapshot.dayRemaining, 0);
+  assert.equal(dashboard.snapshot.dayOverrun, roundBase(500 - fixedDayBudget));
+  const overrunText = formatSavedSummary(500, dashboard.snapshot, { language: "ru" }).replaceAll("\u00a0", " ");
+  assert.match(overrunText, /Обычные: <b>500 THB \/ 427 THB<\/b>/);
+  assert.match(overrunText, /Перерасход: <b>73 THB<\/b>/);
+});
+
+function roundBase(value) {
+  return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
+}
+
+function assertSummary(snapshot, todaySpent, budgetDisplay, remainingDisplay) {
+  const text = formatSavedSummary(todaySpent, snapshot, { language: "ru" }).replaceAll("\u00a0", " ");
+  assert.match(text, new RegExp(`Обычные: <b>${todaySpent} THB / ${budgetDisplay} THB</b>`));
+  assert.match(text, new RegExp(`Осталось: <b>${remainingDisplay} THB</b>`));
+  assert.doesNotMatch(text, /460 THB/);
+  assert.doesNotMatch(text, /1 600 THB/);
+  assert.doesNotMatch(text, /1 563 THB/);
+  assert.doesNotMatch(text, /423 THB/);
+}
 
 function fakePool(handler) {
   return {

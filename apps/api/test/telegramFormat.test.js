@@ -82,9 +82,8 @@ test("formats saved summary with budget context", () => {
 
   assert.match(text, /75 THB/);
   assert.match(text, /Обычные/);
-  assert.match(normalized, /Обычные: <b>75 THB<\/b>/);
-  assert.match(normalized, /896 THB\/день/);
-  assert.doesNotMatch(normalized, /75 THB \/ 1 475 THB/);
+  assert.match(normalized, /Обычные: <b>75 THB \/ 1 475 THB<\/b>/);
+  assert.match(normalized, /Осталось: <b>1 400 THB<\/b>/);
   assert.match(normalized, /735 THB \/ 42 000 THB/);
   assert.match(text, /1,75%/);
   assert.match(text, /Плановые сегодня/);
@@ -94,14 +93,13 @@ test("formats saved summary with budget context", () => {
   assert.match(text, /675 THB/);
 });
 
-test("formats saved summary with safe-to-spend pace and saved expense details", () => {
+test("formats saved summary with the fixed daily budget and saved expense details", () => {
   const text = formatSavedSummary(10, {
     ...snapshot(),
     today: 10,
-    dayPlanLimit: 1600,
-    dayRemaining: 1590,
+    dayPlanLimit: 427,
+    dayRemaining: 417,
     dayOverrun: 0,
-    safeToSpendPerDay: 428,
     plannedToday: 1000,
     largeToday: 0
   }, {
@@ -117,9 +115,9 @@ test("formats saved summary with safe-to-spend pace and saved expense details", 
   });
   const normalized = normalizeSpaces(text);
 
-  assert.match(normalized, /Обычные: <b>10 THB<\/b>/);
-  assert.match(normalized, /428 THB\/день/);
-  assert.doesNotMatch(normalized, /10 THB \/ 1 600 THB/);
+  assert.match(normalized, /Обычные: <b>10 THB \/ 427 THB<\/b>/);
+  assert.match(normalized, /Осталось: <b>417 THB<\/b>/);
+  assert.doesNotMatch(normalized, /1 600 THB/);
   assert.doesNotMatch(normalized, /1 590 THB/);
   assert.match(normalized, /Продукты · Молоко · 10 THB/);
 });
@@ -146,18 +144,32 @@ test("formats saved summary with planned and large daily aggregates", () => {
   const text = formatSavedSummary(80, {
     ...snapshot(),
     today: 802,
-    dayPlanLimit: 615,
+    dayPlanLimit: 1000,
+    dayRemaining: 198,
+    dayOverrun: 0,
     plannedToday: 1000,
     largeToday: 2000
   });
   const normalized = normalizeSpaces(text);
 
-  assert.match(normalized, /Обычные: <b>802 THB<\/b>/);
-  assert.match(normalized, /896 THB\/день/);
-  assert.doesNotMatch(normalized, /802 THB \/ 615 THB/);
+  assert.match(normalized, /Обычные: <b>802 THB \/ 1 000 THB<\/b>/);
   assert.match(normalized, /Плановые сегодня: <b>1 000 THB<\/b>/);
   assert.match(normalized, /Крупные сегодня: <b>2 000 THB<\/b>/);
   assert.match(normalized, /Всего за день: <b>3 802 THB<\/b>/);
+});
+
+test("formats saved summary overrun when regular spend exceeds the day budget", () => {
+  const text = formatSavedSummary(500, {
+    ...snapshot(),
+    today: 500,
+    dayPlanLimit: 427,
+    dayRemaining: 0,
+    dayOverrun: 73
+  }, { language: "ru" });
+  const normalized = normalizeSpaces(text);
+
+  assert.match(normalized, /Обычные: <b>500 THB \/ 427 THB<\/b>/);
+  assert.match(normalized, /Перерасход: <b>73 THB<\/b>/);
 });
 
 test("formats command totals for month and budget", () => {
@@ -227,6 +239,8 @@ function snapshot() {
   return {
     today: 75,
     dayPlanLimit: 1475,
+    dayRemaining: 1400,
+    dayOverrun: 0,
     week: 735,
     weekPlanLimit: 9800,
     month: 735,

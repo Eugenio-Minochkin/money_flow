@@ -27,10 +27,10 @@ test("calculates month remaining and safe-to-spend", () => {
     daysInWeek: 7,
     elapsedDaysInWeek: 7,
     dailyPlanLimit: 1500,
-    dayPlanLimit: 1500,
-    dayRemaining: 680,
-    dayOverrun: 0,
-    dayProgressPercent: 54.67,
+    dayPlanLimit: 687.5,
+    dayRemaining: 0,
+    dayOverrun: 132.5,
+    dayProgressPercent: 119.27,
     weeklyBudget: 10500,
     weekPlanLimit: 10500,
     plannedThisWeek: 0,
@@ -59,7 +59,7 @@ test("calculates month remaining and safe-to-spend", () => {
       daysLeftInMonth: 24
     },
     progress: {
-      day: { percent: 54.67, state: "good" },
+      day: { percent: 119.27, state: "danger" },
       week: { percent: 0, state: "good" },
       month: { percent: 63.33, state: "danger" }
     },
@@ -215,15 +215,15 @@ test("calculates day week and month progress controls", () => {
     now: new Date("2026-06-10T10:00:00+07:00")
   });
 
-  assert.equal(snapshot.dayPlanLimit, 1500);
-  assert.equal(snapshot.dayRemaining, 850);
-  assert.equal(snapshot.dayProgressPercent, 43.33);
+  assert.equal(snapshot.dayPlanLimit, 1247.62);
+  assert.equal(snapshot.dayRemaining, 597.62);
+  assert.equal(snapshot.dayProgressPercent, 52.1);
   assert.equal(snapshot.weekPlanLimit, 11250);
   assert.equal(snapshot.plannedThisWeek, 1000);
   assert.equal(snapshot.weekRemaining, 6900);
   assert.equal(snapshot.weekProgressPercent, 29.78);
   assert.equal(snapshot.monthRemaining, 26200);
-  assert.deepEqual(snapshot.progress.day, { percent: 43.33, state: "good" });
+  assert.deepEqual(snapshot.progress.day, { percent: 52.1, state: "good" });
 });
 
 test("derives automatic weekly budget when manual weekly budget is not set", () => {
@@ -354,7 +354,7 @@ test("subtracts reserve from regular spending availability and reports reserve s
   assert.equal(snapshot.reserve.status, "partially_used");
 });
 
-test("uses the full calendar month for the stable daily plan limit", () => {
+test("falls back to live safe-to-spend when no fixed daily snapshot is provided", () => {
   const snapshot = calculateBudgetSnapshot({
     todayTotal: 383,
     monthTotal: 42811,
@@ -363,13 +363,14 @@ test("uses the full calendar month for the stable daily plan limit", () => {
     now: new Date("2026-06-23T10:00:00+07:00")
   });
 
-  assert.equal(snapshot.dayPlanLimit, 1600);
-  assert.equal(snapshot.dayRemaining, 1217);
+  assert.equal(snapshot.dailyPlanLimit, 1600);
+  assert.equal(snapshot.dayPlanLimit, 401.5);
+  assert.equal(snapshot.dayRemaining, 18.5);
   assert.equal(snapshot.safeToSpendPerDay, 401.5);
-  assert.notEqual(snapshot.dayPlanLimit, 784.5);
+  assert.notEqual(snapshot.dayPlanLimit, 1600);
 });
 
-test("uses the original partial-month period for the stable daily plan limit", () => {
+test("uses the original partial-month period only for the analytical daily plan limit", () => {
   const snapshot = calculateBudgetSnapshot({
     todayTotal: 0,
     monthTotal: 0,
@@ -378,17 +379,21 @@ test("uses the original partial-month period for the stable daily plan limit", (
     now: new Date("2026-06-23T10:00:00+07:00")
   });
 
-  assert.equal(snapshot.dayPlanLimit, 1578.95);
-  assert.notEqual(snapshot.dayPlanLimit, 3750);
+  assert.equal(snapshot.dailyPlanLimit, 1578.95);
+  assert.notEqual(snapshot.dailyPlanLimit, 1000);
 });
 
-test("does not increase the daily plan limit when today's spending increases", () => {
-  const limits = [0, 383, 1000].map((todayTotal) => calculateBudgetSnapshot({
+test("keeps a fixed daily budget stable while today's spending reduces the remainder", () => {
+  const results = [0, 383, 1000].map((todayTotal) => calculateBudgetSnapshot({
     todayTotal,
-    monthTotal: todayTotal,
+    monthTotal: 42811 + todayTotal,
     monthlyBudget: 48000,
+    plannedRemainingTotal: 1977,
+    dayPlanLimit: 401.5,
     now: new Date("2026-06-23T10:00:00+07:00")
-  }).dayPlanLimit);
+  }));
 
-  assert.deepEqual(limits, [1600, 1600, 1600]);
+  assert.deepEqual(results.map((snapshot) => snapshot.dayPlanLimit), [401.5, 401.5, 401.5]);
+  assert.deepEqual(results.map((snapshot) => snapshot.dayRemaining), [401.5, 18.5, 0]);
+  assert.deepEqual(results.map((snapshot) => snapshot.dayOverrun), [0, 0, 598.5]);
 });
