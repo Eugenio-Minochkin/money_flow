@@ -800,7 +800,7 @@ async function handleCallback({ update, repository, token, miniAppUrl, telegramC
       await answerCallback(token, callback.id, botText(language, "savedCallback"), telegramClient);
       if (messageId) {
         try {
-          return await editMessageText(token, chatId, messageId, text, { inline_keyboard: [] }, telegramClient);
+          return await editMessageText(token, chatId, messageId, text, appKeyboard(miniAppUrl, telegramUserId, language), telegramClient);
         } catch (error) {
           console.error("[telegram] editing confirmed draft into summary failed, falling back to new message", error.message);
           await editMessageText(

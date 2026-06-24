@@ -35,24 +35,32 @@ export function formatSavedSummary(total, snapshot, options = {}) {
   const currency = snapshot.baseCurrency ?? "THB";
   const progress = snapshot.budgetProgressPercent == null ? "" : ` (${formatAmount(snapshot.budgetProgressPercent, language)}%)`;
   const todayTotal = Number(snapshot.today ?? 0);
-  const safeToSpendPerDay = Number(snapshot.safeToSpendPerDay ?? 0);
+  const dayPlanLimit = Number(snapshot.dayPlanLimit ?? snapshot.dailyPlanLimit ?? 0);
+  const dayRemaining = Number(snapshot.dayRemaining ?? Math.max(dayPlanLimit - todayTotal, 0));
+  const dayOverrun = Number(snapshot.dayOverrun ?? Math.max(todayTotal - dayPlanLimit, 0));
   const plannedToday = Number(snapshot.plannedToday ?? snapshot.plannedTodayTotal ?? 0);
   const largeToday = Number(snapshot.largeToday ?? snapshot.largeTodayTotal ?? 0);
   const totalToday = todayTotal + plannedToday + largeToday;
-  const planDeviation = Number(snapshot.planDeviation ?? 0);
-  const planLine = planDeviation > 0
-    ? `⚠️ <b>${t(language, "plan")}:</b> ${t(language, "aboveBy")} ${formatMoney(Math.abs(planDeviation), currency, language)}`
-    : `🟢 <b>${t(language, "plan")}:</b> ${t(language, "belowBy")} ${formatMoney(Math.abs(planDeviation), currency, language)}`;
+  const forecastPlanDelta = Number(snapshot.forecastMonthTotal ?? 0) - Number(snapshot.monthlyBudget ?? 0);
+  const planLine = forecastPlanDelta > 0
+    ? `⚠️ <b>${t(language, "plan")}:</b> ${t(language, "aboveBy")} ${formatMoney(Math.abs(forecastPlanDelta), currency, language)}`
+    : `🟢 <b>${t(language, "plan")}:</b> ${t(language, "belowBy")} ${formatMoney(Math.abs(forecastPlanDelta), currency, language)}`;
   const recovery = formatRecoveryAdvice(snapshot, language);
   const savedLines = formatSavedExpenseLines(options.expenses, total, currency, language);
+  const todayBudgetLine = dayPlanLimit > 0
+    ? `${t(language, "regular")}: <b>${formatMoney(todayTotal, currency, language)} / ${formatMoney(dayPlanLimit, currency, language)}</b>`
+    : `${t(language, "regular")}: <b>${formatMoney(todayTotal, currency, language)}</b>`;
+  const todayRemainingLine = dayOverrun > 0
+    ? `${t(language, "overrun")}: <b>${formatMoney(dayOverrun, currency, language)}</b>`
+    : `${t(language, "remainingToday")}: <b>${formatMoney(dayRemaining, currency, language)}</b>`;
 
   const lines = [
     `✅ <b>${t(language, "savedExpense")}:</b>`,
     savedLines,
     "",
     `📌 <b>${t(language, "today")}</b>`,
-    `${t(language, "regular")}: <b>${formatMoney(todayTotal, currency, language)}</b>`,
-    `${t(language, "safeToSpend")}: <b>${formatMoney(safeToSpendPerDay, currency, language)}/${t(language, "day")}</b>`,
+    todayBudgetLine,
+    todayRemainingLine,
     "",
     `🧾 ${t(language, "plannedToday")}: <b>${formatMoney(plannedToday, currency, language)}</b>`,
     `📦 ${t(language, "largeToday")}: <b>${formatMoney(largeToday, currency, language)}</b>`,

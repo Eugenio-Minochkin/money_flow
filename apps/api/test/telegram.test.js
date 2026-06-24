@@ -310,7 +310,7 @@ test("confirm callback saves draft and returns an informative summary", async ()
   }
 });
 
-test("confirm callback edits the original draft message into saved summary and removes keyboard", async () => {
+test("confirm callback edits the original draft message into saved summary and replaces draft keyboard with Mini App", async () => {
   const calls = [];
   const repo = fakeRepository();
   const bot = createTelegramBot({
@@ -351,7 +351,12 @@ test("confirm callback edits the original draft message into saved summary and r
   assert.equal(edit.chatId, 10);
   assert.equal(edit.messageId, 55);
   assert.match(edit.text, /Записал|Saved/);
-  assert.deepEqual(edit.replyMarkup, { inline_keyboard: [] });
+  assert.deepEqual(edit.replyMarkup, {
+    inline_keyboard: [[{
+      text: "📱 Открыть Mini App",
+      web_app: { url: "http://localhost:3000?telegramUserId=100" }
+    }]]
+  });
   assert.ok(calls.some((call) => call.method === "answerCallbackQuery"));
   assert.equal(calls.some((call) => call.method === "sendMessage" && /Записал|Saved/.test(call.text)), false);
 });
