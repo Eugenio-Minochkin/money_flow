@@ -4,12 +4,37 @@ Telegram bot + Mini App for the first vertical slice of personal expense trackin
 
 Implemented MVP slice:
 
-- `/start` creates or updates a Telegram user.
-- Text like `кофе 70 бат` creates a draft.
+- `/start` creates or updates a Telegram user and runs onboarding for language, base currency, and budget setup.
+- Text like `кофе 70 бат` creates a draft; Telegram voice messages can be transcribed when Deepgram is configured.
 - Telegram inline `Confirm all` saves draft items as expenses.
-- Confirmed expenses are stored in Postgres.
-- `/today`, `/month`, and `/budget` return basic totals.
-- Mini App dashboard shows today, month, budget, remaining budget, and safe-to-spend.
+- Confirmed expenses are stored in Postgres with original currency, base currency, converted display amounts, category, tags, and `budget_impact`.
+- `/today`, `/month`, and `/budget` return budget-aware totals.
+- Mini App dashboard shows today, week, month, monthly budget, remaining budget, safe-to-spend, forecast, analytics, latest expenses, history, and settings.
+- Planned expenses support `monthly`, `weekly`, `twice_monthly`, and `one_off` recurrence with occurrence-level paid tracking.
+- Budget Reserve supports one active monthly reserve, one recurring reserve template, month closing snapshots, and Mini App management.
+
+## MVP budget safety contract
+
+Money Flow currently has enough budget machinery for the MVP. The priority is correctness and explainability, not more budget features.
+
+Core rules:
+
+- Daily budget and safe-to-spend are recalculated from the effective monthly budget, regular spending, unpaid planned expenses, and active reserve.
+- Changing the monthly budget or current-month budget must invalidate the current daily budget snapshot so the next dashboard load does not reuse stale day limits.
+- Planned expenses are not just labels: paid planned occurrences become expenses with `budget_impact = planned`, while unpaid current-month occurrences stay reserved from free budget.
+- Budget Reserve protects regular spending only. Planned expenses and `large_oneoff` expenses remain separate buckets.
+- Active reserve must fit after planned obligations. Budget or planned-expense changes that would make the active reserve impossible should be rejected.
+- Forecast uses regular spending pace, then adds non-daily planned/large buckets separately.
+
+Frozen for MVP:
+
+- multiple simultaneous reserves;
+- savings goals;
+- free-text or voice reserve intents;
+- complex reserve templates;
+- reserve growth charts.
+
+The regression coverage for the most fragile path lives in `apps/api/test/budgetReserveIntegration.test.js`: budget change -> planned obligations -> active reserve -> daily budget snapshot -> monthly forecast.
 
 ## Run locally
 
@@ -97,7 +122,7 @@ Use this flow before marking a feature PR ready for merge or deploy. It uses onl
    http://localhost:3000/?telegramUserId=100001
    ```
 
-8. Send fake bot messages in the sandbox, click simulated inline buttons, then check dashboard, today, month, budget, drafts, planned expenses, and history.
+8. Send fake bot messages in the sandbox, click simulated inline buttons, then check dashboard, today, month, budget, drafts, planned expenses, reserve, and history.
 
 9. Run tests:
 
@@ -164,6 +189,7 @@ Before merge/deploy I should be able to:
 - simulate inline buttons;
 - confirm a draft;
 - test regular, planned, and `large_oneoff` budget impact examples;
+- test planned payments and reserve settings;
 - see dashboard numbers update;
 - check many expenses in history;
 - edit CSS/JS locally and refresh to see UI changes;
@@ -180,7 +206,7 @@ Future phase:
 3. Confirm `DATABASE_URL` points only to a local/dev database.
 4. Start the local API with `npm run dev:api`.
 5. Open a local tunnel to `http://localhost:3000`.
-6. Set the dev bot webhook to `<tunnel-url>/telegram/webhook`.
+6. Set the dev bot webhook to the `/telegram/webhook` route on the tunnel URL.
 7. Send a voice message from Telegram and verify it end-to-end against the local database.
 
 ## Production deploy
@@ -218,11 +244,7 @@ Check:
 curl https://$APP_DOMAIN/health
 ```
 
-Set Telegram webhook:
-
-```bash
-curl "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook?url=https://$APP_DOMAIN/telegram/webhook"
-```
+Set Telegram webhook to the production `/telegram/webhook` route.
 
 The Mini App URL is:
 
@@ -232,11 +254,7 @@ https://$APP_DOMAIN
 
 ## Telegram webhook
 
-Set `TELEGRAM_BOT_TOKEN` in `.env`, expose the local server with a tunnel, then point Telegram to:
-
-```text
-https://<public-url>/telegram/webhook
-```
+Set `TELEGRAM_BOT_TOKEN` in `.env`, expose the local server with a tunnel, then point Telegram to the public `/telegram/webhook` URL.
 
 For local dry runs without a token, Telegram send calls are logged to stdout.
 
