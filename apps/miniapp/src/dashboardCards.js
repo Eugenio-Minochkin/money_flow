@@ -13,9 +13,21 @@ export function budgetLine(label, amount) {
 }
 
 export function buildDashboardCards(snapshot, helpers) {
-  const safeToSpendPerDay = Number(snapshot.safeToSpendPerDay ?? 0);
+  const dayPlanLimit = Number(snapshot.dayPlanLimit ?? 0);
+  const dayRemaining = Number(snapshot.dayRemaining ?? 0);
+  const dayOverrun = Number(snapshot.dayOverrun ?? 0);
   const weekProgress = snapshot.progress?.week ?? { percent: snapshot.weekProgressPercent ?? 0, state: "good" };
   const monthProgress = snapshot.progress?.month ?? { percent: snapshot.budgetProgressPercent ?? 0, state: "good" };
+
+  const todayLines = dayOverrun > 0
+    ? [
+        limitLine(helpers.t("dashboard.overrun"), helpers.moneyBase(dayOverrun)),
+        budgetLine(helpers.t("dashboard.dayBudget"), helpers.moneyBase(dayPlanLimit))
+      ]
+    : [
+        remainingLine(helpers.t("dashboard.remainingPrefix"), helpers.moneyBase(dayRemaining)),
+        budgetLine(helpers.t("dashboard.dayBudget"), helpers.moneyBase(dayPlanLimit))
+      ];
 
   const cards = [
     {
@@ -23,9 +35,7 @@ export function buildDashboardCards(snapshot, helpers) {
       amount: helpers.moneyBase(snapshot.today),
       percent: null,
       state: null,
-      lines: [
-        limitLine(helpers.t("dashboard.safeToSpendPerDay"), helpers.moneyBase(safeToSpendPerDay))
-      ],
+      lines: todayLines,
       progress: null
     },
     {
@@ -43,7 +53,8 @@ export function buildDashboardCards(snapshot, helpers) {
       title: helpers.t("dashboard.remaining"),
       amount: helpers.moneyBase(snapshot.freeRemaining),
       display: helpers.moneyDisplay(snapshot.display?.freeRemaining, snapshot.display?.currency),
-      caption: helpers.t("dashboard.afterExpensesAndPlanned")
+      caption: helpers.t("dashboard.afterExpensesAndPlanned"),
+      reserveLine: snapshot.reserve ? reserveLine(snapshot.reserve, helpers) : undefined
     },
     {
       title: helpers.t("dashboard.month"),
@@ -57,20 +68,6 @@ export function buildDashboardCards(snapshot, helpers) {
       progress: monthProgress
     }
   ];
-  if (snapshot.reserve) {
-    const statusKey = snapshot.reserve.status === "saved"
-      ? "reserve.saved"
-      : snapshot.reserve.status === "partially_used"
-        ? "reserve.atRisk"
-        : "reserve.usedUp";
-    cards.splice(3, 0, {
-      title: helpers.t(statusKey),
-      amount: helpers.moneyBase(snapshot.reserve.savedAmount),
-      lines: snapshot.reserve.eatenAmount > 0
-        ? [remainingLine(helpers.t("reserve.used"), helpers.moneyBase(snapshot.reserve.eatenAmount))]
-        : [remainingLine(helpers.t("reserve.total"), helpers.moneyBase(snapshot.reserve.amount))]
-    });
-  }
   return cards;
 }
 
@@ -96,6 +93,7 @@ function renderCard(card) {
   `).join("");
   const display = card.display ? `<div class="dashboard-card__display">${escapeHtml(card.display)}</div>` : "";
   const caption = card.caption ? `<div class="dashboard-card__caption">${escapeHtml(card.caption)}</div>` : "";
+  const reserveLine = card.reserveLine ? `<div class="dashboard-card__reserve">${escapeHtml(card.reserveLine)}</div>` : "";
 
   return `
     <article class="dashboard-card${card.progress ? " dashboard-card--progress" : ""}">
@@ -107,10 +105,28 @@ function renderCard(card) {
       ${lines}
       ${display}
       ${caption}
+      ${reserveLine}
       <div class="dashboard-card__spacer"></div>
       ${progress}
     </article>
   `;
+}
+
+function reserveLine(reserve, helpers) {
+  const eaten = Number(reserve.eatenAmount ?? 0);
+  const amount = Number(reserve.amount ?? 0);
+  if (reserve.status === "used_up" || (amount > 0 && eaten >= amount)) {
+    return helpers.t("reserve.dashboardUsedUp");
+  }
+  if (eaten > 0) {
+    return helpers.t("reserve.dashboardPartiallyUsed", {
+      eaten: helpers.moneyBase(eaten),
+      amount: helpers.moneyBase(amount)
+    });
+  }
+  return helpers.t("reserve.dashboardSaved", {
+    amount: helpers.moneyBase(reserve.savedAmount ?? amount)
+  });
 }
 
 function renderProgress(progress) {

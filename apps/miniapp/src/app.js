@@ -27,6 +27,7 @@ import {
 } from "./history.js";
 import { createTranslator } from "./i18n.js";
 import { inboxDraftDescription, inboxDraftTotal, shouldShowInboxOnDashboard, updateFirstInboxItemCategory } from "./inbox.js";
+import { buildReserveSettingsView } from "./reserveSettings.js";
 import {
   buildPlannedOccurrences,
   calculatePlannedMonthSummary,
@@ -56,6 +57,7 @@ let historyCalendarDraft = null;
 let currentLanguage = "en";
 let translate = createTranslator(currentLanguage);
 let currentTheme = "light";
+let reserveSettingsExpanded = false;
 
 if (window.Telegram?.WebApp) {
   window.Telegram.WebApp.ready();
@@ -65,6 +67,11 @@ if (window.Telegram?.WebApp) {
 document.querySelector("#settingsForm").addEventListener("submit", saveSettings);
 document.querySelector("#reserveForm")?.addEventListener("submit", saveReserve);
 document.querySelector("#disableReserveButton")?.addEventListener("click", disableReserve);
+document.querySelector("#reserveSummaryButton")?.addEventListener("click", () => {
+  reserveSettingsExpanded = !reserveSettingsExpanded;
+  renderReserveSettings();
+});
+document.querySelector("#reserveRecurringInput")?.addEventListener("change", renderReserveSettings);
 document.querySelector("#saveCurrentMonthBudgetButton")?.addEventListener("click", saveCurrentMonthBudget);
 document.querySelector("#historySearchForm").addEventListener("submit", (event) => {
   event.preventDefault();
@@ -544,7 +551,7 @@ function renderSettings(user) {
   document.querySelector("#budgetAdviceInput").checked = user.budget_advice_enabled !== false;
   const reserve = dashboardState?.reserveInstance;
   const template = dashboardState?.reserveTemplate;
-  document.querySelector("#reserveAmountInput").value = reserve?.status === "active"
+  document.querySelector("#reserveAmountInput").value = ["active", "disabled"].includes(reserve?.status)
     ? Math.round(Number(reserve.reserve_amount))
     : "";
   document.querySelector("#reserveTitleInput").value = reserve?.title ?? "";
@@ -552,7 +559,43 @@ function renderSettings(user) {
   document.querySelector("#reserveScopeInput").value = template?.is_active === true
     ? "current_and_future"
     : "current";
+  renderReserveSettings();
   updateCurrencyFlags();
+}
+
+function renderReserveSettings() {
+  const reserve = dashboardState?.reserveInstance ?? null;
+  const template = dashboardState?.reserveTemplate ?? null;
+  const currency = dashboardState?.user?.base_currency ?? dashboardState?.snapshot?.baseCurrency ?? "THB";
+  const view = buildReserveSettingsView({
+    reserve,
+    reserveSummary: dashboardState?.snapshot?.reserve ?? null,
+    template: {
+      ...template,
+      is_active: document.querySelector("#reserveRecurringInput")?.checked === true
+    },
+    currency,
+    isExpanded: reserveSettingsExpanded,
+    t,
+    moneyBase
+  });
+  setOptionalText("#reserveSummaryTitle", view.title);
+  setOptionalText("#reserveSummaryMeta", view.meta);
+  setOptionalText("#reserveSummaryStatus", view.status);
+
+  const summaryButton = document.querySelector("#reserveSummaryButton");
+  summaryButton?.setAttribute("aria-expanded", String(view.isExpanded));
+  summaryButton?.classList.toggle("reserve-summary--expanded", view.isExpanded);
+
+  const disabledNote = document.querySelector("#reserveDisabledNote");
+  if (disabledNote) {
+    disabledNote.textContent = view.disabledNote;
+    disabledNote.classList.toggle("hidden", !view.disabledNote || view.isExpanded);
+  }
+
+  document.querySelector("#reserveForm")?.classList.toggle("hidden", !view.isExpanded);
+  document.querySelector("#reserveScopeField")?.classList.toggle("hidden", !view.showScope);
+  document.querySelector("#disableReserveButton")?.classList.toggle("hidden", !view.showDisable);
 }
 
 function renderPlannedMonthSummary(items) {
@@ -1251,6 +1294,8 @@ async function saveReserve(event) {
       }
     });
     await loadDashboard();
+    reserveSettingsExpanded = false;
+    renderReserveSettings();
     showToast(t("reserve.savedAction"));
   } catch (error) {
     showToast(error.message === "reserve_exceeds_free_budget" ? t("reserve.validationError") : error.message);
@@ -1258,12 +1303,15 @@ async function saveReserve(event) {
 }
 
 async function disableReserve() {
-  const scope = document.querySelector("#reserveScopeInput").value;
+  const recurring = document.querySelector("#reserveRecurringInput").checked;
+  const scope = recurring ? document.querySelector("#reserveScopeInput").value : "current";
   await api("/api/reserve/current/disable", {
     method: "POST",
     body: { telegramUserId, scope }
   });
   await loadDashboard();
+  reserveSettingsExpanded = false;
+  renderReserveSettings();
   showToast(t("reserve.disabledAction"));
 }
 
@@ -1423,6 +1471,7 @@ function applyLanguage(language) {
   }
   const save = document.querySelector("#settingsForm button[type='submit']");
   if (save) save.textContent = t("actions.save");
+  renderReserveSettings();
   updateHistoryFilterChips();
   if (historyCalendarDraft) renderHistoryCalendar();
 }
