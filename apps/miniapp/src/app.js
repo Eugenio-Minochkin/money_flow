@@ -1,7 +1,7 @@
 import { createApiClient } from "./apiClient.js";
 import { categories, categoryColor, categoryLabel } from "./categories.js";
 import { currencyOptions } from "./currencies.js";
-import { buildDashboardCards, renderDashboardCards } from "./dashboardCards.js";
+import { buildDashboardCards, buildHeroMetric, renderDashboardCards } from "./dashboardCards.js";
 import {
   dateTimeLocal,
   escapeAttribute,
@@ -507,11 +507,17 @@ function switchTab(tab) {
 
 function renderSnapshot(snapshot) {
   setBaseCurrency(snapshot.baseCurrency ?? dashboardState?.user?.base_currency ?? "THB");
-  const safeToSpendPerDay = snapshot.safeToSpendPerDay ?? 0;
+  const heroMetric = buildHeroMetric(snapshot, {
+    t,
+    moneyBase,
+    moneyDisplay
+  });
   const hero = document.querySelector(".hero-metric");
-  if (hero) hero.dataset.state = "good";
-  setText("#safeToSpend", moneyBase(safeToSpendPerDay));
-  setText("#safeToSpendDisplay", moneyDisplay(snapshot.display?.safeToSpendPerDay, snapshot.display?.currency));
+  if (hero) hero.dataset.state = heroMetric.state;
+  setText("#heroTitle", heroMetric.title);
+  setText("#safeToSpend", heroMetric.amount);
+  setText("#safeToSpendDisplay", heroMetric.display);
+  setText("#heroCaption", heroMetric.caption);
   renderDashboardCards(document.querySelector("#dashboardCards"), buildDashboardCards(snapshot, {
     t,
     moneyBase,
