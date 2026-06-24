@@ -24,7 +24,7 @@ const helpers = {
   percent: (value) => `${value}%`
 };
 
-test("builds dashboard cards with remaining before limit and budget lines", () => {
+test("builds dashboard cards with MVP priority before secondary weekly analytics", () => {
   const cards = buildDashboardCards({
     today: 100,
     week: 700,
@@ -49,10 +49,11 @@ test("builds dashboard cards with remaining before limit and budget lines", () =
   }, helpers);
 
   assert.equal(cards.length, 4);
+  assert.deepEqual(cards.map((card) => card.title), ["Сегодня", "Осталось", "Месяц", "Неделя"]);
   assert.deepEqual(cards[0].lines.map((line) => line.label), ["осталось", "бюджет дня"]);
   assert.deepEqual(cards[0].lines.map((line) => line.amount), ["650 THB", "750 THB"]);
-  assert.deepEqual(cards[1].lines.map((line) => line.label), ["осталось", "лимит"]);
-  assert.deepEqual(cards[3].lines.map((line) => line.label), ["осталось", "бюджет"]);
+  assert.deepEqual(cards[2].lines.map((line) => line.label), ["осталось", "бюджет"]);
+  assert.deepEqual(cards[3].lines.map((line) => line.label), ["осталось", "лимит"]);
 });
 
 test("builds today's card as overrun when regular spend exceeds today's budget", () => {
@@ -219,6 +220,9 @@ test("renders dashboard cards with explicit component classes and progress state
   renderDashboardCards(container, cards);
 
   assert.match(container.innerHTML, /class="dashboard-card__title">Сегодня/);
+  assert.match(container.innerHTML, /class="dashboard-card__title">Осталось/);
+  assert.match(container.innerHTML, /class="dashboard-card__title">Месяц/);
+  assert.match(container.innerHTML, /class="dashboard-card__title">Неделя/);
   assert.match(container.innerHTML, /class="dashboard-card__label">осталось/);
   assert.match(container.innerHTML, /class="dashboard-card__value">650 THB/);
   assert.match(container.innerHTML, /class="dashboard-card__display">~\$519\.2/);
@@ -248,8 +252,8 @@ test("adds an active reserve row inside the remaining card without adding a fift
   });
 
   assert.equal(cards.length, 4);
-  assert.equal(cards[2].title, helpers.t("dashboard.remaining"));
-  assert.equal(cards[2].reserveLine, "Reserve: used 1500 THB of 4000 THB");
+  assert.equal(cards[1].title, helpers.t("dashboard.remaining"));
+  assert.equal(cards[1].reserveLine, "Reserve: used 1500 THB of 4000 THB");
   assert.equal(cards.some((card) => card.title === "Reserve at risk"), false);
 });
 
@@ -264,5 +268,5 @@ test("does not render any reserve placeholder when reserve is absent", () => {
   }, helpers);
 
   assert.equal(cards.length, 4);
-  assert.equal(cards[2].reserveLine, undefined);
+  assert.equal(cards[1].reserveLine, undefined);
 });

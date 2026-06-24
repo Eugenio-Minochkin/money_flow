@@ -54,46 +54,45 @@ export function buildDashboardCards(snapshot, helpers) {
         budgetLine(helpers.t("dashboard.dayBudget"), helpers.moneyBase(dayPlanLimit))
       ];
 
-  const cards = [
-    {
-      title: helpers.t("dashboard.today"),
-      amount: helpers.moneyBase(snapshot.today),
-      percent: helpers.percent(dayProgressPercent),
-      state: dayProgress.state,
-      lines: todayLines,
-      progress: dayProgress
-    },
-    {
-      title: helpers.t("dashboard.week"),
-      amount: helpers.moneyBase(snapshot.week),
-      percent: helpers.percent(snapshot.weekProgressPercent ?? 0),
-      state: weekProgress.state,
-      lines: [
-        remainingLine(helpers.t("dashboard.remainingPrefix"), helpers.moneyBase(snapshot.weekRemaining)),
-        limitLine(helpers.t("dashboard.limitPrefix"), helpers.moneyBase(snapshot.weekPlanLimit ?? 0))
-      ],
-      progress: weekProgress
-    },
-    {
-      title: helpers.t("dashboard.remaining"),
-      amount: helpers.moneyBase(snapshot.freeRemaining),
-      display: helpers.moneyDisplay(snapshot.display?.freeRemaining, snapshot.display?.currency),
-      caption: helpers.t("dashboard.afterExpensesAndPlanned"),
-      reserveLine: snapshot.reserve ? reserveLine(snapshot.reserve, helpers) : undefined
-    },
-    {
-      title: helpers.t("dashboard.month"),
-      amount: helpers.moneyBase(snapshot.month),
-      percent: helpers.percent(snapshot.budgetProgressPercent ?? 0),
-      state: monthProgress.state,
-      lines: [
-        remainingLine(helpers.t("dashboard.remainingPrefix"), helpers.moneyBase(snapshot.monthRemaining ?? snapshot.remaining)),
-        budgetLine(helpers.t("dashboard.budget"), helpers.moneyBase(snapshot.monthlyBudget ?? 0))
-      ],
-      progress: monthProgress
-    }
-  ];
-  return cards;
+  const todayCard = {
+    title: helpers.t("dashboard.today"),
+    amount: helpers.moneyBase(snapshot.today),
+    percent: helpers.percent(dayProgressPercent),
+    state: dayProgress.state,
+    lines: todayLines,
+    progress: dayProgress
+  };
+  const remainingCard = {
+    title: helpers.t("dashboard.remaining"),
+    amount: helpers.moneyBase(snapshot.freeRemaining),
+    display: helpers.moneyDisplay(snapshot.display?.freeRemaining, snapshot.display?.currency),
+    caption: helpers.t("dashboard.afterExpensesAndPlanned"),
+    reserveLine: snapshot.reserve ? reserveLine(snapshot.reserve, helpers) : undefined
+  };
+  const monthCard = {
+    title: helpers.t("dashboard.month"),
+    amount: helpers.moneyBase(snapshot.month),
+    percent: helpers.percent(snapshot.budgetProgressPercent ?? 0),
+    state: monthProgress.state,
+    lines: [
+      remainingLine(helpers.t("dashboard.remainingPrefix"), helpers.moneyBase(snapshot.monthRemaining ?? snapshot.remaining)),
+      budgetLine(helpers.t("dashboard.budget"), helpers.moneyBase(snapshot.monthlyBudget ?? 0))
+    ],
+    progress: monthProgress
+  };
+  const weekCard = {
+    title: helpers.t("dashboard.week"),
+    amount: helpers.moneyBase(snapshot.week),
+    percent: helpers.percent(snapshot.weekProgressPercent ?? 0),
+    state: weekProgress.state,
+    lines: [
+      remainingLine(helpers.t("dashboard.remainingPrefix"), helpers.moneyBase(snapshot.weekRemaining)),
+      limitLine(helpers.t("dashboard.limitPrefix"), helpers.moneyBase(snapshot.weekPlanLimit ?? 0))
+    ],
+    progress: weekProgress
+  };
+
+  return [todayCard, remainingCard, monthCard, weekCard];
 }
 
 export function renderDashboardCards(container, cards) {
