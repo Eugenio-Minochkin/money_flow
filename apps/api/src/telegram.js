@@ -793,9 +793,29 @@ async function handleCallback({ update, repository, token, miniAppUrl, telegramC
     for (const _expense of expenses) {
       await safeRecordAppEvent(repository, user?.id, "expense_saved", { draftType: "regular" });
     }
+    const chatId = callback.message.chat.id;
+    const messageId = callback.message.message_id;
+    const text = formatSavedSummary(total, dashboard.snapshot, { language, expenses });
     return sendTelegramResponse(trace, async () => {
       await answerCallback(token, callback.id, botText(language, "savedCallback"), telegramClient);
-      return sendMessage(token, callback.message.chat.id, formatSavedSummary(total, dashboard.snapshot, { language }), appKeyboard(miniAppUrl, telegramUserId, language), telegramClient);
+      if (messageId) {
+        try {
+          return await editMessageText(token, chatId, messageId, text, { inline_keyboard: [] }, telegramClient);
+        } catch (error) {
+          console.error("[telegram] editing confirmed draft into summary failed, falling back to new message", error.message);
+          await editMessageText(
+            token,
+            chatId,
+            messageId,
+            callback.message.text ?? botText(language, "savedCallback"),
+            { inline_keyboard: [] },
+            telegramClient
+          ).catch((editError) => {
+            console.error("[telegram] failed to remove draft keyboard after confirm edit failure", editError.message);
+          });
+        }
+      }
+      return sendMessage(token, chatId, text, appKeyboard(miniAppUrl, telegramUserId, language), telegramClient);
     });
   }
 

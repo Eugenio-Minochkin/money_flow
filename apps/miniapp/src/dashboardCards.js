@@ -13,11 +13,7 @@ export function budgetLine(label, amount) {
 }
 
 export function buildDashboardCards(snapshot, helpers) {
-  const todayBudget = Number(snapshot.dayPlanLimit ?? snapshot.dailyPlanLimit ?? 0);
-  const todayTotal = Number(snapshot.today ?? 0);
-  const todayOverrun = Number(snapshot.dayOverrun ?? Math.max(todayTotal - todayBudget, 0));
-  const todayLeft = Number(snapshot.dayRemaining ?? Math.max(todayBudget - todayTotal, 0));
-  const dayProgress = snapshot.progress?.day ?? { percent: snapshot.dayProgressPercent ?? 0, state: "good" };
+  const safeToSpendPerDay = Number(snapshot.safeToSpendPerDay ?? 0);
   const weekProgress = snapshot.progress?.week ?? { percent: snapshot.weekProgressPercent ?? 0, state: "good" };
   const monthProgress = snapshot.progress?.month ?? { percent: snapshot.budgetProgressPercent ?? 0, state: "good" };
 
@@ -25,18 +21,12 @@ export function buildDashboardCards(snapshot, helpers) {
     {
       title: helpers.t("dashboard.today"),
       amount: helpers.moneyBase(snapshot.today),
-      percent: helpers.percent(snapshot.dayProgressPercent ?? 0),
-      state: dayProgress.state,
-      lines: todayOverrun > 0
-        ? [
-            remainingLine(helpers.t("dashboard.overrun"), helpers.moneyBase(todayOverrun)),
-            budgetLine(helpers.t("dashboard.budget"), helpers.moneyBase(todayBudget))
-          ]
-        : [
-            remainingLine(helpers.t("dashboard.remainingPrefix"), helpers.moneyBase(todayLeft)),
-            budgetLine(helpers.t("dashboard.budget"), helpers.moneyBase(todayBudget))
-          ],
-      progress: dayProgress
+      percent: null,
+      state: null,
+      lines: [
+        limitLine(helpers.t("dashboard.safeToSpendPerDay"), helpers.moneyBase(safeToSpendPerDay))
+      ],
+      progress: null
     },
     {
       title: helpers.t("dashboard.week"),

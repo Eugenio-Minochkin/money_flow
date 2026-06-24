@@ -34,10 +34,8 @@ export function formatSavedSummary(total, snapshot, options = {}) {
   const language = normalizeLanguage(options.language);
   const currency = snapshot.baseCurrency ?? "THB";
   const progress = snapshot.budgetProgressPercent == null ? "" : ` (${formatAmount(snapshot.budgetProgressPercent, language)}%)`;
-  const todayBudget = Number(snapshot.dayPlanLimit ?? snapshot.dailyPlanLimit ?? 0);
   const todayTotal = Number(snapshot.today ?? 0);
-  const todayOverrun = Number(snapshot.dayOverrun ?? Math.max(todayTotal - todayBudget, 0));
-  const todayLeft = Number(snapshot.dayRemaining ?? Math.max(todayBudget - todayTotal, 0));
+  const safeToSpendPerDay = Number(snapshot.safeToSpendPerDay ?? 0);
   const plannedToday = Number(snapshot.plannedToday ?? snapshot.plannedTodayTotal ?? 0);
   const largeToday = Number(snapshot.largeToday ?? snapshot.largeTodayTotal ?? 0);
   const totalToday = todayTotal + plannedToday + largeToday;
@@ -46,16 +44,15 @@ export function formatSavedSummary(total, snapshot, options = {}) {
     ? `⚠️ <b>${t(language, "plan")}:</b> ${t(language, "aboveBy")} ${formatMoney(Math.abs(planDeviation), currency, language)}`
     : `🟢 <b>${t(language, "plan")}:</b> ${t(language, "belowBy")} ${formatMoney(Math.abs(planDeviation), currency, language)}`;
   const recovery = formatRecoveryAdvice(snapshot, language);
-  const todayStatusLine = todayOverrun > 0
-    ? `${t(language, "overrun")}: <b>${formatMoney(todayOverrun, currency, language)}</b>`
-    : `${t(language, "remainingToday")}: <b>${formatMoney(todayLeft, currency, language)}</b>`;
+  const savedLines = formatSavedExpenseLines(options.expenses, total, currency, language);
 
   const lines = [
-    `✅ <b>${t(language, "savedExpense")}:</b> ${formatMoney(total, currency, language)}`,
+    `✅ <b>${t(language, "savedExpense")}:</b>`,
+    savedLines,
     "",
     `📌 <b>${t(language, "today")}</b>`,
-    `${t(language, "regular")}: <b>${formatMoney(snapshot.today, currency, language)} / ${formatMoney(todayBudget, currency, language)}</b>`,
-    todayStatusLine,
+    `${t(language, "regular")}: <b>${formatMoney(todayTotal, currency, language)}</b>`,
+    `${t(language, "safeToSpend")}: <b>${formatMoney(safeToSpendPerDay, currency, language)}/${t(language, "day")}</b>`,
     "",
     `🧾 ${t(language, "plannedToday")}: <b>${formatMoney(plannedToday, currency, language)}</b>`,
     `📦 ${t(language, "largeToday")}: <b>${formatMoney(largeToday, currency, language)}</b>`,
@@ -70,6 +67,23 @@ export function formatSavedSummary(total, snapshot, options = {}) {
   ];
   if (recovery) lines.push("", recovery);
   return lines.join("\n");
+}
+
+function formatSavedExpenseLines(expenses, total, currency, language) {
+  if (!Array.isArray(expenses) || expenses.length === 0) {
+    return formatMoney(total, currency, language);
+  }
+  const lines = expenses.map((expense) => {
+    const amount = expense.amount_original ?? expense.amount ?? expense.amount_base ?? 0;
+    const expenseCurrency = expense.currency_original ?? expense.currency ?? expense.base_currency ?? currency;
+    return [
+      escapeHtml(categoryName(expense.category_slug)),
+      escapeHtml(expense.description ?? ""),
+      formatMoney(amount, expenseCurrency, language)
+    ].filter(Boolean).join(" · ");
+  });
+  if (lines.length === 1) return lines[0];
+  return lines.map((line, index) => `${index + 1}. ${line}`).join("\n");
 }
 
 function formatRecoveryAdvice(snapshot, language) {
