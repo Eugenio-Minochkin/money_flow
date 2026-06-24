@@ -28,6 +28,7 @@ export function createExpenseParser(options = {}) {
         return result;
       }
 
+      // TODO: Try the local parser first for simple expense messages, then call OpenAI only when confidence or coverage is insufficient.
       try {
         const parsed = await parseWithOpenAI({ text, apiKey, model, fetchImpl, now: now(), defaultCurrency });
         parseOptions.onLlmTrace?.(parsed.metadata);

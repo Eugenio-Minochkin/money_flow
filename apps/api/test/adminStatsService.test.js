@@ -31,7 +31,17 @@ test("aggregates admin stats from app events and users", async () => {
           parse_failed: 2,
           transcription_failed: 1,
           avg_text_processing_ms: 1400,
-          avg_voice_processing_ms: 4800
+          avg_voice_processing_ms: 4800,
+          avg_text_queue_wait_ms: 100,
+          avg_text_telegram_response_ms: 200,
+          avg_text_llm_parse_ms: 900,
+          avg_text_db_save_ms: 300,
+          avg_voice_queue_wait_ms: 150,
+          avg_voice_telegram_file_download_ms: 1200,
+          avg_voice_transcription_ms: 2600,
+          avg_voice_llm_parse_ms: 800,
+          avg_voice_telegram_response_ms: 250,
+          avg_voice_db_save_ms: 350
         }]
       };
     }),
@@ -54,6 +64,20 @@ test("aggregates admin stats from app events and users", async () => {
   assert.equal(stats.today.parseFailedRate, 33);
   assert.equal(stats.today.avgTextProcessingSeconds, 1.4);
   assert.equal(stats.today.avgVoiceProcessingSeconds, 4.8);
+  assert.deepEqual(stats.today.avgTextStageSeconds, {
+    queue: 0.1,
+    telegramResponse: 0.2,
+    llmParse: 0.9,
+    dbSave: 0.3
+  });
+  assert.deepEqual(stats.today.avgVoiceStageSeconds, {
+    queue: 0.2,
+    telegramFileDownload: 1.2,
+    transcription: 2.6,
+    llmParse: 0.8,
+    telegramResponse: 0.3,
+    dbSave: 0.4
+  });
   assert.ok(queries.some((query) => query.params[0]?.toISOString() === "2026-06-14T17:00:00.000Z"));
 });
 
@@ -109,7 +133,17 @@ test("falls back to historical expense and regular plus planned draft tables", a
             parse_failed: 0,
             transcription_failed: 0,
             avg_text_processing_ms: null,
-            avg_voice_processing_ms: null
+            avg_voice_processing_ms: null,
+            avg_text_queue_wait_ms: null,
+            avg_text_telegram_response_ms: null,
+            avg_text_llm_parse_ms: null,
+            avg_text_db_save_ms: null,
+            avg_voice_queue_wait_ms: null,
+            avg_voice_telegram_file_download_ms: null,
+            avg_voice_transcription_ms: null,
+            avg_voice_llm_parse_ms: null,
+            avg_voice_telegram_response_ms: null,
+            avg_voice_db_save_ms: null
           }]
         };
       }
@@ -141,7 +175,23 @@ test("falls back to historical expense and regular plus planned draft tables", a
 
 test("formats admin stats as a compact Telegram message", () => {
   const text = formatAdminStats({
-    today: emptyPeriod({ activeUsers: 5, newUsers: 1, messagesTotal: 43, textMessages: 31, voiceMessages: 12, expensesSaved: 28, draftsCreated: 32, draftsConfirmed: 25, draftsCancelled: 3, parseFailed: 2, transcriptionFailed: 1, avgTextProcessingSeconds: 1.4, avgVoiceProcessingSeconds: 4.8 }),
+    today: emptyPeriod({
+      activeUsers: 5,
+      newUsers: 1,
+      messagesTotal: 43,
+      textMessages: 31,
+      voiceMessages: 12,
+      expensesSaved: 28,
+      draftsCreated: 32,
+      draftsConfirmed: 25,
+      draftsCancelled: 3,
+      parseFailed: 2,
+      transcriptionFailed: 1,
+      avgTextProcessingSeconds: 1.4,
+      avgVoiceProcessingSeconds: 4.8,
+      avgTextStageSeconds: { queue: 0.1, telegramResponse: 0.2, llmParse: 0.9, dbSave: 0.3 },
+      avgVoiceStageSeconds: { queue: 0.2, telegramFileDownload: 1.2, transcription: 2.6, llmParse: 0.8, telegramResponse: 0.3, dbSave: 0.4 }
+    }),
     last7Days: emptyPeriod({ activeUsers: 9, newUsers: 3, messagesTotal: 210, textMessages: 160, voiceMessages: 48, photoMessages: 2, expensesSaved: 160, draftsCreated: 190, draftsConfirmed: 150, draftsCancelled: 20, confirmRate: 79, parseFailedRate: 4, avgTextProcessingSeconds: 1.5, avgVoiceProcessingSeconds: 5.1 }),
     last30Days: emptyPeriod()
   });
@@ -153,8 +203,12 @@ test("formats admin stats as a compact Telegram message", () => {
   assert.match(text, /Last 7 days:/);
   assert.match(text, /Confirm rate: 79%/);
   assert.match(text, /Avg processing: text 1.5s \/ voice 5.1s/);
+  assert.match(text, /Avg stages text: queue 0.1s \/ tg 0.2s \/ llm 0.9s \/ db 0.3s/);
+  assert.match(text, /Avg stages voice: queue 0.2s \/ dl 1.2s \/ asr 2.6s \/ llm 0.8s \/ tg 0.3s \/ db 0.4s/);
   assert.match(text, /Last 30 days:/);
   assert.match(text, /Confirm rate: -/);
+  assert.match(text, /Avg stages text: queue - \/ tg - \/ llm - \/ db -/);
+  assert.match(text, /Avg stages voice: queue - \/ dl - \/ asr - \/ llm - \/ tg - \/ db -/);
 });
 
 function emptyPeriod(overrides = {}) {
@@ -173,6 +227,8 @@ function emptyPeriod(overrides = {}) {
     transcriptionFailed: 0,
     avgTextProcessingSeconds: null,
     avgVoiceProcessingSeconds: null,
+    avgTextStageSeconds: {},
+    avgVoiceStageSeconds: {},
     confirmRate: null,
     parseFailedRate: null,
     ...overrides

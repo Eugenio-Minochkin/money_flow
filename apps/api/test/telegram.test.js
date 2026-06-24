@@ -85,6 +85,78 @@ test("normal text message records received draft and processing events", async (
   assert.equal(Number.isFinite(repo.events[2].metadata.processingTotalMs), true);
 });
 
+test("message processing completed event includes stage performance metadata", async () => {
+  const repo = fakeRepository();
+  const originalLog = console.log;
+  console.log = () => {};
+  try {
+    const bot = createTelegramBot({
+      token: "",
+      miniAppUrl: "http://localhost:3000",
+      repository: repo,
+      expenseParser: {
+        model: "gpt-test",
+        async parse(_text, options = {}) {
+          options.onLlmTrace?.({
+            model: "gpt-test",
+            promptChars: 123,
+            responseChars: 45,
+            fallback: "local-parser"
+          });
+          return {
+            expenses: [{
+              amount: 70,
+              currency: "THB",
+              description: "coffee",
+              category_slug: "food",
+              tags: [],
+              spent_at: "2026-06-15T10:00:00.000Z",
+              budget_impact: "regular",
+              confidence: 0.9,
+              needs_review: false
+            }],
+            notes: []
+          };
+        }
+      },
+      voiceTranscriber: {
+        isConfigured: () => true,
+        async transcribeTelegramVoice(_voice, options = {}) {
+          options.onPerfStage("telegram_file_download_start", { audioDurationSec: 3 });
+          options.onPerfStage("telegram_file_download_end", { audioDurationSec: 3, fileSizeKb: 12 });
+          options.onPerfStage("transcription_start", { transcriptionProvider: "deepgram" });
+          options.onPerfStage("transcription_end", { transcriptionProvider: "deepgram", responseChars: 11 });
+          return "coffee 70 baht";
+        }
+      }
+    });
+
+    await bot.handleUpdate({
+      message: {
+        chat: { id: 10 },
+        from: { id: 100, first_name: "M" },
+        voice: { file_id: "voice-file-id", mime_type: "audio/ogg", duration: 3 }
+      }
+    });
+  } finally {
+    console.log = originalLog;
+  }
+
+  const completed = repo.events.find((event) => event.eventName === "message_processing_completed");
+  assert.equal(completed.metadata.inputType, "voice");
+  assert.equal(completed.metadata.audioDurationSec, 3);
+  assert.equal(completed.metadata.model, "gpt-test");
+  assert.equal(completed.metadata.promptChars, 123);
+  assert.equal(completed.metadata.responseChars, 45);
+  assert.equal(completed.metadata.fallback, "local-parser");
+  assert.equal(Number.isFinite(completed.metadata.processingTotalMs), true);
+  assert.equal(Number.isFinite(completed.metadata.telegramResponseMs), true);
+  assert.equal(Number.isFinite(completed.metadata.telegramFileDownloadMs), true);
+  assert.equal(Number.isFinite(completed.metadata.transcriptionMs), true);
+  assert.equal(Number.isFinite(completed.metadata.llmParseMs), true);
+  assert.equal(Number.isFinite(completed.metadata.dbSaveMs), true);
+});
+
 test("admin stats command is excluded from regular message events", async () => {
   const repo = fakeRepository();
   const originalLog = console.log;

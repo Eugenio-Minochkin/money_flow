@@ -340,9 +340,22 @@ async function processQueuedMessage({ message, from, user, rawText, hasVoice, in
     }
   } finally {
     if (inputType) {
+      const stageDurations = trace.getDurations();
+      const traceMetadata = trace.getMetadata();
       await safeRecordAppEvent(repository, user.id, "message_processing_completed", {
         inputType,
-        processingTotalMs: Math.max(0, Math.round(performance.now() - processingStartedAt))
+        processingTotalMs: Math.max(0, Math.round(performance.now() - processingStartedAt)),
+        queueWaitMs: traceMetadata.queueWaitMs,
+        telegramResponseMs: stageDurations.telegram_response,
+        llmParseMs: stageDurations.llm_parse,
+        dbSaveMs: stageDurations.db_save,
+        telegramFileDownloadMs: stageDurations.telegram_file_download,
+        transcriptionMs: stageDurations.transcription,
+        model: traceMetadata.llmParse?.model,
+        promptChars: traceMetadata.llmParse?.promptChars,
+        responseChars: traceMetadata.llmParse?.responseChars,
+        fallback: traceMetadata.llmParse?.fallback,
+        audioDurationSec: inputType === "voice" ? traceMetadata.audioDurationSec : undefined
       });
     }
   }
@@ -1043,8 +1056,11 @@ function createPerfTrace({ update, logger }) {
   const traceId = createTraceId();
   const messageType = resolveMessageType(update);
   const userId = update.message?.from?.id ?? update.callback_query?.from?.id ?? null;
+  const initialMessageMetadata = messageMetadata(update, messageType);
   const starts = new Map();
   const durations = new Map();
+  let queueWaitMs = null;
+  let llmParseMetadata = {};
   let finished = false;
 
   const trace = {
@@ -1079,13 +1095,31 @@ function createPerfTrace({ update, logger }) {
       finished = true;
       logStage("total_done", elapsedSince(startedAt), success, {}, error);
       logSummary(success, error);
+    },
+
+    getDurations() {
+      return Object.fromEntries(durations.entries());
+    },
+
+    getMetadata() {
+      return {
+        queueWaitMs,
+        llmParse: { ...llmParseMetadata },
+        audioDurationSec: initialMessageMetadata.audioDurationSec
+      };
     }
   };
 
-  trace.event("message_received", messageMetadata(update, messageType));
+  trace.event("message_received", initialMessageMetadata);
   return trace;
 
   function logStage(stage, durationMs, success, metadata = {}, error = null) {
+    if (stage === "queue_job_start" && Number.isFinite(Number(metadata.queueWaitMs))) {
+      queueWaitMs = Number(metadata.queueWaitMs);
+    }
+    if (stage === "llm_parse_start" || stage === "llm_parse_end") {
+      llmParseMetadata = { ...llmParseMetadata, ...pickLlmMetadata(metadata) };
+    }
     const payload = {
       traceId,
       userId,
@@ -1116,6 +1150,17 @@ function createPerfTrace({ update, logger }) {
     if (error) parts.push(`error=${formatPerfValue(error.message)}`);
     logger(parts.join(" "));
   }
+}
+
+function pickLlmMetadata(metadata) {
+  return Object.fromEntries(
+    Object.entries({
+      model: metadata.model,
+      promptChars: metadata.promptChars,
+      responseChars: metadata.responseChars,
+      fallback: metadata.fallback
+    }).filter(([, value]) => value !== undefined)
+  );
 }
 
 function resolveMessageType(update) {

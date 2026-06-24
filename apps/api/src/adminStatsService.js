@@ -65,6 +65,20 @@ async function periodStats(pool, period, usersCreatedAtAvailable) {
     transcriptionFailed: Number(events.transcriptionFailed),
     avgTextProcessingSeconds: secondsOrNull(events.avgTextProcessingMs),
     avgVoiceProcessingSeconds: secondsOrNull(events.avgVoiceProcessingMs),
+    avgTextStageSeconds: {
+      queue: secondsOrNull(events.avgTextQueueWaitMs),
+      telegramResponse: secondsOrNull(events.avgTextTelegramResponseMs),
+      llmParse: secondsOrNull(events.avgTextLlmParseMs),
+      dbSave: secondsOrNull(events.avgTextDbSaveMs)
+    },
+    avgVoiceStageSeconds: {
+      queue: secondsOrNull(events.avgVoiceQueueWaitMs),
+      telegramFileDownload: secondsOrNull(events.avgVoiceTelegramFileDownloadMs),
+      transcription: secondsOrNull(events.avgVoiceTranscriptionMs),
+      llmParse: secondsOrNull(events.avgVoiceLlmParseMs),
+      telegramResponse: secondsOrNull(events.avgVoiceTelegramResponseMs),
+      dbSave: secondsOrNull(events.avgVoiceDbSaveMs)
+    },
     confirmRate: draftsCreated > 0 ? Math.round((draftsConfirmed / draftsCreated) * 100) : null,
     parseFailedRate: messagesTotal > 0 ? Math.round((parseFailed / messagesTotal) * 100) : null
   };
@@ -141,7 +155,37 @@ async function aggregateEvents(pool, period) {
        END) FILTER (
          WHERE event_name = 'message_processing_completed'
            AND metadata->>'inputType' = 'voice'
-       )::float AS avg_voice_processing_ms
+       )::float AS avg_voice_processing_ms,
+       AVG(CASE WHEN metadata->>'queueWaitMs' ~ '^[0-9]+(\\.[0-9]+)?$' THEN (metadata->>'queueWaitMs')::numeric END) FILTER (
+         WHERE event_name = 'message_processing_completed' AND metadata->>'inputType' = 'text'
+       )::float AS avg_text_queue_wait_ms,
+       AVG(CASE WHEN metadata->>'telegramResponseMs' ~ '^[0-9]+(\\.[0-9]+)?$' THEN (metadata->>'telegramResponseMs')::numeric END) FILTER (
+         WHERE event_name = 'message_processing_completed' AND metadata->>'inputType' = 'text'
+       )::float AS avg_text_telegram_response_ms,
+       AVG(CASE WHEN metadata->>'llmParseMs' ~ '^[0-9]+(\\.[0-9]+)?$' THEN (metadata->>'llmParseMs')::numeric END) FILTER (
+         WHERE event_name = 'message_processing_completed' AND metadata->>'inputType' = 'text'
+       )::float AS avg_text_llm_parse_ms,
+       AVG(CASE WHEN metadata->>'dbSaveMs' ~ '^[0-9]+(\\.[0-9]+)?$' THEN (metadata->>'dbSaveMs')::numeric END) FILTER (
+         WHERE event_name = 'message_processing_completed' AND metadata->>'inputType' = 'text'
+       )::float AS avg_text_db_save_ms,
+       AVG(CASE WHEN metadata->>'queueWaitMs' ~ '^[0-9]+(\\.[0-9]+)?$' THEN (metadata->>'queueWaitMs')::numeric END) FILTER (
+         WHERE event_name = 'message_processing_completed' AND metadata->>'inputType' = 'voice'
+       )::float AS avg_voice_queue_wait_ms,
+       AVG(CASE WHEN metadata->>'telegramFileDownloadMs' ~ '^[0-9]+(\\.[0-9]+)?$' THEN (metadata->>'telegramFileDownloadMs')::numeric END) FILTER (
+         WHERE event_name = 'message_processing_completed' AND metadata->>'inputType' = 'voice'
+       )::float AS avg_voice_telegram_file_download_ms,
+       AVG(CASE WHEN metadata->>'transcriptionMs' ~ '^[0-9]+(\\.[0-9]+)?$' THEN (metadata->>'transcriptionMs')::numeric END) FILTER (
+         WHERE event_name = 'message_processing_completed' AND metadata->>'inputType' = 'voice'
+       )::float AS avg_voice_transcription_ms,
+       AVG(CASE WHEN metadata->>'llmParseMs' ~ '^[0-9]+(\\.[0-9]+)?$' THEN (metadata->>'llmParseMs')::numeric END) FILTER (
+         WHERE event_name = 'message_processing_completed' AND metadata->>'inputType' = 'voice'
+       )::float AS avg_voice_llm_parse_ms,
+       AVG(CASE WHEN metadata->>'telegramResponseMs' ~ '^[0-9]+(\\.[0-9]+)?$' THEN (metadata->>'telegramResponseMs')::numeric END) FILTER (
+         WHERE event_name = 'message_processing_completed' AND metadata->>'inputType' = 'voice'
+       )::float AS avg_voice_telegram_response_ms,
+       AVG(CASE WHEN metadata->>'dbSaveMs' ~ '^[0-9]+(\\.[0-9]+)?$' THEN (metadata->>'dbSaveMs')::numeric END) FILTER (
+         WHERE event_name = 'message_processing_completed' AND metadata->>'inputType' = 'voice'
+       )::float AS avg_voice_db_save_ms
      FROM app_events
      WHERE created_at >= $1 AND created_at < $2`,
     [period.start, period.end]
@@ -164,7 +208,17 @@ async function aggregateEvents(pool, period) {
     parseFailed: numeric(row.parse_failed),
     transcriptionFailed: numeric(row.transcription_failed),
     avgTextProcessingMs: nullableNumeric(row.avg_text_processing_ms),
-    avgVoiceProcessingMs: nullableNumeric(row.avg_voice_processing_ms)
+    avgVoiceProcessingMs: nullableNumeric(row.avg_voice_processing_ms),
+    avgTextQueueWaitMs: nullableNumeric(row.avg_text_queue_wait_ms),
+    avgTextTelegramResponseMs: nullableNumeric(row.avg_text_telegram_response_ms),
+    avgTextLlmParseMs: nullableNumeric(row.avg_text_llm_parse_ms),
+    avgTextDbSaveMs: nullableNumeric(row.avg_text_db_save_ms),
+    avgVoiceQueueWaitMs: nullableNumeric(row.avg_voice_queue_wait_ms),
+    avgVoiceTelegramFileDownloadMs: nullableNumeric(row.avg_voice_telegram_file_download_ms),
+    avgVoiceTranscriptionMs: nullableNumeric(row.avg_voice_transcription_ms),
+    avgVoiceLlmParseMs: nullableNumeric(row.avg_voice_llm_parse_ms),
+    avgVoiceTelegramResponseMs: nullableNumeric(row.avg_voice_telegram_response_ms),
+    avgVoiceDbSaveMs: nullableNumeric(row.avg_voice_db_save_ms)
   };
 }
 
@@ -216,7 +270,9 @@ function formatPeriod(label, period, options) {
       `Confirm rate: ${formatPercent(period.confirmRate)}`,
       `Parse failed rate: ${formatPercent(period.parseFailedRate)}`
     ] : []),
-    `Avg processing: text ${formatSeconds(period.avgTextProcessingSeconds)} / voice ${formatSeconds(period.avgVoiceProcessingSeconds)}`
+    `Avg processing: text ${formatSeconds(period.avgTextProcessingSeconds)} / voice ${formatSeconds(period.avgVoiceProcessingSeconds)}`,
+    formatTextStages(period.avgTextStageSeconds),
+    formatVoiceStages(period.avgVoiceStageSeconds)
   ].join("\n");
 }
 
@@ -231,6 +287,14 @@ function secondsOrNull(value) {
 
 function formatSeconds(value) {
   return value == null ? "-" : `${Number(value).toFixed(1)}s`;
+}
+
+function formatTextStages(stages = {}) {
+  return `Avg stages text: queue ${formatSeconds(stages.queue)} / tg ${formatSeconds(stages.telegramResponse)} / llm ${formatSeconds(stages.llmParse)} / db ${formatSeconds(stages.dbSave)}`;
+}
+
+function formatVoiceStages(stages = {}) {
+  return `Avg stages voice: queue ${formatSeconds(stages.queue)} / dl ${formatSeconds(stages.telegramFileDownload)} / asr ${formatSeconds(stages.transcription)} / llm ${formatSeconds(stages.llmParse)} / tg ${formatSeconds(stages.telegramResponse)} / db ${formatSeconds(stages.dbSave)}`;
 }
 
 function formatPercent(value) {
