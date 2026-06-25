@@ -20,7 +20,7 @@ test("fake Telegram message is processed through bot logic and captures reply ma
   assert.match(telegramClient.messages[0].text, /Adding expense/i);
   assert.equal(telegramClient.messages[1].method, "editMessageText");
   assert.match(telegramClient.messages[1].text, /coffee/i);
-  assert.equal(telegramClient.messages[1].replyMarkup.inline_keyboard[0][0].callback_data, "confirm:42");
+  assert.equal(telegramClient.messages[1].replyMarkup.inline_keyboard[0][0].callback_data, "d:42:confirm");
 });
 
 test("fake callback update is processed through bot logic and captures callback answers", async () => {

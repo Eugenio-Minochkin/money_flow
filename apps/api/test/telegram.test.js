@@ -48,7 +48,7 @@ test("text message creates a pending draft response", async () => {
     assert.match(calls[0][1].text, /Заношу расход/);
     assert.match(calls[1][1].text, /Я понял так/);
     assert.match(calls[1][1].text, /кофе/);
-    assert.equal(calls[1][1].replyMarkup.inline_keyboard[0][0].callback_data, "confirm:42");
+    assert.equal(calls[1][1].replyMarkup.inline_keyboard[0][0].callback_data, "d:42:confirm");
   } finally {
     console.log = originalLog;
   }
@@ -488,7 +488,7 @@ test("voice message is transcribed and creates a draft response", async () => {
     assert.match(calls[0][1].text, /Заношу расход|Adding expense/);
     assert.match(calls[1][1].text, /кофе/);
     assert.match(calls[1][1].text, /70 THB/);
-    assert.equal(calls[1][1].replyMarkup.inline_keyboard[0][0].callback_data, "confirm:42");
+    assert.equal(calls[1][1].replyMarkup.inline_keyboard[0][0].callback_data, "d:42:confirm");
   } finally {
     console.log = originalLog;
   }
@@ -1809,7 +1809,7 @@ test("impact callback updates the draft item and edits the existing Telegram mes
     assert.ok(edit);
     assert.equal(edit.body.chat_id, 10);
     assert.equal(edit.body.message_id, 99);
-    assert.ok(edit.body.reply_markup.inline_keyboard.flat().some((button) => button.text === "☑️ Крупная"));
+    assert.ok(edit.body.reply_markup.inline_keyboard.flat().some((button) => button.text === "🔘 Крупная"));
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -1871,7 +1871,7 @@ test("unclear draft includes category quick actions", async () => {
     });
 
     const keyboard = calls[1][1].replyMarkup.inline_keyboard.flat();
-    assert.ok(keyboard.some((button) => button.callback_data === "cat:42:0:food_cafe"));
+    assert.ok(keyboard.some((button) => button.callback_data === "d:42:c:food"));
   } finally {
     console.log = originalLog;
   }
