@@ -14,6 +14,7 @@ test("parses a simple Russian text expense into a draft item", () => {
     currency: "THB",
     description: "кофе",
     category_slug: "food_cafe",
+    category_source: "parser",
     tags: [],
     spent_at: "2026-06-01T10:00:00.000+07:00",
     confidence: 0.86,
@@ -85,4 +86,12 @@ test("applies relative dates per expense segment", () => {
   assert.equal(result.expenses.length, 2);
   assert.equal(result.expenses[0].spent_at.slice(0, 10), "2026-06-02");
   assert.equal(result.expenses[1].spent_at.slice(0, 10), "2026-06-03");
+});
+
+test("marks the category as parser-provided", () => {
+  const result = parseExpenseText("coffee 80", {
+    now: new Date("2026-06-01T10:00:00+07:00")
+  });
+
+  assert.equal(result.expenses[0].category_source, "parser");
 });
