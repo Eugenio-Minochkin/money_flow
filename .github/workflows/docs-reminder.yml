@@ -1,0 +1,55 @@
+name: Docs Reminder
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  remind-domain-docs:
+    name: Remind about domain docs
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Check changed files
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          git diff --name-only "$BASE_SHA" "$HEAD_SHA" > changed-files.txt
+
+          docs_changed=false
+          sensitive_changed=false
+
+          if grep -Eq '^(AGENTS\.md|docs/)' changed-files.txt; then
+            docs_changed=true
+          fi
+
+          if grep -Eq '^(packages/shared/src/(budget|currencies|parser|plannedParser)\.js|packages/shared/test/(budget|currencies|parser)\.test\.js|apps/api/src/(repository|telegram|telegramFormat|telegramKeyboards|expenseParser|exchangeRates|devSeed)\.js|apps/api/test/(repository|telegram|telegramFormat|expenseParser|exchangeRates)\.test\.js|apps/api/migrations/|apps/miniapp/src/(app|dashboardCards|settings|planned|currencies|formatters|i18n)\.js|apps/miniapp/src/styles\.css|apps/miniapp/test/(dashboardCards|settings|planned|currencies|formatters|i18n|smokeAssets|budgetImpactEditor)\.test\.js)' changed-files.txt; then
+            sensitive_changed=true
+          fi
+
+          if [[ "$sensitive_changed" == "true" && "$docs_changed" != "true" ]]; then
+            {
+              echo "## Domain docs reminder"
+              echo
+              echo "This PR changes budget, planned payment, reserve, onboarding, dashboard, or currency-adjacent files without changing docs or AGENTS.md."
+              echo
+              echo "Please check whether docs/DOMAIN_RULES.md, docs/DECISIONS.md, docs/UI_PRINCIPLES.md, or docs/TESTING_GUIDE.md should be updated."
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            {
+              echo "## Domain docs reminder"
+              echo
+              echo "No documentation reminder needed for this PR."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
