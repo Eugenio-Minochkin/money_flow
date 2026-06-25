@@ -1,6 +1,7 @@
 import { createApiClient } from "./apiClient.js";
 import { categories, categoryColor, categoryLabel } from "./categories.js";
 import { currencyOptions } from "./currencies.js";
+import { resolveDraftSaveResponse } from "./draftSave.js";
 import { buildDashboardCards, buildHeroMetric, renderDashboardCards } from "./dashboardCards.js";
 import {
   dateTimeLocal,
@@ -48,6 +49,7 @@ const percentNumber = new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 
 const api = createApiClient();
 let dashboardState = null;
 let draftState = null;
+let draftDirty = false;
 let draftReturnTab = "dashboard";
 let expenseReturnTab = "dashboard";
 let historyState = [];
@@ -1159,7 +1161,7 @@ function renderDraftEditor(draft) {
     <div class="form-stack">
       ${draft.items.map((item, index) => editableItemFields(item, `draft-${index}`, index)).join("")}
       <div class="button-row">
-        <button type="submit">${t("actions.saveDraft")}</button>
+        <button type="submit">${t("actions.saveChanges")}</button>
         <button type="button" id="confirmDraftButton">${t("actions.confirm")}</button>
         <button type="button" class="ghost-button" id="closeDraftButton">${t("actions.close")}</button>
       </div>
@@ -1363,9 +1365,27 @@ async function saveDraft(event) {
 
 async function saveDraftItems(options = {}) {
   const items = draftState.items.map((item, index) => collectItem(`draft-${index}`, item));
-  const data = await api(`/api/drafts/${draftState.id}`, { method: "PATCH", body: { telegramUserId, items } });
+  let status = 200;
+  let errorBody = null;
+  let data;
+  try {
+    data = await api(`/api/drafts/${draftState.id}`, { method: "PATCH", body: { telegramUserId, items, expectedVersion: draftState.version } });
+  } catch (error) {
+    status = error?.status ?? 500;
+    errorBody = error?.body ?? null;
+    const outcome = resolveDraftSaveResponse(status, errorBody);
+    if (outcome.conflict) {
+      draftState = outcome.draft;
+      renderDraftEditor(draftState);
+      draftDirty = false;
+      showToast(t("toast.draftConflict"));
+      return;
+    }
+    throw error;
+  }
   draftState = data.draft;
   renderDraftEditor(draftState);
+  draftDirty = false;
   if (options.showFeedback) showToast(t("toast.draftSaved"));
 }
 
@@ -1415,6 +1435,7 @@ function collectItem(prefix, original) {
     description: input(`${prefix}-description`).value.trim(),
     category_slug: input(`${prefix}-category_slug`).value,
     budget_impact: input(`${prefix}-budget_impact`)?.value ?? original.budget_impact ?? "regular",
+    category_source: "user",
     spent_at: new Date(input(`${prefix}-spent_at`).value).toISOString(),
     tags: input(`${prefix}-tags`).value.split(",").map((tag) => tag.trim()).filter(Boolean),
     confidence: original.confidence ?? 1,
