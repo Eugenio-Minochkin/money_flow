@@ -2983,3 +2983,28 @@ test("cancelDraft on a confirmed draft is a no-op that reports already_confirmed
   assert.equal(result.canceled, false);
   assert.equal(result.reason, "already_confirmed");
 });
+
+test("updateDraftItems bumps version", async () => {
+  const { createRepository } = await import("../src/repository.js");
+  let query;
+  const repo = createRepository(fakePool((sql) => { query = String(sql); return { rows: [{ id: 1, status: "pending", items: "[]", version: 2 }] }; }));
+  await repo.updateDraftItems(1, 100, [{ amount: 10, currency: "THB", description: "x", category_slug: "food_cafe" }]);
+  assert.match(query, /version = version \+ 1/);
+});
+
+test("updateDraftItems applies expectedVersion guard when provided", async () => {
+  const { createRepository } = await import("../src/repository.js");
+  let params;
+  const repo = createRepository(fakePool((sql, p) => { params = p; return { rows: [] }; }));
+  await repo.updateDraftItems(1, 100, [{ amount: 10, currency: "THB", description: "x", category_slug: "food_cafe" }], { expectedVersion: 3 });
+  assert.equal(params[3], 3);
+});
+
+test("moveDraftToInbox only acts on open drafts and bumps version", async () => {
+  const { createRepository } = await import("../src/repository.js");
+  let query;
+  const repo = createRepository(fakePool((sql) => { query = String(sql); return { rows: [] }; }));
+  await repo.moveDraftToInbox(1, 100);
+  assert.match(query, /status IN \('pending', 'inbox'\)/);
+  assert.match(query, /version = version \+ 1/);
+});

@@ -1022,17 +1022,27 @@ export function createRepository(pool, options = {}) {
       return normalizeDraft(result.rows[0] ?? null);
     },
 
-    async updateDraftItems(draftId, telegramUserId, items) {
+    async updateDraftItems(draftId, telegramUserId, items, options = {}) {
       const normalized = items.map(normalizeDraftItem);
-      const result = await pool.query(
-        `UPDATE drafts
-         SET items = $1
-         WHERE id = $2
-           AND status IN ('pending', 'inbox')
-           AND user_id = (SELECT id FROM users WHERE telegram_user_id = $3)
-         RETURNING *`,
-        [JSON.stringify(normalized), draftId, telegramUserId]
-      );
+      const expectedVersion = options.expectedVersion;
+      const sql = expectedVersion == null
+        ? `UPDATE drafts
+           SET items = $1, version = version + 1
+           WHERE id = $2
+             AND status IN ('pending', 'inbox')
+             AND user_id = (SELECT id FROM users WHERE telegram_user_id = $3)
+           RETURNING *`
+        : `UPDATE drafts
+           SET items = $1, version = version + 1
+           WHERE id = $2
+             AND status IN ('pending', 'inbox')
+             AND version = $4
+             AND user_id = (SELECT id FROM users WHERE telegram_user_id = $3)
+           RETURNING *`;
+      const params = expectedVersion == null
+        ? [JSON.stringify(normalized), draftId, telegramUserId]
+        : [JSON.stringify(normalized), draftId, telegramUserId, expectedVersion];
+      const result = await pool.query(sql, params);
       return normalizeDraft(result.rows[0] ?? null);
     },
 
@@ -1164,8 +1174,10 @@ export function createRepository(pool, options = {}) {
     async moveDraftToInbox(draftId, telegramUserId) {
       await pool.query(
         `UPDATE drafts
-         SET status = 'inbox'
-         WHERE id = $1 AND user_id = (SELECT id FROM users WHERE telegram_user_id = $2)`,
+         SET status = 'inbox', version = version + 1
+         WHERE id = $1
+           AND user_id = (SELECT id FROM users WHERE telegram_user_id = $2)
+           AND status IN ('pending', 'inbox')`,
         [draftId, telegramUserId]
       );
     },
