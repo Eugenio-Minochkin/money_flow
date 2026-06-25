@@ -202,3 +202,11 @@ test("settings expose interface theme as a visible select", async () => {
   assert.match(html, /<option value="dark" data-i18n="settings.themeDark"/);
   assert.match(html, /data-i18n="settings.interfaceTheme"/);
 });
+
+test("settings expose lightweight timezone controls", async () => {
+  const html = await readFile(new URL("../src/index.html", import.meta.url), "utf8");
+
+  assert.match(html, /id="timezoneInput"/);
+  assert.match(html, /id="detectTimezoneButton"/);
+  assert.match(html, /data-i18n="settings.timezone"/);
+});

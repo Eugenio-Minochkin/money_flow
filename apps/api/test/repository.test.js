@@ -236,7 +236,8 @@ test("updates user budget and display currency settings", async () => {
         weekly_budget_amount: params[4],
         interface_language: params[5],
         budget_advice_enabled: params[6],
-        interface_theme: params[7]
+        interface_theme: params[7],
+        timezone: params[8]
       }]
     };
   }));
@@ -249,7 +250,8 @@ test("updates user budget and display currency settings", async () => {
     usdThbRate: 36.5,
     interfaceLanguage: "ru",
     budgetAdviceEnabled: false,
-    interfaceTheme: "light"
+    interfaceTheme: "light",
+    timezone: "America/New_York"
   });
 
   assert.equal(Number(user.monthly_budget_amount), 60000);
@@ -258,13 +260,38 @@ test("updates user budget and display currency settings", async () => {
   assert.equal(user.interface_language, "ru");
   assert.equal(user.budget_advice_enabled, false);
   assert.equal(user.interface_theme, "light");
+  assert.equal(user.timezone, "America/New_York");
   assert.equal(Number(user.usd_thb_rate), 36.5);
   assert.equal(queries[0].params[3], 36.5);
   assert.equal(queries[0].params[4], 12000);
   assert.equal(queries[0].params[5], "ru");
   assert.equal(queries[0].params[6], false);
   assert.equal(queries[0].params[7], "light");
-  assert.equal(queries[0].params[8], 100);
+  assert.equal(queries[0].params[8], "America/New_York");
+  assert.equal(queries[0].params[9], 100);
+});
+
+test("falls back to Bangkok when settings timezone is invalid", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql: String(sql), params });
+    return { rows: [{ timezone: params[8] }] };
+  }));
+
+  const user = await repo.updateUserSettings(100, {
+    monthlyBudgetAmount: 60000,
+    weeklyBudgetAmount: "",
+    baseCurrency: "THB",
+    displayCurrency: "USD",
+    usdThbRate: 36.5,
+    interfaceLanguage: "en",
+    budgetAdviceEnabled: true,
+    interfaceTheme: "dark",
+    timezone: "Mars/Olympus"
+  });
+
+  assert.equal(user.timezone, "Asia/Bangkok");
+  assert.match(queries[0].sql, /timezone = \$9/);
 });
 
 test("updateUserSettings deletes daily_budget_snapshots for current day after settings update", async () => {
@@ -868,6 +895,74 @@ test("marks user as bot blocked", async () => {
   await repo.markUserBotBlocked(1);
 });
 
+test("records app events with json metadata", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql: String(sql), params });
+    return { rows: [] };
+  }));
+
+  await repo.recordAppEvent(1, "timezone_missing", { timezoneUsed: "Asia/Bangkok" });
+
+  assert.match(queries[0].sql, /INSERT INTO app_events/);
+  assert.deepEqual(queries[0].params, [1, "timezone_missing", JSON.stringify({ timezoneUsed: "Asia/Bangkok" })]);
+});
+
+test("records no-spending marks and reminder deliveries idempotently", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql: String(sql), params });
+    if (String(sql).startsWith("SELECT 1 FROM no_spending_marks")) return { rows: [] };
+    if (String(sql).startsWith("SELECT 1 FROM daily_reminder_deliveries")) return { rows: [{ exists: 1 }] };
+    if (String(sql).startsWith("INSERT INTO daily_reminder_deliveries")) {
+      return { rows: [{ id: 10, status: params[4] }] };
+    }
+    return { rows: [] };
+  }));
+
+  assert.equal(await repo.hasNoSpendingMark(1, "2026-06-25"), false);
+  await repo.createNoSpendingMark(1, "2026-06-25", "Asia/Bangkok");
+  assert.equal(await repo.hasDailyReminderDelivery(1, "2026-06-25", "daily_empty_day"), true);
+  const delivery = await repo.recordDailyReminderDelivery({
+    userId: 1,
+    localDate: "2026-06-25",
+    timezoneUsed: "Asia/Bangkok",
+    reminderType: "daily_empty_day",
+    status: "sent",
+    sentAt: new Date("2026-06-25T15:00:00Z")
+  });
+
+  assert.match(queries[1].sql, /INSERT INTO no_spending_marks/);
+  assert.match(queries[3].sql, /INSERT INTO daily_reminder_deliveries/);
+  assert.equal(delivery.status, "sent");
+});
+
+test("lists reminder candidates excluding blocked and onboarding users", async () => {
+  const repo = createRepository(fakePool((sql) => {
+    assert.match(String(sql), /daily_entry_reminder_enabled = true/);
+    assert.match(String(sql), /bot_blocked = false/);
+    assert.match(String(sql), /onboarding_step = 'completed'/);
+    return { rows: [{ id: 1, telegram_user_id: 100, timezone: "Asia/Bangkok" }] };
+  }));
+
+  const users = await repo.listDailyReminderCandidates();
+
+  assert.equal(users[0].id, 1);
+});
+
+test("checks confirmed financial activity using supplied local bounds", async () => {
+  const bounds = { start: new Date("2026-06-24T17:00:00Z"), end: new Date("2026-06-25T17:00:00Z") };
+  const repo = createRepository(fakePool((sql, params) => {
+    assert.match(String(sql), /FROM expenses/);
+    assert.match(String(sql), /spent_at >= \$2/);
+    assert.match(String(sql), /spent_at < \$3/);
+    assert.deepEqual(params, [1, bounds.start, bounds.end]);
+    return { rows: [{ exists: 1 }] };
+  }));
+
+  assert.equal(await repo.hasConfirmedFinancialActivity(1, bounds), true);
+});
+
 test("returns a draft owned by a Telegram user", async () => {
   const repo = createRepository(fakePool(() => ({
     rows: [{ id: "42", status: "pending", items: [{ description: "кофе" }] }]
@@ -1154,6 +1249,26 @@ test("lists expenses with last7 period and filters by spent_at", async () => {
   assert.doesNotMatch(listCall.sql, /created_at/);
   assert.equal(listCall.params[1].toISOString(), "2026-06-09T17:00:00.000Z");
   assert.equal(listCall.params[2].toISOString(), "2026-06-16T17:00:00.000Z");
+});
+
+test("listExpensesForTelegramUser uses the user's timezone for today bounds", async () => {
+  const calls = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    calls.push({ sql: String(sql), params });
+    if (String(sql).startsWith("SELECT * FROM users")) {
+      return { rows: [{ id: "1", telegram_user_id: "100", timezone: "America/New_York", base_currency: "THB" }] };
+    }
+    return { rows: [] };
+  }));
+
+  await repo.listExpensesForTelegramUser(100, {
+    period: "today",
+    now: new Date("2026-06-01T03:30:00Z")
+  });
+
+  const listCall = calls.at(-1);
+  assert.equal(listCall.params[1].toISOString(), "2026-05-31T04:00:00.000Z");
+  assert.equal(listCall.params[2].toISOString(), "2026-06-01T04:00:00.000Z");
 });
 
 test("listExpensesForTelegramUser with fromDate/toDate uses custom bounds", async () => {
@@ -1756,7 +1871,7 @@ test("date-mismatched linked expense blocks duplicate planned payment", async ()
   );
 
   const paidLookup = queries.find((query) => String(query.sql).includes("pep.occurrence_date"));
-  assert.doesNotMatch(String(paidLookup.sql), /e\.spent_at/);
+  assert.match(String(paidLookup.sql), /e\.spent_at AT TIME ZONE \$4/);
   assert.ok(!queries.some((query) => String(query.sql).includes("INSERT INTO expenses")));
 });
 
@@ -2110,7 +2225,7 @@ test("listing planned expenses only counts payments backed by a matching expense
 
   assert.match(listSql, /JOIN expenses e ON e\.id = pep\.expense_id/);
   assert.match(listSql, /e\.user_id = pe\.user_id/);
-  assert.doesNotMatch(listSql, /e\.spent_at/);
+  assert.match(listSql, /e\.spent_at AT TIME ZONE COALESCE\(NULLIF\(pu\.timezone, ''\), 'Asia\/Bangkok'\)/);
   assert.match(listSql, /paid_occurrences/);
   assert.equal(planned[0].paid_count, 0);
   assert.deepEqual(planned[0].paid_occurrence_dates, []);
@@ -2151,7 +2266,7 @@ test("listing planned expenses accepts a date-mismatched same-user expense", asy
 
   assert.match(listSql, /JOIN expenses e ON e\.id = pep\.expense_id/);
   assert.match(listSql, /e\.user_id = pe\.user_id/);
-  assert.doesNotMatch(listSql, /e\.spent_at/);
+  assert.match(listSql, /e\.spent_at AT TIME ZONE COALESCE\(NULLIF\(pu\.timezone, ''\), 'Asia\/Bangkok'\)/);
   assert.deepEqual(planned[0].paid_occurrence_dates, ["2026-06-14"]);
   assert.equal(planned[0].paid_occurrences["2026-06-14"].expense_id, "187");
 });
@@ -2498,7 +2613,7 @@ test("dashboard weekComparison ignores planned and large one-off spending", asyn
   assert.equal(dashboard.analytics.weekComparison.delta, -1000);
 });
 
-test("syncs a valid user timezone and falls back to UTC", async () => {
+test("syncs a valid user timezone and falls back to Bangkok", async () => {
   const calls = [];
   const repo = createRepository(fakePool((sql, params) => {
     calls.push({ sql: String(sql), params });
@@ -2509,7 +2624,7 @@ test("syncs a valid user timezone and falls back to UTC", async () => {
   const fallback = await repo.syncUserTimezone(100, "Not/A_Zone");
 
   assert.equal(updated.timezone, "Europe/Moscow");
-  assert.equal(fallback.timezone, "UTC");
+  assert.equal(fallback.timezone, "Asia/Bangkok");
   assert.match(calls[0].sql, /SET timezone/);
 });
 

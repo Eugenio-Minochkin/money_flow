@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { appKeyboard, draftKeyboard } from "../src/telegramKeyboards.js";
+import { appKeyboard, dailyReminderKeyboard, draftKeyboard } from "../src/telegramKeyboards.js";
 
 test("draft keyboard includes confirm edit cancel inbox and mini app actions", () => {
   const keyboard = draftKeyboard(42, [{
@@ -31,4 +31,14 @@ test("app keyboard opens Mini App for the user", () => {
   const keyboard = appKeyboard("http://localhost:3000", 100);
 
   assert.equal(keyboard.inline_keyboard[0][0].web_app.url, "http://localhost:3000?telegramUserId=100");
+});
+
+test("daily reminder keyboard includes lean MVP actions", () => {
+  const keyboard = dailyReminderKeyboard("en");
+  const buttons = keyboard.inline_keyboard.flat();
+
+  assert.equal(buttons[0].callback_data, "daily_reminder:add");
+  assert.equal(buttons[1].callback_data, "daily_reminder:no_spending");
+  assert.equal(buttons[2].callback_data, "daily_reminder:disable");
+  assert.equal(buttons[0].text, "Add expense");
 });

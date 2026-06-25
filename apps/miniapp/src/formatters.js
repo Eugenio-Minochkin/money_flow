@@ -42,21 +42,21 @@ export function moneyDisplaySigned(value, currency = "USD") {
   return `${sign}${moneyDisplay(value, currency)}`;
 }
 
-export function formatDate(value, language = "ru") {
+export function formatDate(value, language = "ru", timeZone = "Asia/Bangkok") {
   return new Intl.DateTimeFormat(localeFor(language), {
     day: "2-digit",
     month: "short",
     hour: "2-digit",
     minute: "2-digit",
-    timeZone: "Asia/Bangkok"
+    timeZone
   }).format(new Date(value));
 }
 
-export function formatDateOnly(value, language = "ru") {
+export function formatDateOnly(value, language = "ru", timeZone = "Asia/Bangkok") {
   return new Intl.DateTimeFormat(localeFor(language), {
     day: "2-digit",
     month: "short",
-    timeZone: "Asia/Bangkok"
+    timeZone
   }).format(new Date(value));
 }
 
@@ -89,9 +89,18 @@ function normalizeCurrency(currency) {
   return String(currency || baseCurrency || "THB").toUpperCase();
 }
 
-export function dateTimeLocal(value) {
+export function dateTimeLocal(value, timeZone = "Asia/Bangkok") {
   const date = new Date(value ?? Date.now());
-  return new Date(date.getTime() + 7 * 60 * 60_000).toISOString().slice(0, 16);
+  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23"
+  }).formatToParts(date).filter((part) => part.type !== "literal").map((part) => [part.type, part.value]));
+  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
 }
 
 export function escapeHtml(value) {

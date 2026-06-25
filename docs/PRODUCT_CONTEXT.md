@@ -23,3 +23,5 @@ The product should feel simple, fast, and light: a user records expenses in the 
 - Dashboard screens should show budget state clearly and avoid visual noise.
 - Settings should stay compact even as they cover budget, currencies, planned payments, reserve, language, theme, and backup.
 - New work should usually improve the current MVP flows before adding a new major surface.
+- Evening empty-day reminders should feel gentle and easy to dismiss, with a clear opt-out.
+- Timezone settings should stay lightweight: show the current timezone, allow auto-detect, and offer a short common list.

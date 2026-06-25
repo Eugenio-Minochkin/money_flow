@@ -7,6 +7,7 @@ import { config, requireRuntimeConfig } from "./config.js";
 import { createAdminStatsService } from "./adminStatsService.js";
 import { createApiSecurity } from "./apiSecurity.js";
 import { migrate, pool } from "./db.js";
+import { createDailyReminderService } from "./dailyReminderService.js";
 import { createExchangeRateProvider } from "./exchangeRates.js";
 import { createExpenseParser } from "./expenseParser.js";
 import { createJsonReader, createStaticHandler, sendJson } from "./http.js";
@@ -71,6 +72,15 @@ const releaseDigestScheduler = createReleaseDigestScheduler({
   }
 });
 releaseDigestScheduler.start();
+const dailyReminderService = createDailyReminderService({
+  repository,
+  sendMessage: (message) => sendTelegramMessage({
+    token: config.telegramBotToken,
+    ...message
+  }),
+  globalEnabled: config.dailyReminderGlobalEnabled,
+  rolloutPercent: config.dailyReminderRolloutPercent
+});
 function createBot(telegramClient) {
   return createTelegramBot({
     repository,
@@ -96,6 +106,7 @@ const rateLimiter = createRateLimiter({
   windowMs: config.rateLimitWindowMs
 });
 startWeeklyReportScheduler();
+startDailyReminderScheduler();
 
 const server = createServer(async (req, res) => {
   try {
@@ -126,6 +137,19 @@ function startWeeklyReportScheduler() {
   };
   setTimeout(run, 10_000);
   setInterval(run, 60 * 60_000);
+}
+
+function startDailyReminderScheduler() {
+  if (!config.telegramBotToken || !config.dailyReminderGlobalEnabled) return;
+  const run = async () => {
+    try {
+      await dailyReminderService.runOnce();
+    } catch (error) {
+      console.error("[daily-reminder] failed", error);
+    }
+  };
+  setTimeout(run, 15_000);
+  setInterval(run, Math.max(config.dailyReminderIntervalMs, 60_000));
 }
 
 async function route(req, res) {

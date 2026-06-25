@@ -1,4 +1,5 @@
 import { parseExpenseText } from "./parser.js";
+import { localMonthDay } from "./time.js";
 
 const WEEKDAYS = [
   { value: 1, names: ["monday", "mon", "понедельник", "понедельникам"] },
@@ -21,7 +22,8 @@ export function parsePlannedExpenseText(text, options = {}) {
   const cleaned = cleanRecurrenceWords(source);
   const parsed = parseExpenseText(cleaned, {
     now: options.now,
-    defaultCurrency: options.defaultCurrency
+    defaultCurrency: options.defaultCurrency,
+    timeZone: options.timeZone
   });
   const expense = parsed.expenses[0];
   if (!expense) return null;
@@ -55,7 +57,7 @@ function detectRecurrence(text, now) {
 
   if (/(every month|monthly|кажд.*месяц|раз в месяц)/iu.test(text)) {
     const dayMatch = text.match(/(\d{1,2})\s*(?:числа|day)?/iu);
-    const dueDay = normalizeDueDay(dayMatch?.[1], now);
+    const dueDay = normalizeDueDay(dayMatch?.[1], now, options.timeZone);
     return { type: "monthly", weekday: null, dueDay, dueDays: [dueDay] };
   }
 
@@ -71,11 +73,10 @@ function detectWeekday(text) {
   return null;
 }
 
-function normalizeDueDay(value, now) {
+function normalizeDueDay(value, now, timeZone = "Asia/Bangkok") {
   const numeric = Number(value);
   if (Number.isInteger(numeric) && numeric >= 1 && numeric <= 31) return numeric;
-  const local = new Date(now.getTime() + 7 * 60 * 60_000);
-  return local.getUTCDate();
+  return localMonthDay(now, timeZone);
 }
 
 function cleanRecurrenceWords(text) {

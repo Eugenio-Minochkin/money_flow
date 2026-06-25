@@ -14,9 +14,29 @@ This file records stable product and business rules. Read it before changing bud
 - Supported recurrence types are `monthly`, `weekly`, `twice_monthly`, and `one_off`.
 - Each planned payment occurrence has its own occurrence date.
 - When the user pays an overdue planned payment, the created transaction must use the occurrence date, not today's date.
+- Planned payment local dates are interpreted in the user's IANA timezone.
 - Disabled planned payments must not be included in active monthly totals.
 - Weekly planned payments must not be counted more than once for the same target week.
 - One-off planned payments must not repeat in the next month.
+
+## Timezone
+
+- Store timestamps in UTC.
+- Interpret local days, weeks, months, daily budget snapshots, history filters, planned payments, and reminders through `users.timezone`.
+- `users.timezone` is an IANA timezone. Default and fallback is `Asia/Bangkok`.
+- Missing or invalid timezone values must fall back to `Asia/Bangkok` and log `timezone_missing` or `timezone_invalid`.
+- Changing timezone must not rewrite historical transaction timestamps.
+
+## Daily Empty-Day Reminder
+
+- The daily empty-day reminder is an MVP safety feature, not an A/B experimentation platform.
+- The global kill switch defaults off.
+- Rollout is controlled by a stable deterministic user cohort percentage.
+- A user can disable evening reminders with `daily_entry_reminder_enabled = false`.
+- A reminder can send only after 22:00 in the user's local timezone.
+- Do not send when the local day already has confirmed financial activity or a no-spending mark.
+- Enforce both one delivery per `user_id + local_date + reminder_type` and a 48-hour frequency cap.
+- Telegram blocked/forbidden errors must be logged and should mark the user as bot-blocked.
 
 ## Reserve
 

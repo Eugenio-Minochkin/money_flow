@@ -1,4 +1,4 @@
-import { monthDaysLeft, timeZoneMonthState } from "./time.js";
+import { localWeekday, monthDaysLeft, timeZoneMonthState } from "./time.js";
 import { calculateReserveForecast, calculateReserveState } from "./reserve.js";
 
 export function calculateBudgetSnapshot({
@@ -25,7 +25,7 @@ export function calculateBudgetSnapshot({
   baseCurrency = "THB",
   displayCurrency = "USD",
   budgetAdviceEnabled = true,
-  timeZone = null,
+  timeZone = "Asia/Bangkok",
   now
 }) {
   const remaining = monthlyBudget - monthTotal;
@@ -35,15 +35,15 @@ export function calculateBudgetSnapshot({
   const freeRemainingDisplay = Math.max(monthDisplayTotal, 0) === 0 && monthTotal === 0
     ? 0
     : Math.max(displayFromBase(freeRemaining, monthTotal, monthDisplayTotal), 0);
-  const monthState = timeZone ? timeZoneMonthState(now, timeZone) : null;
-  const daysLeftInMonth = monthState?.remainingDays ?? monthDaysLeft(now);
-  const elapsedDaysInMonth = monthState?.dayOfMonth ?? elapsedMonthDays(now);
-  const daysInMonth = monthState?.daysInMonth ?? monthDays(now);
+  const monthState = timeZoneMonthState(now, timeZone);
+  const daysLeftInMonth = monthDaysLeft(now, timeZone);
+  const elapsedDaysInMonth = monthState.dayOfMonth;
+  const daysInMonth = monthState.daysInMonth;
   const resolvedDayPlanDays = Number.isFinite(Number(dayPlanDays)) && Number(dayPlanDays) > 0
     ? Number(dayPlanDays)
     : daysInMonth;
   const daysInWeek = 7;
-  const elapsedDaysInWeek = elapsedWeekDays(now);
+  const elapsedDaysInWeek = elapsedWeekDays(now, timeZone);
   const dailyPlanLimit = roundMoney(monthlyBudget / resolvedDayPlanDays);
   const dailyPlanDisplayLimit = roundMoney(displayFromBase(dailyPlanLimit, monthTotal, monthDisplayTotal));
   const resolvedWeeklyBudget = roundMoney(resolveWeeklyBudget({ monthlyBudget, weeklyBudget, daysInMonth }));
@@ -188,7 +188,7 @@ export function calculateBudgetSnapshot({
       planDeviation: planDisplayDeviation,
       safeToSpendPerDay: safeToSpendDisplayPerDay
     },
-    status: budgetStatus({ monthTotal, monthlyBudget, now })
+    status: budgetStatus({ monthTotal, monthlyBudget, now, timeZone })
   };
 }
 
@@ -197,10 +197,9 @@ function displayFromBase(value, baseTotal, displayTotal) {
   return value * (displayTotal / baseTotal);
 }
 
-function budgetStatus({ monthTotal, monthlyBudget, now }) {
-  const elapsedDays = elapsedMonthDays(now);
-  const daysInMonth = monthDays(now);
-  const plannedSpend = monthlyBudget * (elapsedDays / daysInMonth);
+function budgetStatus({ monthTotal, monthlyBudget, now, timeZone }) {
+  const monthState = timeZoneMonthState(now, timeZone);
+  const plannedSpend = monthlyBudget * (monthState.dayOfMonth / monthState.daysInMonth);
   if (monthTotal > plannedSpend * 1.08) return "above_plan";
   if (monthTotal < plannedSpend * 0.92) return "below_plan";
   return "on_plan";
@@ -269,20 +268,8 @@ function pacedProgressState(progressPercent, elapsedDays, totalDays) {
   return "good";
 }
 
-function monthDays(date) {
-  const local = new Date(date.getTime() + 7 * 60 * 60_000);
-  return new Date(Date.UTC(local.getUTCFullYear(), local.getUTCMonth() + 1, 0)).getUTCDate();
-}
-
-function elapsedMonthDays(date) {
-  const local = new Date(date.getTime() + 7 * 60 * 60_000);
-  return local.getUTCDate();
-}
-
-function elapsedWeekDays(date) {
-  const local = new Date(date.getTime() + 7 * 60 * 60_000);
-  const weekday = local.getUTCDay();
-  return weekday === 0 ? 7 : weekday;
+function elapsedWeekDays(date, timeZone) {
+  return localWeekday(date, timeZone);
 }
 
 function roundMoney(value) {

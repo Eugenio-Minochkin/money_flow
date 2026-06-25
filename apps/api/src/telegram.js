@@ -3,6 +3,13 @@ import { parseExpenseText } from "../../../packages/shared/src/parser.js";
 import { parsePlannedExpenseText } from "../../../packages/shared/src/plannedParser.js";
 import { normalizeCurrency, SUPPORTED_CURRENCY_CODES } from "../../../packages/shared/src/currencies.js";
 import { isAdminTelegramId, normalizeBotCommand } from "./adminAccess.js";
+import {
+  localDateKey as timezoneLocalDateKey,
+  localHour as timezoneLocalHour,
+  localMonthDay as timezoneLocalMonthDay,
+  localWeekday as timezoneLocalWeekday,
+  normalizeTimeZone
+} from "../../../packages/shared/src/time.js";
 import { formatAdminStats } from "./adminStatsService.js";
 import { createTelegramJobQueue } from "./telegramJobQueue.js";
 import { formatDraft, formatPlannedDraft, formatReserveClosedEvent, formatSavedSummary, formatTotals, formatWeeklyReport } from "./telegramFormat.js";
@@ -45,7 +52,7 @@ export function createTelegramBot({
       }
       if (update.callback_query) {
         try {
-          const result = await handleCallback({ update, repository, token, miniAppUrl, telegramClient, trace });
+          const result = await handleCallback({ update, repository, token, miniAppUrl, telegramClient, trace, now });
           success = true;
           return result;
         } catch (error) {
@@ -265,7 +272,10 @@ async function processQueuedMessage({ message, from, user, rawText, hasVoice, in
 
       let planned;
       try {
-        planned = parsePlannedExpenseText(text, { defaultCurrency: user.base_currency ?? "THB" });
+        planned = parsePlannedExpenseText(text, {
+          defaultCurrency: user.base_currency ?? "THB",
+          timeZone: user.timezone
+        });
       } catch (error) {
         processingResult = "parser_failed";
         await safeRecordAppEvent(repository, user.id, "expense_parse_failed", { inputType });
@@ -298,6 +308,7 @@ async function processQueuedMessage({ message, from, user, rawText, hasVoice, in
       try {
         parsed = await expenseParser.parse(text, {
           defaultCurrency: user.base_currency ?? "THB",
+          timeZone: user.timezone,
           onLlmTrace(metadata) {
             llmMetadata = { ...llmMetadata, ...metadata };
           }
@@ -731,11 +742,10 @@ function normalizeOnboardingData(value) {
 }
 
 function localMonthDay(now) {
-  const local = new Date(now.getTime() + 7 * 60 * 60_000);
-  return local.getUTCDate();
+  return timezoneLocalMonthDay(now);
 }
 
-async function handleCallback({ update, repository, token, miniAppUrl, telegramClient, trace }) {
+async function handleCallback({ update, repository, token, miniAppUrl, telegramClient, trace, now = () => new Date() }) {
   const callback = update.callback_query;
   const [action, draftId, itemIndex, value] = callback.data.split(":");
   const telegramUserId = callback.from.id;
@@ -743,6 +753,21 @@ async function handleCallback({ update, repository, token, miniAppUrl, telegramC
   const user = await repository.getUserByTelegramId?.(telegramUserId);
   trace.end("user_context");
   const language = user?.interface_language ?? "en";
+
+  if (action === "daily_reminder") {
+    return handleDailyReminderCallback({
+      callback,
+      action: draftId,
+      user,
+      telegramUserId,
+      language,
+      repository,
+      token,
+      telegramClient,
+      trace,
+      now
+    });
+  }
 
   if (action === "onboard_lang") {
     const selectedLanguage = ["en", "ru"].includes(draftId) ? draftId : "en";
@@ -902,6 +927,76 @@ async function handleCallback({ update, repository, token, miniAppUrl, telegramC
   });
 }
 
+async function handleDailyReminderCallback({ callback, action, user, telegramUserId, language, repository, token, telegramClient, trace, now }) {
+  const chatId = callback.message.chat.id;
+  const messageId = callback.message.message_id;
+  const normalized = normalizeTimeZone(user?.timezone);
+  const timezoneUsed = normalized.timeZone;
+  const localDate = timezoneLocalDateKey(now(), timezoneUsed);
+
+  if (action === "add") {
+    trace.start("db_save");
+    await repository.recordAppEvent?.(user?.id ?? null, "daily_reminder_clicked_add", {
+      local_date: localDate,
+      clicked_at: now().toISOString()
+    });
+    trace.end("db_save");
+    return sendTelegramResponse(trace, async () => {
+      await answerCallback(token, callback.id, language === "ru" ? "Напиши расход" : "Send an expense", telegramClient);
+      return sendMessage(token, chatId, dailyReminderText(language, "addHint"), null, telegramClient);
+    });
+  }
+
+  if (action === "no_spending") {
+    trace.start("db_save");
+    await repository.createNoSpendingMark?.(user.id, localDate, timezoneUsed);
+    await repository.recordAppEvent?.(user.id, "daily_reminder_clicked_no_spending", {
+      local_date: localDate,
+      clicked_at: now().toISOString()
+    });
+    trace.end("db_save");
+    return sendTelegramResponse(trace, async () => {
+      await answerCallback(token, callback.id, language === "ru" ? "Отмечено" : "Marked", telegramClient);
+      return editMessageText(token, chatId, messageId, dailyReminderText(language, "noSpendingDone"), { inline_keyboard: [] }, telegramClient);
+    });
+  }
+
+  if (action === "disable") {
+    trace.start("db_save");
+    await repository.setDailyEntryReminderEnabled?.(telegramUserId, false);
+    await repository.recordAppEvent?.(user.id, "daily_reminder_disabled", {
+      local_date: localDate,
+      clicked_at: now().toISOString()
+    });
+    trace.end("db_save");
+    return sendTelegramResponse(trace, async () => {
+      await answerCallback(token, callback.id, language === "ru" ? "Отключено" : "Disabled", telegramClient);
+      return editMessageText(token, chatId, messageId, dailyReminderText(language, "disabledDone"), { inline_keyboard: [] }, telegramClient);
+    });
+  }
+
+  return sendTelegramResponse(trace, async () => {
+    await answerCallback(token, callback.id, botText(language, "openMiniAppCallback"), telegramClient);
+    return sendMessage(token, chatId, botText(language, "editInMiniApp"), null, telegramClient);
+  });
+}
+
+function dailyReminderText(language, key) {
+  const ru = language === "ru";
+  const messages = {
+    addHint: ru
+      ? "Напиши трату текстом или голосом — я добавлю."
+      : "Send an expense by text or voice — I’ll add it.",
+    noSpendingDone: ru
+      ? "Отлично, отметил день без трат ✅"
+      : "Done — marked today as no spending ✅",
+    disabledDone: ru
+      ? "Окей, больше не буду напоминать вечером."
+      : "Okay, I won’t send evening reminders anymore."
+  };
+  return messages[key];
+}
+
 async function updateOnboardingLanguage(repository, telegramUserId, language) {
   if (repository.updateOnboardingLanguage) {
     return repository.updateOnboardingLanguage(telegramUserId, language);
@@ -946,15 +1041,13 @@ export async function sendWeeklyReports({ repository, token, miniAppUrl, now = n
 }
 
 export function shouldSendWeeklyReport(now = new Date()) {
-  const local = new Date(now.getTime() + 7 * 60 * 60_000);
-  const weekday = local.getUTCDay();
-  const hour = local.getUTCHours();
+  const weekday = timezoneLocalWeekday(now);
+  const hour = timezoneLocalHour(now);
   return weekday === 0 && hour >= 20;
 }
 
 function localDateKey(now) {
-  const local = new Date(now.getTime() + 7 * 60 * 60_000);
-  return local.toISOString().slice(0, 10);
+  return timezoneLocalDateKey(now);
 }
 
 async function sendTelegramResponse(trace, fn) {

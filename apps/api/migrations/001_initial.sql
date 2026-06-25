@@ -11,6 +11,8 @@ CREATE TABLE IF NOT EXISTS users (
   interface_language TEXT NOT NULL DEFAULT 'en',
   interface_theme TEXT NOT NULL DEFAULT 'light',
   budget_advice_enabled BOOLEAN NOT NULL DEFAULT true,
+  timezone TEXT NOT NULL DEFAULT 'Asia/Bangkok',
+  daily_entry_reminder_enabled BOOLEAN NOT NULL DEFAULT true,
   onboarding_step TEXT NOT NULL DEFAULT 'completed',
   onboarding_data JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -24,6 +26,8 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS interface_theme TEXT NOT NULL DEFAULT
 ALTER TABLE users ALTER COLUMN interface_theme SET DEFAULT 'light';
 UPDATE users SET interface_theme = 'light' WHERE interface_theme IS NULL OR interface_theme NOT IN ('light', 'dark');
 ALTER TABLE users ADD COLUMN IF NOT EXISTS budget_advice_enabled BOOLEAN NOT NULL DEFAULT true;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS timezone TEXT NOT NULL DEFAULT 'Asia/Bangkok';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS daily_entry_reminder_enabled BOOLEAN NOT NULL DEFAULT true;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS onboarding_step TEXT NOT NULL DEFAULT 'completed';
 ALTER TABLE users ADD COLUMN IF NOT EXISTS bot_blocked BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS onboarding_data JSONB NOT NULL DEFAULT '{}'::jsonb;
@@ -319,6 +323,31 @@ CREATE TABLE IF NOT EXISTS closed_reserve_events (
   miniapp_delivered_at TIMESTAMPTZ,
   telegram_delivered_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS daily_reminder_deliveries (
+  id BIGSERIAL PRIMARY KEY,
+  user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  local_date DATE NOT NULL,
+  timezone_used TEXT NOT NULL DEFAULT 'Asia/Bangkok',
+  reminder_type TEXT NOT NULL DEFAULT 'daily_empty_day',
+  sent_at TIMESTAMPTZ,
+  status TEXT NOT NULL CHECK (status IN ('sent', 'failed', 'blocked')),
+  error_code TEXT,
+  error_message TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(user_id, local_date, reminder_type)
+);
+
+CREATE INDEX IF NOT EXISTS daily_reminder_deliveries_user_sent_idx ON daily_reminder_deliveries(user_id, sent_at DESC);
+
+CREATE TABLE IF NOT EXISTS no_spending_marks (
+  id BIGSERIAL PRIMARY KEY,
+  user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  local_date DATE NOT NULL,
+  timezone_used TEXT NOT NULL DEFAULT 'Asia/Bangkok',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(user_id, local_date)
 );
 
 CREATE TABLE IF NOT EXISTS weekly_reports (

@@ -2,7 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  DEFAULT_TIMEZONE,
+  localDateKey,
   localDateRangeBounds,
+  localHour,
+  localMonthKey,
   localPeriodBounds,
   normalizeTimeZone,
   resolveUserTimeZone,
@@ -10,7 +14,8 @@ import {
   timeZoneDayKey,
   timeZoneMonthBounds,
   timeZoneMonthKey,
-  timeZoneMonthState
+  timeZoneMonthState,
+  toZonedIso
 } from "../src/time.js";
 
 test("returns current week bounds from Monday in local timezone", () => {
@@ -69,10 +74,31 @@ test("localDateRangeBounds returns null for invalid or reversed ranges", () => {
   assert.equal(localDateRangeBounds("2026-06-15", "2026-06-01"), null);
 });
 
-test("normalizes missing or invalid timezones to UTC", () => {
-  assert.equal(normalizeTimeZone(), "UTC");
-  assert.equal(normalizeTimeZone("Not/A_Timezone"), "UTC");
-  assert.equal(normalizeTimeZone("Asia/Bangkok"), "Asia/Bangkok");
+test("normalizes valid IANA timezones and falls back for missing or invalid values", () => {
+  assert.deepEqual(normalizeTimeZone("America/New_York"), {
+    timeZone: "America/New_York",
+    fallback: false,
+    reason: null
+  });
+  assert.deepEqual(normalizeTimeZone(""), {
+    timeZone: DEFAULT_TIMEZONE,
+    fallback: true,
+    reason: "timezone_missing"
+  });
+  assert.deepEqual(normalizeTimeZone("Mars/Olympus"), {
+    timeZone: DEFAULT_TIMEZONE,
+    fallback: true,
+    reason: "timezone_invalid"
+  });
+});
+
+test("resolves user timezone with Asia/Bangkok fallback", () => {
+  assert.equal(resolveUserTimeZone({ timezone: "Europe/Moscow" }), "Europe/Moscow");
+  assert.equal(resolveUserTimeZone({ timezone: "Asia/Bangkok" }), "Asia/Bangkok");
+  assert.equal(resolveUserTimeZone({ timezone: null }), "Asia/Bangkok");
+  assert.equal(resolveUserTimeZone({ timezone: "" }), "Asia/Bangkok");
+  assert.equal(resolveUserTimeZone({}), "Asia/Bangkok");
+  assert.equal(resolveUserTimeZone({ timezone: "Not/A_Timezone" }), "Asia/Bangkok");
 });
 
 test("derives month key and day state from an IANA timezone", () => {
@@ -95,17 +121,7 @@ test("returns DST-aware month bounds for an IANA timezone", () => {
   assert.equal(bounds.end.toISOString(), "2026-04-01T04:00:00.000Z");
 });
 
-test("resolves user timezone with Asia/Bangkok fallback", () => {
-  assert.equal(resolveUserTimeZone({ timezone: "Europe/Moscow" }), "Europe/Moscow");
-  assert.equal(resolveUserTimeZone({ timezone: "Asia/Bangkok" }), "Asia/Bangkok");
-  assert.equal(resolveUserTimeZone({ timezone: null }), "Asia/Bangkok");
-  assert.equal(resolveUserTimeZone({ timezone: "" }), "Asia/Bangkok");
-  assert.equal(resolveUserTimeZone({}), "Asia/Bangkok");
-  assert.equal(resolveUserTimeZone({ timezone: "Not/A_Timezone" }), "Asia/Bangkok");
-});
-
 test("derives the local day key from an IANA timezone", () => {
-  // 2026-06-23T17:00:00Z is 2026-06-24 00:00 in Bangkok but still 2026-06-23 in Moscow
   const now = new Date("2026-06-23T17:00:00.000Z");
 
   assert.equal(timeZoneDayKey(now, "Asia/Bangkok"), "2026-06-24");
@@ -114,10 +130,8 @@ test("derives the local day key from an IANA timezone", () => {
 });
 
 test("daily snapshot day key changes at the user's local midnight", () => {
-  // Bangkok midnight is 17:00Z the previous day
   assert.equal(timeZoneDayKey(new Date("2026-06-23T16:59:00.000Z"), "Asia/Bangkok"), "2026-06-23");
   assert.equal(timeZoneDayKey(new Date("2026-06-23T17:00:00.000Z"), "Asia/Bangkok"), "2026-06-24");
-  // Moscow (UTC+3, no DST in 2026) midnight is 21:00Z the previous day
   assert.equal(timeZoneDayKey(new Date("2026-06-23T20:59:00.000Z"), "Europe/Moscow"), "2026-06-23");
   assert.equal(timeZoneDayKey(new Date("2026-06-23T21:00:00.000Z"), "Europe/Moscow"), "2026-06-24");
 });
@@ -130,4 +144,29 @@ test("timeZoneDayBounds spans a single local day in the given timezone", () => {
   const moscow = timeZoneDayBounds(new Date("2026-06-23T22:00:00.000Z"), "Europe/Moscow");
   assert.equal(moscow.start.toISOString(), "2026-06-23T21:00:00.000Z");
   assert.equal(moscow.end.toISOString(), "2026-06-24T21:00:00.000Z");
+});
+
+test("formats instants as ISO strings in the supplied timezone", () => {
+  assert.equal(toZonedIso(new Date("2026-06-01T03:30:00.000Z"), "America/New_York"), "2026-05-31T23:30:00.000-04:00");
+  assert.equal(toZonedIso(new Date("2026-05-31T17:00:00.000Z"), "Asia/Bangkok"), "2026-06-01T00:00:00.000+07:00");
+});
+
+test("localDateKey uses the supplied timezone", () => {
+  const instant = new Date("2026-06-01T03:30:00Z");
+  assert.equal(localDateKey(instant, "Asia/Bangkok"), "2026-06-01");
+  assert.equal(localDateKey(instant, "America/New_York"), "2026-05-31");
+});
+
+test("localMonthKey and localHour use the supplied timezone", () => {
+  const instant = new Date("2026-06-30T17:30:00Z");
+  assert.equal(localMonthKey(instant, "Asia/Bangkok"), "2026-07");
+  assert.equal(localMonthKey(instant, "America/New_York"), "2026-06");
+  assert.equal(localHour(new Date("2026-06-01T15:30:00Z"), "Asia/Bangkok"), 22);
+  assert.equal(localHour(new Date("2026-06-01T15:30:00Z"), "America/New_York"), 11);
+});
+
+test("localPeriodBounds uses timezone-specific day boundaries", () => {
+  const bounds = localPeriodBounds(new Date("2026-06-01T03:30:00Z"), "today", "America/New_York");
+  assert.equal(bounds.start.toISOString(), "2026-05-31T04:00:00.000Z");
+  assert.equal(bounds.end.toISOString(), "2026-06-01T04:00:00.000Z");
 });

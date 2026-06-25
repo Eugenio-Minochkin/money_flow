@@ -82,6 +82,19 @@ export function inboxDraftKeyboard(miniAppUrl, telegramUserId, draftId, language
   };
 }
 
+export function dailyReminderKeyboard(language = "ru") {
+  const text = language === "en"
+    ? { add: "Add expense", noSpending: "No spending today", disable: "Don't remind me" }
+    : { add: "Добавить расход", noSpending: "Сегодня без трат", disable: "Не напоминать" };
+  return {
+    inline_keyboard: [
+      [{ text: text.add, callback_data: "daily_reminder:add" }],
+      [{ text: text.noSpending, callback_data: "daily_reminder:no_spending" }],
+      [{ text: text.disable, callback_data: "daily_reminder:disable" }]
+    ]
+  };
+}
+
 function keyboardText(language) {
   if (language === "en") {
     return {

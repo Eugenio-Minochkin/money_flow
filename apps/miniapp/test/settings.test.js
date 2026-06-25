@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { shouldShowCurrentMonthBudgetOverride } from "../src/settings.js";
+import { COMMON_TIMEZONES, detectBrowserTimeZone, normalizeSettingsTimeZone, shouldShowCurrentMonthBudgetOverride } from "../src/settings.js";
 
 test("hides current month budget block when calculated budget has no override", () => {
   assert.equal(shouldShowCurrentMonthBudgetOverride({
@@ -41,4 +41,20 @@ test("does not show non-partial overrides as first-month budget blocks", () => {
     hasOverride: true,
     isPartialMonth: false
   }, new Date("2026-06-13T10:00:00+07:00")), false);
+});
+
+test("normalizes timezone settings to a short supported list", () => {
+  assert.equal(normalizeSettingsTimeZone("Europe/Moscow"), "Europe/Moscow");
+  assert.equal(normalizeSettingsTimeZone("Mars/Olympus"), "Asia/Bangkok");
+  assert.equal(COMMON_TIMEZONES.includes("Asia/Bangkok"), true);
+});
+
+test("detects browser timezone when it is in the supported list", () => {
+  const detected = detectBrowserTimeZone({
+    DateTimeFormat() {
+      return { resolvedOptions: () => ({ timeZone: "Asia/Tbilisi" }) };
+    }
+  });
+
+  assert.equal(detected, "Asia/Tbilisi");
 });
