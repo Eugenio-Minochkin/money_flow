@@ -1857,6 +1857,7 @@ function normalizeDraftItem(item) {
     currency: item.currency || "THB",
     description: String(item.description || "расход").trim(),
     category_slug: item.category_slug || "other",
+    category_source: item.category_source === "user" || item.category_source === "parser" ? item.category_source : null,
     tags: Array.isArray(item.tags) ? item.tags.map(String).filter(Boolean) : [],
     spent_at: item.spent_at || new Date().toISOString(),
     budget_impact: ["regular", "planned", "large_oneoff"].includes(item.budget_impact) ? item.budget_impact : "regular",

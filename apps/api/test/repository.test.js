@@ -2853,3 +2853,18 @@ function fixedRates() {
     }
   };
 }
+
+test("normalizeDraftItem preserves category_source parser/user and defaults to null", async () => {
+  const { createRepository } = await import("../src/repository.js");
+  let captured;
+  const repo = createRepository(fakePool((sql, params) => {
+    captured = JSON.parse(params[0]);
+    return { rows: [{ id: 1, status: "pending", items: params[0], version: 2 }] };
+  }));
+  await repo.updateDraftItems(1, 100, [
+    { amount: 10, currency: "THB", description: "x", category_slug: "food_cafe", category_source: "parser" },
+    { amount: 20, currency: "THB", description: "y", category_slug: "other" }
+  ]);
+  assert.equal(captured[0].category_source, "parser");
+  assert.equal(captured[1].category_source, null);
+});

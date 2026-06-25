@@ -204,6 +204,7 @@ function normalizeExpense(expense, now, defaultCurrency = "THB") {
     currency,
     description: String(expense.description || "расход").trim(),
     category_slug: category,
+    category_source: "parser",
     tags: Array.isArray(expense.tags) ? expense.tags.map(String).filter(Boolean) : [],
     spent_at: normalizeSpentAt(expense.spent_at, now),
     budget_impact: ["regular", "planned", "large_oneoff"].includes(expense.budget_impact) ? expense.budget_impact : "regular",
