@@ -2868,3 +2868,11 @@ test("normalizeDraftItem preserves category_source parser/user and defaults to n
   assert.equal(captured[0].category_source, "parser");
   assert.equal(captured[1].category_source, null);
 });
+
+test("isCategoryValid distinguishes parser-other, user-other and confident categories", async () => {
+  const { isCategoryValid } = await import("../src/repository.js");
+  assert.equal(isCategoryValid({ category_slug: "food_cafe", needs_review: false, category_source: "parser" }), true);
+  assert.equal(isCategoryValid({ category_slug: "other", needs_review: true, category_source: "parser" }), false);
+  assert.equal(isCategoryValid({ category_slug: "other", needs_review: false, category_source: "user" }), true);
+  assert.equal(isCategoryValid({ category_slug: "other", needs_review: false, category_source: null }), false);
+});

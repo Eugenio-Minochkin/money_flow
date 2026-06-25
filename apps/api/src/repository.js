@@ -1731,6 +1731,16 @@ async function getOrCreateDailyBudgetSnapshot(pool, user, now, input) {
   };
 }
 
+export function isCategoryValid(item) {
+  if (!item) return false;
+  if (item.category_source === "user") return true;
+  return item.category_slug !== "other" && !item.needs_review;
+}
+
+export function draftHasValidCategories(items) {
+  return Array.isArray(items) && items.length > 0 && items.every(isCategoryValid);
+}
+
 function normalizeDraft(draft) {
   if (!draft) return null;
   return {
