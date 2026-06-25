@@ -103,3 +103,22 @@ test("saved expenses heading is translated for both languages", () => {
   assert.equal(createTranslator("ru")("history.savedExpenses"), "Записанные расходы");
   assert.equal(createTranslator("en")("history.savedExpenses"), "Saved expenses");
 });
+
+test("draft confirm flow keys are translated for both languages", () => {
+  const draftConfirmKeys = [
+    "actions.saveChanges",
+    "actions.cancelDraft",
+    "confirmations.closeWithoutSaving",
+    "toast.draftConflict",
+    "toast.alreadySaved"
+  ];
+
+  for (const language of ["ru", "en"]) {
+    for (const key of draftConfirmKeys) {
+      const value = createTranslator(language)(key);
+      assert.equal(typeof value, "string", `${language}.${key} should be a string`);
+      assert.ok(value.length > 0, `${language}.${key} should be a non-empty string`);
+      assert.notEqual(translations[language][key], undefined, `${language}.${key} should be defined in translations map`);
+    }
+  }
+});
