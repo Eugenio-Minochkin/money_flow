@@ -217,7 +217,7 @@ async function sendQueuedJobFailure({ error, token, chatId, language, telegramCl
   }
 }
 
-async function processQueuedMessage({ message, from, user, rawText, hasVoice, inputType, repository, token, miniAppUrl, expenseParser, voiceTranscriber, telegramClient, now, trace }) {
+export async function processQueuedMessage({ message, from, user, rawText, hasVoice, inputType, repository, token, miniAppUrl, expenseParser, voiceTranscriber, telegramClient, now, trace }) {
   const processingStartedAt = performance.now();
   const language = user.interface_language ?? "en";
   const chatId = message.chat.id;
@@ -342,7 +342,7 @@ async function processQueuedMessage({ message, from, user, rawText, hasVoice, in
       await safeRecordAppEvent(repository, user.id, "expense_draft_created", { inputType, draftType: "regular" });
       processingResult = "draft_created";
       processingDraftType = "regular";
-      return deliverResultMessage({
+      const delivered = await deliverResultMessage({
         token,
         chatId,
         loaderMessageId: loader.messageId,
@@ -351,6 +351,12 @@ async function processQueuedMessage({ message, from, user, rawText, hasVoice, in
         telegramClient,
         trace
       });
+      const refMessageId = extractMessageId(delivered);
+      if (refMessageId) {
+        await repository.setDraftMessageRef(draft.id, from.id, chatId, refMessageId)
+          .catch((error) => console.error("[telegram] failed to store draft message reference", error.message));
+      }
+      return delivered;
     } catch (error) {
       trace.failActive(["telegram_file_download", "transcription", "llm_parse", "db_save"], error);
       console.error("[telegram] expense processing failed", error.message);

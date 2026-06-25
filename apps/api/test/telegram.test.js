@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { parseAdminTelegramIds } from "../src/adminAccess.js";
-import { createTelegramBot, sendTelegramMessage, sendWeeklyReports } from "../src/telegram.js";
+import { createTelegramBot, processQueuedMessage, sendTelegramMessage, sendWeeklyReports } from "../src/telegram.js";
 
 test("exports the Telegram message sender used by the production server", async () => {
   const calls = [];
@@ -2415,6 +2415,9 @@ function fakeRepository() {
     async createDraft() {
       return { id: 42 };
     },
+    async setDraftMessageRef() {
+      return null;
+    },
     async getDraftForTelegramUser() {
       return {
         id: 42,
@@ -2618,3 +2621,68 @@ test("isMessageNotModified detects the not-modified 400 and rejects other errors
   assert.equal(isMessageNotModified({ status: 500, message: "message is not modified" }), false);
   assert.equal(isMessageNotModified(null), false);
 });
+
+test("regular draft delivery stores the originating telegram chat and message id", async () => {
+  const refs = [];
+  const repository = {
+    async getUserByTelegramId() {
+      return { id: 1, interface_language: "en", base_currency: "THB", onboarding_step: "completed" };
+    },
+    async createDraft() {
+      return { id: 1, status: "pending" };
+    },
+    async createPlannedDraft() {
+      return { id: 99 };
+    },
+    async setDraftMessageRef(draftId, _telegramUserId, chatId, messageId) {
+      refs.push({ id: draftId, chatId, messageId });
+    }
+  };
+  const expenseParser = {
+    async parse() {
+      return {
+        expenses: [{
+          amount: 70,
+          currency: "THB",
+          description: "coffee",
+          category_slug: "food_cafe",
+          budget_impact: "regular",
+          needs_review: false,
+          category_source: "parser",
+          tags: [],
+          spent_at: "2026-06-25T10:00:00Z"
+        }]
+      };
+    }
+  };
+  const telegramClient = {
+    async sendMessage() {
+      return { ok: true, result: { message_id: 777 } };
+    },
+    async editMessageText() {
+      return { ok: true, result: { message_id: 777 } };
+    }
+  };
+
+  await processQueuedMessage({
+    message: { chat: { id: 5 } },
+    from: { id: 100 },
+    user: { interface_language: "en", base_currency: "THB", onboarding_step: "completed" },
+    rawText: "coffee 70",
+    repository,
+    token: null,
+    miniAppUrl: "http://x",
+    expenseParser,
+    telegramClient,
+    now: () => new Date(),
+    trace: stubTrace()
+  });
+
+  assert.equal(refs.length, 1);
+  assert.equal(refs[0].chatId, 5);
+  assert.equal(refs[0].messageId, 777);
+});
+
+function stubTrace() {
+  return { start() {}, end() {}, event() {}, failActive() {} };
+}
