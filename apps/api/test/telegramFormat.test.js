@@ -267,7 +267,9 @@ test("multi-expense saved summary lists each expense and a total", () => {
   ] });
   assert.match(text, /coffee/);
   assert.match(text, /taxi/);
-  assert.match(text, /Total/i);
+  const normalized = normalizeSpaces(text);
+  assert.match(normalized, /<b>Total:<\/b> 280 THB/);
+  assert.ok(normalized.indexOf("coffee") < normalized.indexOf("📌"), "saved-expense lines appear before the today header");
 });
 
 function normalizeSpaces(value) {

@@ -3018,3 +3018,33 @@ test("setDraftMessageRef writes tg_chat_id and tg_message_id", async () => {
   assert.equal(params[2], 555);
   assert.equal(params[3], 999);
 });
+
+test("two saveDraftAsExpense calls on the same draft produce one expense set", async () => {
+  const { createRepository } = await import("../src/repository.js");
+  let flipped = false;
+  const client = {
+    async query(sql) {
+      const q = String(sql);
+      if (q === "BEGIN" || q === "COMMIT" || q === "ROLLBACK") return { rows: [] };
+      if (q.includes("FOR UPDATE")) {
+        return { rows: [{ id: 7, user_id: 1, status: flipped ? "confirmed" : "pending", base_currency: "THB",
+          items: [{ amount: 80, currency: "THB", description: "coffee", category_slug: "food_cafe", budget_impact: "regular", needs_review: false, category_source: "parser", tags: [], spent_at: "2026-06-25T10:00:00Z" }] }] };
+      }
+      if (q.includes("INSERT INTO expenses")) { flipped = true; return { rows: [{ id: 1, draft_id: 7, amount_base: 80 }] }; }
+      if (q.includes("status = 'confirmed'")) return { rows: [] };
+      return { rows: [] };
+    },
+    release() {}
+  };
+  const pool = {
+    async connect() { return client; },
+    async query(sql) { if (String(sql).includes("FROM expenses WHERE draft_id")) return { rows: [{ id: 1, draft_id: 7, amount_base: 80 }] }; return { rows: [] }; }
+  };
+  const repo = createRepository(pool);
+  repo.dashboard = async () => ({ snapshot: { baseCurrency: "THB" } });
+  const first = await repo.saveDraftAsExpense(7, 100);
+  const second = await repo.saveDraftAsExpense(7, 100);
+  assert.equal(first.alreadySaved, false);
+  assert.equal(second.alreadySaved, true);
+  assert.equal(second.expenses.length, 1);
+});

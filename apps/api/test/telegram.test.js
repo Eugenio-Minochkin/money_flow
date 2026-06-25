@@ -2714,3 +2714,65 @@ test("draftCanceledMessageText and savedSummaryKeyboard are localized", async ()
 function stubTrace() {
   return { start() {}, end() {}, event() {}, failActive() {} };
 }
+
+test("legacy confirm:42 callback still confirms via the shared handler", async () => {
+  let confirmedWith;
+  const repository = {
+    ...fakeRepository(),
+    async getUserByTelegramId() {
+      return { id: 1, interface_language: "en", base_currency: "THB", onboarding_step: "completed" };
+    },
+    async saveDraftAsExpense(id) {
+      confirmedWith = id;
+      return { expenses: [{ amount_base: 80, category_slug: "food_cafe", description: "coffee" }], dashboardSnapshot: (await this.dashboard()).snapshot, alreadySaved: false };
+    }
+  };
+  const messages = [];
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository,
+    telegramClient: captureTelegramClient(messages)
+  });
+
+  await bot.handleUpdate({
+    callback_query: {
+      id: "cq1",
+      data: "confirm:42",
+      from: { id: 100 },
+      message: { chat: { id: 1 }, message_id: 9 }
+    }
+  });
+
+  assert.equal(confirmedWith, "42");
+});
+
+test("draft type callback (d: scheme) large_oneoff value updates budget impact", async () => {
+  const calls = [];
+  const repo = fakeRepository();
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: repo,
+    telegramClient: {
+      async sendMessage(message) { calls.push({ method: "sendMessage", ...message }); return { ok: true }; },
+      async editMessageText(message) { calls.push({ method: "editMessageText", ...message }); return { ok: true }; },
+      async answerCallbackQuery(message) { calls.push({ method: "answerCallbackQuery", ...message }); return { ok: true }; },
+      async deleteMessage() { return { ok: true }; }
+    }
+  });
+
+  await bot.handleUpdate({
+    callback_query: {
+      id: "callback-d-type-large",
+      data: "d:42:t:l",
+      from: { id: 100 },
+      message: { chat: { id: 10 }, message_id: 72 }
+    }
+  });
+
+  assert.equal(repo.updatedItems[0].budget_impact, "large_oneoff");
+  const edit = calls.find((call) => call.method === "editMessageText");
+  assert.ok(edit);
+  assert.equal(edit.messageId, 72);
+});

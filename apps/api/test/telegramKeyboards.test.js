@@ -74,3 +74,12 @@ test("parseDraftCallback decodes d: actions", async () => {
   assert.deepEqual(parseDraftCallback("d:42:review"), { scheme: "d", draftId: "42", action: "review" });
   assert.equal(parseDraftCallback("confirm:42"), null);
 });
+
+test("every quick category code round-trips to a known slug", async () => {
+  const { categorySlugFromCode, categoryCodeFromSlug } = await import("../src/telegramKeyboards.js");
+  for (const code of ["food", "home", "transport", "health", "sport", "other"]) {
+    const slug = categorySlugFromCode(code);
+    assert.ok(slug, `missing slug for ${code}`);
+    assert.equal(categoryCodeFromSlug(slug), code);
+  }
+});
