@@ -1182,6 +1182,15 @@ export function createRepository(pool, options = {}) {
       );
     },
 
+    async setDraftMessageRef(draftId, telegramUserId, chatId, messageId) {
+      await pool.query(
+        `UPDATE drafts
+         SET tg_chat_id = $3, tg_message_id = $4
+         WHERE id = $1 AND user_id = (SELECT id FROM users WHERE telegram_user_id = $2)`,
+        [draftId, telegramUserId, chatId ?? null, messageId ?? null]
+      );
+    },
+
     async updateExpenseForTelegramUser(expenseId, telegramUserId, patch) {
       const item = normalizeDraftItem(patch);
       const spentAt = new Date(item.spent_at);

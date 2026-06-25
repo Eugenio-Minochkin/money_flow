@@ -89,7 +89,8 @@ function formatSavedExpenseLines(expenses, total, currency, language) {
     ].filter(Boolean).join(" · ");
   });
   if (lines.length === 1) return lines[0];
-  return lines.map((line, index) => `${index + 1}. ${line}`).join("\n");
+  const itemLines = lines.map((line, index) => `${index + 1}. ${line}`).join("\n");
+  return `${itemLines}\n<b>${t(language, "total")}:</b> ${formatMoney(total, currency, language)}`;
 }
 
 function formatRecoveryAdvice(snapshot, language) {

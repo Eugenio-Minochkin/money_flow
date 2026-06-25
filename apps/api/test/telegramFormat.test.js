@@ -255,6 +255,21 @@ function snapshot() {
   };
 }
 
+test("single-expense saved summary shows the saved line", () => {
+  const text = formatSavedSummary(80, snapshot(), { language: "en", expenses: [{ amount_base: 80, category_slug: "food_cafe", description: "coffee" }] });
+  assert.match(text, /coffee/);
+});
+
+test("multi-expense saved summary lists each expense and a total", () => {
+  const text = formatSavedSummary(280, snapshot(), { language: "en", expenses: [
+    { amount_base: 80, category_slug: "food_cafe", description: "coffee" },
+    { amount_base: 200, category_slug: "transport", description: "taxi" }
+  ] });
+  assert.match(text, /coffee/);
+  assert.match(text, /taxi/);
+  assert.match(text, /Total/i);
+});
+
 function normalizeSpaces(value) {
   return value.replaceAll("\u00a0", " ");
 }

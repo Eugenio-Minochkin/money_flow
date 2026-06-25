@@ -3008,3 +3008,13 @@ test("moveDraftToInbox only acts on open drafts and bumps version", async () => 
   assert.match(query, /status IN \('pending', 'inbox'\)/);
   assert.match(query, /version = version \+ 1/);
 });
+
+test("setDraftMessageRef writes tg_chat_id and tg_message_id", async () => {
+  const { createRepository } = await import("../src/repository.js");
+  let params;
+  const repo = createRepository(fakePool((sql, p) => { params = p; return { rows: [] }; }));
+  await repo.setDraftMessageRef(7, 100, 555, 999);
+  assert.equal(params[0], 7);
+  assert.equal(params[2], 555);
+  assert.equal(params[3], 999);
+});
