@@ -882,6 +882,7 @@ function bindInboxActions(container) {
   });
   container.querySelectorAll("[data-cancel-draft]").forEach((button) => {
     button.addEventListener("click", async () => {
+      if (!window.confirm(t("confirmations.closeWithoutSaving"))) return;
       await api(`/api/drafts/${button.dataset.cancelDraft}`, { method: "DELETE", body: { telegramUserId } });
       await loadHistory();
       showToast(t("toast.draftCanceled"));
@@ -1172,6 +1173,8 @@ function renderDraftEditor(draft) {
   form.querySelector("#confirmDraftButton").addEventListener("click", confirmDraft);
   form.querySelector("#cancelDraftButton").addEventListener("click", cancelDraftFromEditor);
   form.querySelector("#closeDraftButton").addEventListener("click", closeDraftEditor);
+  form.addEventListener("input", () => { draftDirty = true; });
+  draftDirty = false;
 }
 
 function renderExpenseEditor(expense, options = {}) {
@@ -1206,8 +1209,10 @@ function renderExpenseEditor(expense, options = {}) {
 }
 
 function closeDraftEditor() {
+  if (draftDirty && !window.confirm(t("confirmations.closeWithoutSaving"))) return;
   document.querySelector("#draftEditorSection").classList.add("hidden");
   draftState = null;
+  draftDirty = false;
   switchTab(draftReturnTab);
 }
 
