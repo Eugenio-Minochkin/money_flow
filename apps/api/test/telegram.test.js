@@ -2683,6 +2683,34 @@ test("regular draft delivery stores the originating telegram chat and message id
   assert.equal(refs[0].messageId, 777);
 });
 
+test("updateDraftMessageToSaved edits the stored message and falls back to a new one on failure", async () => {
+  const { updateDraftMessageToSaved } = await import("../src/telegram.js");
+  const calls = [];
+  const telegramClient = {
+    editMessageText: async () => { throw { status: 400, body: "Bad Request: message to edit not found" }; },
+    sendMessage: async (args) => { calls.push(["sendMessage", args]); return { ok: true }; },
+    editMessageReplyMarkup: async (args) => { calls.push(["editMessageReplyMarkup", args]); return { ok: true }; }
+  };
+  await updateDraftMessageToSaved({
+    token: null, draft: { id: 7, tg_chat_id: 5, tg_message_id: 9 }, text: "saved", replyMarkup: { inline_keyboard: [] }, telegramClient
+  });
+  assert.ok(calls.some(([name]) => name === "sendMessage"), "expected fallback new message");
+});
+
+test("updateDraftMessageToSaved is a no-op without a stored reference", async () => {
+  const { updateDraftMessageToSaved } = await import("../src/telegram.js");
+  const telegramClient = { editMessageText: async () => { throw new Error("should not be called"); } };
+  await updateDraftMessageToSaved({ token: null, draft: { id: 7, tg_chat_id: null, tg_message_id: null }, text: "x", replyMarkup: null, telegramClient });
+});
+
+test("draftCanceledMessageText and savedSummaryKeyboard are localized", async () => {
+  const { draftCanceledMessageText, savedSummaryKeyboard } = await import("../src/telegram.js");
+  assert.match(draftCanceledMessageText("en"), /Draft canceled/);
+  assert.match(draftCanceledMessageText("ru"), /Черновик отменён/);
+  const kb = savedSummaryKeyboard("http://x", 100, "en");
+  assert.ok(kb.inline_keyboard[0][0].web_app?.url?.includes("telegramUserId=100"));
+});
+
 function stubTrace() {
   return { start() {}, end() {}, event() {}, failActive() {} };
 }

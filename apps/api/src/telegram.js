@@ -1177,6 +1177,47 @@ export async function sendTelegramMessage({ token, chatId, text, replyMarkup = n
   return sendMessage(token, chatId, text, replyMarkup, telegramClient);
 }
 
+export async function updateDraftMessageToSaved({ token, draft, text, replyMarkup, telegramClient }) {
+  const chatId = draft?.tg_chat_id;
+  const messageId = draft?.tg_message_id;
+  if (!chatId || !messageId) {
+    console.log("[telegram] no stored message reference for draft", draft?.id);
+    return;
+  }
+  try {
+    await editMessageText(token, chatId, messageId, text, replyMarkup, telegramClient);
+  } catch (error) {
+    if (isMessageNotModified(error)) return;
+    console.error("[telegram] update draft message to saved failed; sending fallback", error.message);
+    try { await sendMessage(token, chatId, text, replyMarkup, telegramClient); }
+    catch (sendError) { console.error("[telegram] fallback saved message failed", sendError.message); }
+    try { await editMessageReplyMarkup(token, chatId, messageId, { inline_keyboard: [] }, telegramClient); }
+    catch (markupError) { console.error("[telegram] could not clear old draft keyboard", markupError.message); }
+  }
+}
+
+export async function updateDraftMessageToCanceled({ token, draft, text, telegramClient }) {
+  const chatId = draft?.tg_chat_id;
+  const messageId = draft?.tg_message_id;
+  if (!chatId || !messageId) return;
+  try {
+    await editMessageText(token, chatId, messageId, text, { inline_keyboard: [] }, telegramClient);
+  } catch (error) {
+    if (isMessageNotModified(error)) return;
+    console.error("[telegram] update draft message to canceled failed; sending fallback", error.message);
+    try { await sendMessage(token, chatId, text, { inline_keyboard: [] }, telegramClient); }
+    catch (sendError) { console.error("[telegram] fallback canceled message failed", sendError.message); }
+  }
+}
+
+export function draftCanceledMessageText(language) {
+  return botText(language, "draftCanceledMessage");
+}
+
+export function savedSummaryKeyboard(miniAppUrl, telegramUserId, language) {
+  return appKeyboard(miniAppUrl, telegramUserId, language);
+}
+
 async function editMessageText(token, chatId, messageId, text, replyMarkup, telegramClient) {
   if (telegramClient) {
     return telegramClient.editMessageText({ chatId, messageId, text, replyMarkup });
@@ -1207,6 +1248,15 @@ async function editMessageText(token, chatId, messageId, text, replyMarkup, tele
       parse_mode: undefined
     });
   }
+}
+
+async function editMessageReplyMarkup(token, chatId, messageId, replyMarkup, telegramClient) {
+  if (telegramClient) return telegramClient.editMessageReplyMarkup?.({ chatId, messageId, replyMarkup });
+  if (!token) {
+    console.log("[telegram:editMessageReplyMarkup]", { chatId, messageId, replyMarkup });
+    return { ok: true };
+  }
+  return telegramRequest(token, "editMessageReplyMarkup", { chat_id: chatId, message_id: messageId, reply_markup: replyMarkup });
 }
 
 async function deleteMessage(token, chatId, messageId, telegramClient) {
