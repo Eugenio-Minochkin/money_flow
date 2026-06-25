@@ -930,6 +930,149 @@ test("moves stale pending drafts into inbox before listing drafts", async () => 
   assert.equal(queries[0].params[1], 30);
 });
 
+test("createDraft starts as inbox only when an item needs review", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql: String(sql), params });
+    return { rows: [{ id: 1, status: params[1], items: JSON.parse(params[3]) }] };
+  }));
+
+  const inboxDraft = await repo.createDraft(7, "unknown 800", [{ amount: 800, needs_review: true }]);
+  const pendingDraft = await repo.createDraft(7, "coffee 70", [{ amount: 70, needs_review: false }]);
+
+  assert.equal(inboxDraft.status, "inbox");
+  assert.equal(pendingDraft.status, "pending");
+  assert.match(queries[0].sql, /INSERT INTO drafts/);
+});
+
+test("confirmDraft inserts real expenses and marks the draft confirmed", async () => {
+  const queries = [];
+  const client = {
+    async query(sql, params = []) {
+      queries.push({ sql, params });
+      const query = String(sql);
+      if (query.includes("SELECT drafts.*, users.base_currency")) {
+        return {
+          rows: [{
+            id: "42",
+            user_id: "1",
+            status: "pending",
+            base_currency: "THB",
+            usd_thb_rate: "32.6",
+            items: [{
+              amount: 70,
+              currency: "THB",
+              description: "coffee",
+              category_slug: "food_cafe",
+              tags: [],
+              spent_at: "2026-06-02T10:00:00+07:00",
+              budget_impact: "regular"
+            }]
+          }]
+        };
+      }
+      if (query.includes("INSERT INTO expenses")) {
+        return { rows: [{ id: "100", draft_id: params[1], amount_base: params[4] }] };
+      }
+      return { rows: [] };
+    },
+    release() {}
+  };
+  const repo = createRepository({ async connect() { return client; } }, { exchangeRates: fixedRates() });
+
+  const expenses = await repo.confirmDraft("42", 100);
+
+  assert.equal(expenses.length, 1);
+  assert.equal(expenses[0].draft_id, "42");
+  const expenseInsert = queries.find((q) => String(q.sql).includes("INSERT INTO expenses"));
+  assert.ok(expenseInsert, "confirming a draft inserts into expenses");
+  assert.equal(expenseInsert.params[1], "42");
+  assert.ok(
+    queries.some((q) => String(q.sql).includes("UPDATE drafts SET status = 'confirmed'")),
+    "confirming a draft marks it confirmed"
+  );
+});
+
+test("confirmDraft also accepts inbox drafts", async () => {
+  const client = {
+    async query(sql) {
+      if (String(sql).includes("SELECT drafts.*, users.base_currency")) {
+        return {
+          rows: [{
+            id: "42",
+            user_id: "1",
+            status: "inbox",
+            base_currency: "THB",
+            usd_thb_rate: "32.6",
+            items: [{ amount: 70, currency: "THB", description: "coffee", category_slug: "other", tags: [], spent_at: "2026-06-02T10:00:00+07:00", budget_impact: "regular" }]
+          }]
+        };
+      }
+      if (String(sql).includes("INSERT INTO expenses")) {
+        return { rows: [{ id: "100", amount_base: 70 }] };
+      }
+      return { rows: [] };
+    },
+    release() {}
+  };
+  const repo = createRepository({ async connect() { return client; } }, { exchangeRates: fixedRates() });
+
+  const expenses = await repo.confirmDraft("42", 100);
+  assert.equal(expenses.length, 1);
+});
+
+test("confirmDraft rejects already closed drafts and creates no expense", async () => {
+  const queries = [];
+  const client = {
+    async query(sql) {
+      queries.push(String(sql));
+      if (String(sql).includes("SELECT drafts.*, users.base_currency")) {
+        return { rows: [{ id: "42", user_id: "1", status: "cancelled", base_currency: "THB", usd_thb_rate: "32.6", items: [] }] };
+      }
+      return { rows: [] };
+    },
+    release() {}
+  };
+  const repo = createRepository({ async connect() { return client; } }, { exchangeRates: fixedRates() });
+
+  await assert.rejects(repo.confirmDraft("42", 100), /Draft is already closed/);
+  assert.ok(!queries.some((sql) => sql.includes("INSERT INTO expenses")));
+});
+
+test("cancelDraft marks the draft cancelled without creating an expense", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql: String(sql), params });
+    return { rows: [] };
+  }));
+
+  await repo.cancelDraft("42", 100);
+
+  assert.match(queries[0].sql, /UPDATE drafts\s+SET status = 'cancelled'/);
+  assert.ok(!queries.some((q) => q.sql.includes("INSERT INTO expenses")), "cancelling a draft never creates an expense");
+});
+
+test("listing expenses never reads from drafts", async () => {
+  let listSql = "";
+  const repo = createRepository(fakePool((sql) => {
+    const query = String(sql);
+    if (query.startsWith("SELECT * FROM users")) {
+      return { rows: [{ id: "1", telegram_user_id: "100", base_currency: "THB" }] };
+    }
+    if (query.includes("FROM expenses")) {
+      listSql = query;
+      return { rows: [] };
+    }
+    return { rows: [] };
+  }));
+
+  const expenses = await repo.listExpensesForTelegramUser(100, { period: "month" });
+
+  assert.deepEqual(expenses, []);
+  assert.match(listSql, /FROM expenses/);
+  assert.doesNotMatch(listSql, /drafts/);
+});
+
 test("updates an expense owned by a Telegram user", async () => {
   const queries = [];
   const repo = createRepository(fakePool((sql, params) => {

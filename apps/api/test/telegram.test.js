@@ -612,6 +612,114 @@ test("planned cancel sends a fallback message if editing fails", async () => {
   assert.match(fallback.text, /Плановая трата отменена|Planned expense cancelled/);
 });
 
+test("regular cancel edits the original message, removes buttons and records an event", async () => {
+  const repo = fakeRepository();
+  let cancelled = null;
+  repo.cancelDraft = async (draftId, telegramUserId) => {
+    cancelled = { draftId, telegramUserId };
+    return null;
+  };
+  const calls = [];
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: repo,
+    telegramClient: {
+      async sendMessage(message) {
+        calls.push({ method: "sendMessage", ...message });
+        return { ok: true };
+      },
+      async editMessageText(message) {
+        calls.push({ method: "editMessageText", ...message });
+        return { ok: true };
+      },
+      async answerCallbackQuery(message) {
+        calls.push({ method: "answerCallbackQuery", ...message });
+        return { ok: true };
+      },
+      async deleteMessage(message) {
+        calls.push({ method: "deleteMessage", ...message });
+        return { ok: true };
+      }
+    }
+  });
+
+  await bot.handleUpdate({
+    callback_query: {
+      id: "callback-cancel-edit",
+      data: "cancel:42",
+      from: { id: 100 },
+      message: { chat: { id: 10 }, message_id: 55 }
+    }
+  });
+
+  assert.deepEqual(cancelled, { draftId: "42", telegramUserId: 100 });
+  const edit = calls.find((call) => call.method === "editMessageText");
+  assert.ok(edit);
+  assert.equal(edit.chatId, 10);
+  assert.equal(edit.messageId, 55);
+  assert.match(edit.text, /Запись отменена|Entry cancelled/);
+  assert.deepEqual(edit.replyMarkup, { inline_keyboard: [] });
+  assert.ok(calls.some((call) => call.method === "answerCallbackQuery"));
+  assert.equal(calls.some((call) => call.method === "sendMessage"), false);
+  assert.equal(calls.some((call) => call.method === "deleteMessage"), false);
+  assert.deepEqual(repo.events, [
+    { userId: 1, eventName: "expense_draft_cancelled", metadata: { draftType: "regular" } }
+  ]);
+});
+
+test("regular cancel sends a fallback message and does not throw if editing fails", async () => {
+  const repo = fakeRepository();
+  const calls = [];
+  const originalError = console.error;
+  console.error = () => {};
+  try {
+    const bot = createTelegramBot({
+      token: "test-token",
+      miniAppUrl: "http://localhost:3000",
+      repository: repo,
+      telegramClient: {
+        async sendMessage(message) {
+          calls.push({ method: "sendMessage", ...message });
+          return { ok: true };
+        },
+        async editMessageText(message) {
+          calls.push({ method: "editMessageText", ...message });
+          throw new Error("edit failed");
+        },
+        async answerCallbackQuery(message) {
+          calls.push({ method: "answerCallbackQuery", ...message });
+          return { ok: true };
+        },
+        async deleteMessage(message) {
+          calls.push({ method: "deleteMessage", ...message });
+          return { ok: true };
+        }
+      }
+    });
+
+    await assert.doesNotReject(() => bot.handleUpdate({
+      callback_query: {
+        id: "callback-cancel-fallback",
+        data: "cancel:42",
+        from: { id: 100 },
+        message: { chat: { id: 10 }, message_id: 55 }
+      }
+    }));
+  } finally {
+    console.error = originalError;
+  }
+
+  assert.ok(calls.some((call) => call.method === "editMessageText"));
+  const fallback = calls.find((call) => call.method === "sendMessage");
+  assert.ok(fallback);
+  assert.match(fallback.text, /Запись отменена|Entry cancelled/);
+  assert.equal(calls.some((call) => call.method === "deleteMessage"), false);
+  assert.deepEqual(repo.events, [
+    { userId: 1, eventName: "expense_draft_cancelled", metadata: { draftType: "regular" } }
+  ]);
+});
+
 test("admin stats shows non-zero metrics after message draft and confirm flow", async () => {
   const repo = fakeRepository();
   const messages = [];

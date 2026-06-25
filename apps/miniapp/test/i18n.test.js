@@ -96,3 +96,8 @@ test("translations cover budget reserve states and actions", () => {
     assert.notEqual(translations[language]["reserve.validationError"], undefined);
   }
 });
+
+test("saved expenses heading is translated for both languages", () => {
+  assert.equal(createTranslator("ru")("history.savedExpenses"), "Записанные расходы");
+  assert.equal(createTranslator("en")("history.savedExpenses"), "Saved expenses");
+});

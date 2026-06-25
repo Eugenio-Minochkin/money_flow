@@ -19,3 +19,18 @@ export function updateFirstInboxItemCategory(draft, categorySlug) {
 export function shouldShowInboxOnDashboard(drafts) {
   return Array.isArray(drafts) && drafts.length > 0;
 }
+
+export function inboxCountLabel(count, language = "en") {
+  const total = Math.max(0, Number(count) || 0);
+  if (language === "ru") {
+    const lastTwo = total % 100;
+    const lastOne = total % 10;
+    const word = lastOne === 1 && lastTwo !== 11
+      ? "трату"
+      : lastOne >= 2 && lastOne <= 4 && (lastTwo < 12 || lastTwo > 14)
+        ? "траты"
+        : "трат";
+    return `Нужно проверить ${total} ${word}`;
+  }
+  return `Review ${total} ${total === 1 ? "expense" : "expenses"}`;
+}
