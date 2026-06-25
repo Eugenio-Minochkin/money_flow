@@ -53,3 +53,8 @@ This file records stable product and business rules. Read it before changing bud
 - `THB`, `RUB`, `IDR`, and `BYN` should be displayed as whole units.
 - `USD`, `EUR`, and `GEL` should preserve cents.
 - A user may have both a local currency and display currencies.
+
+## Drafts
+- A draft is confirmed exactly once. Repeated or concurrent confirms never create duplicate expenses.
+- Cancel never deletes an already-saved expense.
+- A draft without a valid category cannot be confirmed (parser-fallback `other` is not valid; a user-chosen category, including `other`, is valid).
