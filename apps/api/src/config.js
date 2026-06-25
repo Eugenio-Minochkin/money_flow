@@ -40,7 +40,10 @@ export const config = {
     process.env.RELEASE_DIGEST_CHECK_INTERVAL_MINUTES
   ),
   githubToken: process.env.GITHUB_TOKEN,
-  githubRepository: process.env.GITHUB_REPOSITORY
+  githubRepository: process.env.GITHUB_REPOSITORY,
+  dailyReminderGlobalEnabled: process.env.DAILY_REMINDER_GLOBAL_ENABLED === "true",
+  dailyReminderRolloutPercent: Number(process.env.DAILY_REMINDER_ROLLOUT_PERCENT ?? 0),
+  dailyReminderIntervalMs: Number(process.env.DAILY_REMINDER_INTERVAL_MS ?? 10 * 60_000)
 };
 
 export function requireRuntimeConfig() {

@@ -1,3 +1,5 @@
+import { localMonthDay, localMonthKey, localPeriodBounds } from "../../../packages/shared/src/time.js";
+
 export const DEMO_TELEGRAM_USER_ID = 100001;
 
 export async function resetAndSeedDemoData(pool, options = {}) {
@@ -223,17 +225,16 @@ function dateKey(date) {
 }
 
 function monthKey(date) {
-  const local = new Date(date.getTime() + 7 * 60 * 60_000);
-  return `${local.getUTCFullYear()}-${String(local.getUTCMonth() + 1).padStart(2, "0")}`;
+  return localMonthKey(date);
 }
 
 function localDay(date) {
-  return new Date(date.getTime() + 7 * 60 * 60_000).getUTCDate();
+  return localMonthDay(date);
 }
 
 function localDateForMonthDay(date, day) {
-  const local = new Date(date.getTime() + 7 * 60 * 60_000);
-  return new Date(Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), day) - 7 * 60 * 60_000);
+  const [year, month] = localMonthKey(date).split("-").map(Number);
+  return localPeriodBounds(new Date(Date.UTC(year, month - 1, day, 12)), "today").start;
 }
 
 function startOfMonth(date) {

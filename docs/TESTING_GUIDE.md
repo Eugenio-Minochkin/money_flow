@@ -7,6 +7,8 @@ Use this guide when changing business logic or UI around the main Money Flow sur
 - Monthly budget calculation.
 - Mid-month onboarding budget behavior.
 - Planned payment occurrence logic.
+- User timezone behavior for today/yesterday, weeks, months, daily budget snapshots, planned payment dates, and reminders.
+- Daily empty-day reminder guardrails: kill switch, rollout, 48-hour cap, idempotency, no-spending marks, and Telegram blocked/forbidden errors.
 - Disabled planned payments.
 - Weekly recurrence deduplication.
 - Reserve logic.
@@ -18,8 +20,10 @@ Use this guide when changing business logic or UI around the main Money Flow sur
 - Budget and pace logic lives primarily in `packages/shared/src/budget.js` and `packages/shared/test/budget.test.js`.
 - Currency support lives in `packages/shared/src/currencies.js`, Mini App currency helpers, and their tests.
 - Planned payment behavior is spread across shared parsing, API repository logic, Telegram callbacks, Mini App planned UI, and related tests.
+- Timezone helpers live in `packages/shared/src/time.js` and are covered by `packages/shared/test/time.test.js`.
+- Daily reminder behavior is covered by `apps/api/test/dailyReminderService.test.js`, repository tests, and Telegram callback tests.
 - Dashboard presentation is covered by Mini App dashboard and smoke asset tests.
-- Settings behavior, including current-month budget display, is covered by Mini App settings tests.
+- Settings behavior, including current-month budget display and timezone controls, is covered by Mini App settings tests.
 
 ## Before Marking Business Logic Ready
 

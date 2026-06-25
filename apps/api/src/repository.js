@@ -1,7 +1,19 @@
 import { calculateBudgetSnapshot } from "../../../packages/shared/src/budget.js";
 import { SUPPORTED_CURRENCY_CODES, fallbackThbRate, normalizeCurrency } from "../../../packages/shared/src/currencies.js";
-import { localDateRangeBounds, localPeriodBounds } from "../../../packages/shared/src/time.js";
-import { normalizeTimeZone, resolveUserTimeZone, timeZoneDayBounds, timeZoneDayKey, timeZoneMonthBounds, timeZoneMonthKey, timeZoneMonthState } from "../../../packages/shared/src/time.js";
+import {
+  localDateKey as sharedLocalDateKey,
+  localDateRangeBounds,
+  localMonthDay,
+  localMonthKey,
+  localPeriodBounds,
+  localWeekday as sharedLocalWeekday,
+  normalizeTimeZone,
+  resolveUserTimeZone,
+  timeZoneDayKey,
+  timeZoneMonthBounds,
+  timeZoneMonthKey,
+  timeZoneMonthState
+} from "../../../packages/shared/src/time.js";
 import { calculateReserveState, validateReserveCapacity } from "../../../packages/shared/src/reserve.js";
 import { createExchangeRateProvider } from "./exchangeRates.js";
 
@@ -52,7 +64,7 @@ export function createRepository(pool, options = {}) {
       const normalized = normalizeTimeZone(timeZone);
       const result = await pool.query(
         `UPDATE users SET timezone = $1 WHERE telegram_user_id = $2 RETURNING *`,
-        [normalized, telegramUserId]
+        [normalized.timeZone, telegramUserId]
       );
       return result.rows[0] ?? null;
     },
@@ -357,6 +369,7 @@ export function createRepository(pool, options = {}) {
       }
       const moneyAmounts = await buildMoneyAmounts(exchangeRates, amount, input.currency ?? user.base_currency, now, user);
       await assertReserveBudgetCapacity(pool, user, moneyAmounts.amountBase, now);
+      const timeZone = userTimezone(user);
       const result = await pool.query(
         `INSERT INTO monthly_budget_overrides (
            user_id, month_key, budget_amount_base, source, is_partial_month, updated_at
@@ -368,7 +381,7 @@ export function createRepository(pool, options = {}) {
                        is_partial_month = EXCLUDED.is_partial_month,
                        updated_at = EXCLUDED.updated_at
          RETURNING *`,
-        [user.id, monthKey(now), moneyAmounts.amountBase, input.source ?? "manual", input.isPartialMonth === true, now]
+        [user.id, monthKey(now, timeZone), moneyAmounts.amountBase, input.source ?? "manual", input.isPartialMonth === true, now]
       );
       await updateOpenReserveBudget(pool, user.id, moneyAmounts.amountBase);
       if (input.completeOnboarding) await this.setOnboardingStep(telegramUserId, "completed");
@@ -388,7 +401,7 @@ export function createRepository(pool, options = {}) {
                        source_text = EXCLUDED.source_text,
                        updated_at = now()
          RETURNING *`,
-        [user.id, monthKey(now), moneyAmounts.amountBase, input.sourceText ?? null]
+        [user.id, monthKey(now, userTimezone(user)), moneyAmounts.amountBase, input.sourceText ?? null]
       );
       await this.setOnboardingStep(telegramUserId, "completed");
       await invalidateDailyBudgetSnapshot(pool, user.id, now, resolveUserTimeZone(user));
@@ -776,6 +789,7 @@ export function createRepository(pool, options = {}) {
       const interfaceLanguage = normalizeLanguage(settings.interfaceLanguage);
       const interfaceTheme = normalizeTheme(settings.interfaceTheme);
       const budgetAdviceEnabled = settings.budgetAdviceEnabled !== false;
+      const timeZone = normalizeTimeZone(settings.timezone).timeZone;
       if (typeof pool.connect === "function") {
         const currentUser = await this.getUserByTelegramId(telegramUserId);
         if (!currentUser) return null;
@@ -793,14 +807,113 @@ export function createRepository(pool, options = {}) {
              weekly_budget_amount = $5,
              interface_language = $6,
              budget_advice_enabled = $7,
-             interface_theme = $8
-         WHERE telegram_user_id = $9
+             interface_theme = $8,
+             timezone = $9
+         WHERE telegram_user_id = $10
          RETURNING *`,
-        [monthlyBudgetAmount, baseCurrency, displayCurrency, usdThbRate, weeklyBudgetAmount, interfaceLanguage, budgetAdviceEnabled, interfaceTheme, telegramUserId]
+        [monthlyBudgetAmount, baseCurrency, displayCurrency, usdThbRate, weeklyBudgetAmount, interfaceLanguage, budgetAdviceEnabled, interfaceTheme, timeZone, telegramUserId]
       );
       const user = result.rows[0] ?? null;
-      if (user) await invalidateDailyBudgetSnapshot(pool, user.id, now, resolveUserTimeZone(user));
+      if (user) await invalidateDailyBudgetSnapshot(pool, user.id, new Date(), resolveUserTimeZone(user));
       return user;
+    },
+
+    async listDailyReminderCandidates() {
+      const result = await pool.query(
+        `SELECT *
+         FROM users
+         WHERE telegram_user_id IS NOT NULL
+           AND onboarding_step = 'completed'
+           AND bot_blocked = false
+           AND daily_entry_reminder_enabled = true
+         ORDER BY id ASC`
+      );
+      return result.rows;
+    },
+
+    async hasConfirmedFinancialActivity(userId, bounds) {
+      const result = await pool.query(
+        `SELECT 1 FROM expenses
+         WHERE user_id = $1
+           AND spent_at >= $2
+           AND spent_at < $3
+         LIMIT 1`,
+        [userId, bounds.start, bounds.end]
+      );
+      return result.rows.length > 0;
+    },
+
+    async hasNoSpendingMark(userId, localDate) {
+      const result = await pool.query(
+        `SELECT 1 FROM no_spending_marks
+         WHERE user_id = $1 AND local_date = $2`,
+        [userId, localDate]
+      );
+      return result.rows.length > 0;
+    },
+
+    async createNoSpendingMark(userId, localDate, timezoneUsed) {
+      await pool.query(
+        `INSERT INTO no_spending_marks (user_id, local_date, timezone_used)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (user_id, local_date) DO NOTHING`,
+        [userId, localDate, timezoneUsed]
+      );
+    },
+
+    async setDailyEntryReminderEnabled(telegramUserId, enabled) {
+      const result = await pool.query(
+        `UPDATE users
+         SET daily_entry_reminder_enabled = $1
+         WHERE telegram_user_id = $2
+         RETURNING *`,
+        [enabled === true, telegramUserId]
+      );
+      return result.rows[0] ?? null;
+    },
+
+    async hasDailyReminderDelivery(userId, localDate, reminderType = "daily_empty_day") {
+      const result = await pool.query(
+        `SELECT 1 FROM daily_reminder_deliveries
+         WHERE user_id = $1 AND local_date = $2 AND reminder_type = $3`,
+        [userId, localDate, reminderType]
+      );
+      return result.rows.length > 0;
+    },
+
+    async hasRecentDailyReminderDelivery(userId, since, reminderType = "daily_empty_day") {
+      const result = await pool.query(
+        `SELECT 1 FROM daily_reminder_deliveries
+         WHERE user_id = $1
+           AND reminder_type = $2
+           AND sent_at >= $3
+         LIMIT 1`,
+        [userId, reminderType, since]
+      );
+      return result.rows.length > 0;
+    },
+
+    async recordDailyReminderDelivery(input) {
+      const result = await pool.query(
+        `INSERT INTO daily_reminder_deliveries (
+           user_id, local_date, timezone_used, reminder_type, status,
+           sent_at, error_code, error_message
+         )
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         ON CONFLICT (user_id, local_date, reminder_type) DO NOTHING
+         RETURNING *`,
+        [
+          input.userId,
+          input.localDate,
+          input.timezoneUsed,
+          input.reminderType ?? "daily_empty_day",
+          input.status,
+          input.sentAt ?? null,
+          input.errorCode ?? null,
+          input.errorMessage ?? null
+        ]
+      );
+      return result.rows[0] ?? null;
     },
 
     async createDraft(userId, sourceText, items) {
@@ -1068,9 +1181,10 @@ export function createRepository(pool, options = {}) {
       const period = validPeriods.includes(options.period) ? options.period : "month";
       const fromDate = options.fromDate ? String(options.fromDate) : "";
       const toDate = options.toDate ? String(options.toDate) : "";
+      const timeZone = userTimezone(user);
       const bounds = fromDate && toDate
-        ? (localDateRangeBounds(fromDate, toDate) ?? localPeriodBounds(options.now ?? new Date(), "month"))
-        : localPeriodBounds(options.now ?? new Date(), period);
+        ? (localDateRangeBounds(fromDate, toDate, timeZone) ?? localPeriodBounds(options.now ?? new Date(), "month", timeZone))
+        : localPeriodBounds(options.now ?? new Date(), period, timeZone);
       const search = String(options.search ?? "").trim();
       const params = [user.id, bounds.start, bounds.end];
       let searchSql = "";
@@ -1098,7 +1212,8 @@ export function createRepository(pool, options = {}) {
     async topCategories(userId, now = new Date()) {
       const userResult = await pool.query("SELECT * FROM users WHERE id = $1", [userId]);
       const user = userResult.rows[0] ?? {};
-      const bounds = localPeriodBounds(now, "month");
+      const timeZone = userTimezone(user);
+      const bounds = localPeriodBounds(now, "month", timeZone);
       const result = await pool.query(
         `SELECT category_slug,
                 COALESCE(SUM(amount_base), 0)::float AS total,
@@ -1229,17 +1344,20 @@ export function createRepository(pool, options = {}) {
         if (!planned) {
           throw Object.assign(new Error("Planned expense not found"), { code: "not_found" });
         }
+        const timeZone = userTimezone(planned);
         const paidResult = await client.query(
           `SELECT pep.occurrence_date::text, pep.paid_key
            FROM planned_expense_payments pep
            JOIN expenses e ON e.id = pep.expense_id
                            AND e.user_id = $3
+                           AND (pep.occurrence_date IS NULL
+                                OR (e.spent_at AT TIME ZONE $4)::date = pep.occurrence_date)
            WHERE pep.planned_expense_id = $1
              AND pep.paid_month = $2
            ORDER BY pep.occurrence_date`,
-          [planned.id, monthKey(paidAt), planned.user_id]
+          [planned.id, monthKey(paidAt, timeZone), planned.user_id, timeZone]
         );
-        const requestedOccurrence = resolveOccurrenceDate(planned, paidAt, options.occurrenceDate, paidResult.rows);
+        const requestedOccurrence = resolveOccurrenceDate(planned, paidAt, options.occurrenceDate, paidResult.rows, timeZone);
         if (requestedOccurrence.error) {
           throw Object.assign(new Error(requestedOccurrence.error), { code: requestedOccurrence.code });
         }
@@ -1251,8 +1369,8 @@ export function createRepository(pool, options = {}) {
           throw Object.assign(new Error("Planned expense is already paid for this month"), { code: "already_paid" });
         }
 
-        const expenseDate = plannedExpenseSpentAt(occurrenceDate, paidAt);
-        const occurrenceMonth = monthKey(expenseDate);
+        const expenseDate = plannedExpenseSpentAt(occurrenceDate, paidAt, timeZone);
+        const occurrenceMonth = monthKey(expenseDate, timeZone);
         const moneyAmounts = await buildMoneyAmounts(exchangeRates, planned.amount, planned.currency, expenseDate, planned);
         const expenseResult = await client.query(
           `INSERT INTO expenses (
@@ -1301,10 +1419,11 @@ export function createRepository(pool, options = {}) {
     async totals(userId, now = new Date(), timeZone = null) {
       const userResult = await pool.query("SELECT * FROM users WHERE id = $1", [userId]);
       const user = userResult.rows[0] ?? {};
+      const resolvedTimeZone = timeZone ?? userTimezone(user);
       const [today, week, month] = await Promise.all([
-        totalForPeriod(pool, userId, "today", now, { ...user, calculation_time_zone: timeZone }),
-        totalForPeriod(pool, userId, "week", now, user),
-        totalForPeriod(pool, userId, "month", now, { ...user, calculation_time_zone: timeZone })
+        totalForPeriod(pool, userId, "today", now, user, resolvedTimeZone),
+        totalForPeriod(pool, userId, "week", now, user, resolvedTimeZone),
+        totalForPeriod(pool, userId, "month", now, user, resolvedTimeZone)
       ]);
       return {
         today: today.regularTotal,
@@ -1333,6 +1452,7 @@ export function createRepository(pool, options = {}) {
     async dashboard(telegramUserId, now = new Date()) {
       const user = await this.getUserByTelegramId(telegramUserId);
       if (!user) return null;
+      const timeZone = userTimezone(user);
       const reserveOpening = typeof pool.connect === "function"
         ? await this.openReserveMonth(telegramUserId, now)
         : null;
@@ -1346,7 +1466,7 @@ export function createRepository(pool, options = {}) {
       const reserveInstance = reserveInstanceResult.rows[0] ?? null;
       const calculationTimeZone = reserveInstance?.status === "active"
         ? reserveInstance.timezone
-        : normalizeTimeZone(user.timezone);
+        : timeZone;
       const reserveTemplateResult = typeof pool.connect === "function"
         ? await pool.query(
             `SELECT * FROM recurring_reserve_templates WHERE user_id = $1`,
@@ -1361,17 +1481,17 @@ export function createRepository(pool, options = {}) {
             [user.id]
           )
         : { rows: [] };
-      const currentBudget = await currentMonthBudget(pool, user, now);
+      const currentBudget = await currentMonthBudget(pool, user, now, calculationTimeZone);
       const totals = await this.totals(user.id, now, calculationTimeZone);
-      const monthBaseline = await monthBaselineTotal(pool, user.id, now);
+      const monthBaseline = await monthBaselineTotal(pool, user.id, now, calculationTimeZone);
       totals.month += monthBaseline;
       totals.monthDisplay += displayFromBase(monthBaseline, user);
       totals.regularMonth += monthBaseline;
       totals.regularMonthDisplay += displayFromBase(monthBaseline, user);
       const plannedExpenses = await listPlannedExpensesForTelegramUserAt(pool, telegramUserId, now);
-      const plannedRemainingTotal = calculatePlannedRemaining(plannedExpenses, now);
-      const plannedThisWeekTotal = calculatePlannedThisWeek(plannedExpenses, now);
-      const paidPlannedMonthTotal = await paidPlannedTotalForMonth(pool, user.id, now);
+      const plannedRemainingTotal = calculatePlannedRemaining(plannedExpenses, now, calculationTimeZone);
+      const plannedThisWeekTotal = calculatePlannedThisWeek(plannedExpenses, now, calculationTimeZone);
+      const paidPlannedMonthTotal = await paidPlannedTotalForMonth(pool, user.id, now, calculationTimeZone);
       const dayBudgetSnapshot = await getOrCreateDailyBudgetSnapshot(pool, user, now, {
         todayTotal: totals.today,
         monthTotal: totals.month,
@@ -1387,10 +1507,10 @@ export function createRepository(pool, options = {}) {
         paidPlannedMonthTotal,
         largeOneOffMonthTotal: totals.largeMonth,
         reserveAmount: reserveInstance?.status === "active" ? Number(reserveInstance.reserve_amount) : 0,
-        timeZone: calculationTimeZone,
         baseCurrency: user.base_currency ?? "THB",
         displayCurrency: user.display_currency ?? "USD",
-        budgetAdviceEnabled: user.budget_advice_enabled !== false
+        budgetAdviceEnabled: user.budget_advice_enabled !== false,
+        timeZone: calculationTimeZone
       });
       const latest = await pool.query(
         `SELECT id, amount_original, currency_original, amount_base, converted_amounts, budget_impact,
@@ -1435,7 +1555,7 @@ export function createRepository(pool, options = {}) {
       snapshot.display.plannedToday = roundMoney(totals.plannedTodayDisplay);
       snapshot.display.largeToday = roundMoney(totals.largeTodayDisplay);
       const topCategories = await this.topCategories(user.id, now);
-      const analytics = await dashboardAnalytics(pool, user, topCategories, snapshot, now);
+      const analytics = await dashboardAnalytics(pool, user, topCategories, snapshot, now, calculationTimeZone);
       return {
         user,
         currentMonthBudget: currentBudget,
@@ -1453,13 +1573,13 @@ export function createRepository(pool, options = {}) {
   };
 }
 
-async function dashboardAnalytics(pool, user, topCategories, snapshot, now) {
+async function dashboardAnalytics(pool, user, topCategories, snapshot, now, timeZone = userTimezone(user)) {
   const [largestWeek, largestMonth, topTags, dailyHeatmap, previousWeek] = await Promise.all([
-    largestExpenseForPeriod(pool, user.id, "week", now, user),
-    largestExpenseForPeriod(pool, user.id, "month", now, user),
-    topTagsForMonth(pool, user.id, now, user),
-    dailyHeatmapForMonth(pool, user.id, now),
-    totalForPreviousWeek(pool, user.id, now, user)
+    largestExpenseForPeriod(pool, user.id, "week", now, user, timeZone),
+    largestExpenseForPeriod(pool, user.id, "month", now, user, timeZone),
+    topTagsForMonth(pool, user.id, now, user, timeZone),
+    dailyHeatmapForMonth(pool, user.id, now, timeZone),
+    totalForPreviousWeek(pool, user.id, now, user, timeZone)
   ]);
   const otherCategory = topCategories.find((category) => category.category_slug === "other");
   const otherTotal = Number(otherCategory?.total ?? 0);
@@ -1490,8 +1610,8 @@ async function dashboardAnalytics(pool, user, topCategories, snapshot, now) {
   };
 }
 
-async function largestExpenseForPeriod(pool, userId, period, now, user) {
-  const bounds = localPeriodBounds(now, period);
+async function largestExpenseForPeriod(pool, userId, period, now, user, timeZone = userTimezone(user)) {
+  const bounds = localPeriodBounds(now, period, timeZone);
   const result = await pool.query(
     `SELECT id, amount_original, currency_original, amount_base, converted_amounts,
             description, category_slug, tags, spent_at
@@ -1504,8 +1624,8 @@ async function largestExpenseForPeriod(pool, userId, period, now, user) {
   return result.rows[0] ? withDisplay(result.rows[0], user) : null;
 }
 
-async function topTagsForMonth(pool, userId, now, user) {
-  const bounds = localPeriodBounds(now, "month");
+async function topTagsForMonth(pool, userId, now, user, timeZone = userTimezone(user)) {
+  const bounds = localPeriodBounds(now, "month", timeZone);
   const result = await pool.query(
     `SELECT tag,
             COALESCE(SUM(amount_base), 0)::float AS total,
@@ -1527,16 +1647,16 @@ async function topTagsForMonth(pool, userId, now, user) {
   }));
 }
 
-async function dailyHeatmapForMonth(pool, userId, now) {
-  const bounds = localPeriodBounds(now, "month");
+async function dailyHeatmapForMonth(pool, userId, now, timeZone = "Asia/Bangkok") {
+  const bounds = localPeriodBounds(now, "month", timeZone);
   const result = await pool.query(
-    `SELECT EXTRACT(DAY FROM (spent_at + interval '7 hours'))::int AS day,
+    `SELECT EXTRACT(DAY FROM (spent_at AT TIME ZONE $4))::int AS day,
             COALESCE(SUM(amount_base), 0)::float AS total
      FROM expenses
      WHERE user_id = $1 AND spent_at >= $2 AND spent_at < $3
      GROUP BY day
      ORDER BY day`,
-    [userId, bounds.start, bounds.end]
+    [userId, bounds.start, bounds.end, timeZone]
   );
   return result.rows.map((row) => ({
     day: Number(row.day),
@@ -1544,14 +1664,14 @@ async function dailyHeatmapForMonth(pool, userId, now) {
   }));
 }
 
-async function totalForPreviousWeek(pool, userId, now, user) {
-  const week = localPeriodBounds(now, "week");
+async function totalForPreviousWeek(pool, userId, now, user, timeZone = userTimezone(user)) {
+  const week = localPeriodBounds(now, "week", timeZone);
   const previousNow = new Date(week.start.getTime() - 24 * 60 * 60_000);
-  return totalForPeriod(pool, userId, "week", previousNow, user);
+  return totalForPeriod(pool, userId, "week", previousNow, user, timeZone);
 }
 
-async function paidPlannedTotalForMonth(pool, userId, now) {
-  const bounds = localPeriodBounds(now, "month");
+async function paidPlannedTotalForMonth(pool, userId, now, timeZone = "Asia/Bangkok") {
+  const bounds = localPeriodBounds(now, "month", timeZone);
   const result = await pool.query(
     `SELECT COALESCE(SUM(expenses.amount_base), 0)::float AS total
      FROM planned_expense_payments
@@ -1592,7 +1712,8 @@ async function getOrCreateDailyBudgetSnapshot(pool, user, now, input) {
 
   const snapshot = calculateBudgetSnapshot({
     ...input,
-    now
+    now,
+    timeZone
   });
   const dayBudgetBase = Number(snapshot.safeToSpendPerDay ?? snapshot.dayPlanLimit ?? 0);
   const dayBudgetDisplay = Number(snapshot.display?.safeToSpendPerDay ?? snapshot.display?.dayPlanLimit ?? 0);
@@ -1626,17 +1747,17 @@ function normalizePlannedDraft(draft) {
   };
 }
 
-async function monthBaselineTotal(pool, userId, now) {
+async function monthBaselineTotal(pool, userId, now, timeZone = "Asia/Bangkok") {
   const result = await pool.query(
     `SELECT COALESCE(amount_base, 0)::float AS total
      FROM month_baselines
      WHERE user_id = $1 AND month_key = $2`,
-    [userId, monthKey(now)]
+    [userId, monthKey(now, timeZone)]
   );
   return Number(result.rows[0]?.total ?? 0);
 }
 
-async function currentMonthBudget(pool, user, now) {
+async function currentMonthBudget(pool, user, now, timeZone = userTimezone(user)) {
   const regularAmount = roundMoney(Number(user.monthly_budget_amount ?? 0));
   const result = await pool.query(
     `SELECT COALESCE(budget_amount_base, 0)::float AS budget_amount_base,
@@ -1645,7 +1766,7 @@ async function currentMonthBudget(pool, user, now) {
             updated_at
      FROM monthly_budget_overrides
      WHERE user_id = $1 AND month_key = $2`,
-    [user.id, monthKey(now)]
+    [user.id, monthKey(now, timeZone)]
   );
   const override = result.rows[0];
   const amount = override ? roundMoney(Number(override.budget_amount_base ?? 0)) : regularAmount;
@@ -1655,7 +1776,7 @@ async function currentMonthBudget(pool, user, now) {
     ? partialMonthPeriodDays(effectiveDate ?? now, now, normalizeTimeZone(user.timezone))
     : null;
   return {
-    monthKey: monthKey(now),
+    monthKey: monthKey(now, timeZone),
     amount,
     regularMonthlyBudget: regularAmount,
     isPartialMonth,
@@ -1690,8 +1811,11 @@ async function moveExpiredPendingDraftsToInbox(pool, telegramUserId, expireAfter
 }
 
 async function listPlannedExpensesForTelegramUserAt(pool, telegramUserId, now) {
+  const userResult = await pool.query("SELECT timezone FROM users WHERE telegram_user_id = $1", [telegramUserId]);
+  const timeZone = userTimezone(userResult.rows[0] ?? {});
   const result = await pool.query(
     `SELECT planned_expenses.*,
+            users.timezone,
             COALESCE(paid.paid_count, 0)::int AS paid_count,
             COALESCE(paid.paid_occurrence_dates, '{}'::text[]) AS paid_occurrence_dates,
             COALESCE(paid.paid_occurrences, '{}'::jsonb) AS paid_occurrences
@@ -1708,14 +1832,17 @@ async function listPlannedExpensesForTelegramUserAt(pool, telegramUserId, now) {
               ) FILTER (WHERE pep.occurrence_date IS NOT NULL), '{}'::jsonb) AS paid_occurrences
        FROM planned_expense_payments pep
        JOIN planned_expenses pe ON pe.id = pep.planned_expense_id
-       JOIN expenses e ON e.id = pep.expense_id
-                       AND e.user_id = pe.user_id
-       WHERE pep.paid_month = $2
+       JOIN users pu ON pu.id = pe.user_id
+     JOIN expenses e ON e.id = pep.expense_id
+                     AND e.user_id = pe.user_id
+                     AND (pep.occurrence_date IS NULL
+                          OR (e.spent_at AT TIME ZONE COALESCE(NULLIF(pu.timezone, ''), 'Asia/Bangkok'))::date = pep.occurrence_date)
+     WHERE pep.paid_month = $2
        GROUP BY pep.planned_expense_id
      ) paid ON paid.planned_expense_id = planned_expenses.id
      WHERE users.telegram_user_id = $1 AND planned_expenses.active = true
      ORDER BY planned_expenses.id DESC`,
-    [telegramUserId, monthKey(now)]
+    [telegramUserId, monthKey(now, timeZone)]
   );
   return result.rows;
 }
@@ -1780,6 +1907,10 @@ function normalizeLanguage(value) {
 
 function normalizeTheme(value) {
   return ["dark", "light"].includes(value) ? value : "light";
+}
+
+function userTimezone(user) {
+  return normalizeTimeZone(user?.timezone).timeZone;
 }
 
 async function buildMoneyAmounts(exchangeRates, amount, currency, date, user = {}) {
@@ -1875,9 +2006,9 @@ function roundMoney(value) {
   return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
 }
 
-function calculatePlannedRemaining(plannedExpenses, now) {
+function calculatePlannedRemaining(plannedExpenses, now, timeZone = "Asia/Bangkok") {
   return plannedExpenses.reduce((sum, item) => {
-    return sum + Number(item.amount_base) * unpaidPlannedDueDatesThisMonth(item, now).length;
+    return sum + Number(item.amount_base) * unpaidPlannedDueDatesThisMonth(item, now, timeZone).length;
   }, 0);
 }
 
@@ -2104,46 +2235,47 @@ function plannedOccurrenceCountForPeriod(item, period) {
   return new Set(days.map(Number).filter((day) => day >= 1).map((day) => Math.min(day, daysInMonth))).size;
 }
 
-function calculatePlannedThisWeek(plannedExpenses, now) {
-  const bounds = localFullWeekBounds(now);
+function calculatePlannedThisWeek(plannedExpenses, now, timeZone = "Asia/Bangkok") {
+  const bounds = localFullWeekBounds(now, timeZone);
   return plannedExpenses.reduce((sum, item) => {
-    const dueDates = unpaidPlannedDueDatesThisMonth(item, now)
+    const dueDates = unpaidPlannedDueDatesThisMonth(item, now, timeZone)
       .filter((date) => date >= bounds.start && date < bounds.end);
     return sum + Number(item.amount_base) * dueDates.length;
   }, 0);
 }
 
-function localFullWeekBounds(now) {
-  const current = localPeriodBounds(now, "week");
+function localFullWeekBounds(now, timeZone = "Asia/Bangkok") {
+  const current = localPeriodBounds(now, "week", timeZone);
   return {
     start: current.start,
     end: new Date(current.start.getTime() + 7 * 24 * 60 * 60_000)
   };
 }
 
-function plannedDueDatesThisMonth(item, now) {
-  if (item.recurrence === "weekly") return weeklyDueDatesThisMonth(now, Number(item.weekday ?? localWeekday(now)));
+function plannedDueDatesThisMonth(item, now, timeZone = userTimezone(item)) {
+  if (item.recurrence === "weekly") return weeklyDueDatesThisMonth(now, Number(item.weekday ?? localWeekday(now, timeZone)), timeZone);
   if (item.recurrence === "one_off" || item.recurrence === "one_time") {
     if (!item.due_date) return [];
-    const dueDate = plannedLocalDate(item.due_date);
-    return monthKey(dueDate) === monthKey(now) ? [dueDate] : [];
+    const dueDate = plannedLocalDate(item.due_date, timeZone);
+    return monthKey(dueDate, timeZone) === monthKey(now, timeZone) ? [dueDate] : [];
   }
-  return dueDaysInMonthValues(item, now).map((day) => plannedLocalDateForMonthDay(now, day));
+  return dueDaysInMonthValues(item, now, timeZone).map((day) => plannedLocalDateForMonthDay(now, day, timeZone));
 }
 
-function unpaidPlannedDueDatesThisMonth(item, now) {
-  const dueDates = plannedDueDatesThisMonth(item, now);
+function unpaidPlannedDueDatesThisMonth(item, now, timeZone = userTimezone(item)) {
+  const dueDates = plannedDueDatesThisMonth(item, now, timeZone);
   const paidDates = new Set(Array.isArray(item.paid_occurrence_dates) ? item.paid_occurrence_dates : []);
-  if (paidDates.size) return dueDates.filter((date) => !paidDates.has(localDayKey(date)));
-  const legacyPaid = item.paid_month === monthKey(now) ? 1 : 0;
+  if (paidDates.size) return dueDates.filter((date) => !paidDates.has(localDayKey(date, timeZone)));
+  const legacyPaid = item.paid_month === monthKey(now, timeZone) ? 1 : 0;
   const paidCount = Math.min(Number(item.paid_count ?? legacyPaid), dueDates.length);
   return dueDates.slice(paidCount);
 }
 
 function occurrencesThisMonth(item, now) {
-  if (item.recurrence === "weekly") return weekdaysInMonth(now, Number(item.weekday ?? localWeekday(now)));
+  const timeZone = userTimezone(item);
+  if (item.recurrence === "weekly") return weekdaysInMonth(now, Number(item.weekday ?? localWeekday(now, timeZone)), timeZone);
   if (item.recurrence === "twice_monthly") return dueDaysInMonth(item);
-  if (item.recurrence === "one_off" || item.recurrence === "one_time") return item.due_date && monthKey(new Date(item.due_date)) === monthKey(now) ? 1 : 0;
+  if (item.recurrence === "one_off" || item.recurrence === "one_time") return item.due_date && monthKey(new Date(item.due_date), timeZone) === monthKey(now, timeZone) ? 1 : 0;
   return dueDaysInMonth(item);
 }
 
@@ -2152,18 +2284,17 @@ function dueDaysInMonth(item) {
   return days.filter((day) => Number(day) >= 1 && Number(day) <= 31).length;
 }
 
-function dueDaysInMonthValues(item, now) {
+function dueDaysInMonthValues(item, now, timeZone = userTimezone(item)) {
   const days = Array.isArray(item.due_days) && item.due_days.length ? item.due_days : [Number(item.due_day ?? 1)];
-  const local = new Date(now.getTime() + 7 * 60 * 60_000);
-  const daysInCurrentMonth = new Date(Date.UTC(local.getUTCFullYear(), local.getUTCMonth() + 1, 0)).getUTCDate();
+  const [year, month] = monthKey(now, timeZone).split("-").map(Number);
+  const daysInCurrentMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
   return [...new Set(days.map(Number).filter((day) => day >= 1).map((day) => Math.min(day, daysInCurrentMonth)))]
     .sort((left, right) => left - right);
 }
 
-function weekdaysInMonth(now, weekday) {
-  const local = new Date(now.getTime() + 7 * 60 * 60_000);
-  const year = local.getUTCFullYear();
-  const month = local.getUTCMonth();
+function weekdaysInMonth(now, weekday, timeZone = "Asia/Bangkok") {
+  const [year, monthKeyValue] = monthKey(now, timeZone).split("-").map(Number);
+  const month = monthKeyValue - 1;
   const daysInMonth = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
   let count = 0;
   for (let currentDay = 1; currentDay <= daysInMonth; currentDay += 1) {
@@ -2174,89 +2305,81 @@ function weekdaysInMonth(now, weekday) {
   return count;
 }
 
-function weeklyDueDatesThisMonth(now, weekday) {
-  const local = new Date(now.getTime() + 7 * 60 * 60_000);
-  const year = local.getUTCFullYear();
-  const month = local.getUTCMonth();
+function weeklyDueDatesThisMonth(now, weekday, timeZone = "Asia/Bangkok") {
+  const [year, monthKeyValue] = monthKey(now, timeZone).split("-").map(Number);
+  const month = monthKeyValue - 1;
   const daysInMonth = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
   const dates = [];
   for (let currentDay = 1; currentDay <= daysInMonth; currentDay += 1) {
     const current = new Date(Date.UTC(year, month, currentDay));
     const currentWeekday = current.getUTCDay() === 0 ? 7 : current.getUTCDay();
-    if (currentWeekday === weekday) dates.push(plannedLocalDateForMonthDay(now, currentDay));
+    if (currentWeekday === weekday) dates.push(plannedLocalDateForMonthDay(now, currentDay, timeZone));
   }
   return dates;
 }
 
-function plannedLocalDate(value) {
+function plannedLocalDate(value, timeZone = "Asia/Bangkok") {
   const [year, month, day] = String(value).slice(0, 10).split("-").map(Number);
-  return new Date(Date.UTC(year, month - 1, day) - 7 * 60 * 60_000);
+  return localPeriodBounds(new Date(Date.UTC(year, month - 1, day, 12)), "today", timeZone).start;
 }
 
-function plannedExpenseSpentAt(occurrenceDate, paidAt = new Date()) {
+function plannedExpenseSpentAt(occurrenceDate, paidAt = new Date(), timeZone = "Asia/Bangkok") {
   const occurrenceKey = String(occurrenceDate).slice(0, 10);
-  if (occurrenceKey === localDayKey(paidAt)) return paidAt;
+  if (occurrenceKey === localDayKey(paidAt, timeZone)) return paidAt;
   const [year, month, day] = occurrenceKey.split("-").map(Number);
-  return new Date(Date.UTC(year, month - 1, day, 12) - 7 * 60 * 60_000);
+  const start = localPeriodBounds(new Date(Date.UTC(year, month - 1, day, 12)), "today", timeZone).start;
+  return new Date(start.getTime() + 12 * 60 * 60_000);
 }
 
-function plannedLocalDateForMonthDay(now, day) {
-  const local = new Date(now.getTime() + 7 * 60 * 60_000);
-  return new Date(Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), day) - 7 * 60 * 60_000);
+function plannedLocalDateForMonthDay(now, day, timeZone = "Asia/Bangkok") {
+  const [year, month] = monthKey(now, timeZone).split("-").map(Number);
+  return localPeriodBounds(new Date(Date.UTC(year, month - 1, day, 12)), "today", timeZone).start;
 }
 
-function localWeekday(now) {
-  const local = new Date(now.getTime() + 7 * 60 * 60_000);
-  const weekday = local.getUTCDay();
-  return weekday === 0 ? 7 : weekday;
+function localWeekday(now, timeZone = "Asia/Bangkok") {
+  return sharedLocalWeekday(now, timeZone);
 }
 
-function startOfLocalDay(now) {
-  const local = new Date(now.getTime() + 7 * 60 * 60_000);
-  return new Date(Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate()) - 7 * 60 * 60_000);
+function startOfLocalDay(now, timeZone = "Asia/Bangkok") {
+  return localPeriodBounds(now, "today", timeZone).start;
 }
 
-function monthKey(now) {
-  const local = new Date(now.getTime() + 7 * 60 * 60_000);
-  const month = String(local.getUTCMonth() + 1).padStart(2, "0");
-  return `${local.getUTCFullYear()}-${month}`;
+function monthKey(now, timeZone = "Asia/Bangkok") {
+  return localMonthKey(now, timeZone);
 }
 
-function localDayKey(now) {
-  const local = new Date(now.getTime() + 7 * 60 * 60_000);
-  const month = String(local.getUTCMonth() + 1).padStart(2, "0");
-  const day = String(local.getUTCDate()).padStart(2, "0");
-  return `${local.getUTCFullYear()}-${month}-${day}`;
+function localDayKey(now, timeZone = "Asia/Bangkok") {
+  return sharedLocalDateKey(now, timeZone);
 }
 
-function localDayBounds(now) {
-  const start = startOfLocalDay(now);
+function localDayBounds(now, timeZone = "Asia/Bangkok") {
+  const start = startOfLocalDay(now, timeZone);
   return {
     start,
     end: new Date(start.getTime() + 24 * 60 * 60_000)
   };
 }
 
-function nextUnpaidOccurrenceDate(planned, now, paidOccurrenceDates = []) {
+function nextUnpaidOccurrenceDate(planned, now, paidOccurrenceDates = [], timeZone = userTimezone(planned)) {
   const paid = new Set(paidOccurrenceDates.filter(Boolean).map((date) => String(date).slice(0, 10)));
-  const unpaid = plannedDueDatesThisMonth(planned, now)
-    .map(localDayKey)
+  const unpaid = plannedDueDatesThisMonth(planned, now, timeZone)
+    .map((date) => localDayKey(date, timeZone))
     .filter((date) => !paid.has(date));
-  const today = localDayKey(now);
+  const today = localDayKey(now, timeZone);
   return unpaid.filter((date) => date <= today).sort()[0] ?? unpaid.filter((date) => date > today).sort()[0] ?? null;
 }
 
-function resolveOccurrenceDate(planned, now, requested, paidRows = []) {
+function resolveOccurrenceDate(planned, now, requested, paidRows = [], timeZone = userTimezone(planned)) {
   if (!requested) {
-    const fallback = nextUnpaidOccurrenceDate(planned, now, paidRows.map((row) => row.occurrence_date));
+    const fallback = nextUnpaidOccurrenceDate(planned, now, paidRows.map((row) => row.occurrence_date), timeZone);
     if (!fallback) return { error: "Planned expense is already paid for this month", code: "already_paid" };
     return { value: fallback };
   }
   const normalized = normalizeOccurrenceKey(requested);
   if (!normalized) return { error: "Invalid occurrence date", code: "invalid_occurrence" };
-  const dueDates = new Set(plannedDueDatesThisMonth(planned, now).map(localDayKey));
+  const dueDates = new Set(plannedDueDatesThisMonth(planned, now, timeZone).map((date) => localDayKey(date, timeZone)));
   if (!dueDates.has(normalized)) return { error: "Invalid occurrence date", code: "invalid_occurrence" };
-  const today = localDayKey(now);
+  const today = localDayKey(now, timeZone);
   if (normalized > today) return { error: "Occurrence is in the future", code: "future_occurrence" };
   const paidDates = new Set(paidRows.map((row) => String(row.occurrence_date ?? "").slice(0, 10)));
   if (paidDates.has(normalized)) return { error: "Planned expense is already paid for this month", code: "already_paid" };
@@ -2281,15 +2404,8 @@ function plannedPaymentKey(planned, occurrenceDate) {
   return String(occurrenceDate).slice(0, 7);
 }
 
-async function totalForPeriod(pool, userId, period, now, user = {}) {
-  let bounds;
-  if (period === "month" && user.calculation_time_zone) {
-    bounds = timeZoneMonthBounds(timeZoneMonthKey(now, user.calculation_time_zone), user.calculation_time_zone);
-  } else if (period === "today" && user.calculation_time_zone) {
-    bounds = timeZoneDayBounds(now, user.calculation_time_zone);
-  } else {
-    bounds = localPeriodBounds(now, period);
-  }
+async function totalForPeriod(pool, userId, period, now, user = {}, timeZone = userTimezone(user)) {
+  const bounds = localPeriodBounds(now, period, timeZone);
   const result = await pool.query(
     `SELECT COALESCE(SUM(amount_base), 0)::float AS total,
             COALESCE(SUM(amount_base) FILTER (WHERE budget_impact = 'regular'), 0)::float AS regular_total,

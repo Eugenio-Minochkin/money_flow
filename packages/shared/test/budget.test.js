@@ -397,3 +397,28 @@ test("keeps a fixed daily budget stable while today's spending reduces the remai
   assert.deepEqual(results.map((snapshot) => snapshot.dayRemaining), [401.5, 18.5, 0]);
   assert.deepEqual(results.map((snapshot) => snapshot.dayOverrun), [0, 0, 598.5]);
 });
+
+test("calculates elapsed month and week days in the user's timezone", () => {
+  const instant = new Date("2026-06-30T17:30:00Z");
+  const bangkok = calculateBudgetSnapshot({
+    todayTotal: 0,
+    monthTotal: 0,
+    monthlyBudget: 31000,
+    now: instant,
+    timeZone: "Asia/Bangkok"
+  });
+  const newYork = calculateBudgetSnapshot({
+    todayTotal: 0,
+    monthTotal: 0,
+    monthlyBudget: 30000,
+    now: instant,
+    timeZone: "America/New_York"
+  });
+
+  assert.equal(bangkok.daysInMonth, 31);
+  assert.equal(bangkok.elapsedDaysInMonth, 1);
+  assert.equal(bangkok.elapsedDaysInWeek, 3);
+  assert.equal(newYork.daysInMonth, 30);
+  assert.equal(newYork.elapsedDaysInMonth, 30);
+  assert.equal(newYork.elapsedDaysInWeek, 2);
+});

@@ -18,8 +18,9 @@ export function createExpenseParser(options = {}) {
 
     async parse(text, parseOptions = {}) {
       const defaultCurrency = normalizeCurrency(parseOptions.defaultCurrency, "THB");
+      const timeZone = parseOptions.timeZone ?? "Asia/Bangkok";
       if (!apiKey || !fetchImpl) {
-        const result = parseExpenseText(text, { now: now(), defaultCurrency });
+        const result = parseExpenseText(text, { now: now(), defaultCurrency, timeZone });
         parseOptions.onLlmTrace?.({
           model: "local-parser",
           promptChars: String(text ?? "").length,
@@ -30,12 +31,12 @@ export function createExpenseParser(options = {}) {
 
       // TODO: Try the local parser first for simple expense messages, then call OpenAI only when confidence or coverage is insufficient.
       try {
-        const parsed = await parseWithOpenAI({ text, apiKey, model, fetchImpl, now: now(), defaultCurrency });
+        const parsed = await parseWithOpenAI({ text, apiKey, model, fetchImpl, now: now(), defaultCurrency, timeZone });
         parseOptions.onLlmTrace?.(parsed.metadata);
         return parsed.result;
       } catch (error) {
         console.error("[expense-parser] OpenAI parser failed, using local parser", error.message);
-        const fallback = parseExpenseText(text, { now: now(), defaultCurrency });
+        const fallback = parseExpenseText(text, { now: now(), defaultCurrency, timeZone });
         parseOptions.onLlmTrace?.({
           model,
           promptChars: String(text ?? "").length,
@@ -51,8 +52,8 @@ export function createExpenseParser(options = {}) {
   };
 }
 
-async function parseWithOpenAI({ text, apiKey, model, fetchImpl, now, defaultCurrency }) {
-  const systemPrompt = buildSystemPrompt(now, defaultCurrency);
+async function parseWithOpenAI({ text, apiKey, model, fetchImpl, now, defaultCurrency, timeZone }) {
+  const systemPrompt = buildSystemPrompt(now, defaultCurrency, timeZone);
   const response = await fetchImpl(OPENAI_RESPONSES_URL, {
     method: "POST",
     headers: {
@@ -99,7 +100,7 @@ async function parseWithOpenAI({ text, apiKey, model, fetchImpl, now, defaultCur
   };
 }
 
-function buildSystemPrompt(now, defaultCurrency = "THB") {
+function buildSystemPrompt(now, defaultCurrency = "THB", timeZone = "Asia/Bangkok") {
   return [
     "You are an expense parser for a personal finance Telegram bot.",
     "Return only JSON that matches the schema.",
@@ -115,7 +116,7 @@ function buildSystemPrompt(now, defaultCurrency = "THB") {
     "- regular otherwise.",
     "If category or description is unclear, set needs_review=true and confidence below 0.7.",
     "For relative dates and times, use the provided current timestamp and timezone.",
-    `Current timestamp: ${now.toISOString()}. User timezone for expense timestamps: +07:00.`
+    `Current timestamp: ${now.toISOString()}. User timezone for expense timestamps: ${timeZone}.`
   ].join("\n");
 }
 

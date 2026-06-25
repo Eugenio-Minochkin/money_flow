@@ -41,6 +41,15 @@ test("uses provided default currency when currency is omitted", () => {
   assert.equal(result.expenses[0].amount, 14000);
 });
 
+test("formats parsed timestamps in the supplied timezone", () => {
+  const result = parseExpenseText("coffee 70", {
+    now: new Date("2026-06-01T03:30:00Z"),
+    timeZone: "America/New_York"
+  });
+
+  assert.equal(result.expenses[0].spent_at, "2026-05-31T23:30:00.000-04:00");
+});
+
 test("parses compact thousands notation", () => {
   const compact = parseExpenseText("coffee 14k", { defaultCurrency: "IDR" });
   const compactCyrillic = parseExpenseText("coffee 14к", { defaultCurrency: "IDR" });

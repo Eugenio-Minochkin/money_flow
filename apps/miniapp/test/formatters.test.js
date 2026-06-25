@@ -53,6 +53,10 @@ test("formats dates in Bangkok timezone", () => {
   assert.equal(dateTimeLocal("2026-05-31T17:00:00.000Z"), "2026-06-01T00:00");
 });
 
+test("formats datetime-local values in a supplied timezone", () => {
+  assert.equal(dateTimeLocal("2026-06-01T03:30:00.000Z", "America/New_York"), "2026-05-31T23:30");
+});
+
 function normalizeSpaces(value) {
   return value.replaceAll("\u00a0", " ");
 }

@@ -1,4 +1,4 @@
-const BANGKOK_OFFSET_MS = 7 * 60 * 60_000;
+import { localPeriodBounds } from "../../../packages/shared/src/time.js";
 
 export function createAdminStatsService({ pool, now = () => new Date() }) {
   return {
@@ -6,7 +6,7 @@ export function createAdminStatsService({ pool, now = () => new Date() }) {
       const current = now();
       const usersCreatedAtAvailable = await hasUsersCreatedAt(pool);
       const periods = {
-        today: { start: startOfBangkokDay(current), end: current },
+        today: { start: localPeriodBounds(current, "today").start, end: current },
         last7Days: { start: new Date(current.getTime() - 7 * 24 * 60 * 60_000), end: current },
         last30Days: { start: new Date(current.getTime() - 30 * 24 * 60 * 60_000), end: current }
       };
@@ -399,7 +399,3 @@ function nullableNumeric(value) {
   return Number.isFinite(number) ? number : null;
 }
 
-function startOfBangkokDay(now) {
-  const local = new Date(now.getTime() + BANGKOK_OFFSET_MS);
-  return new Date(Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate()) - BANGKOK_OFFSET_MS);
-}

@@ -38,7 +38,7 @@ import {
   recurrenceLabel as plannedRecurrenceLabel,
   weekdayOptions as plannedWeekdayOptions
 } from "./planned.js";
-import { shouldShowCurrentMonthBudgetOverride } from "./settings.js";
+import { COMMON_TIMEZONES, detectBrowserTimeZone, normalizeSettingsTimeZone, shouldShowCurrentMonthBudgetOverride } from "./settings.js";
 
 const params = new URLSearchParams(window.location.search);
 const telegramUserId = params.get("telegramUserId") || window.Telegram?.WebApp?.initDataUnsafe?.user?.id;
@@ -89,6 +89,7 @@ document.querySelector("#baseCurrencyInput").addEventListener("change", updateCu
 document.querySelector("#displayCurrencyInput").addEventListener("change", updateCurrencyFlags);
 document.querySelector("#interfaceLanguageInput").addEventListener("change", updateCurrencyFlags);
 document.querySelector("#interfaceThemeInput").addEventListener("change", (event) => applyTheme(event.target.value));
+document.querySelector("#detectTimezoneButton")?.addEventListener("click", detectTimezone);
 document.querySelector("#openHistoryInboxButton")?.addEventListener("click", () => switchTab("history"));
 document.querySelectorAll("[data-history-period]").forEach((chip) => {
   chip.addEventListener("click", () => selectHistoryPeriod(chip.dataset.historyPeriod));
@@ -192,7 +193,7 @@ function renderLargestExpenses(analytics) {
     <article class="expense-row" style="--category-color: ${categoryColor(expense.category_slug)}">
       <div class="expense-main">
         <div class="expense-title">${escapeHtml(label)} · ${escapeHtml(expense.description)}</div>
-        <div class="expense-meta">${formatDate(expense.spent_at, currentLanguage)} · ${escapeHtml(categoryLabel(expense.category_slug, currentLanguage))}</div>
+        <div class="expense-meta">${formatDate(expense.spent_at, currentLanguage, userTimeZone())} · ${escapeHtml(categoryLabel(expense.category_slug, currentLanguage))}</div>
       </div>
       <div class="expense-amount">${moneyBase(expense.amount_base)}
         <em>${moneyDisplay(expense.display?.amount, expense.display?.currency)}</em>
@@ -543,7 +544,7 @@ function renderSettings(user) {
   applyLanguage(currentLanguage);
   document.querySelector("#budgetInput").value = Math.round(Number(user.monthly_budget_amount ?? 45000));
   const currentMonthBudgetForm = document.querySelector("#currentMonthBudgetForm");
-  const showCurrentMonthBudgetOverride = shouldShowCurrentMonthBudgetOverride(dashboardState?.currentMonthBudget);
+  const showCurrentMonthBudgetOverride = shouldShowCurrentMonthBudgetOverride(dashboardState?.currentMonthBudget, new Date(), userTimeZone(user));
   currentMonthBudgetForm?.classList.toggle("hidden", !showCurrentMonthBudgetOverride);
   if (showCurrentMonthBudgetOverride) {
     document.querySelector("#currentMonthBudgetInput").value = Math.round(Number(dashboardState.currentMonthBudget.amount));
@@ -553,6 +554,7 @@ function renderSettings(user) {
   document.querySelector("#displayCurrencyInput").value = user.display_currency ?? "USD";
   document.querySelector("#interfaceLanguageInput").value = currentLanguage;
   document.querySelector("#interfaceThemeInput").value = currentTheme;
+  renderTimezoneOptions(user.timezone);
   document.querySelector("#usdThbRateInput").value = Number(user.usd_thb_rate ?? 32.65);
   document.querySelector("#budgetAdviceInput").checked = user.budget_advice_enabled !== false;
   const reserve = dashboardState?.reserveInstance;
@@ -662,7 +664,7 @@ function plannedDueRowHtml(entry, titleKey) {
   const { item, occurrence, isToday } = entry;
   const dateLabel = isToday
     ? t("plan.dueToday")
-    : t("plan.wasDue", { date: formatDateOnly(occurrence.occurrence_date, currentLanguage) });
+    : t("plan.wasDue", { date: formatDateOnly(occurrence.occurrence_date, currentLanguage, userTimeZone()) });
   const displayCurrency = item.display?.currency;
   const displayAmount = item.display?.amount;
   const baseAmount = moneyBase(item.amount_base ?? item.amount);
@@ -777,7 +779,7 @@ function renderInboxDrafts(drafts) {
       <article class="expense-row" style="--category-color: #b84d7a">
         <div class="expense-main">
           <div class="expense-title">${escapeHtml(description)}</div>
-          <div class="expense-meta">${formatDate(draft.created_at, currentLanguage)} · ${draft.items.length} ${t("history.rows")} · ${moneyBase(total)}</div>
+          <div class="expense-meta">${formatDate(draft.created_at, currentLanguage, userTimeZone())} · ${draft.items.length} ${t("history.rows")} · ${moneyBase(total)}</div>
           <div class="button-row inbox-category-row">
             ${inboxCategoryButtons(draft)}
           </div>
@@ -813,7 +815,7 @@ function renderDashboardInboxDrafts(drafts) {
       <article class="expense-row inbox-draft-row" data-inbox-location="dashboard" data-draft-row="${draft.id}" style="--category-color: #b84d7a">
         <div class="expense-main">
           <div class="expense-title">${escapeHtml(description)}</div>
-          <div class="expense-meta">${formatDate(draft.created_at, currentLanguage)} · ${draft.items.length} ${t("history.rows")} · ${moneyBase(total)}</div>
+          <div class="expense-meta">${formatDate(draft.created_at, currentLanguage, userTimeZone())} · ${draft.items.length} ${t("history.rows")} · ${moneyBase(total)}</div>
           <div class="button-row inbox-category-row">
             ${inboxCategoryButtons(draft)}
           </div>
@@ -903,7 +905,7 @@ function expenseRow(expense) {
       <div class="expense-main">
         <div class="expense-title">${escapeHtml(expense.description)}</div>
         ${impactLabel ? `<div class="expense-meta">${impactLabel}</div>` : ""}
-        <div class="expense-meta">${formatDate(expense.spent_at, currentLanguage)} · ${escapeHtml(categoryLabel(expense.category_slug, currentLanguage))}</div>
+        <div class="expense-meta">${formatDate(expense.spent_at, currentLanguage, userTimeZone())} · ${escapeHtml(categoryLabel(expense.category_slug, currentLanguage))}</div>
       </div>
       <div class="expense-actions">
         <div class="expense-amount">${formatMoney(expense.amount_original, expense.currency_original)}
@@ -1241,7 +1243,7 @@ function editableItemFields(item, prefix, index) {
       </label>
       <label>
         <span>${t("forms.dateAndTime")}</span>
-        <input name="${prefix}-spent_at" type="datetime-local" value="${dateTimeLocal(item.spent_at)}" required />
+        <input name="${prefix}-spent_at" type="datetime-local" value="${dateTimeLocal(item.spent_at, dashboardState?.user?.timezone)}" required />
       </label>
       <label>
         <span>${t("forms.tagsComma")}</span>
@@ -1264,6 +1266,7 @@ async function saveSettings(event) {
         displayCurrency: document.querySelector("#displayCurrencyInput").value,
         interfaceLanguage: document.querySelector("#interfaceLanguageInput").value,
         interfaceTheme: document.querySelector("#interfaceThemeInput").value,
+        timezone: document.querySelector("#timezoneInput").value,
         budgetAdviceEnabled: document.querySelector("#budgetAdviceInput").checked,
         usdThbRate: Number(document.querySelector("#usdThbRateInput").value)
       }
@@ -1271,6 +1274,22 @@ async function saveSettings(event) {
   });
   await loadDashboard();
   showToast(t("toast.settingsSaved"));
+}
+
+function detectTimezone() {
+  const input = document.querySelector("#timezoneInput");
+  if (!input) return;
+  input.value = detectBrowserTimeZone();
+}
+
+function renderTimezoneOptions(value) {
+  const input = document.querySelector("#timezoneInput");
+  if (!input) return;
+  const selected = normalizeSettingsTimeZone(value);
+  input.innerHTML = COMMON_TIMEZONES
+    .map((timeZone) => option(timeZone, selected, timeZone))
+    .join("");
+  input.value = selected;
 }
 
 async function saveCurrentMonthBudget() {
@@ -1472,7 +1491,8 @@ function applyLanguage(language) {
     ["#baseCurrencyInput", "settings.baseCurrency"],
     ["#displayCurrencyInput", "settings.displayCurrency"],
     ["#interfaceLanguageInput", "settings.interfaceLanguage"],
-    ["#interfaceThemeInput", "settings.interfaceTheme"]
+    ["#interfaceThemeInput", "settings.interfaceTheme"],
+    ["#timezoneInput", "settings.timezone"]
   ];
   for (const [selector, key] of labels) {
     const label = document.querySelector(selector)?.closest("label")?.querySelector("span");
@@ -1501,7 +1521,11 @@ function setOptionalText(selector, text) {
 }
 
 function recurrenceLabel(item) {
-  return plannedRecurrenceLabel(item, (value) => formatDate(value, currentLanguage), currentLanguage);
+  return plannedRecurrenceLabel(item, (value) => formatDate(value, currentLanguage, userTimeZone()), currentLanguage);
+}
+
+function userTimeZone(user = dashboardState?.user) {
+  return normalizeSettingsTimeZone(user?.timezone);
 }
 
 function weekdayOptions(selected) {

@@ -96,6 +96,7 @@ test("OpenAI parser prompt describes planned and large one-off budget impact rul
       assert.match(prompt, /large_oneoff/);
       assert.match(prompt, /плановая/);
       assert.match(prompt, /крупная/);
+      assert.match(prompt, /America\/New_York/);
 
       return jsonResponse({
         output_text: JSON.stringify({
@@ -116,7 +117,7 @@ test("OpenAI parser prompt describes planned and large one-off budget impact rul
     }
   });
 
-  const parsed = await parser.parse("плановая аренда 2000 бат");
+  const parsed = await parser.parse("плановая аренда 2000 бат", { timeZone: "America/New_York" });
 
   assert.equal(parsed.expenses[0].budget_impact, "planned");
 });
@@ -131,6 +132,16 @@ test("falls back to the local parser when OpenAI is not configured", async () =>
   assert.equal(parsed.expenses.length, 1);
   assert.equal(parsed.expenses[0].amount, 70);
   assert.equal(parsed.expenses[0].description, "кофе");
+});
+
+test("local parser uses supplied timezone", async () => {
+  const parser = createExpenseParser({
+    now: () => new Date("2026-06-01T03:30:00Z")
+  });
+
+  const parsed = await parser.parse("coffee 70", { timeZone: "America/New_York" });
+
+  assert.equal(parsed.expenses[0].spent_at, "2026-05-31T23:30:00.000-04:00");
 });
 
 test("falls back to the local parser when OpenAI fails", async () => {

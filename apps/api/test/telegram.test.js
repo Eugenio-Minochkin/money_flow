@@ -1487,6 +1487,60 @@ test("current month budget can be skipped without creating a monthly override", 
   }
 });
 
+test("daily reminder add button sends expense hint", async () => {
+  const messages = [];
+  const repo = fakeRepository();
+  repo.user = { id: 1, interface_language: "en", timezone: "Asia/Bangkok", base_currency: "THB", onboarding_step: "completed" };
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: repo,
+    telegramClient: captureTelegramClient(messages)
+  });
+
+  await bot.handleUpdate(callbackUpdate("daily_reminder:add", 100));
+
+  assert.match(messages.at(-1).text, /Send an expense by text or voice/);
+  assert.equal(repo.events.some((event) => event.eventName === "daily_reminder_clicked_add"), true);
+});
+
+test("daily reminder no-spending button marks local date and edits message", async () => {
+  const messages = [];
+  const repo = fakeRepository();
+  repo.user = { id: 1, interface_language: "en", timezone: "Asia/Bangkok", base_currency: "THB", onboarding_step: "completed" };
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: repo,
+    now: () => new Date("2026-06-25T15:30:00Z"),
+    telegramClient: captureTelegramClient(messages)
+  });
+
+  await bot.handleUpdate(callbackUpdate("daily_reminder:no_spending", 100));
+
+  assert.deepEqual(repo.noSpendingMarks[0], { userId: 1, localDate: "2026-06-25", timezoneUsed: "Asia/Bangkok" });
+  assert.match(messages.at(-1).text, /marked today as no spending/);
+  assert.equal(repo.events.some((event) => event.eventName === "daily_reminder_clicked_no_spending"), true);
+});
+
+test("daily reminder disable button turns off future reminders", async () => {
+  const messages = [];
+  const repo = fakeRepository();
+  repo.user = { id: 1, interface_language: "en", timezone: "Asia/Bangkok", base_currency: "THB", onboarding_step: "completed" };
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: repo,
+    telegramClient: captureTelegramClient(messages)
+  });
+
+  await bot.handleUpdate(callbackUpdate("daily_reminder:disable", 100));
+
+  assert.equal(repo.dailyEntryReminderEnabled, false);
+  assert.match(messages.at(-1).text, /won’t send evening reminders/);
+  assert.equal(repo.events.some((event) => event.eventName === "daily_reminder_disabled"), true);
+});
+
 test("text message does not call voice transcription during onboarding", async () => {
   const repo = fakeRepository();
   repo.user = { id: 1, interface_language: "en", base_currency: "THB", onboarding_step: "language", onboarding_data: {} };
@@ -2156,6 +2210,8 @@ function fakeRepository() {
     settings: {},
     monthBaseline: null,
     currentMonthBudget: null,
+    noSpendingMarks: [],
+    dailyEntryReminderEnabled: true,
     setCurrentMonthBudgetCalls: 0,
     plannedDraft: null,
     async upsertTelegramUser() {
@@ -2266,6 +2322,17 @@ function fakeRepository() {
     async markWeeklyReportSent(_userId, reportKey) {
       this.markedReportKey = reportKey;
     },
+    async createNoSpendingMark(userId, localDate, timezoneUsed) {
+      this.noSpendingMarks.push({ userId, localDate, timezoneUsed });
+    },
+    async setDailyEntryReminderEnabled(_telegramUserId, enabled) {
+      this.dailyEntryReminderEnabled = enabled;
+      this.user = { ...this.user, daily_entry_reminder_enabled: enabled };
+      return this.user;
+    },
+    async recordAppEvent(userId, eventName, metadata) {
+      this.events.push({ userId, eventName, metadata });
+    },
     async dashboard() {
       return {
         topCategories: [{ category_slug: "food_cafe", total: 735 }],
@@ -2313,6 +2380,17 @@ function textUpdate(text, telegramUserId) {
       chat: { id: 10 },
       from: { id: telegramUserId, first_name: "M" },
       text
+    }
+  };
+}
+
+function callbackUpdate(data, telegramUserId) {
+  return {
+    callback_query: {
+      id: "callback-1",
+      data,
+      from: { id: telegramUserId },
+      message: { chat: { id: 10 }, message_id: 20 }
     }
   };
 }
