@@ -17,6 +17,16 @@ import {
 import { calculateReserveState, validateReserveCapacity } from "../../../packages/shared/src/reserve.js";
 import { createExchangeRateProvider } from "./exchangeRates.js";
 
+export class DraftCanceledError extends Error {
+  constructor() { super("Draft is canceled"); this.name = "DraftCanceledError"; }
+}
+export class CategoryRequiredError extends Error {
+  constructor() { super("Category is required"); this.name = "CategoryRequiredError"; }
+}
+export class DraftNotFoundError extends Error {
+  constructor() { super("Draft not found"); this.name = "DraftNotFoundError"; }
+}
+
 export function createRepository(pool, options = {}) {
   const defaultMonthlyBudget = options.defaultMonthlyBudget ?? 45000;
   const exchangeRates = options.exchangeRates ?? createExchangeRateProvider({ fetchImpl: null });
@@ -1043,6 +1053,11 @@ export function createRepository(pool, options = {}) {
     },
 
     async confirmDraft(draftId, telegramUserId) {
+      const result = await this.saveDraftAsExpense(draftId, telegramUserId);
+      return result.expenses;
+    },
+
+    async saveDraftAsExpense(draftId, telegramUserId) {
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
@@ -1055,10 +1070,29 @@ export function createRepository(pool, options = {}) {
           [draftId, telegramUserId]
         );
         const draft = draftResult.rows[0];
-        if (!draft) throw new Error("Draft not found");
-        if (draft.status !== "pending" && draft.status !== "inbox") throw new Error("Draft is already closed");
+        if (!draft) {
+          await client.query("ROLLBACK");
+          throw new DraftNotFoundError();
+        }
+        const status = draft.status;
+        if (status !== "pending" && status !== "inbox") {
+          await client.query("ROLLBACK");
+          if (status === "cancelled") throw new DraftCanceledError();
+          // already confirmed -> loser path: return the already-created expenses
+          const existing = await pool.query(
+            `SELECT * FROM expenses WHERE draft_id = $1 ORDER BY id`,
+            [draftId]
+          );
+          const snapshot = (await this.dashboard(telegramUserId)).snapshot;
+          return { expenses: existing.rows, dashboardSnapshot: snapshot, alreadySaved: true };
+        }
 
         const items = Array.isArray(draft.items) ? draft.items : JSON.parse(draft.items);
+        if (!draftHasValidCategories(items)) {
+          console.warn("[repository] confirm blocked: missing valid category", { draftId });
+          throw new CategoryRequiredError();
+        }
+
         const inserted = [];
         for (const item of items) {
           const spentAt = new Date(item.spent_at);
@@ -1091,13 +1125,14 @@ export function createRepository(pool, options = {}) {
         }
 
         await client.query(
-          "UPDATE drafts SET status = 'confirmed', confirmed_at = now() WHERE id = $1",
+          `UPDATE drafts SET status = 'confirmed', confirmed_at = now(), version = version + 1 WHERE id = $1`,
           [draft.id]
         );
         await client.query("COMMIT");
-        return inserted;
+        const snapshot = (await this.dashboard(telegramUserId)).snapshot;
+        return { expenses: inserted, dashboardSnapshot: snapshot, alreadySaved: false };
       } catch (error) {
-        await client.query("ROLLBACK");
+        try { await client.query("ROLLBACK"); } catch { /* already rolled back or connection gone */ }
         throw error;
       } finally {
         client.release();

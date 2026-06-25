@@ -1074,6 +1074,7 @@ test("confirmDraft inserts real expenses and marks the draft confirmed", async (
     release() {}
   };
   const repo = createRepository({ async connect() { return client; } }, { exchangeRates: fixedRates() });
+  repo.dashboard = async () => ({ snapshot: {} });
 
   const expenses = await repo.confirmDraft("42", 100);
 
@@ -1099,7 +1100,7 @@ test("confirmDraft also accepts inbox drafts", async () => {
             status: "inbox",
             base_currency: "THB",
             usd_thb_rate: "32.6",
-            items: [{ amount: 70, currency: "THB", description: "coffee", category_slug: "other", tags: [], spent_at: "2026-06-02T10:00:00+07:00", budget_impact: "regular" }]
+            items: [{ amount: 70, currency: "THB", description: "coffee", category_slug: "food_cafe", tags: [], spent_at: "2026-06-02T10:00:00+07:00", budget_impact: "regular" }]
           }]
         };
       }
@@ -1111,6 +1112,7 @@ test("confirmDraft also accepts inbox drafts", async () => {
     release() {}
   };
   const repo = createRepository({ async connect() { return client; } }, { exchangeRates: fixedRates() });
+  repo.dashboard = async () => ({ snapshot: {} });
 
   const expenses = await repo.confirmDraft("42", 100);
   assert.equal(expenses.length, 1);
@@ -1128,9 +1130,10 @@ test("confirmDraft rejects already closed drafts and creates no expense", async 
     },
     release() {}
   };
+  const { DraftCanceledError } = await import("../src/repository.js");
   const repo = createRepository({ async connect() { return client; } }, { exchangeRates: fixedRates() });
 
-  await assert.rejects(repo.confirmDraft("42", 100), /Draft is already closed/);
+  await assert.rejects(repo.confirmDraft("42", 100), (err) => err instanceof DraftCanceledError);
   assert.ok(!queries.some((sql) => sql.includes("INSERT INTO expenses")));
 });
 
@@ -2810,6 +2813,21 @@ function fakePool(handler) {
   };
 }
 
+function fakeConfirmClient({ draftRow, onQuery = () => {} }) {
+  return {
+    async query(sql, params = []) {
+      const query = String(sql);
+      onQuery(query);
+      if (query === "BEGIN" || query === "COMMIT" || query === "ROLLBACK") return { rows: [] };
+      if (query.includes("FOR UPDATE")) return { rows: [draftRow] };
+      if (query.includes("INSERT INTO expenses")) return { rows: [{ id: 100, draft_id: draftRow.id, amount_base: params[3] ?? 80 }] };
+      if (query.includes("status = 'confirmed'")) return { rows: [draftRow] };
+      return { rows: [] };
+    },
+    release() {}
+  };
+}
+
 function fakePayClient({ planned, paidOccurrences = [], queries = [] }) {
   return {
     async query(sql, params = []) {
@@ -2875,4 +2893,66 @@ test("isCategoryValid distinguishes parser-other, user-other and confident categ
   assert.equal(isCategoryValid({ category_slug: "other", needs_review: true, category_source: "parser" }), false);
   assert.equal(isCategoryValid({ category_slug: "other", needs_review: false, category_source: "user" }), true);
   assert.equal(isCategoryValid({ category_slug: "other", needs_review: false, category_source: null }), false);
+});
+
+test("saveDraftAsExpense confirms an open draft and returns alreadySaved false", async () => {
+  const { createRepository } = await import("../src/repository.js");
+  const queries = [];
+  const client = fakeConfirmClient({
+    draftRow: { id: 7, user_id: 1, status: "pending", base_currency: "THB", usd_thb_rate: 32.65,
+      items: [{ amount: 80, currency: "THB", description: "coffee", category_slug: "food_cafe", budget_impact: "regular", needs_review: false, category_source: "parser", tags: [], spent_at: "2026-06-25T10:00:00Z" }] },
+    onQuery: (q) => queries.push(String(q))
+  });
+  const repo = createRepository({ ...fakePool(() => ({ rows: [] })), async connect() { return client; } });
+  repo.dashboard = async () => ({ snapshot: { baseCurrency: "THB", month: 0, monthlyBudget: 45000, freeRemaining: 45000, plannedRemaining: 0, forecastMonthTotal: 0, today: 0, planDeviation: 0 } });
+
+  const result = await repo.saveDraftAsExpense(7, 100);
+
+  assert.equal(result.alreadySaved, false);
+  assert.ok(Array.isArray(result.expenses) && result.expenses.length === 1);
+  assert.equal(result.dashboardSnapshot.baseCurrency, "THB");
+  assert.ok(queries.some((q) => q.includes("FOR UPDATE")));
+  assert.ok(queries.some((q) => q.includes("status = 'confirmed'") && q.includes("version = version + 1")));
+});
+
+test("saveDraftAsExpense returns existing expenses when already confirmed", async () => {
+  const { createRepository } = await import("../src/repository.js");
+  const client = fakeConfirmClient({ draftRow: { id: 7, user_id: 1, status: "confirmed", items: [], base_currency: "THB" } });
+  let expensesQueried = false;
+  const pool = {
+    async connect() { return client; },
+    async query(sql) { if (String(sql).includes("FROM expenses WHERE draft_id")) { expensesQueried = true; return { rows: [{ id: 99, draft_id: 7 }] }; } return { rows: [] }; }
+  };
+  const repo = createRepository(pool);
+  repo.dashboard = async () => ({ snapshot: { baseCurrency: "THB" } });
+
+  const result = await repo.saveDraftAsExpense(7, 100);
+
+  assert.equal(result.alreadySaved, true);
+  assert.equal(result.expenses.length, 1);
+  assert.equal(expensesQueried, true);
+});
+
+test("saveDraftAsExpense throws DraftCanceledError on a cancelled draft", async () => {
+  const { createRepository, DraftCanceledError } = await import("../src/repository.js");
+  const client = fakeConfirmClient({ draftRow: { id: 7, user_id: 1, status: "cancelled", items: [], base_currency: "THB" } });
+  const repo = createRepository({ ...fakePool(() => ({ rows: [] })), async connect() { return client; } });
+  repo.dashboard = async () => ({ snapshot: {} });
+
+  await assert.rejects(() => repo.saveDraftAsExpense(7, 100), (err) => err instanceof DraftCanceledError);
+});
+
+test("saveDraftAsExpense throws CategoryRequiredError and does not insert when category invalid", async () => {
+  const { createRepository, CategoryRequiredError } = await import("../src/repository.js");
+  const queries = [];
+  const client = fakeConfirmClient({
+    draftRow: { id: 7, user_id: 1, status: "pending", base_currency: "THB",
+      items: [{ amount: 80, currency: "THB", description: "x", category_slug: "other", needs_review: true, category_source: "parser", budget_impact: "regular", tags: [], spent_at: "2026-06-25T10:00:00Z" }] },
+    onQuery: (q) => queries.push(String(q))
+  });
+  const repo = createRepository({ ...fakePool(() => ({ rows: [] })), async connect() { return client; } });
+  repo.dashboard = async () => ({ snapshot: {} });
+
+  await assert.rejects(() => repo.saveDraftAsExpense(7, 100), (err) => err instanceof CategoryRequiredError);
+  assert.ok(!queries.some((q) => q.includes("INSERT INTO expenses")));
 });
