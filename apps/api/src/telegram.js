@@ -1189,6 +1189,10 @@ async function editMessageText(token, chatId, messageId, text, replyMarkup, tele
   try {
     return await telegramRequest(token, "editMessageText", body);
   } catch (error) {
+    if (isMessageNotModified(error)) {
+      console.log("[telegram] editMessageText: message is not modified, ignoring");
+      return { ok: true };
+    }
     if (!shouldRetryPlainText(error)) throw error;
     console.error("[telegram] editMessageText HTML rejected, retrying plain text", error.message);
     return telegramRequest(token, "editMessageText", {
@@ -1242,6 +1246,12 @@ async function telegramRequest(token, method, body) {
 
 function shouldRetryPlainText(error) {
   return error?.status === 400;
+}
+
+export function isMessageNotModified(error) {
+  if (!error || error?.status !== 400) return false;
+  const text = `${error.body ?? ""} ${error.message ?? ""}`;
+  return /message is not modified/i.test(text);
 }
 
 function stripTelegramHtml(text) {

@@ -2610,3 +2610,11 @@ function emptyAdminPeriod(overrides = {}) {
     ...overrides
   };
 }
+
+test("isMessageNotModified detects the not-modified 400 and rejects other errors", async () => {
+  const { isMessageNotModified } = await import("../src/telegram.js");
+  assert.equal(isMessageNotModified({ status: 400, body: "Bad Request: message is not modified" }), true);
+  assert.equal(isMessageNotModified({ status: 400, body: "Bad Request: chat not found" }), false);
+  assert.equal(isMessageNotModified({ status: 500, message: "message is not modified" }), false);
+  assert.equal(isMessageNotModified(null), false);
+});
