@@ -2956,3 +2956,30 @@ test("saveDraftAsExpense throws CategoryRequiredError and does not insert when c
   await assert.rejects(() => repo.saveDraftAsExpense(7, 100), (err) => err instanceof CategoryRequiredError);
   assert.ok(!queries.some((q) => q.includes("INSERT INTO expenses")));
 });
+
+test("cancelDraft cancels an open draft and returns canceled true", async () => {
+  const { createRepository } = await import("../src/repository.js");
+  let query;
+  const repo = createRepository(fakePool((sql) => { query = String(sql); return { rows: [{ id: 7, status: "cancelled" }] }; }));
+  const result = await repo.cancelDraft(7, 100);
+  assert.equal(result.canceled, true);
+  assert.match(query, /status = 'cancelled'/);
+  assert.match(query, /cancelled_at = now\(\)/);
+  assert.match(query, /version = version \+ 1/);
+  assert.match(query, /status IN \('pending', 'inbox'\)/);
+});
+
+test("cancelDraft on a confirmed draft is a no-op that reports already_confirmed", async () => {
+  const { createRepository } = await import("../src/repository.js");
+  const pool = {
+    async query(sql) {
+      const q = String(sql);
+      if (q.includes("RETURNING")) return { rows: [] };   // CAS matched 0 rows (status not open)
+      return { rows: [{ status: "confirmed" }] };          // re-read
+    }
+  };
+  const repo = createRepository(pool);
+  const result = await repo.cancelDraft(7, 100);
+  assert.equal(result.canceled, false);
+  assert.equal(result.reason, "already_confirmed");
+});

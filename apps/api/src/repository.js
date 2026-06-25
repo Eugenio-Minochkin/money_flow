@@ -1140,12 +1140,25 @@ export function createRepository(pool, options = {}) {
     },
 
     async cancelDraft(draftId, telegramUserId) {
-      await pool.query(
+      const result = await pool.query(
         `UPDATE drafts
-         SET status = 'cancelled'
+         SET status = 'cancelled', cancelled_at = now(), version = version + 1
+         WHERE id = $1
+           AND user_id = (SELECT id FROM users WHERE telegram_user_id = $2)
+           AND status IN ('pending', 'inbox')
+         RETURNING *`,
+        [draftId, telegramUserId]
+      );
+      if (result.rows[0]) return { canceled: true };
+      const current = await pool.query(
+        `SELECT status FROM drafts
          WHERE id = $1 AND user_id = (SELECT id FROM users WHERE telegram_user_id = $2)`,
         [draftId, telegramUserId]
       );
+      const status = current.rows[0]?.status;
+      if (status === "cancelled") return { canceled: false, reason: "already_cancelled" };
+      if (status === "confirmed") return { canceled: false, reason: "already_confirmed" };
+      return { canceled: false, reason: "not_found" };
     },
 
     async moveDraftToInbox(draftId, telegramUserId) {
