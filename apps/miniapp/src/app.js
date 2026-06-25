@@ -1,7 +1,7 @@
 import { createApiClient } from "./apiClient.js";
 import { categories, categoryColor, categoryLabel } from "./categories.js";
 import { currencyOptions } from "./currencies.js";
-import { resolveDraftSaveResponse } from "./draftSave.js";
+import { resolveDraftSaveResponse, classifyConfirmOutcome } from "./draftSave.js";
 import { buildDashboardCards, buildHeroMetric, renderDashboardCards } from "./dashboardCards.js";
 import {
   dateTimeLocal,
@@ -1163,12 +1163,14 @@ function renderDraftEditor(draft) {
       <div class="button-row">
         <button type="submit">${t("actions.saveChanges")}</button>
         <button type="button" id="confirmDraftButton">${t("actions.confirm")}</button>
+        <button type="button" class="danger-button" id="cancelDraftButton">${t("actions.cancelDraft")}</button>
         <button type="button" class="ghost-button" id="closeDraftButton">${t("actions.close")}</button>
       </div>
     </div>
   `;
   form.onsubmit = saveDraft;
   form.querySelector("#confirmDraftButton").addEventListener("click", confirmDraft);
+  form.querySelector("#cancelDraftButton").addEventListener("click", cancelDraftFromEditor);
   form.querySelector("#closeDraftButton").addEventListener("click", closeDraftEditor);
 }
 
@@ -1391,12 +1393,24 @@ async function saveDraftItems(options = {}) {
 
 async function confirmDraft() {
   await saveDraftItems();
-  await api(`/api/drafts/${draftState.id}/confirm`, { method: "POST", body: { telegramUserId } });
+  const data = await api(`/api/drafts/${draftState.id}/confirm`, { method: "POST", body: { telegramUserId, language: currentLanguage } });
+  const outcome = classifyConfirmOutcome(data);
   document.querySelector("#draftEditorSection").classList.add("hidden");
   await loadDashboard();
   await loadHistory();
-  showToast(t("toast.draftConfirmed"));
+  showToast(outcome.alreadySaved ? t("toast.alreadySaved") : t("toast.draftConfirmed"));
   switchTab(draftReturnTab);
+}
+
+async function cancelDraftFromEditor() {
+  if (!window.confirm(t("confirmations.closeWithoutSaving"))) return;
+  await api(`/api/drafts/${draftState.id}`, { method: "DELETE", body: { telegramUserId, language: currentLanguage } });
+  document.querySelector("#draftEditorSection").classList.add("hidden");
+  draftState = null;
+  draftDirty = false;
+  await loadDashboard();
+  await loadHistory();
+  showToast(t("toast.draftCanceled"));
 }
 
 async function saveExpense(event, expenseId) {
