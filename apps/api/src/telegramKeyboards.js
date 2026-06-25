@@ -15,6 +15,19 @@ export function categoryCodeFromSlug(slug) {
   return QUICK_CATEGORY_CODES.find((entry) => entry.slug === slug)?.code ?? null;
 }
 
+export function parseDraftCallback(data) {
+  const parts = String(data ?? "").split(":");
+  if (parts[0] !== "d") return null;
+  const draftId = parts[1];
+  const sub = parts[2];
+  if (sub === "confirm" || sub === "cancel" || sub === "review") {
+    return { scheme: "d", draftId, action: sub };
+  }
+  if (sub === "t") return { scheme: "d", draftId, action: "type", value: parts[3] };
+  if (sub === "c") return { scheme: "d", draftId, action: "category", value: parts[3] };
+  return null;
+}
+
 export function draftKeyboard(draftId, items = [], miniAppUrl, telegramUserId, language = "ru") {
   const text = keyboardText(language);
   const rows = [[{ text: `✅ ${text.confirm}`, callback_data: `d:${draftId}:confirm` }]];

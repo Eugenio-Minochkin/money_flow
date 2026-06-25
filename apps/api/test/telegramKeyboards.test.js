@@ -52,3 +52,25 @@ test("daily reminder keyboard includes lean MVP actions", () => {
   assert.equal(buttons[2].callback_data, "daily_reminder:disable");
   assert.equal(buttons[0].text, "Add expense");
 });
+
+test("all draft keyboard callback_data are at most 64 bytes", () => {
+  for (const id of [1, 42, 9999999]) {
+    const keyboard = draftKeyboard(id, [{ amount: 70, category_slug: "food_cafe", budget_impact: "regular", needs_review: false }], "http://x", 100, "en");
+    for (const row of keyboard.inline_keyboard) {
+      for (const button of row) {
+        if (button.callback_data) {
+          assert.ok(Buffer.byteLength(button.callback_data, "utf8") <= 64, `too long: ${button.callback_data}`);
+        }
+      }
+    }
+  }
+});
+
+test("parseDraftCallback decodes d: actions", async () => {
+  const { parseDraftCallback } = await import("../src/telegramKeyboards.js");
+  assert.deepEqual(parseDraftCallback("d:42:confirm"), { scheme: "d", draftId: "42", action: "confirm" });
+  assert.deepEqual(parseDraftCallback("d:42:t:r"), { scheme: "d", draftId: "42", action: "type", value: "r" });
+  assert.deepEqual(parseDraftCallback("d:42:c:food"), { scheme: "d", draftId: "42", action: "category", value: "food" });
+  assert.deepEqual(parseDraftCallback("d:42:review"), { scheme: "d", draftId: "42", action: "review" });
+  assert.equal(parseDraftCallback("confirm:42"), null);
+});
