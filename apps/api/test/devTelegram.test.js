@@ -98,6 +98,10 @@ function fakeRepository() {
       this.confirmedDraftId = draftId;
       return [{ amount_base: 70 }];
     },
+    async saveDraftAsExpense(draftId) {
+      this.confirmedDraftId = draftId;
+      return { expenses: [{ amount_base: 70 }], dashboardSnapshot: (await this.dashboard()).snapshot, alreadySaved: false };
+    },
     async dashboard() {
       return {
         snapshot: {

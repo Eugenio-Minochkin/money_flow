@@ -617,7 +617,7 @@ test("regular cancel edits the original message, removes buttons and records an 
   let cancelled = null;
   repo.cancelDraft = async (draftId, telegramUserId) => {
     cancelled = { draftId, telegramUserId };
-    return null;
+    return { canceled: true };
   };
   const calls = [];
   const bot = createTelegramBot({
@@ -658,7 +658,7 @@ test("regular cancel edits the original message, removes buttons and records an 
   assert.ok(edit);
   assert.equal(edit.chatId, 10);
   assert.equal(edit.messageId, 55);
-  assert.match(edit.text, /Запись отменена|Entry cancelled/);
+  assert.match(edit.text, /Черновик отменён|Draft canceled/);
   assert.deepEqual(edit.replyMarkup, { inline_keyboard: [] });
   assert.ok(calls.some((call) => call.method === "answerCallbackQuery"));
   assert.equal(calls.some((call) => call.method === "sendMessage"), false);
@@ -713,7 +713,7 @@ test("regular cancel sends a fallback message and does not throw if editing fail
   assert.ok(calls.some((call) => call.method === "editMessageText"));
   const fallback = calls.find((call) => call.method === "sendMessage");
   assert.ok(fallback);
-  assert.match(fallback.text, /Запись отменена|Entry cancelled/);
+  assert.match(fallback.text, /Черновик отменён|Draft canceled/);
   assert.equal(calls.some((call) => call.method === "deleteMessage"), false);
   assert.deepEqual(repo.events, [
     { userId: 1, eventName: "expense_draft_cancelled", metadata: { draftType: "regular" } }
@@ -1815,6 +1815,132 @@ test("impact callback updates the draft item and edits the existing Telegram mes
   }
 });
 
+test("draft category callback (d: scheme) maps quick code to slug, marks user source and edits in place", async () => {
+  const calls = [];
+  const repo = fakeRepository();
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: repo,
+    telegramClient: {
+      async sendMessage(message) { calls.push({ method: "sendMessage", ...message }); return { ok: true }; },
+      async editMessageText(message) { calls.push({ method: "editMessageText", ...message }); return { ok: true }; },
+      async answerCallbackQuery(message) { calls.push({ method: "answerCallbackQuery", ...message }); return { ok: true }; },
+      async deleteMessage() { return { ok: true }; }
+    }
+  });
+
+  await bot.handleUpdate({
+    callback_query: {
+      id: "callback-d-cat",
+      data: "d:42:c:food",
+      from: { id: 100 },
+      message: { chat: { id: 10 }, message_id: 71 }
+    }
+  });
+
+  assert.equal(repo.updatedItems[0].category_slug, "food_cafe");
+  assert.equal(repo.updatedItems[0].category_source, "user");
+  const edit = calls.find((call) => call.method === "editMessageText");
+  assert.ok(edit);
+  assert.equal(edit.messageId, 71);
+  assert.equal(calls.some((call) => call.method === "sendMessage"), false);
+  assert.ok(calls.some((call) => call.method === "answerCallbackQuery"));
+});
+
+test("draft type callback (d: scheme) updates budget impact and edits in place", async () => {
+  const calls = [];
+  const repo = fakeRepository();
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: repo,
+    telegramClient: {
+      async sendMessage(message) { calls.push({ method: "sendMessage", ...message }); return { ok: true }; },
+      async editMessageText(message) { calls.push({ method: "editMessageText", ...message }); return { ok: true }; },
+      async answerCallbackQuery(message) { calls.push({ method: "answerCallbackQuery", ...message }); return { ok: true }; },
+      async deleteMessage() { return { ok: true }; }
+    }
+  });
+
+  await bot.handleUpdate({
+    callback_query: {
+      id: "callback-d-type",
+      data: "d:42:t:r",
+      from: { id: 100 },
+      message: { chat: { id: 10 }, message_id: 72 }
+    }
+  });
+
+  assert.equal(repo.updatedItems[0].budget_impact, "regular");
+  const edit = calls.find((call) => call.method === "editMessageText");
+  assert.ok(edit);
+  assert.equal(edit.messageId, 72);
+});
+
+test("draft confirm callback (d: scheme) shows already-saved toast and skips save events when alreadySaved", async () => {
+  const calls = [];
+  const repo = fakeRepository();
+  repo.saveDraftAsExpense = async () => {
+    return { expenses: [{ amount_base: 75 }], dashboardSnapshot: (await repo.dashboard()).snapshot, alreadySaved: true };
+  };
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: repo,
+    telegramClient: {
+      async sendMessage(message) { calls.push({ method: "sendMessage", ...message }); return { ok: true }; },
+      async editMessageText(message) { calls.push({ method: "editMessageText", ...message }); return { ok: true }; },
+      async answerCallbackQuery(message) { calls.push({ method: "answerCallbackQuery", ...message }); return { ok: true }; },
+      async deleteMessage() { return { ok: true }; }
+    }
+  });
+
+  await bot.handleUpdate({
+    callback_query: {
+      id: "callback-d-confirm-already",
+      data: "d:42:confirm",
+      from: { id: 100 },
+      message: { chat: { id: 10 }, message_id: 73 }
+    }
+  });
+
+  const answer = calls.find((call) => call.method === "answerCallbackQuery");
+  assert.ok(answer);
+  assert.equal(answer.text, "Уже сохранено");
+  assert.equal(repo.events.some((event) => event.eventName === "expense_saved"), false);
+  assert.equal(repo.events.some((event) => event.eventName === "expense_draft_confirmed"), false);
+});
+
+test("draft review callback (d: scheme) moves the draft to the inbox", async () => {
+  let moved = null;
+  const repo = fakeRepository();
+  const moveSpy = repo.moveDraftToInbox.bind(repo);
+  repo.moveDraftToInbox = async (draftId, telegramUserId) => {
+    moved = { draftId, telegramUserId };
+    return moveSpy(draftId, telegramUserId);
+  };
+  const messages = [];
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: repo,
+    telegramClient: captureTelegramClient(messages)
+  });
+
+  await bot.handleUpdate({
+    callback_query: {
+      id: "callback-d-review",
+      data: "d:42:review",
+      from: { id: 100 },
+      message: { chat: { id: 10 } }
+    }
+  });
+
+  assert.deepEqual(moved, { draftId: "42", telegramUserId: 100 });
+  assert.match(messages.at(-1).text, /Inbox/);
+});
+
 test("weekly reports are sent once per pending user", async () => {
   const calls = [];
   const repo = fakeRepository();
@@ -2284,7 +2410,7 @@ function fakeRepository() {
       return null;
     },
     async cancelDraft() {
-      return null;
+      return { canceled: true };
     },
     async createDraft() {
       return { id: 42 };
@@ -2312,6 +2438,10 @@ function fakeRepository() {
     async confirmDraft(draftId) {
       this.confirmedDraftId = draftId;
       return [{ amount_base: 75 }];
+    },
+    async saveDraftAsExpense(draftId) {
+      this.confirmedDraftId = draftId;
+      return { expenses: [{ amount_base: 75 }], dashboardSnapshot: (await this.dashboard()).snapshot, alreadySaved: false };
     },
     async moveDraftToInbox() {
       return null;
