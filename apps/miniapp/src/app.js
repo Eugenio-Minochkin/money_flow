@@ -533,17 +533,29 @@ function renderSnapshot(snapshot) {
 }
 
 function bindDashboardTooltips() {
+  document.querySelectorAll(".dashboard-card").forEach((card) => {
+    const button = card.querySelector("[data-dashboard-tooltip]");
+    if (!button) return;
+    card.addEventListener("click", (event) => {
+      if (event.target.closest("[data-dashboard-tooltip]")) return;
+      toggleDashboardTooltip(button);
+    });
+  });
   document.querySelectorAll("[data-dashboard-tooltip]").forEach((button) => {
     button.addEventListener("click", (event) => {
       event.stopPropagation();
-      const isOpen = button.getAttribute("aria-expanded") === "true";
-      closeDashboardTooltips();
-      if (isOpen) return;
-      const tooltip = document.getElementById(button.getAttribute("aria-controls"));
-      button.setAttribute("aria-expanded", "true");
-      if (tooltip) tooltip.hidden = false;
+      toggleDashboardTooltip(button);
     });
   });
+}
+
+function toggleDashboardTooltip(button) {
+  const isOpen = button.getAttribute("aria-expanded") === "true";
+  closeDashboardTooltips();
+  if (isOpen) return;
+  const tooltip = document.getElementById(button.getAttribute("aria-controls"));
+  button.setAttribute("aria-expanded", "true");
+  if (tooltip) tooltip.hidden = false;
 }
 
 function closeDashboardTooltips() {

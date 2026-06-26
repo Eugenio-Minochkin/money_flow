@@ -386,6 +386,44 @@ test("calculates month-free and clamps week availability by month", () => {
   assert.equal(snapshot.dayRemaining, 0);
 });
 
+test("uses provided dashboard display values instead of the monthly spending ratio", () => {
+  const displayFromBase = (amount) => Math.round(((amount / 32.65) + Number.EPSILON) * 100) / 100;
+  const snapshot = calculateBudgetSnapshot({
+    todayTotal: 676,
+    todayDisplayTotal: displayFromBase(676),
+    weekTotal: 3813,
+    weekDisplayTotal: displayFromBase(3813),
+    monthTotal: 45481,
+    monthDisplayTotal: 9999,
+    monthlyBudget: 48000,
+    monthlyBudgetDisplay: displayFromBase(48000),
+    weeklyBudget: 11200,
+    weeklyBudgetDisplay: displayFromBase(11200),
+    plannedRemainingTotal: 712,
+    plannedRemainingDisplayTotal: displayFromBase(712),
+    reservedAheadDisplay: displayFromBase(712),
+    reserveAmount: 0,
+    reserveDisplayAmount: 0,
+    monthRemainingDisplay: displayFromBase(2519),
+    freeRemainingDisplay: displayFromBase(1807),
+    weekRemainingRawDisplay: displayFromBase(7387),
+    weekAvailableDisplay: displayFromBase(1807),
+    dayPlanLimit: 397,
+    dayDisplayPlanLimit: displayFromBase(397),
+    now: new Date("2026-06-25T12:00:00+07:00"),
+    timeZone: "Asia/Bangkok"
+  });
+
+  assert.equal(snapshot.dayOverrun, 279);
+  assert.equal(snapshot.freeRemaining, 1807);
+  assert.equal(snapshot.display.freeRemaining, displayFromBase(1807));
+  assert.equal(snapshot.display.weekAvailable, displayFromBase(1807));
+  assert.equal(snapshot.display.weekRemainingRaw, displayFromBase(7387));
+  assert.equal(snapshot.display.monthRemaining, displayFromBase(2519));
+  assert.equal(snapshot.display.monthlyBudget, displayFromBase(48000));
+  assert.equal(snapshot.display.weeklyBudget, displayFromBase(11200));
+});
+
 test("does not subtract planned payments twice from week availability", () => {
   const snapshot = calculateBudgetSnapshot({
     weekTotal: 3000,

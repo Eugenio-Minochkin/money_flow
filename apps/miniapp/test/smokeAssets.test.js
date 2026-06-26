@@ -190,7 +190,12 @@ test("dashboard cards expose tooltip controls without hero status wiring", async
 
   assert.match(renderer, /data-dashboard-tooltip/);
   assert.match(renderer, /role="tooltip"/);
+  assert.match(renderer, /aria-expanded="false"/);
+  assert.match(renderer, /aria-controls=/);
   assert.match(app, /bindDashboardTooltips/);
+  assert.match(app, /querySelectorAll\("\.dashboard-card"\)/);
+  assert.match(app, /toggleDashboardTooltip/);
+  assert.match(app, /closest\("\[data-dashboard-tooltip\]"\)/);
   assert.match(app, /closeDashboardTooltips/);
   assert.doesNotMatch(app, /heroStatus/);
 });
