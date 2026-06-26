@@ -974,6 +974,8 @@ async function handleConfirmDraft(trace, token, telegramClient, callback, draftI
         return await editMessageText(token, chatId, messageId, text, replyMarkup, telegramClient);
       } catch (error) {
         console.error("[telegram] editing confirmed draft into summary failed, falling back to new message", error.message);
+        await editMessageReplyMarkup(token, chatId, messageId, { inline_keyboard: [] }, telegramClient)
+          .catch((markupError) => console.error("[telegram] could not clear old draft keyboard", markupError.message));
       }
     }
     return sendMessage(token, chatId, text, replyMarkup, telegramClient);
@@ -987,7 +989,10 @@ async function handleCancelDraft(trace, token, telegramClient, callback, draftId
   const outcome = await repository.cancelDraft(draftId, telegramUserId);
   trace.end("db_save");
   if (!outcome.canceled) {
-    return sendTelegramResponse(trace, () => answerCallback(token, callback.id, botText(language, "alreadySavedCallback"), telegramClient));
+    const reasonKey = outcome.reason === "already_confirmed" ? "alreadySavedCallback"
+      : outcome.reason === "already_cancelled" ? "draftCanceledAlert"
+      : "technicalError";
+    return sendTelegramResponse(trace, () => answerCallback(token, callback.id, botText(language, reasonKey), telegramClient));
   }
   await safeRecordAppEvent(repository, user?.id, "expense_draft_cancelled", { draftType: "regular" });
   return sendTelegramResponse(trace, async () => {
@@ -998,6 +1003,8 @@ async function handleCancelDraft(trace, token, telegramClient, callback, draftId
         return await editMessageText(token, chatId, messageId, text, { inline_keyboard: [] }, telegramClient);
       } catch (error) {
         console.error("[telegram] editing cancelled draft failed, falling back to new message", error.message);
+        await editMessageReplyMarkup(token, chatId, messageId, { inline_keyboard: [] }, telegramClient)
+          .catch((markupError) => console.error("[telegram] could not clear old draft keyboard", markupError.message));
       }
     }
     return sendMessage(token, chatId, text, { inline_keyboard: [] }, telegramClient);
@@ -1207,6 +1214,8 @@ export async function updateDraftMessageToCanceled({ token, draft, text, telegra
     console.error("[telegram] update draft message to canceled failed; sending fallback", error.message);
     try { await sendMessage(token, chatId, text, { inline_keyboard: [] }, telegramClient); }
     catch (sendError) { console.error("[telegram] fallback canceled message failed", sendError.message); }
+    try { await editMessageReplyMarkup(token, chatId, messageId, { inline_keyboard: [] }, telegramClient); }
+    catch (markupError) { console.error("[telegram] could not clear old draft keyboard", markupError.message); }
   }
 }
 

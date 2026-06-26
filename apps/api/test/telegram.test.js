@@ -2776,3 +2776,117 @@ test("draft type callback (d: scheme) large_oneoff value updates budget impact",
   assert.ok(edit);
   assert.equal(edit.messageId, 72);
 });
+
+test("cancel callback answers a different toast for each non-canceled outcome reason", async () => {
+  const cases = [
+    { reason: "already_cancelled", expected: "Этот черновик уже отменён." },
+    { reason: "already_confirmed", expected: "Уже сохранено" },
+    { reason: "not_found", expected: "⚠️ Что-то пошло не так. Попробуйте ещё раз." }
+  ];
+
+  for (const { reason, expected } of cases) {
+    const calls = [];
+    const repo = fakeRepository();
+    repo.cancelDraft = async () => ({ canceled: false, reason });
+    const bot = createTelegramBot({
+      token: "test-token",
+      miniAppUrl: "http://localhost:3000",
+      repository: repo,
+      telegramClient: capturingClient(calls)
+    });
+
+    await bot.handleUpdate({
+      callback_query: {
+        id: `callback-cancel-${reason}`,
+        data: "cancel:42",
+        from: { id: 100 },
+        message: { chat: { id: 10 }, message_id: 55 }
+      }
+    });
+
+    const answer = calls.find((call) => call.method === "answerCallbackQuery");
+    assert.ok(answer, reason);
+    assert.equal(answer.text, expected, reason);
+    assert.equal(calls.some((call) => call.method === "editMessageText"), false, reason);
+    assert.equal(calls.some((call) => call.method === "sendMessage"), false, reason);
+  }
+});
+
+test("cancel callback with a real cancel edits the draft into the canceled message with an empty keyboard", async () => {
+  const calls = [];
+  const repo = fakeRepository();
+  repo.cancelDraft = async () => ({ canceled: true });
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: repo,
+    telegramClient: capturingClient(calls)
+  });
+
+  await bot.handleUpdate({
+    callback_query: {
+      id: "callback-cancel-real",
+      data: "cancel:42",
+      from: { id: 100 },
+      message: { chat: { id: 10 }, message_id: 55 }
+    }
+  });
+
+  const edit = calls.find((call) => call.method === "editMessageText");
+  assert.ok(edit);
+  assert.equal(edit.messageId, 55);
+  assert.equal(edit.text, "🗑 Черновик отменён.\nРасход не был сохранён.");
+  assert.deepEqual(edit.replyMarkup, { inline_keyboard: [] });
+  assert.equal(calls.some((call) => call.method === "sendMessage"), false);
+  assert.deepEqual(repo.events, [
+    { userId: 1, eventName: "expense_draft_cancelled", metadata: { draftType: "regular" } }
+  ]);
+});
+
+test("confirm callback clears the old draft keyboard and sends a new message when editing fails", async () => {
+  const calls = [];
+  const repo = fakeRepository();
+  const originalError = console.error;
+  console.error = () => {};
+  try {
+    const bot = createTelegramBot({
+      token: "test-token",
+      miniAppUrl: "http://localhost:3000",
+      repository: repo,
+      telegramClient: {
+        async sendMessage(message) { calls.push({ method: "sendMessage", ...message }); return { ok: true }; },
+        async editMessageText(message) { calls.push({ method: "editMessageText", ...message }); throw new Error("edit failed"); },
+        async answerCallbackQuery(message) { calls.push({ method: "answerCallbackQuery", ...message }); return { ok: true }; },
+        async editMessageReplyMarkup(message) { calls.push({ method: "editMessageReplyMarkup", ...message }); return { ok: true }; },
+        async deleteMessage() { return { ok: true }; }
+      }
+    });
+
+    await bot.handleUpdate({
+      callback_query: {
+        id: "callback-confirm-fallback",
+        data: "confirm:42",
+        from: { id: 100 },
+        message: { chat: { id: 10 }, message_id: 55 }
+      }
+    });
+  } finally {
+    console.error = originalError;
+  }
+
+  const markup = calls.find((call) => call.method === "editMessageReplyMarkup");
+  assert.ok(markup);
+  assert.equal(markup.messageId, 55);
+  assert.deepEqual(markup.replyMarkup, { inline_keyboard: [] });
+  assert.ok(calls.some((call) => call.method === "sendMessage"));
+});
+
+function capturingClient(calls) {
+  return {
+    async sendMessage(message) { calls.push({ method: "sendMessage", ...message }); return { ok: true }; },
+    async editMessageText(message) { calls.push({ method: "editMessageText", ...message }); return { ok: true }; },
+    async answerCallbackQuery(message) { calls.push({ method: "answerCallbackQuery", ...message }); return { ok: true }; },
+    async editMessageReplyMarkup(message) { calls.push({ method: "editMessageReplyMarkup", ...message }); return { ok: true }; },
+    async deleteMessage() { return { ok: true }; }
+  };
+}
