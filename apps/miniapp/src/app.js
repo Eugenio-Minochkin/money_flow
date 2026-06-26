@@ -46,6 +46,8 @@ const telegramUserId = params.get("telegramUserId") || window.Telegram?.WebApp?.
 const draftId = params.get("draftId");
 
 const percentNumber = new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 });
+const FLIP_SELECTOR = "[data-flip-card]";
+const FLIP_TOGGLE_SELECTOR = "[data-flip-toggle]";
 const api = createApiClient();
 let dashboardState = null;
 let draftState = null;
@@ -119,7 +121,7 @@ document.addEventListener("keydown", (event) => {
   }
 });
 document.addEventListener("click", (event) => {
-  if (!event.target.closest(".dashboard-card")) closeDashboardTooltips();
+  if (!event.target.closest(FLIP_SELECTOR)) closeDashboardTooltips();
   const popover = document.querySelector("#plannedDuePopover");
   if (!popover || popover.classList.contains("hidden")) return;
   if (popover.contains(event.target) || event.target.closest("[data-planned-menu]")) return;
@@ -523,6 +525,9 @@ function renderSnapshot(snapshot) {
   setText("#safeToSpend", heroMetric.amount);
   setText("#safeToSpendDisplay", heroMetric.display);
   setText("#heroCaption", heroMetric.caption);
+  setText("#heroTooltipText", heroMetric.tooltip);
+  const heroInfo = document.querySelector(".hero-metric__info");
+  heroInfo?.setAttribute("aria-label", `${t("dashboard.explain")}: ${heroMetric.title}`);
   renderDashboardCards(document.querySelector("#dashboardCards"), buildDashboardCards(snapshot, {
     t,
     moneyBase,
@@ -533,10 +538,12 @@ function renderSnapshot(snapshot) {
 }
 
 function bindDashboardTooltips() {
-  document.querySelectorAll(".dashboard-card[data-dashboard-card]").forEach((card) => {
-    const button = card.querySelector("[data-dashboard-tooltip]");
+  document.querySelectorAll(FLIP_SELECTOR).forEach((card) => {
+    if (card.dataset.flipBound === "true") return;
+    card.dataset.flipBound = "true";
+    const button = card.querySelector(FLIP_TOGGLE_SELECTOR);
     card.addEventListener("click", (event) => {
-      if (event.target.closest("[data-dashboard-tooltip]")) return;
+      if (event.target.closest(FLIP_TOGGLE_SELECTOR)) return;
       toggleDashboardTooltip(card);
     });
     button?.addEventListener("click", (event) => {
@@ -559,16 +566,16 @@ function toggleDashboardTooltip(card) {
 }
 
 function closeDashboardTooltips() {
-  document.querySelectorAll(".dashboard-card.is-flipped").forEach((card) => {
+  document.querySelectorAll(`${FLIP_SELECTOR}.is-flipped`).forEach((card) => {
     setDashboardCardFlipped(card, false);
   });
 }
 
 function setDashboardCardFlipped(card, isFlipped) {
   card.classList.toggle("is-flipped", isFlipped);
-  const button = card.querySelector("[data-dashboard-tooltip]");
-  const front = card.querySelector(".dashboard-card__face--front");
-  const back = card.querySelector(".dashboard-card__face--back");
+  const button = card.querySelector(FLIP_TOGGLE_SELECTOR);
+  const front = card.querySelector("[data-flip-front]");
+  const back = card.querySelector("[data-flip-back]");
   button?.setAttribute("aria-expanded", String(isFlipped));
   front?.setAttribute("aria-hidden", String(isFlipped));
   back?.setAttribute("aria-hidden", String(!isFlipped));

@@ -152,7 +152,8 @@ test("dashboard uses compact iPhone card sizing", async () => {
   const css = await readFile(join(miniAppRoot, "styles.css"), "utf8");
 
   assert.match(css, /@media \(max-width:\s*640px\)\s*{[^}]*\.shell\s*{[^}]*padding:\s*14px 16px 88px/s);
-  assert.match(css, /@media \(max-width:\s*640px\)[^]*\.hero-metric\s*{[^}]*min-height:\s*218px[^}]*padding:\s*24px 26px/s);
+  assert.match(css, /@media \(max-width:\s*640px\)[^]*\.hero-metric\s*{[^}]*min-height:\s*218px/s);
+  assert.match(css, /@media \(max-width:\s*640px\)[^]*\.hero-metric__face--front\s*{[^}]*padding:\s*24px 26px/s);
   assert.match(css, /@media \(max-width:\s*640px\)[^]*\.dashboard-card,[^}]*\.dashboard-card__face--back\s*{[^}]*min-height:\s*140px/s);
   assert.match(css, /@media \(max-width:\s*640px\)[^]*\.dashboard-card__face--front\s*{[^}]*gap:\s*5px[^}]*padding:\s*12px/s);
   assert.match(css, /@media \(max-width:\s*640px\)[^]*\.dashboard-card__amount\s*{[^}]*font-size:\s*clamp\(23px,\s*6\.5vw,\s*27px\)/s);
@@ -188,9 +189,10 @@ test("dashboard cards expose tooltip controls without hero status wiring", async
   const renderer = await readFile(join(miniAppRoot, "dashboardCards.js"), "utf8");
   const app = await readFile(join(miniAppRoot, "app.js"), "utf8");
   const css = await readFile(join(miniAppRoot, "styles.css"), "utf8");
+  const html = await readFile(join(miniAppRoot, "index.html"), "utf8");
 
-  assert.match(renderer, /data-dashboard-tooltip/);
-  assert.match(renderer, /data-dashboard-card/);
+  assert.match(renderer, /data-flip-toggle/);
+  assert.match(renderer, /data-flip-card/);
   assert.match(renderer, /dashboard-card__flip-inner/);
   assert.match(renderer, /dashboard-card__face--front/);
   assert.match(renderer, /dashboard-card__face--back/);
@@ -198,14 +200,25 @@ test("dashboard cards expose tooltip controls without hero status wiring", async
   assert.doesNotMatch(renderer, /dashboard-card__tooltip/);
   assert.match(renderer, /aria-expanded="false"/);
   assert.match(renderer, /aria-controls=/);
+  assert.match(html, /class="hero-metric hero-metric--flip"[^>]*data-flip-card/);
+  assert.match(html, /id="heroTooltip"/);
+  assert.match(html, /id="heroTooltipText"/);
+  assert.match(html, /data-flip-toggle/);
+  assert.match(html, /class="hero-metric__info"[^]*aria-label="Объяснить"[^]*data-flip-toggle/);
   assert.match(app, /bindDashboardTooltips/);
-  assert.match(app, /querySelectorAll\("\.dashboard-card\[data-dashboard-card\]"\)/);
+  assert.match(app, /querySelector\("\.hero-metric__info"\)/);
+  assert.match(app, /setAttribute\("aria-label",\s*`\$\{t\("dashboard\.explain"\)\}: \$\{heroMetric\.title\}`\)/);
+  assert.match(app, /FLIP_SELECTOR\s*=\s*"\[data-flip-card\]"/);
+  assert.match(app, /FLIP_TOGGLE_SELECTOR\s*=\s*"\[data-flip-toggle\]"/);
   assert.match(app, /is-flipped/);
   assert.match(app, /closeDashboardTooltips/);
   assert.doesNotMatch(app, /dashboard-card__tooltip:not\(\[hidden\]\)/);
+  assert.doesNotMatch(app, /querySelectorAll\("\.dashboard-card\[data-dashboard-card\]"\)/);
   assert.match(css, /\.dashboard-card__flip-inner\s*{/);
+  assert.match(css, /\.hero-metric__flip-inner\s*{/);
+  assert.match(css, /\.hero-metric__face--back\s*{/);
   assert.match(css, /transform-style:\s*preserve-3d/);
-  assert.match(css, /prefers-reduced-motion:\s*reduce/);
+  assert.match(css, /prefers-reduced-motion:\s*reduce[^]*\.hero-metric__flip-inner/s);
   assert.doesNotMatch(app, /heroStatus/);
 });
 
