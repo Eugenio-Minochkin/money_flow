@@ -1206,14 +1206,30 @@ test("updates an expense owned by a Telegram user", async () => {
   assert.equal(expense.description, "завтрак");
 });
 
-test("deletes an expense owned by a Telegram user", async () => {
+test("deletes an expense owned by a Telegram user and returns the row with draft_id", async () => {
   const repo = createRepository(fakePool((_sql, params) => ({
-    rows: [{ id: params[0] }]
+    rows: [{ id: params[0], draft_id: 9 }]
   })));
 
-  const deleted = await repo.deleteExpenseForTelegramUser(7, 100);
+  const deleted = await repo.deleteExpenseForTelegramUser(5, 100);
 
-  assert.equal(deleted.id, 7);
+  assert.equal(deleted.id, 5);
+  assert.equal(deleted.draft_id, 9);
+});
+
+test("listExpensesByDraftId queries by draft_id and returns the rows", async () => {
+  const queries = [];
+  const rows = [{ id: "1", draft_id: 9 }, { id: "2", draft_id: 9 }];
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql: String(sql), params });
+    return { rows };
+  }));
+
+  const expenses = await repo.listExpensesByDraftId(9);
+
+  assert.deepEqual(expenses, rows);
+  assert.match(queries[0].sql, /FROM expenses WHERE draft_id = \$1/);
+  assert.deepEqual(queries[0].params, [9]);
 });
 
 test("lists expenses for history", async () => {

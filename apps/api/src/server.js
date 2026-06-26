@@ -25,7 +25,9 @@ import {
   sendWeeklyReports,
   shouldSendWeeklyReport,
   updateDraftMessageToCanceled,
-  updateDraftMessageToSaved
+  updateDraftMessageToDraftState,
+  updateDraftMessageToSaved,
+  updateTelegramMessageAfterExpenseDelete
 } from "./telegram.js";
 import { formatSavedSummary } from "./telegramFormat.js";
 import { createVoiceTranscriber } from "./voiceTranscriber.js";
@@ -427,6 +429,19 @@ async function route(req, res) {
         }
         return sendJson(res, 404, { error: "draft_not_found" });
       }
+      const user = await repository.getUserByTelegramId(auth.telegramUserId).catch(() => null);
+      if (user) {
+        await updateDraftMessageToDraftState({
+          token: config.telegramBotToken,
+          draft,
+          items: draft.items ?? [],
+          miniAppUrl: config.miniAppUrl,
+          telegramUserId: auth.telegramUserId,
+          language: user.interface_language ?? "en",
+          baseCurrency: user.base_currency ?? "THB",
+          telegramClient: null
+        }).catch((error) => console.error("[server] draft preview update failed", error.message));
+      }
       return sendJson(res, 200, { draft });
     }
 
@@ -477,6 +492,27 @@ async function route(req, res) {
       ? await repository.updateExpenseForTelegramUser(Number(expenseMatch[1]), auth.telegramUserId, body.expense)
       : await repository.deleteExpenseForTelegramUser(Number(expenseMatch[1]), auth.telegramUserId);
     if (!expense) return sendJson(res, 404, { error: "expense_not_found" });
+    if (req.method === "DELETE" && expense.draft_id) {
+      try {
+        const draft = await repository.getDraftForTelegramUser(expense.draft_id, auth.telegramUserId);
+        if (draft?.tg_chat_id && draft?.tg_message_id) {
+          const remaining = await repository.listExpensesByDraftId(expense.draft_id);
+          const { snapshot } = await repository.dashboard(auth.telegramUserId);
+          await updateTelegramMessageAfterExpenseDelete({
+            token: config.telegramBotToken,
+            draft,
+            remainingExpenses: remaining,
+            dashboardSnapshot: snapshot,
+            language: body.language ?? "en",
+            miniAppUrl: config.miniAppUrl,
+            telegramUserId: auth.telegramUserId,
+            telegramClient: null
+          }).catch((error) => console.error("[server] expense delete message update failed", error.message));
+        }
+      } catch (error) {
+        console.error("[server] expense delete telegram sync failed", error.message);
+      }
+    }
     return sendJson(res, 200, { expense });
   }
 

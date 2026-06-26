@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { formatDraft, formatReserveClosedEvent, formatSavedSummary, formatTotals, formatWeeklyReport } from "../src/telegramFormat.js";
+import { categoryName } from "../../../packages/shared/src/categories.js";
 
 test("formats a draft with total and review warning", () => {
   const text = formatDraft([
@@ -271,6 +272,28 @@ test("multi-expense saved summary lists each expense and a total", () => {
   assert.match(normalized, /<b>Total:<\/b> 280 THB/);
   assert.ok(normalized.indexOf("coffee") < normalized.indexOf("📌"), "saved-expense lines appear before the today header");
 });
+
+test("draft preview and saved summary show the same category label for a slug", () => {
+  for (const slug of ["food_cafe", "groceries", "gifts_help", "transport", "other"]) {
+    const item = { amount: 1, currency: "THB", amount_base: 1, category_slug: slug, description: "x", spent_at: "2026-06-26T10:00:00Z", budget_impact: "regular", tags: [] };
+    const draft = formatDraft([item], { language: "ru", baseCurrency: "THB" });
+    const saved = formatSavedSummary(1, snapshot(), { language: "ru", expenses: [item] });
+    const label = categoryName(slug);
+    assert.match(draft, new RegExp(escapeRegExp(label)), `draft missing label for ${slug}`);
+    assert.match(saved, new RegExp(escapeRegExp(label)), `saved missing label for ${slug}`);
+  }
+});
+
+test("food_cafe saved summary shows the food label and never the gifts label", () => {
+  const item = { amount: 1, currency: "THB", amount_base: 1, category_slug: "food_cafe", description: "x" };
+  const saved = formatSavedSummary(1, snapshot(), { language: "ru", expenses: [item] });
+  assert.match(saved, new RegExp(escapeRegExp(categoryName("food_cafe"))));
+  assert.doesNotMatch(saved, /Подарки/);
+});
+
+function escapeRegExp(text) {
+  return String(text ?? "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
 function normalizeSpaces(value) {
   return value.replaceAll("\u00a0", " ");

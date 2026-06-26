@@ -1203,6 +1203,39 @@ export async function updateDraftMessageToSaved({ token, draft, text, replyMarku
   }
 }
 
+export async function updateTelegramMessageAfterExpenseDelete({ token, draft, remainingExpenses, dashboardSnapshot, language, miniAppUrl, telegramUserId, telegramClient }) {
+  const replyMarkup = savedSummaryKeyboard(miniAppUrl, telegramUserId, language);
+  let text;
+  if (Array.isArray(remainingExpenses) && remainingExpenses.length > 0) {
+    const total = remainingExpenses.reduce((sum, expense) => sum + Number(expense.amount_base ?? 0), 0);
+    text = formatSavedSummary(total, dashboardSnapshot ?? {}, { language, expenses: remainingExpenses });
+  } else {
+    text = botText(language, "expenseDeletedMessage");
+  }
+  await updateDraftMessageToSaved({ token, draft, text, replyMarkup, telegramClient });
+}
+
+export async function updateDraftMessageToDraftState({ token, draft, items, miniAppUrl, telegramUserId, language, baseCurrency, telegramClient }) {
+  const chatId = draft?.tg_chat_id;
+  const messageId = draft?.tg_message_id;
+  if (!chatId || !messageId) {
+    console.log("[telegram] no stored message reference for draft", draft?.id);
+    return;
+  }
+  const text = formatDraft(items ?? [], { language, baseCurrency: baseCurrency ?? "THB" });
+  const replyMarkup = draftKeyboard(draft.id, items ?? [], miniAppUrl, telegramUserId, language);
+  try {
+    await editMessageText(token, chatId, messageId, text, replyMarkup, telegramClient);
+  } catch (error) {
+    if (isMessageNotModified(error)) return;
+    console.error("[telegram] update draft message to draft state failed; sending fallback", error.message);
+    try { await sendMessage(token, chatId, text, replyMarkup, telegramClient); }
+    catch (sendError) { console.error("[telegram] fallback draft preview failed", sendError.message); }
+    try { await editMessageReplyMarkup(token, chatId, messageId, { inline_keyboard: [] }, telegramClient); }
+    catch (markupError) { console.error("[telegram] could not clear old draft keyboard", markupError.message); }
+  }
+}
+
 export async function updateDraftMessageToCanceled({ token, draft, text, telegramClient }) {
   const chatId = draft?.tg_chat_id;
   const messageId = draft?.tg_message_id;
@@ -1603,6 +1636,7 @@ function botText(language, key, values = {}) {
       categoryUpdatedCallback: "Категория обновлена",
       draftCancelled: "Черновик отменен.",
       draftCanceledMessage: "🗑 Черновик отменён.\nРасход не был сохранён.",
+      expenseDeletedMessage: "🗑 Запись удалена.\nРасход удалён из Mini App и больше не учитывается.",
       chooseCategoryAlert: "Сначала выберите категорию.",
       draftCanceledAlert: "Этот черновик уже отменён.",
       alreadySavedCallback: "Уже сохранено",
@@ -1644,6 +1678,7 @@ function botText(language, key, values = {}) {
       categoryUpdatedCallback: "Category updated",
       draftCancelled: "Draft cancelled.",
       draftCanceledMessage: "🗑 Draft canceled.\nThis expense was not saved.",
+      expenseDeletedMessage: "🗑 Entry deleted.\nThis expense was deleted in Mini App and no longer counts.",
       chooseCategoryAlert: "Please choose a category first.",
       draftCanceledAlert: "This draft was canceled.",
       alreadySavedCallback: "Already saved",

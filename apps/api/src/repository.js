@@ -1237,10 +1237,18 @@ export function createRepository(pool, options = {}) {
         `DELETE FROM expenses
          WHERE id = $1
            AND user_id = (SELECT id FROM users WHERE telegram_user_id = $2)
-         RETURNING id`,
+         RETURNING *`,
         [expenseId, telegramUserId]
       );
       return result.rows[0] ?? null;
+    },
+
+    async listExpensesByDraftId(draftId) {
+      const result = await pool.query(
+        `SELECT * FROM expenses WHERE draft_id = $1 ORDER BY id`,
+        [draftId]
+      );
+      return result.rows;
     },
 
     async listExpensesForTelegramUser(telegramUserId, options = {}) {

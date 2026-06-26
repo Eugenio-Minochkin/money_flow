@@ -969,7 +969,7 @@ function bindExpenseActions(container, expenses) {
     button.addEventListener("click", async () => {
       const expense = expenses.find((item) => String(item.id) === button.dataset.deleteExpense);
       if (!window.confirm(currentLanguage === "ru" ? `Удалить расход "${expense.description}"?` : `Delete expense "${expense.description}"?`)) return;
-      await api(`/api/expenses/${expense.id}`, { method: "DELETE", body: { telegramUserId } });
+      await api(`/api/expenses/${expense.id}`, { method: "DELETE", body: { telegramUserId, language: currentLanguage } });
       await loadDashboard();
       await loadHistory();
       showToast(t("toast.expenseDeleted"));

@@ -2703,6 +2703,119 @@ test("updateDraftMessageToSaved is a no-op without a stored reference", async ()
   await updateDraftMessageToSaved({ token: null, draft: { id: 7, tg_chat_id: null, tg_message_id: null }, text: "x", replyMarkup: null, telegramClient });
 });
 
+test("updateTelegramMessageAfterExpenseDelete shows the deleted-state when no expenses remain", async () => {
+  const { updateTelegramMessageAfterExpenseDelete } = await import("../src/telegram.js");
+  const calls = [];
+  const telegramClient = {
+    editMessageText: async (message) => { calls.push({ method: "editMessageText", ...message }); return { ok: true }; },
+    sendMessage: async () => { throw new Error("sendMessage should not be called"); },
+    editMessageReplyMarkup: async () => { throw new Error("editMessageReplyMarkup should not be called"); }
+  };
+  await updateTelegramMessageAfterExpenseDelete({
+    token: "test-token",
+    draft: { id: 7, tg_chat_id: 5, tg_message_id: 9 },
+    remainingExpenses: [],
+    dashboardSnapshot: {},
+    language: "en",
+    miniAppUrl: "http://x",
+    telegramUserId: 100,
+    telegramClient
+  });
+  const edit = calls.find((call) => call.method === "editMessageText");
+  assert.ok(edit, "expected editMessageText");
+  assert.equal(edit.text, "🗑 Entry deleted.\nThis expense was deleted in Mini App and no longer counts.");
+  assert.ok(edit.replyMarkup?.inline_keyboard?.[0]?.[0]?.web_app?.url?.includes("http://x?telegramUserId=100"), "expected the Mini App web_app url");
+});
+
+test("updateTelegramMessageAfterExpenseDelete re-renders the saved summary when expenses remain", async () => {
+  const { updateTelegramMessageAfterExpenseDelete } = await import("../src/telegram.js");
+  const calls = [];
+  const telegramClient = {
+    editMessageText: async (message) => { calls.push({ method: "editMessageText", ...message }); return { ok: true }; },
+    sendMessage: async () => { throw new Error("sendMessage should not be called"); },
+    editMessageReplyMarkup: async () => { throw new Error("editMessageReplyMarkup should not be called"); }
+  };
+  const remaining = [{ amount_base: 120, amount_original: 120, currency_original: "THB", description: "latte", category_slug: "food_cafe" }];
+  await updateTelegramMessageAfterExpenseDelete({
+    token: "test-token",
+    draft: { id: 7, tg_chat_id: 5, tg_message_id: 9 },
+    remainingExpenses: remaining,
+    dashboardSnapshot: { baseCurrency: "THB", today: 0, monthlyBudget: 45000 },
+    language: "en",
+    miniAppUrl: "http://x",
+    telegramUserId: 100,
+    telegramClient
+  });
+  const edit = calls.find((call) => call.method === "editMessageText");
+  assert.ok(edit, "expected editMessageText");
+  assert.match(edit.text, /latte/);
+});
+
+test("updateTelegramMessageAfterExpenseDelete is a no-op without a stored reference", async () => {
+  const { updateTelegramMessageAfterExpenseDelete } = await import("../src/telegram.js");
+  const calls = [];
+  const telegramClient = {
+    editMessageText: async (message) => { calls.push({ method: "editMessageText", ...message }); return { ok: true }; }
+  };
+  await updateTelegramMessageAfterExpenseDelete({
+    token: "test-token",
+    draft: { id: 7, tg_chat_id: null, tg_message_id: null },
+    remainingExpenses: [],
+    dashboardSnapshot: {},
+    language: "en",
+    miniAppUrl: "http://x",
+    telegramUserId: 100,
+    telegramClient
+  });
+  assert.equal(calls.length, 0, "editMessageText should not be called without a stored reference");
+});
+
+test("updateDraftMessageToDraftState edits the stored draft preview with the current items", async () => {
+  const { updateDraftMessageToDraftState } = await import("../src/telegram.js");
+  const calls = [];
+  const telegramClient = {
+    editMessageText: async (args) => { calls.push(["editMessageText", args]); return { ok: true }; },
+    sendMessage: async () => { throw new Error("sendMessage should not be called"); },
+    editMessageReplyMarkup: async () => { throw new Error("editMessageReplyMarkup should not be called"); }
+  };
+  const items = [{ amount: 1, currency: "THB", amount_base: 1, category_slug: "food_cafe", description: "coffee", spent_at: "2026-06-26T10:00:00Z", budget_impact: "regular", tags: [] }];
+  await updateDraftMessageToDraftState({
+    token: null, draft: { id: 7, tg_chat_id: 5, tg_message_id: 9 }, items, miniAppUrl: "http://x", telegramUserId: 100, language: "ru", baseCurrency: "THB", telegramClient
+  });
+  const edit = calls.find(([name]) => name === "editMessageText");
+  assert.ok(edit, "expected editMessageText");
+  assert.equal(edit[1].chatId, 5);
+  assert.equal(edit[1].messageId, 9);
+  assert.match(edit[1].text, /Еда и кафе/);
+  assert.ok(Array.isArray(edit[1].replyMarkup?.inline_keyboard), "expected a draft keyboard");
+});
+
+test("updateDraftMessageToDraftState is a no-op without a stored reference", async () => {
+  const { updateDraftMessageToDraftState } = await import("../src/telegram.js");
+  const telegramClient = { editMessageText: async () => { throw new Error("should not be called"); } };
+  await updateDraftMessageToDraftState({
+    token: null, draft: { id: 7, tg_chat_id: null, tg_message_id: null }, items: [], miniAppUrl: "http://x", telegramUserId: 100, language: "ru", baseCurrency: "THB", telegramClient
+  });
+});
+
+test("updateDraftMessageToDraftState sends a fallback message and clears the old keyboard on edit failure", async () => {
+  const { updateDraftMessageToDraftState } = await import("../src/telegram.js");
+  const calls = [];
+  const telegramClient = {
+    editMessageText: async (args) => { calls.push(["editMessageText", args]); throw { status: 400, body: "Bad Request: message to edit not found" }; },
+    sendMessage: async (args) => { calls.push(["sendMessage", args]); return { ok: true }; },
+    editMessageReplyMarkup: async (args) => { calls.push(["editMessageReplyMarkup", args]); return { ok: true }; }
+  };
+  const items = [{ amount: 1, currency: "THB", amount_base: 1, category_slug: "food_cafe", description: "coffee", spent_at: "2026-06-26T10:00:00Z", budget_impact: "regular", tags: [] }];
+  await updateDraftMessageToDraftState({
+    token: null, draft: { id: 7, tg_chat_id: 5, tg_message_id: 9 }, items, miniAppUrl: "http://x", telegramUserId: 100, language: "ru", baseCurrency: "THB", telegramClient
+  });
+  assert.ok(calls.some(([name]) => name === "sendMessage"), "expected fallback new message");
+  const markup = calls.find(([name]) => name === "editMessageReplyMarkup");
+  assert.ok(markup, "expected old keyboard to be cleared");
+  assert.deepEqual(markup[1].replyMarkup, { inline_keyboard: [] });
+});
+
 test("draftCanceledMessageText and savedSummaryKeyboard are localized", async () => {
   const { draftCanceledMessageText, savedSummaryKeyboard } = await import("../src/telegram.js");
   assert.match(draftCanceledMessageText("en"), /Draft canceled/);
