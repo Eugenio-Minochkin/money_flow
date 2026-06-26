@@ -84,7 +84,7 @@ test("dashboard metric text can wrap instead of causing horizontal overflow", as
   const css = await readFile(join(miniAppRoot, "styles.css"), "utf8");
 
   assert.match(html, /id="dashboardCards"/);
-  assert.match(css, /\.dashboard-card\s*{[^}]*overflow:\s*hidden/s);
+  assert.match(css, /\.dashboard-card__face--back\s*{[^}]*overflow:\s*hidden/s);
   assert.match(css, /\.dashboard-card__amount\s*{[^}]*font-size:\s*clamp\(32px,\s*5vw,\s*40px\)/s);
   assert.match(css, /\.dashboard-card__line\s*{[^}]*white-space:\s*normal/s);
   assert.match(css, /\.dashboard-card__caption\s*{[^}]*white-space:\s*normal/s);
@@ -153,8 +153,8 @@ test("dashboard uses compact iPhone card sizing", async () => {
 
   assert.match(css, /@media \(max-width:\s*640px\)\s*{[^}]*\.shell\s*{[^}]*padding:\s*14px 16px 88px/s);
   assert.match(css, /@media \(max-width:\s*640px\)[^]*\.hero-metric\s*{[^}]*min-height:\s*218px[^}]*padding:\s*24px 26px/s);
-  assert.match(css, /@media \(max-width:\s*640px\)[^]*\.dashboard-card,\s*\.dashboard-card--progress\s*{[^}]*min-height:\s*140px/s);
-  assert.match(css, /@media \(max-width:\s*640px\)[^]*\.dashboard-card\s*{[^}]*gap:\s*5px[^}]*padding:\s*12px/s);
+  assert.match(css, /@media \(max-width:\s*640px\)[^]*\.dashboard-card,[^}]*\.dashboard-card__face--back\s*{[^}]*min-height:\s*140px/s);
+  assert.match(css, /@media \(max-width:\s*640px\)[^]*\.dashboard-card__face--front\s*{[^}]*gap:\s*5px[^}]*padding:\s*12px/s);
   assert.match(css, /@media \(max-width:\s*640px\)[^]*\.dashboard-card__amount\s*{[^}]*font-size:\s*clamp\(23px,\s*6\.5vw,\s*27px\)/s);
   assert.match(css, /@media \(max-width:\s*640px\)[^]*\.dashboard-card__progress\s*{[^}]*height:\s*6px/s);
 });
@@ -179,7 +179,7 @@ test("dashboard uses compact header, inbox before month plan, and bottom navigat
   assert.ok(html.indexOf('id="dashboardInboxBlock"') < html.indexOf('id="monthlyForecast"'));
   assert.match(html, /class="bottom-tabs"/);
   assert.match(css, /\.bottom-tabs\s*{/);
-  assert.match(css, /\.dashboard-card\s*{[^}]*grid-template-rows:/s);
+  assert.match(css, /\.dashboard-card__face--front\s*{[^}]*grid-template-rows:/s);
   assert.match(css, /body\[data-theme="dark"\]/);
   assert.match(css, /body\[data-theme="light"\]/);
 });
@@ -187,16 +187,25 @@ test("dashboard uses compact header, inbox before month plan, and bottom navigat
 test("dashboard cards expose tooltip controls without hero status wiring", async () => {
   const renderer = await readFile(join(miniAppRoot, "dashboardCards.js"), "utf8");
   const app = await readFile(join(miniAppRoot, "app.js"), "utf8");
+  const css = await readFile(join(miniAppRoot, "styles.css"), "utf8");
 
   assert.match(renderer, /data-dashboard-tooltip/);
-  assert.match(renderer, /role="tooltip"/);
+  assert.match(renderer, /data-dashboard-card/);
+  assert.match(renderer, /dashboard-card__flip-inner/);
+  assert.match(renderer, /dashboard-card__face--front/);
+  assert.match(renderer, /dashboard-card__face--back/);
+  assert.match(renderer, /role="note"/);
+  assert.doesNotMatch(renderer, /dashboard-card__tooltip/);
   assert.match(renderer, /aria-expanded="false"/);
   assert.match(renderer, /aria-controls=/);
   assert.match(app, /bindDashboardTooltips/);
-  assert.match(app, /querySelectorAll\("\.dashboard-card"\)/);
-  assert.match(app, /toggleDashboardTooltip/);
-  assert.match(app, /closest\("\[data-dashboard-tooltip\]"\)/);
+  assert.match(app, /querySelectorAll\("\.dashboard-card\[data-dashboard-card\]"\)/);
+  assert.match(app, /is-flipped/);
   assert.match(app, /closeDashboardTooltips/);
+  assert.doesNotMatch(app, /dashboard-card__tooltip:not\(\[hidden\]\)/);
+  assert.match(css, /\.dashboard-card__flip-inner\s*{/);
+  assert.match(css, /transform-style:\s*preserve-3d/);
+  assert.match(css, /prefers-reduced-motion:\s*reduce/);
   assert.doesNotMatch(app, /heroStatus/);
 });
 

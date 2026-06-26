@@ -1569,9 +1569,11 @@ export function createRepository(pool, options = {}) {
       const plannedRemainingTotal = calculatePlannedRemaining(plannedExpenses, now, calculationTimeZone);
       const plannedThisWeekTotal = calculatePlannedThisWeek(plannedExpenses, now, calculationTimeZone);
       const paidPlannedMonthTotal = await paidPlannedTotalForMonth(pool, user.id, now, calculationTimeZone);
-      const activeReserveAmount = reserveInstance?.status === "active" ? Number(reserveInstance.reserve_amount) : 0;
+      const rawActiveReserveAmount = reserveInstance?.status === "active" ? Number(reserveInstance.reserve_amount) : 0;
+      const activeReserveAmount = roundForDisplayCurrency(rawActiveReserveAmount, user.base_currency);
       const activeReserveDisplayAmount = displayFromBase(activeReserveAmount, user);
-      const plannedRemainingDisplayTotal = displayFromBase(plannedRemainingTotal, user);
+      const plannedRemaining = roundForDisplayCurrency(plannedRemainingTotal, user.base_currency);
+      const plannedRemainingDisplayTotal = displayFromBase(plannedRemaining, user);
       const plannedThisWeekDisplayTotal = displayFromBase(plannedThisWeekTotal, user);
       const paidPlannedMonthDisplayTotal = displayFromBase(paidPlannedMonthTotal, user);
       const manualWeeklyBudget = user.weekly_budget_amount == null ? null : Number(user.weekly_budget_amount);
@@ -1581,11 +1583,11 @@ export function createRepository(pool, options = {}) {
           ? manualWeeklyBudget
           : currentBudget.amount * (7 / daysInCurrentMonth)
       );
-      const monthRemaining = roundMoney(currentBudget.amount - totals.month);
-      const reservedAhead = roundMoney(plannedRemainingTotal + activeReserveAmount);
-      const freeRemaining = roundMoney(monthRemaining - reservedAhead);
-      const weekRemainingRaw = roundMoney(resolvedWeeklyBudget - totals.week);
-      const weekAvailable = roundMoney(Math.min(weekRemainingRaw, freeRemaining));
+      const monthRemaining = roundForDisplayCurrency(currentBudget.amount - totals.month, user.base_currency);
+      const reservedAhead = roundForDisplayCurrency(plannedRemaining + activeReserveAmount, user.base_currency);
+      const freeRemaining = roundForDisplayCurrency(monthRemaining - reservedAhead, user.base_currency);
+      const weekRemainingRaw = roundForDisplayCurrency(resolvedWeeklyBudget - totals.week, user.base_currency);
+      const weekAvailable = roundForDisplayCurrency(Math.min(weekRemainingRaw, freeRemaining), user.base_currency);
       const dayBudgetSnapshot = await getOrCreateDailyBudgetSnapshot(pool, user, now, {
         todayTotal: totals.today,
         monthTotal: totals.month,
@@ -2125,6 +2127,22 @@ function displayThbRate(user) {
 
 function roundMoney(value) {
   return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
+}
+
+const ZERO_DECIMAL_DISPLAY_CURRENCIES = ["THB", "RUB", "IDR", "BYN"];
+const TWO_DECIMAL_DISPLAY_CURRENCIES = ["USD", "EUR", "GEL"];
+
+function roundForDisplayCurrency(value, currency) {
+  const decimals = displayDecimalsForCurrency(currency);
+  const factor = 10 ** decimals;
+  return Math.round((Number(value ?? 0) + Number.EPSILON) * factor) / factor;
+}
+
+function displayDecimalsForCurrency(currency) {
+  const normalized = normalizeCurrency(currency, "THB");
+  if (ZERO_DECIMAL_DISPLAY_CURRENCIES.includes(normalized)) return 0;
+  if (TWO_DECIMAL_DISPLAY_CURRENCIES.includes(normalized)) return 2;
+  return 2;
 }
 
 function calculatePlannedRemaining(plannedExpenses, now, timeZone = "Asia/Bangkok") {
