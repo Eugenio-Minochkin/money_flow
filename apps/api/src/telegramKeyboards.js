@@ -39,7 +39,10 @@ export function draftKeyboard(draftId, items = [], miniAppUrl, telegramUserId, l
       typeButton(text.regular, impact === "regular", draftId, "r"),
       typeButton(text.large, impact === "large_oneoff", draftId, "l")
     ]);
-    const selectedSlug = item.category_slug;
+    const categoryIsVisuallySelected =
+      item.category_source === "user" ||
+      (item.category_slug !== "other" && !item.needs_review);
+    const selectedSlug = categoryIsVisuallySelected ? item.category_slug : null;
     rows.push(QUICK_CATEGORY_CODES.slice(0, 3).map((entry) =>
       categoryButton(text[entry.label], entry.slug === selectedSlug, draftId, entry.code)));
     rows.push(QUICK_CATEGORY_CODES.slice(3).map((entry) =>

@@ -83,3 +83,24 @@ test("every quick category code round-trips to a known slug", async () => {
     assert.equal(categoryCodeFromSlug(slug), code);
   }
 });
+
+test("parser-fallback other renders every category button unchecked", () => {
+  const keyboard = draftKeyboard(42, [{
+    amount: 70, category_slug: "other", category_source: "parser", needs_review: true, budget_impact: "regular"
+  }], "http://x", 100, "en");
+  const categoryButtons = keyboard.inline_keyboard
+    .flat()
+    .filter((b) => typeof b.callback_data === "string" && b.callback_data.startsWith("d:42:c:"));
+  assert.equal(categoryButtons.length, 6);
+  assert.ok(categoryButtons.every((b) => b.text.startsWith("⬜")), "no category should be selected for parser-fallback other");
+  const other = categoryButtons.find((b) => b.callback_data === "d:42:c:other");
+  assert.ok(other && other.text.startsWith("⬜"));
+});
+
+test("user-selected other renders the other category as selected", () => {
+  const keyboard = draftKeyboard(42, [{
+    amount: 70, category_slug: "other", category_source: "user", needs_review: false, budget_impact: "regular"
+  }], "http://x", 100, "en");
+  const other = keyboard.inline_keyboard.flat().find((b) => b.callback_data === "d:42:c:other");
+  assert.ok(other && other.text.startsWith("✅"));
+});
