@@ -147,13 +147,19 @@ test("builds on-track hero title and caption", () => {
   assert.equal(hero.caption, "потрачено 250 THB · бюджет дня 397 THB");
 });
 
-test("renders tooltips and avoids the old limit wording", () => {
+test("renders card flip backs and avoids the old limit wording", () => {
   const cards = buildDashboardCards(semanticSnapshot, helpers);
   const container = { innerHTML: "" };
 
   renderDashboardCards(container, cards);
 
+  assert.match(container.innerHTML, /data-dashboard-card/);
+  assert.match(container.innerHTML, /dashboard-card__flip-inner/);
+  assert.match(container.innerHTML, /dashboard-card__face dashboard-card__face--front/);
+  assert.match(container.innerHTML, /dashboard-card__face dashboard-card__face--back/);
+  assert.match(container.innerHTML, /dashboard-card__back-text/);
   assert.match(container.innerHTML, /dashboard-card__info/);
+  assert.doesNotMatch(container.innerHTML, /dashboard-card__tooltip/);
   assert.match(container.innerHTML, /aria-label="Объяснить: До конца месяца"/);
   assert.match(container.innerHTML, /Сколько реально можно потратить/);
   assert.doesNotMatch(container.innerHTML, /лимит/);
