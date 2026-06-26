@@ -1074,6 +1074,7 @@ test("confirmDraft inserts real expenses and marks the draft confirmed", async (
     release() {}
   };
   const repo = createRepository({ async connect() { return client; } }, { exchangeRates: fixedRates() });
+  repo.dashboard = async () => ({ snapshot: {} });
 
   const expenses = await repo.confirmDraft("42", 100);
 
@@ -1099,7 +1100,7 @@ test("confirmDraft also accepts inbox drafts", async () => {
             status: "inbox",
             base_currency: "THB",
             usd_thb_rate: "32.6",
-            items: [{ amount: 70, currency: "THB", description: "coffee", category_slug: "other", tags: [], spent_at: "2026-06-02T10:00:00+07:00", budget_impact: "regular" }]
+            items: [{ amount: 70, currency: "THB", description: "coffee", category_slug: "food_cafe", tags: [], spent_at: "2026-06-02T10:00:00+07:00", budget_impact: "regular" }]
           }]
         };
       }
@@ -1111,6 +1112,7 @@ test("confirmDraft also accepts inbox drafts", async () => {
     release() {}
   };
   const repo = createRepository({ async connect() { return client; } }, { exchangeRates: fixedRates() });
+  repo.dashboard = async () => ({ snapshot: {} });
 
   const expenses = await repo.confirmDraft("42", 100);
   assert.equal(expenses.length, 1);
@@ -1128,9 +1130,10 @@ test("confirmDraft rejects already closed drafts and creates no expense", async 
     },
     release() {}
   };
+  const { DraftCanceledError } = await import("../src/repository.js");
   const repo = createRepository({ async connect() { return client; } }, { exchangeRates: fixedRates() });
 
-  await assert.rejects(repo.confirmDraft("42", 100), /Draft is already closed/);
+  await assert.rejects(repo.confirmDraft("42", 100), (err) => err instanceof DraftCanceledError);
   assert.ok(!queries.some((sql) => sql.includes("INSERT INTO expenses")));
 });
 
@@ -2810,6 +2813,21 @@ function fakePool(handler) {
   };
 }
 
+function fakeConfirmClient({ draftRow, onQuery = () => {} }) {
+  return {
+    async query(sql, params = []) {
+      const query = String(sql);
+      onQuery(query);
+      if (query === "BEGIN" || query === "COMMIT" || query === "ROLLBACK") return { rows: [] };
+      if (query.includes("FOR UPDATE")) return { rows: [draftRow] };
+      if (query.includes("INSERT INTO expenses")) return { rows: [{ id: 100, draft_id: draftRow.id, amount_base: params[3] ?? 80 }] };
+      if (query.includes("status = 'confirmed'")) return { rows: [draftRow] };
+      return { rows: [] };
+    },
+    release() {}
+  };
+}
+
 function fakePayClient({ planned, paidOccurrences = [], queries = [] }) {
   return {
     async query(sql, params = []) {
@@ -2853,3 +2871,180 @@ function fixedRates() {
     }
   };
 }
+
+test("normalizeDraftItem preserves category_source parser/user and defaults to null", async () => {
+  const { createRepository } = await import("../src/repository.js");
+  let captured;
+  const repo = createRepository(fakePool((sql, params) => {
+    captured = JSON.parse(params[0]);
+    return { rows: [{ id: 1, status: "pending", items: params[0], version: 2 }] };
+  }));
+  await repo.updateDraftItems(1, 100, [
+    { amount: 10, currency: "THB", description: "x", category_slug: "food_cafe", category_source: "parser" },
+    { amount: 20, currency: "THB", description: "y", category_slug: "other" }
+  ]);
+  assert.equal(captured[0].category_source, "parser");
+  assert.equal(captured[1].category_source, null);
+});
+
+test("isCategoryValid distinguishes parser-other, user-other and confident categories", async () => {
+  const { isCategoryValid } = await import("../src/repository.js");
+  assert.equal(isCategoryValid({ category_slug: "food_cafe", needs_review: false, category_source: "parser" }), true);
+  assert.equal(isCategoryValid({ category_slug: "other", needs_review: true, category_source: "parser" }), false);
+  assert.equal(isCategoryValid({ category_slug: "other", needs_review: false, category_source: "user" }), true);
+  assert.equal(isCategoryValid({ category_slug: "other", needs_review: false, category_source: null }), false);
+});
+
+test("saveDraftAsExpense confirms an open draft and returns alreadySaved false", async () => {
+  const { createRepository } = await import("../src/repository.js");
+  const queries = [];
+  const client = fakeConfirmClient({
+    draftRow: { id: 7, user_id: 1, status: "pending", base_currency: "THB", usd_thb_rate: 32.65,
+      items: [{ amount: 80, currency: "THB", description: "coffee", category_slug: "food_cafe", budget_impact: "regular", needs_review: false, category_source: "parser", tags: [], spent_at: "2026-06-25T10:00:00Z" }] },
+    onQuery: (q) => queries.push(String(q))
+  });
+  const repo = createRepository({ ...fakePool(() => ({ rows: [] })), async connect() { return client; } });
+  repo.dashboard = async () => ({ snapshot: { baseCurrency: "THB", month: 0, monthlyBudget: 45000, freeRemaining: 45000, plannedRemaining: 0, forecastMonthTotal: 0, today: 0, planDeviation: 0 } });
+
+  const result = await repo.saveDraftAsExpense(7, 100);
+
+  assert.equal(result.alreadySaved, false);
+  assert.ok(Array.isArray(result.expenses) && result.expenses.length === 1);
+  assert.equal(result.dashboardSnapshot.baseCurrency, "THB");
+  assert.ok(queries.some((q) => q.includes("FOR UPDATE")));
+  assert.ok(queries.some((q) => q.includes("status = 'confirmed'") && q.includes("version = version + 1")));
+});
+
+test("saveDraftAsExpense returns existing expenses when already confirmed", async () => {
+  const { createRepository } = await import("../src/repository.js");
+  const client = fakeConfirmClient({ draftRow: { id: 7, user_id: 1, status: "confirmed", items: [], base_currency: "THB" } });
+  let expensesQueried = false;
+  const pool = {
+    async connect() { return client; },
+    async query(sql) { if (String(sql).includes("FROM expenses WHERE draft_id")) { expensesQueried = true; return { rows: [{ id: 99, draft_id: 7 }] }; } return { rows: [] }; }
+  };
+  const repo = createRepository(pool);
+  repo.dashboard = async () => ({ snapshot: { baseCurrency: "THB" } });
+
+  const result = await repo.saveDraftAsExpense(7, 100);
+
+  assert.equal(result.alreadySaved, true);
+  assert.equal(result.expenses.length, 1);
+  assert.equal(expensesQueried, true);
+});
+
+test("saveDraftAsExpense throws DraftCanceledError on a cancelled draft", async () => {
+  const { createRepository, DraftCanceledError } = await import("../src/repository.js");
+  const client = fakeConfirmClient({ draftRow: { id: 7, user_id: 1, status: "cancelled", items: [], base_currency: "THB" } });
+  const repo = createRepository({ ...fakePool(() => ({ rows: [] })), async connect() { return client; } });
+  repo.dashboard = async () => ({ snapshot: {} });
+
+  await assert.rejects(() => repo.saveDraftAsExpense(7, 100), (err) => err instanceof DraftCanceledError);
+});
+
+test("saveDraftAsExpense throws CategoryRequiredError and does not insert when category invalid", async () => {
+  const { createRepository, CategoryRequiredError } = await import("../src/repository.js");
+  const queries = [];
+  const client = fakeConfirmClient({
+    draftRow: { id: 7, user_id: 1, status: "pending", base_currency: "THB",
+      items: [{ amount: 80, currency: "THB", description: "x", category_slug: "other", needs_review: true, category_source: "parser", budget_impact: "regular", tags: [], spent_at: "2026-06-25T10:00:00Z" }] },
+    onQuery: (q) => queries.push(String(q))
+  });
+  const repo = createRepository({ ...fakePool(() => ({ rows: [] })), async connect() { return client; } });
+  repo.dashboard = async () => ({ snapshot: {} });
+
+  await assert.rejects(() => repo.saveDraftAsExpense(7, 100), (err) => err instanceof CategoryRequiredError);
+  assert.ok(!queries.some((q) => q.includes("INSERT INTO expenses")));
+});
+
+test("cancelDraft cancels an open draft and returns canceled true", async () => {
+  const { createRepository } = await import("../src/repository.js");
+  let query;
+  const repo = createRepository(fakePool((sql) => { query = String(sql); return { rows: [{ id: 7, status: "cancelled" }] }; }));
+  const result = await repo.cancelDraft(7, 100);
+  assert.equal(result.canceled, true);
+  assert.match(query, /status = 'cancelled'/);
+  assert.match(query, /cancelled_at = now\(\)/);
+  assert.match(query, /version = version \+ 1/);
+  assert.match(query, /status IN \('pending', 'inbox'\)/);
+});
+
+test("cancelDraft on a confirmed draft is a no-op that reports already_confirmed", async () => {
+  const { createRepository } = await import("../src/repository.js");
+  const pool = {
+    async query(sql) {
+      const q = String(sql);
+      if (q.includes("RETURNING")) return { rows: [] };   // CAS matched 0 rows (status not open)
+      return { rows: [{ status: "confirmed" }] };          // re-read
+    }
+  };
+  const repo = createRepository(pool);
+  const result = await repo.cancelDraft(7, 100);
+  assert.equal(result.canceled, false);
+  assert.equal(result.reason, "already_confirmed");
+});
+
+test("updateDraftItems bumps version", async () => {
+  const { createRepository } = await import("../src/repository.js");
+  let query;
+  const repo = createRepository(fakePool((sql) => { query = String(sql); return { rows: [{ id: 1, status: "pending", items: "[]", version: 2 }] }; }));
+  await repo.updateDraftItems(1, 100, [{ amount: 10, currency: "THB", description: "x", category_slug: "food_cafe" }]);
+  assert.match(query, /version = version \+ 1/);
+});
+
+test("updateDraftItems applies expectedVersion guard when provided", async () => {
+  const { createRepository } = await import("../src/repository.js");
+  let params;
+  const repo = createRepository(fakePool((sql, p) => { params = p; return { rows: [] }; }));
+  await repo.updateDraftItems(1, 100, [{ amount: 10, currency: "THB", description: "x", category_slug: "food_cafe" }], { expectedVersion: 3 });
+  assert.equal(params[3], 3);
+});
+
+test("moveDraftToInbox only acts on open drafts and bumps version", async () => {
+  const { createRepository } = await import("../src/repository.js");
+  let query;
+  const repo = createRepository(fakePool((sql) => { query = String(sql); return { rows: [] }; }));
+  await repo.moveDraftToInbox(1, 100);
+  assert.match(query, /status IN \('pending', 'inbox'\)/);
+  assert.match(query, /version = version \+ 1/);
+});
+
+test("setDraftMessageRef writes tg_chat_id and tg_message_id", async () => {
+  const { createRepository } = await import("../src/repository.js");
+  let params;
+  const repo = createRepository(fakePool((sql, p) => { params = p; return { rows: [] }; }));
+  await repo.setDraftMessageRef(7, 100, 555, 999);
+  assert.equal(params[0], 7);
+  assert.equal(params[2], 555);
+  assert.equal(params[3], 999);
+});
+
+test("two saveDraftAsExpense calls on the same draft produce one expense set", async () => {
+  const { createRepository } = await import("../src/repository.js");
+  let flipped = false;
+  const client = {
+    async query(sql) {
+      const q = String(sql);
+      if (q === "BEGIN" || q === "COMMIT" || q === "ROLLBACK") return { rows: [] };
+      if (q.includes("FOR UPDATE")) {
+        return { rows: [{ id: 7, user_id: 1, status: flipped ? "confirmed" : "pending", base_currency: "THB",
+          items: [{ amount: 80, currency: "THB", description: "coffee", category_slug: "food_cafe", budget_impact: "regular", needs_review: false, category_source: "parser", tags: [], spent_at: "2026-06-25T10:00:00Z" }] }] };
+      }
+      if (q.includes("INSERT INTO expenses")) { flipped = true; return { rows: [{ id: 1, draft_id: 7, amount_base: 80 }] }; }
+      if (q.includes("status = 'confirmed'")) return { rows: [] };
+      return { rows: [] };
+    },
+    release() {}
+  };
+  const pool = {
+    async connect() { return client; },
+    async query(sql) { if (String(sql).includes("FROM expenses WHERE draft_id")) return { rows: [{ id: 1, draft_id: 7, amount_base: 80 }] }; return { rows: [] }; }
+  };
+  const repo = createRepository(pool);
+  repo.dashboard = async () => ({ snapshot: { baseCurrency: "THB" } });
+  const first = await repo.saveDraftAsExpense(7, 100);
+  const second = await repo.saveDraftAsExpense(7, 100);
+  assert.equal(first.alreadySaved, false);
+  assert.equal(second.alreadySaved, true);
+  assert.equal(second.expenses.length, 1);
+});

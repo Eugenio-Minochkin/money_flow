@@ -17,6 +17,16 @@ import {
 import { calculateReserveState, validateReserveCapacity } from "../../../packages/shared/src/reserve.js";
 import { createExchangeRateProvider } from "./exchangeRates.js";
 
+export class DraftCanceledError extends Error {
+  constructor() { super("Draft is canceled"); this.name = "DraftCanceledError"; }
+}
+export class CategoryRequiredError extends Error {
+  constructor() { super("Category is required"); this.name = "CategoryRequiredError"; }
+}
+export class DraftNotFoundError extends Error {
+  constructor() { super("Draft not found"); this.name = "DraftNotFoundError"; }
+}
+
 export function createRepository(pool, options = {}) {
   const defaultMonthlyBudget = options.defaultMonthlyBudget ?? 45000;
   const exchangeRates = options.exchangeRates ?? createExchangeRateProvider({ fetchImpl: null });
@@ -1012,17 +1022,27 @@ export function createRepository(pool, options = {}) {
       return normalizeDraft(result.rows[0] ?? null);
     },
 
-    async updateDraftItems(draftId, telegramUserId, items) {
+    async updateDraftItems(draftId, telegramUserId, items, options = {}) {
       const normalized = items.map(normalizeDraftItem);
-      const result = await pool.query(
-        `UPDATE drafts
-         SET items = $1
-         WHERE id = $2
-           AND status IN ('pending', 'inbox')
-           AND user_id = (SELECT id FROM users WHERE telegram_user_id = $3)
-         RETURNING *`,
-        [JSON.stringify(normalized), draftId, telegramUserId]
-      );
+      const expectedVersion = options.expectedVersion;
+      const sql = expectedVersion == null
+        ? `UPDATE drafts
+           SET items = $1, version = version + 1
+           WHERE id = $2
+             AND status IN ('pending', 'inbox')
+             AND user_id = (SELECT id FROM users WHERE telegram_user_id = $3)
+           RETURNING *`
+        : `UPDATE drafts
+           SET items = $1, version = version + 1
+           WHERE id = $2
+             AND status IN ('pending', 'inbox')
+             AND version = $4
+             AND user_id = (SELECT id FROM users WHERE telegram_user_id = $3)
+           RETURNING *`;
+      const params = expectedVersion == null
+        ? [JSON.stringify(normalized), draftId, telegramUserId]
+        : [JSON.stringify(normalized), draftId, telegramUserId, expectedVersion];
+      const result = await pool.query(sql, params);
       return normalizeDraft(result.rows[0] ?? null);
     },
 
@@ -1043,6 +1063,11 @@ export function createRepository(pool, options = {}) {
     },
 
     async confirmDraft(draftId, telegramUserId) {
+      const result = await this.saveDraftAsExpense(draftId, telegramUserId);
+      return result.expenses;
+    },
+
+    async saveDraftAsExpense(draftId, telegramUserId) {
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
@@ -1055,10 +1080,29 @@ export function createRepository(pool, options = {}) {
           [draftId, telegramUserId]
         );
         const draft = draftResult.rows[0];
-        if (!draft) throw new Error("Draft not found");
-        if (draft.status !== "pending" && draft.status !== "inbox") throw new Error("Draft is already closed");
+        if (!draft) {
+          await client.query("ROLLBACK");
+          throw new DraftNotFoundError();
+        }
+        const status = draft.status;
+        if (status !== "pending" && status !== "inbox") {
+          await client.query("ROLLBACK");
+          if (status === "cancelled") throw new DraftCanceledError();
+          // already confirmed -> loser path: return the already-created expenses
+          const existing = await pool.query(
+            `SELECT * FROM expenses WHERE draft_id = $1 ORDER BY id`,
+            [draftId]
+          );
+          const snapshot = (await this.dashboard(telegramUserId)).snapshot;
+          return { expenses: existing.rows, dashboardSnapshot: snapshot, alreadySaved: true };
+        }
 
         const items = Array.isArray(draft.items) ? draft.items : JSON.parse(draft.items);
+        if (!draftHasValidCategories(items)) {
+          console.warn("[repository] confirm blocked: missing valid category", { draftId });
+          throw new CategoryRequiredError();
+        }
+
         const inserted = [];
         for (const item of items) {
           const spentAt = new Date(item.spent_at);
@@ -1091,13 +1135,14 @@ export function createRepository(pool, options = {}) {
         }
 
         await client.query(
-          "UPDATE drafts SET status = 'confirmed', confirmed_at = now() WHERE id = $1",
+          `UPDATE drafts SET status = 'confirmed', confirmed_at = now(), version = version + 1 WHERE id = $1`,
           [draft.id]
         );
         await client.query("COMMIT");
-        return inserted;
+        const snapshot = (await this.dashboard(telegramUserId)).snapshot;
+        return { expenses: inserted, dashboardSnapshot: snapshot, alreadySaved: false };
       } catch (error) {
-        await client.query("ROLLBACK");
+        try { await client.query("ROLLBACK"); } catch { /* already rolled back or connection gone */ }
         throw error;
       } finally {
         client.release();
@@ -1105,20 +1150,44 @@ export function createRepository(pool, options = {}) {
     },
 
     async cancelDraft(draftId, telegramUserId) {
-      await pool.query(
+      const result = await pool.query(
         `UPDATE drafts
-         SET status = 'cancelled'
+         SET status = 'cancelled', cancelled_at = now(), version = version + 1
+         WHERE id = $1
+           AND user_id = (SELECT id FROM users WHERE telegram_user_id = $2)
+           AND status IN ('pending', 'inbox')
+         RETURNING *`,
+        [draftId, telegramUserId]
+      );
+      if (result.rows[0]) return { canceled: true };
+      const current = await pool.query(
+        `SELECT status FROM drafts
          WHERE id = $1 AND user_id = (SELECT id FROM users WHERE telegram_user_id = $2)`,
         [draftId, telegramUserId]
       );
+      const status = current.rows[0]?.status;
+      if (status === "cancelled") return { canceled: false, reason: "already_cancelled" };
+      if (status === "confirmed") return { canceled: false, reason: "already_confirmed" };
+      return { canceled: false, reason: "not_found" };
     },
 
     async moveDraftToInbox(draftId, telegramUserId) {
       await pool.query(
         `UPDATE drafts
-         SET status = 'inbox'
-         WHERE id = $1 AND user_id = (SELECT id FROM users WHERE telegram_user_id = $2)`,
+         SET status = 'inbox', version = version + 1
+         WHERE id = $1
+           AND user_id = (SELECT id FROM users WHERE telegram_user_id = $2)
+           AND status IN ('pending', 'inbox')`,
         [draftId, telegramUserId]
+      );
+    },
+
+    async setDraftMessageRef(draftId, telegramUserId, chatId, messageId) {
+      await pool.query(
+        `UPDATE drafts
+         SET tg_chat_id = $3, tg_message_id = $4
+         WHERE id = $1 AND user_id = (SELECT id FROM users WHERE telegram_user_id = $2)`,
+        [draftId, telegramUserId, chatId ?? null, messageId ?? null]
       );
     },
 
@@ -1731,6 +1800,16 @@ async function getOrCreateDailyBudgetSnapshot(pool, user, now, input) {
   };
 }
 
+export function isCategoryValid(item) {
+  if (!item) return false;
+  if (item.category_source === "user") return true;
+  return item.category_slug !== "other" && !item.needs_review;
+}
+
+export function draftHasValidCategories(items) {
+  return Array.isArray(items) && items.length > 0 && items.every(isCategoryValid);
+}
+
 function normalizeDraft(draft) {
   if (!draft) return null;
   return {
@@ -1857,6 +1936,7 @@ function normalizeDraftItem(item) {
     currency: item.currency || "THB",
     description: String(item.description || "расход").trim(),
     category_slug: item.category_slug || "other",
+    category_source: item.category_source === "user" || item.category_source === "parser" ? item.category_source : null,
     tags: Array.isArray(item.tags) ? item.tags.map(String).filter(Boolean) : [],
     spent_at: item.spent_at || new Date().toISOString(),
     budget_impact: ["regular", "planned", "large_oneoff"].includes(item.budget_impact) ? item.budget_impact : "regular",

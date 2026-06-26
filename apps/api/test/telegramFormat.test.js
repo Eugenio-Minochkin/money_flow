@@ -255,6 +255,23 @@ function snapshot() {
   };
 }
 
+test("single-expense saved summary shows the saved line", () => {
+  const text = formatSavedSummary(80, snapshot(), { language: "en", expenses: [{ amount_base: 80, category_slug: "food_cafe", description: "coffee" }] });
+  assert.match(text, /coffee/);
+});
+
+test("multi-expense saved summary lists each expense and a total", () => {
+  const text = formatSavedSummary(280, snapshot(), { language: "en", expenses: [
+    { amount_base: 80, category_slug: "food_cafe", description: "coffee" },
+    { amount_base: 200, category_slug: "transport", description: "taxi" }
+  ] });
+  assert.match(text, /coffee/);
+  assert.match(text, /taxi/);
+  const normalized = normalizeSpaces(text);
+  assert.match(normalized, /<b>Total:<\/b> 280 THB/);
+  assert.ok(normalized.indexOf("coffee") < normalized.indexOf("📌"), "saved-expense lines appear before the today header");
+});
+
 function normalizeSpaces(value) {
   return value.replaceAll("\u00a0", " ");
 }

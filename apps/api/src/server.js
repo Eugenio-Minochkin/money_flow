@@ -15,9 +15,19 @@ import { handleDevRoute } from "./devRoutes.js";
 import { createRateLimiter } from "./rateLimit.js";
 import { createReleaseDigestScheduler } from "./releaseDigestScheduler.js";
 import { createReleaseNotesService } from "./releaseNotesService.js";
-import { createRepository } from "./repository.js";
+import { DraftCanceledError, CategoryRequiredError, createRepository } from "./repository.js";
 import { shouldRateLimitRequest } from "./routing.js";
-import { createTelegramBot, sendTelegramMessage, sendWeeklyReports, shouldSendWeeklyReport } from "./telegram.js";
+import {
+  createTelegramBot,
+  draftCanceledMessageText,
+  savedSummaryKeyboard,
+  sendTelegramMessage,
+  sendWeeklyReports,
+  shouldSendWeeklyReport,
+  updateDraftMessageToCanceled,
+  updateDraftMessageToSaved
+} from "./telegram.js";
+import { formatSavedSummary } from "./telegramFormat.js";
 import { createVoiceTranscriber } from "./voiceTranscriber.js";
 
 const root = resolve(fileURLToPath(new URL("../../..", import.meta.url)));
@@ -407,8 +417,16 @@ async function route(req, res) {
       const body = await readJson(req);
       const auth = apiSecurity.resolveTelegramUserId(req, url, body);
       if (auth.error) return sendJson(res, 400, { error: auth.error });
-      const draft = await repository.updateDraftItems(draftId, auth.telegramUserId, body.items ?? []);
-      if (!draft) return sendJson(res, 404, { error: "draft_not_found" });
+      const expectedVersion = Number.isFinite(Number(body.expectedVersion)) ? Number(body.expectedVersion) : null;
+      const draft = await repository.updateDraftItems(draftId, auth.telegramUserId, body.items ?? [], { expectedVersion });
+      if (!draft) {
+        const fresh = await repository.getDraftForTelegramUser(draftId, auth.telegramUserId);
+        if (fresh && (fresh.status === "pending" || fresh.status === "inbox")) {
+          console.warn("[server] draft version conflict", { draftId });
+          return sendJson(res, 409, { error: "draft_version_conflict", draft: fresh });
+        }
+        return sendJson(res, 404, { error: "draft_not_found" });
+      }
       return sendJson(res, 200, { draft });
     }
 
@@ -416,16 +434,37 @@ async function route(req, res) {
       const body = await readJson(req);
       const auth = apiSecurity.resolveTelegramUserId(req, url, body);
       if (auth.error) return sendJson(res, 400, { error: auth.error });
-      await repository.cancelDraft(draftId, auth.telegramUserId);
-      return sendJson(res, 200, { ok: true });
+      const outcome = await repository.cancelDraft(draftId, auth.telegramUserId);
+      if (outcome.canceled) {
+        const draft = await repository.getDraftForTelegramUser(draftId, auth.telegramUserId);
+        if (draft) {
+          await updateDraftMessageToCanceled({ token: config.telegramBotToken, draft, text: draftCanceledMessageText(body.language ?? "en"), telegramClient: null })
+            .catch((error) => console.error("[server] cancel message update failed", error.message));
+        }
+      }
+      return sendJson(res, 200, { ok: true, ...outcome });
     }
 
     if (req.method === "POST" && draftMatch[2]) {
       const body = await readJson(req);
       const auth = apiSecurity.resolveTelegramUserId(req, url, body);
       if (auth.error) return sendJson(res, 400, { error: auth.error });
-      const expenses = await repository.confirmDraft(draftId, auth.telegramUserId);
-      return sendJson(res, 200, { expenses });
+      const language = body.language ?? "en";
+      try {
+        const result = await repository.saveDraftAsExpense(draftId, auth.telegramUserId);
+        const draft = await repository.getDraftForTelegramUser(draftId, auth.telegramUserId);
+        if (draft?.tg_chat_id && draft?.tg_message_id) {
+          const total = result.expenses.reduce((sum, expense) => sum + Number(expense.amount_base), 0);
+          const text = formatSavedSummary(total, result.dashboardSnapshot, { language, expenses: result.expenses });
+          await updateDraftMessageToSaved({ token: config.telegramBotToken, draft, text, replyMarkup: savedSummaryKeyboard(config.miniAppUrl, auth.telegramUserId, language), telegramClient: null })
+            .catch((error) => console.error("[server] confirm message update failed", error.message));
+        }
+        return sendJson(res, 200, { expenses: result.expenses, dashboardSnapshot: result.dashboardSnapshot, alreadySaved: result.alreadySaved });
+      } catch (error) {
+        if (error instanceof DraftCanceledError) return sendJson(res, 409, { error: "draft_canceled" });
+        if (error instanceof CategoryRequiredError) return sendJson(res, 422, { error: "category_required" });
+        throw error;
+      }
     }
   }
 

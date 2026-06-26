@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import pg from "pg";
@@ -12,9 +12,18 @@ export const pool = new Pool({
   connectionString: config.databaseUrl
 });
 
+export async function listMigrationFiles(migrationsDir) {
+  const entries = await readdir(migrationsDir);
+  return entries.filter((file) => file.endsWith(".sql")).sort();
+}
+
 export async function migrate() {
-  const migration = await readFile(resolve(__dirname, "../migrations/001_initial.sql"), "utf8");
-  await runWithRetry(() => pool.query(migration));
+  const migrationsDir = resolve(__dirname, "../migrations");
+  const files = await listMigrationFiles(migrationsDir);
+  for (const file of files) {
+    const sql = await readFile(resolve(migrationsDir, file), "utf8");
+    await runWithRetry(() => pool.query(sql));
+  }
 }
 
 export async function closeDb() {

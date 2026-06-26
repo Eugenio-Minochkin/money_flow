@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { parseAdminTelegramIds } from "../src/adminAccess.js";
-import { createTelegramBot, sendTelegramMessage, sendWeeklyReports } from "../src/telegram.js";
+import { createTelegramBot, processQueuedMessage, sendTelegramMessage, sendWeeklyReports } from "../src/telegram.js";
 
 test("exports the Telegram message sender used by the production server", async () => {
   const calls = [];
@@ -48,7 +48,7 @@ test("text message creates a pending draft response", async () => {
     assert.match(calls[0][1].text, /Заношу расход/);
     assert.match(calls[1][1].text, /Я понял так/);
     assert.match(calls[1][1].text, /кофе/);
-    assert.equal(calls[1][1].replyMarkup.inline_keyboard[0][0].callback_data, "confirm:42");
+    assert.equal(calls[1][1].replyMarkup.inline_keyboard[0][0].callback_data, "d:42:confirm");
   } finally {
     console.log = originalLog;
   }
@@ -488,7 +488,7 @@ test("voice message is transcribed and creates a draft response", async () => {
     assert.match(calls[0][1].text, /Заношу расход|Adding expense/);
     assert.match(calls[1][1].text, /кофе/);
     assert.match(calls[1][1].text, /70 THB/);
-    assert.equal(calls[1][1].replyMarkup.inline_keyboard[0][0].callback_data, "confirm:42");
+    assert.equal(calls[1][1].replyMarkup.inline_keyboard[0][0].callback_data, "d:42:confirm");
   } finally {
     console.log = originalLog;
   }
@@ -617,7 +617,7 @@ test("regular cancel edits the original message, removes buttons and records an 
   let cancelled = null;
   repo.cancelDraft = async (draftId, telegramUserId) => {
     cancelled = { draftId, telegramUserId };
-    return null;
+    return { canceled: true };
   };
   const calls = [];
   const bot = createTelegramBot({
@@ -658,7 +658,7 @@ test("regular cancel edits the original message, removes buttons and records an 
   assert.ok(edit);
   assert.equal(edit.chatId, 10);
   assert.equal(edit.messageId, 55);
-  assert.match(edit.text, /Запись отменена|Entry cancelled/);
+  assert.match(edit.text, /Черновик отменён|Draft canceled/);
   assert.deepEqual(edit.replyMarkup, { inline_keyboard: [] });
   assert.ok(calls.some((call) => call.method === "answerCallbackQuery"));
   assert.equal(calls.some((call) => call.method === "sendMessage"), false);
@@ -713,7 +713,7 @@ test("regular cancel sends a fallback message and does not throw if editing fail
   assert.ok(calls.some((call) => call.method === "editMessageText"));
   const fallback = calls.find((call) => call.method === "sendMessage");
   assert.ok(fallback);
-  assert.match(fallback.text, /Запись отменена|Entry cancelled/);
+  assert.match(fallback.text, /Черновик отменён|Draft canceled/);
   assert.equal(calls.some((call) => call.method === "deleteMessage"), false);
   assert.deepEqual(repo.events, [
     { userId: 1, eventName: "expense_draft_cancelled", metadata: { draftType: "regular" } }
@@ -1809,10 +1809,136 @@ test("impact callback updates the draft item and edits the existing Telegram mes
     assert.ok(edit);
     assert.equal(edit.body.chat_id, 10);
     assert.equal(edit.body.message_id, 99);
-    assert.ok(edit.body.reply_markup.inline_keyboard.flat().some((button) => button.text === "☑️ Крупная"));
+    assert.ok(edit.body.reply_markup.inline_keyboard.flat().some((button) => button.text === "🔘 Крупная"));
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test("draft category callback (d: scheme) maps quick code to slug, marks user source and edits in place", async () => {
+  const calls = [];
+  const repo = fakeRepository();
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: repo,
+    telegramClient: {
+      async sendMessage(message) { calls.push({ method: "sendMessage", ...message }); return { ok: true }; },
+      async editMessageText(message) { calls.push({ method: "editMessageText", ...message }); return { ok: true }; },
+      async answerCallbackQuery(message) { calls.push({ method: "answerCallbackQuery", ...message }); return { ok: true }; },
+      async deleteMessage() { return { ok: true }; }
+    }
+  });
+
+  await bot.handleUpdate({
+    callback_query: {
+      id: "callback-d-cat",
+      data: "d:42:c:food",
+      from: { id: 100 },
+      message: { chat: { id: 10 }, message_id: 71 }
+    }
+  });
+
+  assert.equal(repo.updatedItems[0].category_slug, "food_cafe");
+  assert.equal(repo.updatedItems[0].category_source, "user");
+  const edit = calls.find((call) => call.method === "editMessageText");
+  assert.ok(edit);
+  assert.equal(edit.messageId, 71);
+  assert.equal(calls.some((call) => call.method === "sendMessage"), false);
+  assert.ok(calls.some((call) => call.method === "answerCallbackQuery"));
+});
+
+test("draft type callback (d: scheme) updates budget impact and edits in place", async () => {
+  const calls = [];
+  const repo = fakeRepository();
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: repo,
+    telegramClient: {
+      async sendMessage(message) { calls.push({ method: "sendMessage", ...message }); return { ok: true }; },
+      async editMessageText(message) { calls.push({ method: "editMessageText", ...message }); return { ok: true }; },
+      async answerCallbackQuery(message) { calls.push({ method: "answerCallbackQuery", ...message }); return { ok: true }; },
+      async deleteMessage() { return { ok: true }; }
+    }
+  });
+
+  await bot.handleUpdate({
+    callback_query: {
+      id: "callback-d-type",
+      data: "d:42:t:r",
+      from: { id: 100 },
+      message: { chat: { id: 10 }, message_id: 72 }
+    }
+  });
+
+  assert.equal(repo.updatedItems[0].budget_impact, "regular");
+  const edit = calls.find((call) => call.method === "editMessageText");
+  assert.ok(edit);
+  assert.equal(edit.messageId, 72);
+});
+
+test("draft confirm callback (d: scheme) shows already-saved toast and skips save events when alreadySaved", async () => {
+  const calls = [];
+  const repo = fakeRepository();
+  repo.saveDraftAsExpense = async () => {
+    return { expenses: [{ amount_base: 75 }], dashboardSnapshot: (await repo.dashboard()).snapshot, alreadySaved: true };
+  };
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: repo,
+    telegramClient: {
+      async sendMessage(message) { calls.push({ method: "sendMessage", ...message }); return { ok: true }; },
+      async editMessageText(message) { calls.push({ method: "editMessageText", ...message }); return { ok: true }; },
+      async answerCallbackQuery(message) { calls.push({ method: "answerCallbackQuery", ...message }); return { ok: true }; },
+      async deleteMessage() { return { ok: true }; }
+    }
+  });
+
+  await bot.handleUpdate({
+    callback_query: {
+      id: "callback-d-confirm-already",
+      data: "d:42:confirm",
+      from: { id: 100 },
+      message: { chat: { id: 10 }, message_id: 73 }
+    }
+  });
+
+  const answer = calls.find((call) => call.method === "answerCallbackQuery");
+  assert.ok(answer);
+  assert.equal(answer.text, "Уже сохранено");
+  assert.equal(repo.events.some((event) => event.eventName === "expense_saved"), false);
+  assert.equal(repo.events.some((event) => event.eventName === "expense_draft_confirmed"), false);
+});
+
+test("draft review callback (d: scheme) moves the draft to the inbox", async () => {
+  let moved = null;
+  const repo = fakeRepository();
+  const moveSpy = repo.moveDraftToInbox.bind(repo);
+  repo.moveDraftToInbox = async (draftId, telegramUserId) => {
+    moved = { draftId, telegramUserId };
+    return moveSpy(draftId, telegramUserId);
+  };
+  const messages = [];
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: repo,
+    telegramClient: captureTelegramClient(messages)
+  });
+
+  await bot.handleUpdate({
+    callback_query: {
+      id: "callback-d-review",
+      data: "d:42:review",
+      from: { id: 100 },
+      message: { chat: { id: 10 } }
+    }
+  });
+
+  assert.deepEqual(moved, { draftId: "42", telegramUserId: 100 });
+  assert.match(messages.at(-1).text, /Inbox/);
 });
 
 test("weekly reports are sent once per pending user", async () => {
@@ -1871,7 +1997,7 @@ test("unclear draft includes category quick actions", async () => {
     });
 
     const keyboard = calls[1][1].replyMarkup.inline_keyboard.flat();
-    assert.ok(keyboard.some((button) => button.callback_data === "cat:42:0:food_cafe"));
+    assert.ok(keyboard.some((button) => button.callback_data === "d:42:c:food"));
   } finally {
     console.log = originalLog;
   }
@@ -2284,10 +2410,13 @@ function fakeRepository() {
       return null;
     },
     async cancelDraft() {
-      return null;
+      return { canceled: true };
     },
     async createDraft() {
       return { id: 42 };
+    },
+    async setDraftMessageRef() {
+      return null;
     },
     async getDraftForTelegramUser() {
       return {
@@ -2312,6 +2441,10 @@ function fakeRepository() {
     async confirmDraft(draftId) {
       this.confirmedDraftId = draftId;
       return [{ amount_base: 75 }];
+    },
+    async saveDraftAsExpense(draftId) {
+      this.confirmedDraftId = draftId;
+      return { expenses: [{ amount_base: 75 }], dashboardSnapshot: (await this.dashboard()).snapshot, alreadySaved: false };
     },
     async moveDraftToInbox() {
       return null;
@@ -2478,5 +2611,282 @@ function emptyAdminPeriod(overrides = {}) {
     confirmRate: null,
     parseFailedRate: null,
     ...overrides
+  };
+}
+
+test("isMessageNotModified detects the not-modified 400 and rejects other errors", async () => {
+  const { isMessageNotModified } = await import("../src/telegram.js");
+  assert.equal(isMessageNotModified({ status: 400, body: "Bad Request: message is not modified" }), true);
+  assert.equal(isMessageNotModified({ status: 400, body: "Bad Request: chat not found" }), false);
+  assert.equal(isMessageNotModified({ status: 500, message: "message is not modified" }), false);
+  assert.equal(isMessageNotModified(null), false);
+});
+
+test("regular draft delivery stores the originating telegram chat and message id", async () => {
+  const refs = [];
+  const repository = {
+    async getUserByTelegramId() {
+      return { id: 1, interface_language: "en", base_currency: "THB", onboarding_step: "completed" };
+    },
+    async createDraft() {
+      return { id: 1, status: "pending" };
+    },
+    async createPlannedDraft() {
+      return { id: 99 };
+    },
+    async setDraftMessageRef(draftId, _telegramUserId, chatId, messageId) {
+      refs.push({ id: draftId, chatId, messageId });
+    }
+  };
+  const expenseParser = {
+    async parse() {
+      return {
+        expenses: [{
+          amount: 70,
+          currency: "THB",
+          description: "coffee",
+          category_slug: "food_cafe",
+          budget_impact: "regular",
+          needs_review: false,
+          category_source: "parser",
+          tags: [],
+          spent_at: "2026-06-25T10:00:00Z"
+        }]
+      };
+    }
+  };
+  const telegramClient = {
+    async sendMessage() {
+      return { ok: true, result: { message_id: 777 } };
+    },
+    async editMessageText() {
+      return { ok: true, result: { message_id: 777 } };
+    }
+  };
+
+  await processQueuedMessage({
+    message: { chat: { id: 5 } },
+    from: { id: 100 },
+    user: { interface_language: "en", base_currency: "THB", onboarding_step: "completed" },
+    rawText: "coffee 70",
+    repository,
+    token: null,
+    miniAppUrl: "http://x",
+    expenseParser,
+    telegramClient,
+    now: () => new Date(),
+    trace: stubTrace()
+  });
+
+  assert.equal(refs.length, 1);
+  assert.equal(refs[0].chatId, 5);
+  assert.equal(refs[0].messageId, 777);
+});
+
+test("updateDraftMessageToSaved edits the stored message and falls back to a new one on failure", async () => {
+  const { updateDraftMessageToSaved } = await import("../src/telegram.js");
+  const calls = [];
+  const telegramClient = {
+    editMessageText: async () => { throw { status: 400, body: "Bad Request: message to edit not found" }; },
+    sendMessage: async (args) => { calls.push(["sendMessage", args]); return { ok: true }; },
+    editMessageReplyMarkup: async (args) => { calls.push(["editMessageReplyMarkup", args]); return { ok: true }; }
+  };
+  await updateDraftMessageToSaved({
+    token: null, draft: { id: 7, tg_chat_id: 5, tg_message_id: 9 }, text: "saved", replyMarkup: { inline_keyboard: [] }, telegramClient
+  });
+  assert.ok(calls.some(([name]) => name === "sendMessage"), "expected fallback new message");
+});
+
+test("updateDraftMessageToSaved is a no-op without a stored reference", async () => {
+  const { updateDraftMessageToSaved } = await import("../src/telegram.js");
+  const telegramClient = { editMessageText: async () => { throw new Error("should not be called"); } };
+  await updateDraftMessageToSaved({ token: null, draft: { id: 7, tg_chat_id: null, tg_message_id: null }, text: "x", replyMarkup: null, telegramClient });
+});
+
+test("draftCanceledMessageText and savedSummaryKeyboard are localized", async () => {
+  const { draftCanceledMessageText, savedSummaryKeyboard } = await import("../src/telegram.js");
+  assert.match(draftCanceledMessageText("en"), /Draft canceled/);
+  assert.match(draftCanceledMessageText("ru"), /Черновик отменён/);
+  const kb = savedSummaryKeyboard("http://x", 100, "en");
+  assert.ok(kb.inline_keyboard[0][0].web_app?.url?.includes("telegramUserId=100"));
+});
+
+function stubTrace() {
+  return { start() {}, end() {}, event() {}, failActive() {} };
+}
+
+test("legacy confirm:42 callback still confirms via the shared handler", async () => {
+  let confirmedWith;
+  const repository = {
+    ...fakeRepository(),
+    async getUserByTelegramId() {
+      return { id: 1, interface_language: "en", base_currency: "THB", onboarding_step: "completed" };
+    },
+    async saveDraftAsExpense(id) {
+      confirmedWith = id;
+      return { expenses: [{ amount_base: 80, category_slug: "food_cafe", description: "coffee" }], dashboardSnapshot: (await this.dashboard()).snapshot, alreadySaved: false };
+    }
+  };
+  const messages = [];
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository,
+    telegramClient: captureTelegramClient(messages)
+  });
+
+  await bot.handleUpdate({
+    callback_query: {
+      id: "cq1",
+      data: "confirm:42",
+      from: { id: 100 },
+      message: { chat: { id: 1 }, message_id: 9 }
+    }
+  });
+
+  assert.equal(confirmedWith, "42");
+});
+
+test("draft type callback (d: scheme) large_oneoff value updates budget impact", async () => {
+  const calls = [];
+  const repo = fakeRepository();
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: repo,
+    telegramClient: {
+      async sendMessage(message) { calls.push({ method: "sendMessage", ...message }); return { ok: true }; },
+      async editMessageText(message) { calls.push({ method: "editMessageText", ...message }); return { ok: true }; },
+      async answerCallbackQuery(message) { calls.push({ method: "answerCallbackQuery", ...message }); return { ok: true }; },
+      async deleteMessage() { return { ok: true }; }
+    }
+  });
+
+  await bot.handleUpdate({
+    callback_query: {
+      id: "callback-d-type-large",
+      data: "d:42:t:l",
+      from: { id: 100 },
+      message: { chat: { id: 10 }, message_id: 72 }
+    }
+  });
+
+  assert.equal(repo.updatedItems[0].budget_impact, "large_oneoff");
+  const edit = calls.find((call) => call.method === "editMessageText");
+  assert.ok(edit);
+  assert.equal(edit.messageId, 72);
+});
+
+test("cancel callback answers a different toast for each non-canceled outcome reason", async () => {
+  const cases = [
+    { reason: "already_cancelled", expected: "Этот черновик уже отменён." },
+    { reason: "already_confirmed", expected: "Уже сохранено" },
+    { reason: "not_found", expected: "⚠️ Что-то пошло не так. Попробуйте ещё раз." }
+  ];
+
+  for (const { reason, expected } of cases) {
+    const calls = [];
+    const repo = fakeRepository();
+    repo.cancelDraft = async () => ({ canceled: false, reason });
+    const bot = createTelegramBot({
+      token: "test-token",
+      miniAppUrl: "http://localhost:3000",
+      repository: repo,
+      telegramClient: capturingClient(calls)
+    });
+
+    await bot.handleUpdate({
+      callback_query: {
+        id: `callback-cancel-${reason}`,
+        data: "cancel:42",
+        from: { id: 100 },
+        message: { chat: { id: 10 }, message_id: 55 }
+      }
+    });
+
+    const answer = calls.find((call) => call.method === "answerCallbackQuery");
+    assert.ok(answer, reason);
+    assert.equal(answer.text, expected, reason);
+    assert.equal(calls.some((call) => call.method === "editMessageText"), false, reason);
+    assert.equal(calls.some((call) => call.method === "sendMessage"), false, reason);
+  }
+});
+
+test("cancel callback with a real cancel edits the draft into the canceled message with an empty keyboard", async () => {
+  const calls = [];
+  const repo = fakeRepository();
+  repo.cancelDraft = async () => ({ canceled: true });
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: repo,
+    telegramClient: capturingClient(calls)
+  });
+
+  await bot.handleUpdate({
+    callback_query: {
+      id: "callback-cancel-real",
+      data: "cancel:42",
+      from: { id: 100 },
+      message: { chat: { id: 10 }, message_id: 55 }
+    }
+  });
+
+  const edit = calls.find((call) => call.method === "editMessageText");
+  assert.ok(edit);
+  assert.equal(edit.messageId, 55);
+  assert.equal(edit.text, "🗑 Черновик отменён.\nРасход не был сохранён.");
+  assert.deepEqual(edit.replyMarkup, { inline_keyboard: [] });
+  assert.equal(calls.some((call) => call.method === "sendMessage"), false);
+  assert.deepEqual(repo.events, [
+    { userId: 1, eventName: "expense_draft_cancelled", metadata: { draftType: "regular" } }
+  ]);
+});
+
+test("confirm callback clears the old draft keyboard and sends a new message when editing fails", async () => {
+  const calls = [];
+  const repo = fakeRepository();
+  const originalError = console.error;
+  console.error = () => {};
+  try {
+    const bot = createTelegramBot({
+      token: "test-token",
+      miniAppUrl: "http://localhost:3000",
+      repository: repo,
+      telegramClient: {
+        async sendMessage(message) { calls.push({ method: "sendMessage", ...message }); return { ok: true }; },
+        async editMessageText(message) { calls.push({ method: "editMessageText", ...message }); throw new Error("edit failed"); },
+        async answerCallbackQuery(message) { calls.push({ method: "answerCallbackQuery", ...message }); return { ok: true }; },
+        async editMessageReplyMarkup(message) { calls.push({ method: "editMessageReplyMarkup", ...message }); return { ok: true }; },
+        async deleteMessage() { return { ok: true }; }
+      }
+    });
+
+    await bot.handleUpdate({
+      callback_query: {
+        id: "callback-confirm-fallback",
+        data: "confirm:42",
+        from: { id: 100 },
+        message: { chat: { id: 10 }, message_id: 55 }
+      }
+    });
+  } finally {
+    console.error = originalError;
+  }
+
+  const markup = calls.find((call) => call.method === "editMessageReplyMarkup");
+  assert.ok(markup);
+  assert.equal(markup.messageId, 55);
+  assert.deepEqual(markup.replyMarkup, { inline_keyboard: [] });
+  assert.ok(calls.some((call) => call.method === "sendMessage"));
+});
+
+function capturingClient(calls) {
+  return {
+    async sendMessage(message) { calls.push({ method: "sendMessage", ...message }); return { ok: true }; },
+    async editMessageText(message) { calls.push({ method: "editMessageText", ...message }); return { ok: true }; },
+    async answerCallbackQuery(message) { calls.push({ method: "answerCallbackQuery", ...message }); return { ok: true }; },
+    async editMessageReplyMarkup(message) { calls.push({ method: "editMessageReplyMarkup", ...message }); return { ok: true }; },
+    async deleteMessage() { return { ok: true }; }
   };
 }

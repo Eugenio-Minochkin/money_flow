@@ -17,7 +17,10 @@ export function createApiClient({
     });
     if (!response.ok) {
       const body = await response.json().catch(() => ({}));
-      throw new Error(body.error ?? "Не удалось выполнить запрос.");
+      const error = new Error(body.error ?? "Не удалось выполнить запрос.");
+      error.status = response.status;
+      error.body = body;
+      throw error;
     }
     return response.json();
   };

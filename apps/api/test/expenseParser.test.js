@@ -164,6 +164,32 @@ test("falls back to the local parser when OpenAI fails", async () => {
   }
 });
 
+test("parsed expenses carry category_source parser", async () => {
+  const parser = createExpenseParser({
+    apiKey: "test-key",
+    now: () => new Date("2026-06-01T10:00:00+07:00"),
+    fetchImpl: async () => jsonResponse({
+      output_text: JSON.stringify({
+        expenses: [{
+          amount: 80,
+          currency: "THB",
+          description: "coffee",
+          category_slug: "food_cafe",
+          tags: [],
+          spent_at: "2026-06-01T10:00:00.000+07:00",
+          confidence: 0.9,
+          needs_review: false
+        }],
+        notes: []
+      })
+    })
+  });
+
+  const result = await parser.parse("coffee 80", { defaultCurrency: "THB", timeZone: "Asia/Bangkok" });
+
+  assert.equal(result.expenses[0].category_source, "parser");
+});
+
 function jsonResponse(body, options = {}) {
   return {
     ok: options.ok ?? true,

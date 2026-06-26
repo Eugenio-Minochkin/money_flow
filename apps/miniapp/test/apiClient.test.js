@@ -35,6 +35,17 @@ test("API client raises API error message from response body", async () => {
   );
 });
 
+test("API client attaches status and body to thrown errors", async () => {
+  const api = createApiClient({
+    getInitData: () => "",
+    fetchImpl: async () => response(409, { error: "draft_version_conflict", draft: { id: 1, version: 5 } })
+  });
+  await assert.rejects(
+    () => api("/api/drafts/1", { method: "PATCH", body: { telegramUserId: 100 } }),
+    (error) => error.status === 409 && error.body?.error === "draft_version_conflict"
+  );
+});
+
 test("API client sends the detected IANA timezone", async () => {
   let request;
   const api = createApiClient({

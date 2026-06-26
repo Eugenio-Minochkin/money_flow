@@ -1,54 +1,69 @@
+const QUICK_CATEGORY_CODES = [
+  { code: "food", slug: "food_cafe", label: "food" },
+  { code: "home", slug: "home", label: "home" },
+  { code: "transport", slug: "transport", label: "transport" },
+  { code: "health", slug: "health", label: "health" },
+  { code: "sport", slug: "sport_activities", label: "sport" },
+  { code: "other", slug: "other", label: "other" }
+];
+
+export function categorySlugFromCode(code) {
+  return QUICK_CATEGORY_CODES.find((entry) => entry.code === code)?.slug ?? null;
+}
+
+export function categoryCodeFromSlug(slug) {
+  return QUICK_CATEGORY_CODES.find((entry) => entry.slug === slug)?.code ?? null;
+}
+
+export function parseDraftCallback(data) {
+  const parts = String(data ?? "").split(":");
+  if (parts[0] !== "d") return null;
+  const draftId = parts[1];
+  const sub = parts[2];
+  if (sub === "confirm" || sub === "cancel" || sub === "review") {
+    return { scheme: "d", draftId, action: sub };
+  }
+  if (sub === "t") return { scheme: "d", draftId, action: "type", value: parts[3] };
+  if (sub === "c") return { scheme: "d", draftId, action: "category", value: parts[3] };
+  return null;
+}
+
 export function draftKeyboard(draftId, items = [], miniAppUrl, telegramUserId, language = "ru") {
   const text = keyboardText(language);
-  const firstReviewIndex = items.findIndex((item) => item.needs_review || item.category_slug === "other");
-  const impactIndex = firstReviewIndex >= 0 ? firstReviewIndex : 0;
-  const impactValue = items[impactIndex]?.budget_impact ?? "regular";
-  const quickRows = [
-    [
-      impactButton(text.regular, "regular", impactValue, draftId, impactIndex),
-      impactButton(text.planned, "planned", impactValue, draftId, impactIndex),
-      impactButton(text.large, "large_oneoff", impactValue, draftId, impactIndex)
-    ]
-  ];
-  if (firstReviewIndex >= 0) {
-    quickRows.push([
-      { text: text.food, callback_data: `cat:${draftId}:${firstReviewIndex}:food_cafe` },
-      { text: text.home, callback_data: `cat:${draftId}:${firstReviewIndex}:home` },
-      { text: text.transport, callback_data: `cat:${draftId}:${firstReviewIndex}:transport` }
+  const rows = [[{ text: `✅ ${text.confirm}`, callback_data: `d:${draftId}:confirm` }]];
+
+  if (Array.isArray(items) && items.length === 1) {
+    const item = items[0];
+    const impact = item.budget_impact;
+    rows.push([
+      typeButton(text.regular, impact === "regular", draftId, "r"),
+      typeButton(text.large, impact === "large_oneoff", draftId, "l")
     ]);
-    quickRows.push([
-      { text: text.health, callback_data: `cat:${draftId}:${firstReviewIndex}:health` },
-      { text: text.sport, callback_data: `cat:${draftId}:${firstReviewIndex}:sport_activities` },
-      { text: text.other, callback_data: `cat:${draftId}:${firstReviewIndex}:other` }
-    ]);
+    const categoryIsVisuallySelected =
+      item.category_source === "user" ||
+      (item.category_slug !== "other" && !item.needs_review);
+    const selectedSlug = categoryIsVisuallySelected ? item.category_slug : null;
+    rows.push(QUICK_CATEGORY_CODES.slice(0, 3).map((entry) =>
+      categoryButton(text[entry.label], entry.slug === selectedSlug, draftId, entry.code)));
+    rows.push(QUICK_CATEGORY_CODES.slice(3).map((entry) =>
+      categoryButton(text[entry.label], entry.slug === selectedSlug, draftId, entry.code)));
   }
-  return {
-    inline_keyboard: [
-      [{ text: `✅ ${text.confirm}`, callback_data: `confirm:${draftId}` }],
-      ...quickRows,
-      [
-        { text: `✏️ ${text.edit}`, web_app: { url: `${miniAppUrl}?telegramUserId=${telegramUserId}&draftId=${draftId}` } },
-        { text: `🗑 ${text.cancel}`, callback_data: `cancel:${draftId}` }
-      ],
-      [{ text: `📥 ${text.later}`, callback_data: `inbox:${draftId}` }],
-      [{ text: "📱 Mini App", web_app: { url: `${miniAppUrl}?telegramUserId=${telegramUserId}` } }]
-    ]
-  };
+
+  rows.push([
+    { text: `✏️ ${text.edit}`, web_app: { url: `${miniAppUrl}?telegramUserId=${telegramUserId}&draftId=${draftId}` } },
+    { text: `🗑 ${text.cancel}`, callback_data: `d:${draftId}:cancel` }
+  ]);
+  rows.push([{ text: `📥 ${text.later}`, callback_data: `d:${draftId}:review` }]);
+  rows.push([{ text: "📱 Mini App", web_app: { url: `${miniAppUrl}?telegramUserId=${telegramUserId}` } }]);
+  return { inline_keyboard: rows };
 }
 
-function impactButton(label, value, activeValue, draftId, itemIndex) {
-  return {
-    text: `${activeValue === value ? "☑️" : "⬜"} ${label ?? impactFallbackLabel(value)}`,
-    callback_data: `impact:${draftId}:${itemIndex}:${value}`
-  };
+function typeButton(label, selected, draftId, code) {
+  return { text: `${selected ? "🔘" : "⚪"} ${label}`, callback_data: `d:${draftId}:t:${code}` };
 }
 
-function impactFallbackLabel(value) {
-  return {
-    regular: "Обычная",
-    planned: "Плановая",
-    large_oneoff: "Крупная"
-  }[value] ?? value;
+function categoryButton(label, selected, draftId, code) {
+  return { text: `${selected ? "✅" : "⬜"} ${label}`, callback_data: `d:${draftId}:c:${code}` };
 }
 
 export function plannedDraftKeyboard(plannedDraftId, miniAppUrl, telegramUserId, language = "ru") {
@@ -125,6 +140,8 @@ function keyboardText(language) {
     health: "Здоровье",
     home: "Дом",
     later: "Разобрать позже",
+    large: "Крупная",
+    regular: "Обычная",
     openApp: "Открыть Mini App",
     openDraft: "Открыть этот черновик",
     other: "Другое",

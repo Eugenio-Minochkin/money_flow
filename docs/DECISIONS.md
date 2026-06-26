@@ -25,3 +25,11 @@ Local days, weeks, months, daily budget snapshots, history filters, planned paym
 ## 2026-06 - Daily Empty-Day Reminder Is A Safe MVP
 
 The daily empty-day reminder uses a kill switch, rollout percentage, 48-hour frequency cap, idempotent delivery rows, no-spending marks, and Telegram blocked/forbidden logging. It is not a full experimentation or holdout platform.
+
+## Draft confirm flow (2026-06-25)
+- One draft maps to N expenses (unchanged). Confirm is an atomic in-transaction CAS (`pending|inbox → confirmed`) with in-transaction category validation; a losing concurrent confirm returns the already-created expenses (`alreadySaved: true`) instead of throwing.
+- Cancel is a CAS guarded to open states; it is a no-op on a `confirmed` draft and never deletes an expense.
+- Every draft mutation bumps `version` for Mini App↔Telegram optimistic locking (PATCH honors `expectedVersion`, returns 409 on conflict).
+- `category_source` (`parser`|`user`) lives per-item in `items` JSONB (set by both parser paths); parser-fallback `other` blocks confirm, user-chosen `other` is valid.
+- Telegram quick keyboard dropped Planned; type uses `🔘/⚪`, category uses `✅/⬜`; new `d:<id>:<action>` callback scheme (legacy callbacks remain supported). All callback_data ≤ 64 bytes.
+- Both inline and Mini App confirm/cancel edit the original Telegram message in place using stored `tg_chat_id`/`tg_message_id`, with a send-new fallback. "message is not modified" is swallowed.

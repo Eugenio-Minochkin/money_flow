@@ -65,6 +65,7 @@ function parsePart(part, now, defaultCurrency, timeZone) {
     currency,
     description,
     category_slug: category,
+    category_source: "parser",
     tags: inferTags(description),
     spent_at: toZonedIso(spentAt, timeZone),
     confidence: needsReview ? 0.62 : 0.86,

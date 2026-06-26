@@ -1,6 +1,7 @@
 import { createApiClient } from "./apiClient.js";
 import { categories, categoryColor, categoryLabel } from "./categories.js";
 import { currencyOptions } from "./currencies.js";
+import { resolveDraftSaveResponse, classifyConfirmOutcome } from "./draftSave.js";
 import { buildDashboardCards, buildHeroMetric, renderDashboardCards } from "./dashboardCards.js";
 import {
   dateTimeLocal,
@@ -48,6 +49,7 @@ const percentNumber = new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 
 const api = createApiClient();
 let dashboardState = null;
 let draftState = null;
+let draftDirty = false;
 let draftReturnTab = "dashboard";
 let expenseReturnTab = "dashboard";
 let historyState = [];
@@ -880,6 +882,7 @@ function bindInboxActions(container) {
   });
   container.querySelectorAll("[data-cancel-draft]").forEach((button) => {
     button.addEventListener("click", async () => {
+      if (!window.confirm(t("confirmations.closeWithoutSaving"))) return;
       await api(`/api/drafts/${button.dataset.cancelDraft}`, { method: "DELETE", body: { telegramUserId } });
       await loadHistory();
       showToast(t("toast.draftCanceled"));
@@ -1159,15 +1162,19 @@ function renderDraftEditor(draft) {
     <div class="form-stack">
       ${draft.items.map((item, index) => editableItemFields(item, `draft-${index}`, index)).join("")}
       <div class="button-row">
-        <button type="submit">${t("actions.saveDraft")}</button>
+        <button type="submit">${t("actions.saveChanges")}</button>
         <button type="button" id="confirmDraftButton">${t("actions.confirm")}</button>
+        <button type="button" class="danger-button" id="cancelDraftButton">${t("actions.cancelDraft")}</button>
         <button type="button" class="ghost-button" id="closeDraftButton">${t("actions.close")}</button>
       </div>
     </div>
   `;
   form.onsubmit = saveDraft;
   form.querySelector("#confirmDraftButton").addEventListener("click", confirmDraft);
+  form.querySelector("#cancelDraftButton").addEventListener("click", cancelDraftFromEditor);
   form.querySelector("#closeDraftButton").addEventListener("click", closeDraftEditor);
+  form.addEventListener("input", () => { draftDirty = true; });
+  draftDirty = false;
 }
 
 function renderExpenseEditor(expense, options = {}) {
@@ -1202,8 +1209,10 @@ function renderExpenseEditor(expense, options = {}) {
 }
 
 function closeDraftEditor() {
+  if (draftDirty && !window.confirm(t("confirmations.closeWithoutSaving"))) return;
   document.querySelector("#draftEditorSection").classList.add("hidden");
   draftState = null;
+  draftDirty = false;
   switchTab(draftReturnTab);
 }
 
@@ -1363,20 +1372,52 @@ async function saveDraft(event) {
 
 async function saveDraftItems(options = {}) {
   const items = draftState.items.map((item, index) => collectItem(`draft-${index}`, item));
-  const data = await api(`/api/drafts/${draftState.id}`, { method: "PATCH", body: { telegramUserId, items } });
+  let status = 200;
+  let errorBody = null;
+  let data;
+  try {
+    data = await api(`/api/drafts/${draftState.id}`, { method: "PATCH", body: { telegramUserId, items, expectedVersion: draftState.version } });
+  } catch (error) {
+    status = error?.status ?? 500;
+    errorBody = error?.body ?? null;
+    const outcome = resolveDraftSaveResponse(status, errorBody);
+    if (outcome.conflict) {
+      draftState = outcome.draft;
+      renderDraftEditor(draftState);
+      draftDirty = false;
+      showToast(t("toast.draftConflict"));
+      return { saved: false };
+    }
+    throw error;
+  }
   draftState = data.draft;
   renderDraftEditor(draftState);
+  draftDirty = false;
   if (options.showFeedback) showToast(t("toast.draftSaved"));
+  return { saved: true };
 }
 
 async function confirmDraft() {
-  await saveDraftItems();
-  await api(`/api/drafts/${draftState.id}/confirm`, { method: "POST", body: { telegramUserId } });
+  const saveResult = await saveDraftItems();
+  if (!saveResult?.saved) return;
+  const data = await api(`/api/drafts/${draftState.id}/confirm`, { method: "POST", body: { telegramUserId, language: currentLanguage } });
+  const outcome = classifyConfirmOutcome(data);
   document.querySelector("#draftEditorSection").classList.add("hidden");
   await loadDashboard();
   await loadHistory();
-  showToast(t("toast.draftConfirmed"));
+  showToast(outcome.alreadySaved ? t("toast.alreadySaved") : t("toast.draftConfirmed"));
   switchTab(draftReturnTab);
+}
+
+async function cancelDraftFromEditor() {
+  if (!window.confirm(t("confirmations.closeWithoutSaving"))) return;
+  await api(`/api/drafts/${draftState.id}`, { method: "DELETE", body: { telegramUserId, language: currentLanguage } });
+  document.querySelector("#draftEditorSection").classList.add("hidden");
+  draftState = null;
+  draftDirty = false;
+  await loadDashboard();
+  await loadHistory();
+  showToast(t("toast.draftCanceled"));
 }
 
 async function saveExpense(event, expenseId) {
@@ -1415,6 +1456,7 @@ function collectItem(prefix, original) {
     description: input(`${prefix}-description`).value.trim(),
     category_slug: input(`${prefix}-category_slug`).value,
     budget_impact: input(`${prefix}-budget_impact`)?.value ?? original.budget_impact ?? "regular",
+    category_source: "user",
     spent_at: new Date(input(`${prefix}-spent_at`).value).toISOString(),
     tags: input(`${prefix}-tags`).value.split(",").map((tag) => tag.trim()).filter(Boolean),
     confidence: original.confidence ?? 1,
