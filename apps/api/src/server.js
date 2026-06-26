@@ -79,6 +79,7 @@ const releaseDigestScheduler = createReleaseDigestScheduler({
   checkIntervalMinutes: config.releaseDigestCheckIntervalMinutes,
   repository,
   releaseNotesService,
+  logger: console,
   onError(error) {
     console.error("[release-digest] scheduler failed", error);
   }

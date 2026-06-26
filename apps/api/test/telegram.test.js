@@ -2275,6 +2275,32 @@ test("admin release send reports empty public user notes", async () => {
   assert.equal(messages[0].text, "Нет новых публичных изменений для пользователей с прошлого дайджеста — отправлять нечего.");
 });
 
+test("admin release send reports when there are no active release push users", async () => {
+  const messages = [];
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: fakeRepository(),
+    adminTelegramIds: new Set([100]),
+    releaseNotesService: fakeReleaseNotesService({
+      sendResult: { sent: false, reason: "no_active_release_push_users", users: 0 }
+    }),
+    telegramClient: captureTelegramClient(messages)
+  });
+
+  await bot.handleUpdate({
+    message: {
+      chat: { id: 10 },
+      from: { id: 100, first_name: "M" },
+      text: "/admin_release_send"
+    }
+  });
+
+  assert.equal(messages[0].text, "Нет активных пользователей для release push — digest не был отправлен.");
+  assert.doesNotMatch(messages[0].text, /Release digest отправлен/);
+  assert.doesNotMatch(messages[0].text, /Пользователей: 0/);
+});
+
 test("admin release send reports an in-progress digest without a success summary", async () => {
   const messages = [];
   const bot = createTelegramBot({

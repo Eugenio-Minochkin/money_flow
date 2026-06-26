@@ -185,9 +185,19 @@ export function createReleaseNotesService({ repository, sendMessage } = {}) {
         };
 
         try {
-          if (!sendMessage) throw new Error("sendMessage is required");
           const users = await repository.getActiveUsersForReleasePush();
           summary.users = users.length;
+          if (users.length === 0) {
+            const skippedSummary = {
+              ...summary,
+              sent: false,
+              reason: "no_active_release_push_users"
+            };
+            await repository.markReleaseDigestRunSkipped(run.id, "no_active_release_push_users");
+            return skippedSummary;
+          }
+
+          if (!sendMessage) throw new Error("sendMessage is required");
 
           for (const user of users) {
             try {

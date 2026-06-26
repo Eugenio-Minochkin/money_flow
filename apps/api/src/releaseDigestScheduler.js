@@ -21,6 +21,7 @@ export function releaseDigestLocalParts(now, timezone) {
 export function createReleaseDigestScheduler(options) {
   const timerApi = options.timerApi ?? globalThis;
   const repository = options.repo ?? options.repository;
+  const logger = options.logger ?? { info() {}, warn() {} };
   const onError = options.onError ?? (() => {});
   let running = false;
   let timeoutId = null;
@@ -28,6 +29,10 @@ export function createReleaseDigestScheduler(options) {
 
   async function tick(now = new Date()) {
     if (!options.enabled) {
+      logger.info?.("[release-digest] auto disabled", {
+        timezone: options.timezone,
+        sendHour: options.sendHour
+      });
       return { skipped: true, reason: "disabled" };
     }
 
@@ -49,11 +54,17 @@ export function createReleaseDigestScheduler(options) {
         return { skipped: true, reason: "existing_run" };
       }
 
-      return await options.releaseNotesService.sendReleaseDigestSinceLastRun(now, {
+      const result = await options.releaseNotesService.sendReleaseDigestSinceLastRun(now, {
         trigger: "auto",
         timezone: options.timezone,
         localDate: local.date
       });
+      logDigestRunSummary(result, {
+        logger,
+        localDate: local.date,
+        timezone: options.timezone
+      });
+      return result;
     } finally {
       running = false;
     }
@@ -94,4 +105,24 @@ export function createReleaseDigestScheduler(options) {
       }
     }
   };
+}
+
+function logDigestRunSummary(result = {}, { logger, localDate, timezone }) {
+  const metadata = {
+    sent: result.sent === true,
+    reason: result.reason ?? null,
+    trigger: "auto",
+    localDate,
+    timezone,
+    users: result.users ?? 0,
+    success: result.success ?? 0,
+    errors: result.errors ?? 0,
+    skipped: result.skipped ?? 0,
+    blocked: result.blocked ?? 0
+  };
+
+  logger.info?.("[release-digest] run summary", metadata);
+  if (metadata.users === 0) {
+    logger.warn?.("[release-digest] no active release push users", metadata);
+  }
 }
