@@ -1890,7 +1890,8 @@ test("date-mismatched linked expense blocks duplicate planned payment", async ()
   );
 
   const paidLookup = queries.find((query) => String(query.sql).includes("pep.occurrence_date"));
-  assert.match(String(paidLookup.sql), /e\.spent_at AT TIME ZONE \$4/);
+  assert.doesNotMatch(String(paidLookup.sql), /spent_at/);
+  assert.match(String(paidLookup.sql), /e\.user_id = \$3/);
   assert.ok(!queries.some((query) => String(query.sql).includes("INSERT INTO expenses")));
 });
 
@@ -2244,7 +2245,7 @@ test("listing planned expenses only counts payments backed by a matching expense
 
   assert.match(listSql, /JOIN expenses e ON e\.id = pep\.expense_id/);
   assert.match(listSql, /e\.user_id = pe\.user_id/);
-  assert.match(listSql, /e\.spent_at AT TIME ZONE COALESCE\(NULLIF\(pu\.timezone, ''\), 'Asia\/Bangkok'\)/);
+  assert.doesNotMatch(listSql, /spent_at/);
   assert.match(listSql, /paid_occurrences/);
   assert.equal(planned[0].paid_count, 0);
   assert.deepEqual(planned[0].paid_occurrence_dates, []);
@@ -2285,9 +2286,57 @@ test("listing planned expenses accepts a date-mismatched same-user expense", asy
 
   assert.match(listSql, /JOIN expenses e ON e\.id = pep\.expense_id/);
   assert.match(listSql, /e\.user_id = pe\.user_id/);
-  assert.match(listSql, /e\.spent_at AT TIME ZONE COALESCE\(NULLIF\(pu\.timezone, ''\), 'Asia\/Bangkok'\)/);
+  assert.doesNotMatch(listSql, /spent_at/);
   assert.deepEqual(planned[0].paid_occurrence_dates, ["2026-06-14"]);
   assert.equal(planned[0].paid_occurrences["2026-06-14"].expense_id, "187");
+});
+
+test("a planned occurrence stays paid when its linked expense local date differs from occurrence_date", async () => {
+  // Regression: PR #34 dropped the spent_at=occurrence_date match from the paid
+  // aggregate; PR #61 (daily reminders) re-added it, which silently dropped valid
+  // payment rows from paid_count/paid_occurrence_dates so the dashboard kept
+  // showing a paid occurrence as overdue and let a duplicate Pay through.
+  // planned_expense_payments is the source of truth; expense.spent_at is history
+  // placement, not payment validity.
+  let listSql = "";
+  const repo = createRepository(fakePool((sql) => {
+    const query = String(sql);
+    if (query.includes("SELECT timezone FROM users")) {
+      return { rows: [{ timezone: "Asia/Bangkok" }] };
+    }
+    if (query.includes("planned_expense_payments")) {
+      listSql = query;
+      return {
+        rows: [{
+          id: "5",
+          amount: "17000",
+          currency: "THB",
+          amount_base: "17000",
+          description: "Сервер",
+          category_slug: "subscriptions",
+          recurrence: "monthly",
+          due_day: 6,
+          due_days: [6],
+          active: true,
+          timezone: "Asia/Bangkok",
+          paid_count: 1,
+          paid_occurrence_dates: ["2026-06-06"],
+          paid_occurrences: {
+            "2026-06-06": { expense_id: "20", paid_at: "2026-06-05T20:00:00.000Z" }
+          }
+        }]
+      };
+    }
+    return { rows: [] };
+  }));
+
+  const planned = await repo.listPlannedExpensesForTelegramUser(100, new Date("2026-06-23T10:00:00+07:00"));
+
+  assert.doesNotMatch(listSql, /spent_at/);
+  assert.match(listSql, /JOIN expenses e ON e\.id = pep\.expense_id/);
+  assert.match(listSql, /e\.user_id = pe\.user_id/);
+  assert.ok(planned[0].paid_occurrence_dates.includes("2026-06-06"));
+  assert.equal(planned[0].paid_occurrences["2026-06-06"].expense_id, "20");
 });
 
 test("dashboard keeps unpaid twice-monthly occurrences in planned reserve", async () => {

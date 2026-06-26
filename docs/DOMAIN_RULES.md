@@ -18,6 +18,7 @@ This file records stable product and business rules. Read it before changing bud
 - Disabled planned payments must not be included in active monthly totals.
 - Weekly planned payments must not be counted more than once for the same target week.
 - One-off planned payments must not repeat in the next month.
+- The source of truth for whether a planned occurrence is paid is `planned_expense_payments` (matching the planned expense and occurrence), not the local date of the linked expense. A payment row counts as paid as long as its linked expense exists and belongs to the same user; `expenses.spent_at` is history placement and must not make an otherwise valid payment appear unpaid or allow a duplicate Pay.
 
 ## Timezone
 
