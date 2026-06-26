@@ -250,3 +250,52 @@ test("settings expose lightweight timezone controls", async () => {
   assert.match(html, /id="detectTimezoneButton"/);
   assert.match(html, /data-i18n="settings.timezone"/);
 });
+
+test("settings are grouped into four focused sections with evening reminder", async () => {
+  const html = await readFile(join(miniAppRoot, "index.html"), "utf8");
+  const settingsStart = html.indexOf('id="settingsTab"');
+  const settingsEnd = html.indexOf("</main>", settingsStart);
+  const settingsHtml = html.slice(settingsStart, settingsEnd);
+
+  assert.equal((settingsHtml.match(/class="settings-section"/g) ?? []).length, 4);
+  assert.match(settingsHtml, /data-i18n="settings.sectionBudget"/);
+  assert.match(settingsHtml, /data-i18n="settings.sectionCurrencies"/);
+  assert.match(settingsHtml, /data-i18n="settings.sectionNotifications"/);
+  assert.match(settingsHtml, /data-i18n="settings.sectionInterface"/);
+  assert.match(settingsHtml, /id="dailyReminderInput"[^>]+name="dailyEntryReminderEnabled"/);
+  assert.doesNotMatch(settingsHtml, /budgetAdviceInput/);
+});
+
+test("reserve settings live in Plan instead of Settings", async () => {
+  const html = await readFile(join(miniAppRoot, "index.html"), "utf8");
+  const planStart = html.indexOf('id="planTab"');
+  const settingsStart = html.indexOf('id="settingsTab"');
+  const planHtml = html.slice(planStart, settingsStart);
+  const settingsHtml = html.slice(settingsStart, html.indexOf("</main>", settingsStart));
+
+  assert.match(planHtml, /id="reserveSettingsBlock"/);
+  assert.match(planHtml, /id="reserveForm"/);
+  assert.ok(planHtml.indexOf('id="reserveSettingsBlock"') < planHtml.indexOf('id="plannedExpenses"'));
+  assert.doesNotMatch(settingsHtml, /id="reserveSettingsBlock"/);
+  assert.doesNotMatch(settingsHtml, /id="reserveForm"/);
+});
+
+test("currency selectors use stable markers and language selector has no flag", async () => {
+  const html = await readFile(join(miniAppRoot, "index.html"), "utf8");
+  const app = await readFile(join(miniAppRoot, "app.js"), "utf8");
+  const css = await readFile(join(miniAppRoot, "styles.css"), "utf8");
+
+  assert.match(html, /id="baseCurrencyMark"/);
+  assert.match(html, /id="displayCurrencyMark"/);
+  assert.doesNotMatch(html, /interfaceLanguageFlag/);
+  assert.doesNotMatch(html, /flag-icon/);
+  assert.doesNotMatch(html, /data-currency/);
+  assert.doesNotMatch(html, /data-language/);
+  assert.match(app, /updateSettingsDecorations/);
+  assert.match(app, /CURRENCY_MARKS/);
+  assert.doesNotMatch(app, /updateCurrencyFlags/);
+  assert.match(css, /\.currency-mark/);
+  assert.match(css, /\.currency-code-fallback/);
+  assert.doesNotMatch(css, /data-currency/);
+  assert.doesNotMatch(css, /data-language/);
+});

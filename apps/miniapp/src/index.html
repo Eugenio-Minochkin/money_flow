@@ -154,7 +154,46 @@
             </div>
           </div>
           <form class="form-stack hidden" id="plannedForm"></form>
+          <section class="reserve-settings plan-reserve-section" id="reserveSettingsBlock">
+            <button class="reserve-summary" id="reserveSummaryButton" type="button" aria-expanded="false" aria-controls="reserveForm">
+              <span class="reserve-summary__text">
+                <strong id="reserveSummaryTitle" data-i18n="reserve.settingsTitle">Резерв бюджета</strong>
+                <small id="reserveSummaryMeta"></small>
+              </span>
+              <span class="reserve-summary__status">
+                <span id="reserveSummaryStatus" data-i18n="reserve.add">Добавить</span>
+                <span class="reserve-summary__chevron" aria-hidden="true">›</span>
+              </span>
+            </button>
+            <p class="reserve-summary__note hidden" id="reserveDisabledNote" data-i18n="reserve.disabledThisMonth">Резерв отключён на этот месяц</p>
+          </section>
+          <form class="form-stack nested-form hidden plan-reserve-form" id="reserveForm">
+            <label>
+              <span data-i18n="forms.amount">Сумма</span>
+              <input id="reserveAmountInput" type="number" min="1" step="1" inputmode="decimal" />
+            </label>
+            <label>
+              <span data-i18n="reserve.title">Название</span>
+              <input id="reserveTitleInput" type="text" />
+            </label>
+            <label class="toggle-setting">
+              <span data-i18n="reserve.repeatMonthly">Повторять каждый месяц</span>
+              <input id="reserveRecurringInput" type="checkbox" />
+            </label>
+            <label id="reserveScopeField">
+              <span data-i18n="reserve.scope">Область изменения</span>
+              <select id="reserveScopeInput">
+                <option value="current" data-i18n="reserve.currentOnly">Только этот месяц</option>
+                <option value="current_and_future" data-i18n="reserve.currentAndFuture">Этот и будущие месяцы</option>
+              </select>
+            </label>
+            <div class="button-row">
+              <button type="submit" data-i18n="reserve.save">Сохранить резерв</button>
+              <button type="button" class="danger-button" id="disableReserveButton" data-i18n="reserve.disable">Отключить резерв</button>
+            </div>
+          </form>
           <div class="expense-list" id="plannedExpenses"></div>
+
         </section>
       </section>
 
@@ -204,131 +243,111 @@
           <div class="section-heading">
             <h2 data-i18n="settings.title">Настройки</h2>
           </div>
-          <form class="form-stack" id="settingsForm">
-            <label>
-              <span data-i18n="settings.monthlyBudget">Месячный бюджет</span>
-              <input id="budgetInput" name="monthlyBudgetAmount" type="number" min="1" step="1" inputmode="decimal" />
-            </label>
-            <div class="form-stack nested-form hidden" id="currentMonthBudgetForm">
-              <label>
-                <span data-i18n="settings.currentMonthBudget">Бюджет на этот месяц</span>
-                <input id="currentMonthBudgetInput" name="currentMonthBudgetAmount" type="number" min="1" step="1" inputmode="decimal" />
-              </label>
-              <small data-i18n="settings.currentMonthBudgetHint">Меняет только лимит текущего месяца. Обычный месячный бюджет не изменится.</small>
-              <div class="button-row">
-                <button type="button" id="saveCurrentMonthBudgetButton" class="ghost-button" data-i18n="settings.editCurrentMonthBudget">Изменить бюджет на этот месяц</button>
-              </div>
-            </div>
-            <label>
-              <span data-i18n="settings.weeklyBudget">План недели</span>
-              <input id="weeklyBudgetInput" name="weeklyBudgetAmount" type="number" min="1" step="1" inputmode="decimal" placeholder="Автоматически из бюджета" data-i18n-placeholder="settings.weeklyBudgetPlaceholder" />
-            </label>
-            <div class="field-grid">
-              <label>
-                <span data-i18n="settings.baseCurrency">Базовая валюта учета</span>
-                <div class="currency-control">
-                  <span class="flag-icon" id="baseCurrencyFlag" aria-hidden="true"></span>
-                  <select id="baseCurrencyInput" name="baseCurrency">
-                  <option value="THB">THB - Thai baht</option>
-                  <option value="USD">USD - US dollar</option>
-                  <option value="RUB">RUB - Russian ruble</option>
-                  <option value="IDR">IDR - Indonesian rupiah</option>
-                  <option value="EUR">EUR - Euro</option>
-                  <option value="BYN">BYN - Belarusian ruble</option>
-                  <option value="GEL">GEL - Georgian lari</option>
-                  </select>
+          <form class="settings-page" id="settingsForm">
+            <section class="settings-section">
+              <h3 class="settings-section-title" data-i18n="settings.sectionBudget">Budget</h3>
+              <div class="settings-card">
+                <label class="settings-row">
+                  <span data-i18n="settings.monthlyBudget">Monthly budget</span>
+                  <input id="budgetInput" name="monthlyBudgetAmount" type="number" min="1" step="1" inputmode="decimal" />
+                </label>
+                <div class="settings-row settings-row--stacked hidden" id="currentMonthBudgetForm">
+                  <label>
+                    <span data-i18n="settings.currentMonthBudget">Current month budget</span>
+                    <input id="currentMonthBudgetInput" name="currentMonthBudgetAmount" type="number" min="1" step="1" inputmode="decimal" />
+                  </label>
+                  <small data-i18n="settings.currentMonthBudgetHint">Changes only the current month limit. The regular monthly budget stays the same.</small>
+                  <div class="button-row">
+                    <button type="button" id="saveCurrentMonthBudgetButton" class="ghost-button" data-i18n="settings.editCurrentMonthBudget">Edit current month budget</button>
+                  </div>
                 </div>
-              </label>
-              <label>
-                <span data-i18n="settings.displayCurrency">Валюта отображения</span>
-                <div class="currency-control">
-                  <span class="flag-icon" id="displayCurrencyFlag" aria-hidden="true"></span>
-                  <select id="displayCurrencyInput" name="displayCurrency">
-                  <option value="USD">USD - US dollar</option>
-                  <option value="THB">THB - Thai baht</option>
-                  <option value="RUB">RUB - Russian ruble</option>
-                  <option value="IDR">IDR - Indonesian rupiah</option>
-                  <option value="EUR">EUR - Euro</option>
-                  <option value="BYN">BYN - Belarusian ruble</option>
-                  <option value="GEL">GEL - Georgian lari</option>
-                  </select>
-                </div>
-              </label>
-            </div>
-            <label class="toggle-setting">
-              <span>
-                <strong data-i18n="settings.budgetAdvice">Советы по бюджету</strong>
-                <small data-i18n="settings.budgetAdviceHint">Показывать блок “Вернуться в бюджет”</small>
-              </span>
-              <input id="budgetAdviceInput" name="budgetAdviceEnabled" type="checkbox" />
-            </label>
-            <label>
-              <span data-i18n="settings.interfaceLanguage">Язык интерфейса</span>
-              <div class="currency-control">
-                <span class="flag-icon" id="interfaceLanguageFlag" aria-hidden="true"></span>
-                <select id="interfaceLanguageInput" name="interfaceLanguage">
-                  <option value="en" data-i18n="settings.languageEnglish">English</option>
-                  <option value="ru" data-i18n="settings.languageRussian">Русский</option>
-                </select>
+                <label class="settings-row">
+                  <span data-i18n="settings.weeklyBudget">Weekly plan</span>
+                  <input id="weeklyBudgetInput" name="weeklyBudgetAmount" type="number" min="1" step="1" inputmode="decimal" placeholder="Automatic from budget" data-i18n-placeholder="settings.weeklyBudgetPlaceholder" />
+                </label>
               </div>
-            </label>
-            <label>
-              <span data-i18n="settings.interfaceTheme">Тема интерфейса</span>
-              <select id="interfaceThemeInput" name="interfaceTheme">
-                <option value="light" data-i18n="settings.themeLight">Светлая</option>
-                <option value="dark" data-i18n="settings.themeDark">Темная</option>
-              </select>
-            </label>
-            <label>
-              <span data-i18n="settings.timezone">Часовой пояс</span>
-              <select id="timezoneInput" name="timezone"></select>
-            </label>
-            <div class="button-row">
-              <button type="button" id="detectTimezoneButton" class="ghost-button" data-i18n="settings.detectTimezone">Определить автоматически</button>
-            </div>
+            </section>
+            <section class="settings-section">
+              <h3 class="settings-section-title" data-i18n="settings.sectionCurrencies">Currencies</h3>
+              <div class="settings-card">
+                <p class="settings-hint" data-i18n="settings.currencyHint">Accounting is what expenses are calculated in. Display is what amounts are shown in.</p>
+                <label class="settings-row">
+                  <span data-i18n="settings.baseCurrency">Base currency</span>
+                  <div class="currency-control">
+                    <span class="currency-mark" id="baseCurrencyMark" aria-hidden="true"></span>
+                    <select id="baseCurrencyInput" name="baseCurrency">
+                      <option value="THB">THB - Thai baht</option>
+                      <option value="USD">USD - US dollar</option>
+                      <option value="RUB">RUB - Russian ruble</option>
+                      <option value="IDR">IDR - Indonesian rupiah</option>
+                      <option value="EUR">EUR - Euro</option>
+                      <option value="BYN">BYN - Belarusian ruble</option>
+                      <option value="GEL">GEL - Georgian lari</option>
+                    </select>
+                  </div>
+                </label>
+                <label class="settings-row">
+                  <span data-i18n="settings.displayCurrency">Display currency</span>
+                  <div class="currency-control">
+                    <span class="currency-mark" id="displayCurrencyMark" aria-hidden="true"></span>
+                    <select id="displayCurrencyInput" name="displayCurrency">
+                      <option value="USD">USD - US dollar</option>
+                      <option value="THB">THB - Thai baht</option>
+                      <option value="RUB">RUB - Russian ruble</option>
+                      <option value="IDR">IDR - Indonesian rupiah</option>
+                      <option value="EUR">EUR - Euro</option>
+                      <option value="BYN">BYN - Belarusian ruble</option>
+                      <option value="GEL">GEL - Georgian lari</option>
+                    </select>
+                  </div>
+                </label>
+              </div>
+            </section>
+            <section class="settings-section">
+              <h3 class="settings-section-title" data-i18n="settings.sectionNotifications">Notifications</h3>
+              <div class="settings-card">
+                <label class="toggle-setting settings-toggle">
+                  <span>
+                    <strong data-i18n="settings.dailyReminder">Evening reminder</strong>
+                    <small data-i18n="settings.dailyReminderHint">If there are no expenses today, I'll remind you in the evening</small>
+                  </span>
+                  <input id="dailyReminderInput" name="dailyEntryReminderEnabled" type="checkbox" />
+                </label>
+              </div>
+            </section>
+            <section class="settings-section">
+              <h3 class="settings-section-title" data-i18n="settings.sectionInterface">Interface</h3>
+              <div class="settings-card">
+                <label class="settings-row">
+                  <span data-i18n="settings.interfaceLanguage">Interface language</span>
+                  <select id="interfaceLanguageInput" name="interfaceLanguage">
+                    <option value="en" data-i18n="settings.languageEnglish">English</option>
+                    <option value="ru" data-i18n="settings.languageRussian">Russian</option>
+                  </select>
+                </label>
+                <label class="settings-row">
+                  <span data-i18n="settings.interfaceTheme">Interface theme</span>
+                  <select id="interfaceThemeInput" name="interfaceTheme">
+                    <option value="light" data-i18n="settings.themeLight">Light</option>
+                    <option value="dark" data-i18n="settings.themeDark">Dark</option>
+                  </select>
+                </label>
+                <label class="settings-row">
+                  <span data-i18n="settings.timezone">Time zone</span>
+                  <div class="timezone-control">
+                    <select id="timezoneInput" name="timezone"></select>
+                    <button type="button" id="detectTimezoneButton" class="ghost-button timezone-action" data-i18n="settings.detectTimezone">Detect automatically</button>
+                  </div>
+                </label>
+              </div>
+            </section>
             <input id="usdThbRateInput" name="usdThbRate" type="hidden" value="32.65" />
-            <div class="button-row">
-              <button type="submit" data-i18n="actions.save">Сохранить</button>
+            <div class="settings-actions">
+              <button type="submit" data-i18n="actions.save">Save</button>
+              <small class="settings-dirty-state" id="settingsDirtyState" data-i18n="settings.saveHint">No unsaved changes</small>
             </div>
           </form>
-          <section class="reserve-settings" id="reserveSettingsBlock">
-            <button class="reserve-summary" id="reserveSummaryButton" type="button" aria-expanded="false" aria-controls="reserveForm">
-              <span class="reserve-summary__text">
-                <strong id="reserveSummaryTitle" data-i18n="reserve.settingsTitle">Резерв бюджета</strong>
-                <small id="reserveSummaryMeta"></small>
-              </span>
-              <span class="reserve-summary__status">
-                <span id="reserveSummaryStatus" data-i18n="reserve.add">Добавить</span>
-                <span class="reserve-summary__chevron" aria-hidden="true">›</span>
-              </span>
-            </button>
-            <p class="reserve-summary__note hidden" id="reserveDisabledNote" data-i18n="reserve.disabledThisMonth">Резерв отключён на этот месяц</p>
-          </section>
-          <form class="form-stack nested-form hidden" id="reserveForm">
-            <label>
-              <span data-i18n="forms.amount">Сумма</span>
-              <input id="reserveAmountInput" type="number" min="1" step="1" inputmode="decimal" />
-            </label>
-            <label>
-              <span data-i18n="reserve.title">Название</span>
-              <input id="reserveTitleInput" type="text" />
-            </label>
-            <label class="toggle-setting">
-              <span data-i18n="reserve.repeatMonthly">Повторять каждый месяц</span>
-              <input id="reserveRecurringInput" type="checkbox" />
-            </label>
-            <label id="reserveScopeField">
-              <span data-i18n="reserve.scope">Область изменения</span>
-              <select id="reserveScopeInput">
-                <option value="current" data-i18n="reserve.currentOnly">Только этот месяц</option>
-                <option value="current_and_future" data-i18n="reserve.currentAndFuture">Этот и будущие месяцы</option>
-              </select>
-            </label>
-            <div class="button-row">
-              <button type="submit" data-i18n="reserve.save">Сохранить резерв</button>
-              <button type="button" class="danger-button" id="disableReserveButton" data-i18n="reserve.disable">Отключить резерв</button>
-            </div>
-          </form>
+
         </section>
       </section>
     </main>
