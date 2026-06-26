@@ -241,25 +241,15 @@ h2 {
 }
 
 .hero-metric__back-text {
-  margin: auto;
+  margin: 0;
   max-width: 34rem;
-  max-height: 100%;
-  overflow-y: auto;
-  display: grid;
-  gap: 10px;
-  color: var(--ink);
-  font-size: clamp(16px, 3.5vw, 20px);
-  line-height: 1.35;
+  color: #2b2521;
+  font-weight: 650;
+  font-size: clamp(15px, 3.6vw, 18px);
+  line-height: 1.3;
   text-align: center;
-  overflow-wrap: anywhere;
-}
-
-.hero-metric__back-title {
-  font-weight: 800;
-}
-
-.hero-metric__back-body {
-  font-weight: 500;
+  overflow-wrap: normal;
+  word-break: normal;
 }
 
 .hero-metric__info {
@@ -405,24 +395,14 @@ h2 {
 }
 
 .dashboard-card__back-text {
-  margin: auto;
-  max-height: 100%;
-  overflow-y: auto;
-  display: grid;
-  gap: 8px;
-  color: var(--ink);
-  font-size: 15px;
-  line-height: 1.35;
+  margin: 0;
+  color: #2b2521;
+  font-weight: 650;
+  font-size: clamp(12px, 2.8vw, 14px);
+  line-height: 1.3;
   text-align: center;
-  overflow-wrap: anywhere;
-}
-
-.dashboard-card__back-title {
-  font-weight: 800;
-}
-
-.dashboard-card__back-body {
-  font-weight: 500;
+  overflow-wrap: normal;
+  word-break: normal;
 }
 
 body[data-theme="dark"] .dashboard-card,

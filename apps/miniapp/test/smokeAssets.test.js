@@ -90,6 +90,25 @@ test("dashboard metric text can wrap instead of causing horizontal overflow", as
   assert.match(css, /\.dashboard-card__caption\s*{[^}]*white-space:\s*normal/s);
 });
 
+test("dashboard tooltip backs never scroll internally and use compact copy type", async () => {
+  const css = await readFile(join(miniAppRoot, "styles.css"), "utf8");
+
+  assert.match(css, /\.dashboard-card__face--back\s*{[^}]*overflow:\s*hidden/s);
+  assert.match(css, /\.hero-metric__face--back\s*{[^}]*overflow:\s*hidden/s);
+
+  const cardBackText = css.match(/\.dashboard-card__back-text\s*{[^}]*}/s)?.[0] ?? "";
+  const heroBackText = css.match(/\.hero-metric__back-text\s*{[^}]*}/s)?.[0] ?? "";
+  assert.ok(cardBackText, ".dashboard-card__back-text rule should exist");
+  assert.ok(heroBackText, ".hero-metric__back-text rule should exist");
+
+  assert.doesNotMatch(cardBackText, /overflow-y:\s*auto/);
+  assert.doesNotMatch(heroBackText, /overflow-y:\s*auto/);
+  assert.match(cardBackText, /font-size:\s*clamp\(12px,\s*2\.8vw,\s*14px\)/);
+  assert.match(heroBackText, /font-size:\s*clamp\(15px,\s*3\.6vw,\s*18px\)/);
+  assert.match(cardBackText, /font-weight:\s*650/);
+  assert.match(heroBackText, /font-weight:\s*650/);
+});
+
 test("dashboard metric display currency uses the purple accent", async () => {
   const html = await readFile(join(miniAppRoot, "index.html"), "utf8");
   const css = await readFile(join(miniAppRoot, "styles.css"), "utf8");

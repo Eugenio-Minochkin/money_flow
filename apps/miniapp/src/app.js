@@ -538,10 +538,7 @@ function renderSnapshot(snapshot) {
   setText("#safeToSpend", heroMetric.amount);
   setText("#safeToSpendDisplay", heroMetric.display);
   setText("#heroCaption", heroMetric.caption);
-  const heroTooltipText = document.querySelector("#heroTooltipText");
-  if (heroTooltipText) {
-    heroTooltipText.innerHTML = `<strong class="hero-metric__back-title">${escapeHtml(heroMetric.tooltip.title)}</strong><span class="hero-metric__back-body">${escapeHtml(heroMetric.tooltip.body)}</span>`;
-  }
+  setText("#heroTooltipText", heroMetric.tooltip);
   const heroInfo = document.querySelector(".hero-metric__info");
   heroInfo?.setAttribute("aria-label", `${t("dashboard.explain")}: ${heroMetric.title}`);
   renderDashboardCards(document.querySelector("#dashboardCards"), buildDashboardCards(snapshot, {
