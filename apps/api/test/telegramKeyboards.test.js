@@ -5,7 +5,7 @@ import { appKeyboard, dailyReminderKeyboard, draftKeyboard } from "../src/telegr
 
 test("single-item draft keyboard uses d: scheme, radio type and checkbox category, no planned", () => {
   const keyboard = draftKeyboard(42, [{
-    amount: 70, category_slug: "food_cafe", budget_impact: "regular", needs_review: false
+    amount: 70, category_slug: "other", category_source: "parser", needs_review: true, budget_impact: "regular"
   }], "http://localhost:3000", 100, "ru");
   const buttons = keyboard.inline_keyboard.flat();
 
@@ -19,11 +19,26 @@ test("single-item draft keyboard uses d: scheme, radio type and checkbox categor
   assert.ok(buttons.every((b) => !/planned/i.test(b.callback_data)));
   assert.ok(buttons.some((b) => b.text.startsWith("🔘")));
   assert.ok(buttons.some((b) => b.text.startsWith("⚪")));
-  assert.ok(buttons.some((b) => b.text.startsWith("✅") && b.text.includes("Еда")));
+  assert.ok(buttons.some((b) => b.text.startsWith("⬜") && b.text.includes("Еда")));
   assert.ok(buttons.some((b) => b.text.startsWith("⬜")));
   assert.ok(buttons.some((b) => b.text.includes("Обычная")));
   assert.ok(buttons.some((b) => b.text.includes("Крупная")));
   assert.ok(buttons.some((b) => b.web_app?.url === "http://localhost:3000?telegramUserId=100&draftId=42"));
+});
+
+test("resolved confident category hides the category quick buttons", () => {
+  const keyboard = draftKeyboard(42, [{ amount: 70, category_slug: "food_cafe", category_source: "parser", needs_review: false, budget_impact: "regular" }], "http://x", 100, "en");
+  const buttons = keyboard.inline_keyboard.flat();
+  assert.ok(buttons.some((b) => b.callback_data === "d:42:t:r"));
+  assert.ok(buttons.some((b) => b.callback_data === "d:42:t:l"));
+  assert.ok(buttons.every((b) => !b.callback_data?.startsWith("d:42:c:")));
+  assert.ok(buttons.some((b) => b.callback_data === "d:42:confirm"));
+});
+
+test("user-selected category hides the category quick buttons", () => {
+  const keyboard = draftKeyboard(42, [{ amount: 70, category_slug: "other", category_source: "user", needs_review: false, budget_impact: "regular" }], "http://x", 100, "en");
+  const buttons = keyboard.inline_keyboard.flat();
+  assert.ok(buttons.every((b) => !b.callback_data?.startsWith("d:42:c:")));
 });
 
 test("multi-item draft keyboard omits type and category rows", () => {
@@ -95,12 +110,4 @@ test("parser-fallback other renders every category button unchecked", () => {
   assert.ok(categoryButtons.every((b) => b.text.startsWith("⬜")), "no category should be selected for parser-fallback other");
   const other = categoryButtons.find((b) => b.callback_data === "d:42:c:other");
   assert.ok(other && other.text.startsWith("⬜"));
-});
-
-test("user-selected other renders the other category as selected", () => {
-  const keyboard = draftKeyboard(42, [{
-    amount: 70, category_slug: "other", category_source: "user", needs_review: false, budget_impact: "regular"
-  }], "http://x", 100, "en");
-  const other = keyboard.inline_keyboard.flat().find((b) => b.callback_data === "d:42:c:other");
-  assert.ok(other && other.text.startsWith("✅"));
 });
