@@ -14,6 +14,17 @@ test("Mini App HTML references an existing module entry", async () => {
   assert.equal(existsSync(join(miniAppRoot, match[1].split("?")[0].replace(/^\//, ""))), true);
 });
 
+test("Mini App keeps app.js and styles.css cache-busters in sync", async () => {
+  const html = await readFile(join(miniAppRoot, "index.html"), "utf8");
+  const appVersion = html.match(/\/app\.js\?v=([^"]+)/)?.[1];
+  const cssVersion = html.match(/\/styles\.css\?v=([^"]+)/)?.[1];
+
+  assert.ok(appVersion, "index.html should version app.js with a ?v= query");
+  assert.ok(cssVersion, "index.html should version styles.css with a ?v= query");
+  assert.equal(appVersion, cssVersion, "app.js and styles.css cache-busters must stay in sync");
+  assert.notEqual(appVersion, "20260626-dashboard-v12", "app.js must not keep the stale dashboard-v12 cache-buster");
+});
+
 test("Mini App local module imports resolve to files", async () => {
   const app = await readFile(join(miniAppRoot, "app.js"), "utf8");
   const imports = [...app.matchAll(/from "\.\/([^"]+\.js)"/g)].map((match) => match[1]);
