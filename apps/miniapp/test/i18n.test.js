@@ -28,16 +28,16 @@ test("Mini App translations cover dashboard, plan, history and settings labels",
     "dashboard.spent",
     "dashboard.available",
     "dashboard.explain",
-    "dashboard.tooltip.monthFree",
-    "dashboard.tooltip.monthFreeWithReserve",
-    "dashboard.tooltip.planned",
-    "dashboard.tooltip.month",
-    "dashboard.tooltip.todayOnTrack",
-    "dashboard.tooltip.todayOverspend",
-    "dashboard.tooltip.heroTodayOnTrack",
-    "dashboard.tooltip.heroTodayOverspend",
-    "dashboard.tooltip.weekMonthBinding",
-    "dashboard.tooltip.weekWeekBinding",
+    "dashboard.tooltip.monthFree.title",
+    "dashboard.tooltip.monthFree.body",
+    "dashboard.tooltip.planned.title",
+    "dashboard.tooltip.planned.body",
+    "dashboard.tooltip.month.title",
+    "dashboard.tooltip.month.body",
+    "dashboard.tooltip.heroToday.title",
+    "dashboard.tooltip.heroToday.body",
+    "dashboard.tooltip.week.title",
+    "dashboard.tooltip.week.body",
     "dashboard.week",
     "dashboard.month",
     "history.latestExpenses",
@@ -100,35 +100,33 @@ test("dashboard labels use the semantic cleanup vocabulary", () => {
   assert.equal(createTranslator("en")("dashboard.todayCaption", { spent: "676 THB", budget: "397 THB" }), "spent 676 THB · day budget 397 THB");
 });
 
-test("dashboard tooltip translations are short and interpolate new placeholders", () => {
+test("dashboard tooltip translations interpolate placeholders and split title/body", () => {
   assert.equal(
-    createTranslator("en")("dashboard.tooltip.monthFree", {
-      monthRemaining: "2,458 THB",
-      plannedAhead: "888 THB",
-      monthFree: "1,570 THB"
+    createTranslator("ru")("dashboard.tooltip.month.title", {
+      remaining: "2 327 THB",
+      budget: "48 000 THB",
+      spent: "45 673 THB"
     }),
-    "From the 2,458 THB left we set aside 888 THB for planned payments → 1,570 THB free."
+    "Сколько осталось от общего бюджета месяца: 2 327 THB из 48 000 THB (потрачено 45 673 THB)."
   );
   assert.equal(
-    createTranslator("en")("dashboard.tooltip.weekMonthBinding", {
-      weekRemainingRaw: "7,326 THB",
-      monthFree: "1,570 THB",
-      weekAvailable: "1,570 THB"
+    createTranslator("en")("dashboard.tooltip.month.title", {
+      remaining: "2,327 THB",
+      budget: "48,000 THB",
+      spent: "45,673 THB"
     }),
-    "The week's remainder, capped by the month. Week has 7,326 THB, the month allows 1,570 THB → 1,570 THB available."
+    "What's left of your monthly budget: 2,327 THB of 48,000 THB (45,673 THB spent)."
   );
-  assert.match(
-    createTranslator("ru")("dashboard.tooltip.monthFree", {
-      monthRemaining: "2 458 THB",
-      plannedAhead: "888 THB",
-      monthFree: "1 570 THB"
+  assert.equal(
+    createTranslator("en")("dashboard.tooltip.week.body", {
+      weeklyPace: "7,326 THB",
+      monthlyAllowance: "1,570 THB"
     }),
-    /1 570 THB/
+    "Your weekly pace says 7,326 THB; the month only allows 1,570 THB, so we take the smaller one. One generous week won't leave you broke by month-end."
   );
-  assert.match(createTranslator("ru")("dashboard.tooltip.heroTodayOnTrack"), /плановые уже вычтены/i);
-  assert.match(createTranslator("ru")("dashboard.tooltip.heroTodayOverspend"), /бюджета дня/i);
-  assert.match(createTranslator("en")("dashboard.tooltip.heroTodayOnTrack"), /planned payments already deducted/i);
-  assert.match(createTranslator("en")("dashboard.tooltip.heroTodayOverspend"), /today's budget/i);
+  assert.match(createTranslator("ru")("dashboard.tooltip.monthFree.title"), /реально можно распоряжаться/i);
+  assert.match(createTranslator("ru")("dashboard.tooltip.heroToday.body"), /плановые уже отложены/i);
+  assert.match(createTranslator("en")("dashboard.tooltip.heroToday.body"), /planned bills already set aside/i);
 });
 
 test("translator falls back to English and formats count labels", () => {

@@ -30,7 +30,10 @@ export function buildHeroMetric(snapshot, helpers) {
       budget: helpers.moneyBase(dayPlanLimit)
     }),
     state: hasOverrun ? "bad" : "good",
-    tooltip: helpers.t(hasOverrun ? "dashboard.tooltip.heroTodayOverspend" : "dashboard.tooltip.heroTodayOnTrack")
+    tooltip: {
+      title: helpers.t("dashboard.tooltip.heroToday.title"),
+      body: helpers.t("dashboard.tooltip.heroToday.body")
+    }
   };
 }
 
@@ -52,12 +55,10 @@ export function buildDashboardCards(snapshot, helpers) {
     state: freeRemaining < 0 ? "danger" : "good",
     infoLabel: explainLabel,
     reserveLine: reserveAmount > 0 ? helpers.t("dashboard.reserveIncluded", { amount: helpers.moneyBase(reserveAmount) }) : undefined,
-    tooltip: helpers.t(reserveAmount > 0 ? "dashboard.tooltip.monthFreeWithReserve" : "dashboard.tooltip.monthFree", {
-      monthRemaining: helpers.moneyBase(monthRemaining),
-      plannedAhead: helpers.moneyBase(plannedRemaining),
-      reserveAmount: helpers.moneyBase(reserveAmount),
-      monthFree: helpers.moneyBase(freeRemaining)
-    })
+    tooltip: {
+      title: helpers.t("dashboard.tooltip.monthFree.title"),
+      body: helpers.t("dashboard.tooltip.monthFree.body")
+    }
   };
   const plannedCard = {
     title: helpers.t("dashboard.plannedAhead"),
@@ -65,9 +66,10 @@ export function buildDashboardCards(snapshot, helpers) {
     display: helpers.moneyDisplay(snapshot.display?.plannedRemaining, snapshot.display?.currency),
     caption: helpers.t(plannedRemaining > 0 ? "dashboard.plannedAheadCaption" : "dashboard.noPlannedAhead"),
     infoLabel: explainLabel,
-    tooltip: helpers.t("dashboard.tooltip.planned", {
-      plannedRemaining: helpers.moneyBase(plannedRemaining)
-    })
+    tooltip: {
+      title: helpers.t("dashboard.tooltip.planned.title"),
+      body: helpers.t("dashboard.tooltip.planned.body")
+    }
   };
   const monthCard = {
     title: helpers.t("dashboard.month"),
@@ -81,11 +83,14 @@ export function buildDashboardCards(snapshot, helpers) {
     ],
     progress: monthProgress,
     infoLabel: explainLabel,
-    tooltip: helpers.t("dashboard.tooltip.month", {
-      monthSpent: helpers.moneyBase(snapshot.month),
-      monthBudget: helpers.moneyBase(snapshot.monthlyBudget ?? 0),
-      monthRemaining: helpers.moneyBase(monthRemaining)
-    })
+    tooltip: {
+      title: helpers.t("dashboard.tooltip.month.title", {
+        remaining: helpers.moneyBase(monthRemaining),
+        budget: helpers.moneyBase(snapshot.monthlyBudget ?? 0),
+        spent: helpers.moneyBase(snapshot.month)
+      }),
+      body: helpers.t("dashboard.tooltip.month.body")
+    }
   };
   const weekCard = {
     title: helpers.t("dashboard.week"),
@@ -99,13 +104,13 @@ export function buildDashboardCards(snapshot, helpers) {
     ],
     progress: weekProgress,
     infoLabel: explainLabel,
-    tooltip: helpers.t(snapshot.isMonthBinding ? "dashboard.tooltip.weekMonthBinding" : "dashboard.tooltip.weekWeekBinding", {
-      weekSpent: helpers.moneyBase(snapshot.week),
-      weekBudget: helpers.moneyBase(snapshot.weekPlanLimit ?? 0),
-      weekRemainingRaw: helpers.moneyBase(weekRemainingRaw),
-      monthFree: helpers.moneyBase(freeRemaining),
-      weekAvailable: helpers.moneyBase(weekAvailable)
-    })
+    tooltip: {
+      title: helpers.t("dashboard.tooltip.week.title"),
+      body: helpers.t("dashboard.tooltip.week.body", {
+        weeklyPace: helpers.moneyBase(weekRemainingRaw),
+        monthlyAllowance: helpers.moneyBase(freeRemaining)
+      })
+    }
   };
 
   return [monthFreeCard, plannedCard, monthCard, weekCard];
@@ -141,7 +146,10 @@ function renderCard(card) {
   const reserveLine = card.reserveLine ? `<div class="dashboard-card__reserve">${escapeHtml(card.reserveLine)}</div>` : "";
   const back = card.tooltip ? `
         <div class="dashboard-card__face dashboard-card__face--back" id="${escapeHtml(tooltipId)}" role="note" tabindex="-1" aria-hidden="true" aria-live="polite" data-flip-back>
-          <p class="dashboard-card__back-text">${escapeHtml(card.tooltip)}</p>
+          <div class="dashboard-card__back-text">
+            <strong class="dashboard-card__back-title">${escapeHtml(card.tooltip.title)}</strong>
+            <span class="dashboard-card__back-body">${escapeHtml(card.tooltip.body)}</span>
+          </div>
         </div>` : "";
 
   return `

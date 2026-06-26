@@ -241,24 +241,41 @@ h2 {
 }
 
 .hero-metric__back-text {
-  margin: 0;
+  margin: auto;
   max-width: 34rem;
+  max-height: 100%;
+  overflow-y: auto;
+  display: grid;
+  gap: 10px;
   color: var(--ink);
   font-size: clamp(16px, 3.5vw, 20px);
-  font-weight: 800;
   line-height: 1.35;
   text-align: center;
   overflow-wrap: anywhere;
 }
 
+.hero-metric__back-title {
+  font-weight: 800;
+}
+
+.hero-metric__back-body {
+  font-weight: 500;
+}
+
 .hero-metric__info {
-  width: 34px;
-  height: 34px;
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  min-width: 24px;
+  min-height: 24px;
+  height: 24px;
+  aspect-ratio: 1 / 1;
+  box-sizing: border-box;
   border-radius: 999px;
   border: 1px solid color-mix(in srgb, #fff 42%, transparent);
   background: color-mix(in srgb, #fff 18%, transparent);
   color: #fff;
-  font-size: 17px;
+  font-size: 12px;
   font-weight: 900;
   line-height: 1;
   padding: 0;
@@ -388,13 +405,24 @@ h2 {
 }
 
 .dashboard-card__back-text {
-  margin: 0;
+  margin: auto;
+  max-height: 100%;
+  overflow-y: auto;
+  display: grid;
+  gap: 8px;
   color: var(--ink);
   font-size: 15px;
-  font-weight: 800;
   line-height: 1.35;
   text-align: center;
   overflow-wrap: anywhere;
+}
+
+.dashboard-card__back-title {
+  font-weight: 800;
+}
+
+.dashboard-card__back-body {
+  font-weight: 500;
 }
 
 body[data-theme="dark"] .dashboard-card,
@@ -1542,12 +1570,6 @@ button:disabled {
   .hero-metric__back-text {
     font-size: 15px;
     line-height: 1.3;
-  }
-
-  .hero-metric__info {
-    width: 30px;
-    height: 30px;
-    font-size: 15px;
   }
 
   .hero-metric span {
