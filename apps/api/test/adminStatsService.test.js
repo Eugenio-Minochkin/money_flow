@@ -14,6 +14,16 @@ test("aggregates admin stats from app events and users", async () => {
       if (String(sql).includes("FROM users")) {
         return { rows: [{ new_users: 1 }] };
       }
+      if (String(sql).includes("FROM expenses")) {
+        return {
+          rows: [{
+            expenses_saved: 0,
+            drafts_created: 0,
+            drafts_confirmed: 0,
+            drafts_cancelled: 0
+          }]
+        };
+      }
       return {
         rows: [{
           active_users: 2,
@@ -31,17 +41,35 @@ test("aggregates admin stats from app events and users", async () => {
           parse_failed: 2,
           transcription_failed: 1,
           avg_text_processing_ms: 1400,
+          p95_text_processing_ms: 2500,
           avg_voice_processing_ms: 4800,
+          p95_voice_processing_ms: 7000,
           avg_text_queue_wait_ms: 100,
           avg_text_telegram_response_ms: 200,
           avg_text_llm_parse_ms: 900,
+          p95_text_llm_parse_ms: 1600,
           avg_text_db_save_ms: 300,
+          p95_text_db_save_ms: 500,
           avg_voice_queue_wait_ms: 150,
           avg_voice_telegram_file_download_ms: 1200,
+          p95_voice_telegram_file_download_ms: 1800,
           avg_voice_transcription_ms: 2600,
+          p95_voice_transcription_ms: 3600,
           avg_voice_llm_parse_ms: 800,
+          p95_voice_llm_parse_ms: 1400,
           avg_voice_telegram_response_ms: 250,
-          avg_voice_db_save_ms: 350
+          avg_voice_db_save_ms: 350,
+          p95_voice_db_save_ms: 650,
+          local_fast_path_count: 3,
+          llm_count: 2,
+          llm_skipped_count: 3,
+          category_needs_review_count: 1,
+          shadow_disagreement_count: 1,
+          shadow_compared_count: 2,
+          avg_local_fast_path_processing_ms: 700,
+          avg_llm_processing_ms: 8300,
+          local_fast_path_reject_reasons: { no_amount: 2, split_semantics: 1 },
+          shadow_disagreement_fields: { amount: 1 }
         }]
       };
     }),
@@ -63,7 +91,9 @@ test("aggregates admin stats from app events and users", async () => {
   assert.equal(stats.today.confirmRate, 60);
   assert.equal(stats.today.parseFailedRate, 33);
   assert.equal(stats.today.avgTextProcessingSeconds, 1.4);
+  assert.equal(stats.today.p95TextProcessingSeconds, 2.5);
   assert.equal(stats.today.avgVoiceProcessingSeconds, 4.8);
+  assert.equal(stats.today.p95VoiceProcessingSeconds, 7);
   assert.deepEqual(stats.today.avgTextStageSeconds, {
     queue: 0.1,
     telegramResponse: 0.2,
@@ -78,6 +108,26 @@ test("aggregates admin stats from app events and users", async () => {
     telegramResponse: 0.3,
     dbSave: 0.4
   });
+  assert.deepEqual(stats.today.p95TextStageSeconds, {
+    llmParse: 1.6,
+    dbSave: 0.5
+  });
+  assert.deepEqual(stats.today.p95VoiceStageSeconds, {
+    telegramFileDownload: 1.8,
+    transcription: 3.6,
+    llmParse: 1.4,
+    dbSave: 0.7
+  });
+  assert.equal(stats.today.localFastPathCount, 3);
+  assert.equal(stats.today.llmCount, 2);
+  assert.equal(stats.today.llmSkippedCount, 3);
+  assert.equal(stats.today.categoryNeedsReviewCount, 1);
+  assert.equal(stats.today.shadowDisagreementCount, 1);
+  assert.equal(stats.today.shadowComparedCount, 2);
+  assert.equal(stats.today.avgLocalFastPathProcessingSeconds, 0.7);
+  assert.equal(stats.today.avgLlmProcessingSeconds, 8.3);
+  assert.deepEqual(stats.today.localFastPathRejectReasons, { no_amount: 2, split_semantics: 1 });
+  assert.deepEqual(stats.today.shadowDisagreementFields, { amount: 1 });
   assert.ok(queries.some((query) => query.params[0]?.toISOString() === "2026-06-14T17:00:00.000Z"));
 });
 
@@ -100,6 +150,8 @@ test("falls back to first app event when users.created_at is unavailable", async
   assert.equal(stats.last7Days.newUsers, 2);
   assert.equal(stats.last7Days.messagesTotal, 0);
   assert.equal(stats.last7Days.avgTextProcessingSeconds, null);
+  assert.equal(stats.last7Days.avgLocalFastPathProcessingSeconds, null);
+  assert.equal(stats.last7Days.localFastPathCount, 0);
   assert.equal(stats.last7Days.confirmRate, null);
 });
 
@@ -133,17 +185,35 @@ test("falls back to historical expense and regular plus planned draft tables", a
             parse_failed: 0,
             transcription_failed: 0,
             avg_text_processing_ms: null,
+            p95_text_processing_ms: null,
             avg_voice_processing_ms: null,
+            p95_voice_processing_ms: null,
             avg_text_queue_wait_ms: null,
             avg_text_telegram_response_ms: null,
             avg_text_llm_parse_ms: null,
+            p95_text_llm_parse_ms: null,
             avg_text_db_save_ms: null,
+            p95_text_db_save_ms: null,
             avg_voice_queue_wait_ms: null,
             avg_voice_telegram_file_download_ms: null,
+            p95_voice_telegram_file_download_ms: null,
             avg_voice_transcription_ms: null,
+            p95_voice_transcription_ms: null,
             avg_voice_llm_parse_ms: null,
+            p95_voice_llm_parse_ms: null,
             avg_voice_telegram_response_ms: null,
-            avg_voice_db_save_ms: null
+            avg_voice_db_save_ms: null,
+            p95_voice_db_save_ms: null,
+            local_fast_path_count: 0,
+            llm_count: 0,
+            llm_skipped_count: 0,
+            category_needs_review_count: 0,
+            shadow_disagreement_count: 0,
+            shadow_compared_count: 0,
+            avg_local_fast_path_processing_ms: null,
+            avg_llm_processing_ms: null,
+            local_fast_path_reject_reasons: {},
+            shadow_disagreement_fields: {}
           }]
         };
       }
@@ -188,11 +258,25 @@ test("formats admin stats as a compact Telegram message", () => {
       parseFailed: 2,
       transcriptionFailed: 1,
       avgTextProcessingSeconds: 1.4,
+      p95TextProcessingSeconds: 2.5,
       avgVoiceProcessingSeconds: 4.8,
+      p95VoiceProcessingSeconds: 7,
       avgTextStageSeconds: { queue: 0.1, telegramResponse: 0.2, llmParse: 0.9, dbSave: 0.3 },
-      avgVoiceStageSeconds: { queue: 0.2, telegramFileDownload: 1.2, transcription: 2.6, llmParse: 0.8, telegramResponse: 0.3, dbSave: 0.4 }
+      avgVoiceStageSeconds: { queue: 0.2, telegramFileDownload: 1.2, transcription: 2.6, llmParse: 0.8, telegramResponse: 0.3, dbSave: 0.4 },
+      p95TextStageSeconds: { llmParse: 1.6, dbSave: 0.5 },
+      p95VoiceStageSeconds: { telegramFileDownload: 1.8, transcription: 3.6, llmParse: 1.4, dbSave: 0.7 },
+      localFastPathCount: 18,
+      llmCount: 7,
+      llmSkippedCount: 18,
+      categoryNeedsReviewCount: 3,
+      shadowDisagreementCount: 1,
+      shadowComparedCount: 4,
+      avgLocalFastPathProcessingSeconds: 0.8,
+      avgLlmProcessingSeconds: 8.2,
+      localFastPathRejectReasons: { no_amount: 2 },
+      shadowDisagreementFields: { amount: 1 }
     }),
-    last7Days: emptyPeriod({ activeUsers: 9, newUsers: 3, messagesTotal: 210, textMessages: 160, voiceMessages: 48, photoMessages: 2, expensesSaved: 160, draftsCreated: 190, draftsConfirmed: 150, draftsCancelled: 20, confirmRate: 79, parseFailedRate: 4, avgTextProcessingSeconds: 1.5, avgVoiceProcessingSeconds: 5.1 }),
+    last7Days: emptyPeriod({ activeUsers: 9, newUsers: 3, messagesTotal: 210, textMessages: 160, voiceMessages: 48, photoMessages: 2, expensesSaved: 160, draftsCreated: 190, draftsConfirmed: 150, draftsCancelled: 20, confirmRate: 79, parseFailedRate: 4, avgTextProcessingSeconds: 1.5, avgVoiceProcessingSeconds: 5.1, localFastPathCount: 90, llmCount: 40, llmSkippedCount: 90, categoryNeedsReviewCount: 12, avgLocalFastPathProcessingSeconds: 0.7, avgLlmProcessingSeconds: 8.4 }),
     last30Days: emptyPeriod()
   });
 
@@ -203,8 +287,17 @@ test("formats admin stats as a compact Telegram message", () => {
   assert.match(text, /Last 7 days:/);
   assert.match(text, /Confirm rate: 79%/);
   assert.match(text, /Avg processing: text 1.5s \/ voice 5.1s/);
+  assert.match(text, /P95 processing: text 2.5s \/ voice 7.0s/);
   assert.match(text, /Avg stages text: queue 0.1s \/ tg 0.2s \/ llm 0.9s \/ db 0.3s/);
   assert.match(text, /Avg stages voice: queue 0.2s \/ dl 1.2s \/ asr 2.6s \/ llm 0.8s \/ tg 0.3s \/ db 0.4s/);
+  assert.match(text, /P95 stages text: llm 1.6s \/ db 0.5s/);
+  assert.match(text, /P95 stages voice: dl 1.8s \/ asr 3.6s \/ llm 1.4s \/ db 0.7s/);
+  assert.match(text, /Parser: local 90 \/ LLM 40 \/ skipped 90/);
+  assert.match(text, /Parser avg: local 0.7s \/ LLM 8.4s/);
+  assert.match(text, /Review: category 12/);
+  assert.match(text, /Shadow: 0\/0 disagreements/);
+  assert.match(text, /Rejects: no_amount 2/);
+  assert.match(text, /Shadow fields: amount 1/);
   assert.match(text, /Last 30 days:/);
   assert.match(text, /Confirm rate: -/);
   assert.match(text, /Avg stages text: queue - \/ tg - \/ llm - \/ db -/);
@@ -227,8 +320,22 @@ function emptyPeriod(overrides = {}) {
     transcriptionFailed: 0,
     avgTextProcessingSeconds: null,
     avgVoiceProcessingSeconds: null,
+    p95TextProcessingSeconds: null,
+    p95VoiceProcessingSeconds: null,
     avgTextStageSeconds: {},
     avgVoiceStageSeconds: {},
+    p95TextStageSeconds: {},
+    p95VoiceStageSeconds: {},
+    localFastPathCount: 0,
+    llmCount: 0,
+    llmSkippedCount: 0,
+    categoryNeedsReviewCount: 0,
+    shadowDisagreementCount: 0,
+    shadowComparedCount: 0,
+    avgLocalFastPathProcessingSeconds: null,
+    avgLlmProcessingSeconds: null,
+    localFastPathRejectReasons: {},
+    shadowDisagreementFields: {},
     confirmRate: null,
     parseFailedRate: null,
     ...overrides

@@ -123,15 +123,22 @@ test("OpenAI parser prompt describes planned and large one-off budget impact rul
 });
 
 test("falls back to the local parser when OpenAI is not configured", async () => {
+  let trace;
   const parser = createExpenseParser({
     now: () => new Date("2026-06-01T10:00:00+07:00")
   });
 
-  const parsed = await parser.parse("кофе 70 бат");
+  const parsed = await parser.parse("кофе 70 бат", {
+    onLlmTrace(metadata) {
+      trace = metadata;
+    }
+  });
 
   assert.equal(parsed.expenses.length, 1);
   assert.equal(parsed.expenses[0].amount, 70);
   assert.equal(parsed.expenses[0].description, "кофе");
+  assert.equal(trace.parserEngine, "local-fallback");
+  assert.equal(trace.llmSkipped, true);
 });
 
 test("local parser uses supplied timezone", async () => {
@@ -142,6 +149,185 @@ test("local parser uses supplied timezone", async () => {
   const parsed = await parser.parse("coffee 70", { timeZone: "America/New_York" });
 
   assert.equal(parsed.expenses[0].spent_at, "2026-05-31T23:30:00.000-04:00");
+});
+
+test("off mode calls OpenAI before local parser", async () => {
+  let openAiCalls = 0;
+  let trace;
+  const parser = createExpenseParser({
+    apiKey: "test-key",
+    fastPathMode: "off",
+    now: () => new Date("2026-06-01T10:00:00+07:00"),
+    fetchImpl: async () => {
+      openAiCalls += 1;
+      return jsonResponse({
+        output_text: JSON.stringify({
+          expenses: [{
+            amount: 80,
+            currency: "THB",
+            description: "coffee",
+            category_slug: "food_cafe",
+            tags: [],
+            spent_at: "2026-06-01T10:00:00.000+07:00",
+            budget_impact: "regular",
+            confidence: 0.9,
+            needs_review: false
+          }],
+          notes: []
+        })
+      });
+    }
+  });
+
+  const parsed = await parser.parse("coffee 80", {
+    onLlmTrace(metadata) {
+      trace = metadata;
+    }
+  });
+
+  assert.equal(openAiCalls, 1);
+  assert.equal(parsed.expenses[0].amount, 80);
+  assert.equal(trace.parserEngine, "llm");
+  assert.equal(trace.localFastPathAccepted, false);
+  assert.equal(trace.fastPathMode, "off");
+});
+
+test("enabled fast-path skips OpenAI for simple English expense", async () => {
+  let openAiCalls = 0;
+  let trace;
+  const parser = createExpenseParser({
+    apiKey: "test-key",
+    fastPathMode: "enabled",
+    now: () => new Date("2026-06-01T10:00:00+07:00"),
+    fetchImpl: async () => {
+      openAiCalls += 1;
+      throw new Error("OpenAI should not be called");
+    }
+  });
+
+  const parsed = await parser.parse("coffee 80", {
+    onLlmTrace(metadata) {
+      trace = metadata;
+    }
+  });
+
+  assert.equal(openAiCalls, 0);
+  assert.equal(parsed.expenses[0].category_slug, "food_cafe");
+  assert.equal(parsed.expenses[0].needs_review, false);
+  assert.equal(trace.parserEngine, "local-fast-path");
+  assert.equal(trace.localFastPathAccepted, true);
+  assert.equal(trace.llmSkipped, true);
+  assert.equal(trace.fastPathMode, "enabled");
+});
+
+test("enabled fast-path keeps unknown category as review without OpenAI", async () => {
+  let openAiCalls = 0;
+  let trace;
+  const parser = createExpenseParser({
+    apiKey: "test-key",
+    fastPathMode: "enabled",
+    now: () => new Date("2026-06-01T10:00:00+07:00"),
+    fetchImpl: async () => {
+      openAiCalls += 1;
+      throw new Error("OpenAI should not be called");
+    }
+  });
+
+  const parsed = await parser.parse("notebook 120", {
+    onLlmTrace(metadata) {
+      trace = metadata;
+    }
+  });
+
+  assert.equal(openAiCalls, 0);
+  assert.equal(parsed.expenses[0].category_slug, "other");
+  assert.equal(parsed.expenses[0].needs_review, true);
+  assert.equal(trace.categoryResolution, "needs_user_review");
+});
+
+test("stop-patterns reject local fast-path and call OpenAI", async () => {
+  let openAiCalls = 0;
+  let trace;
+  const parser = createExpenseParser({
+    apiKey: "test-key",
+    fastPathMode: "enabled",
+    now: () => new Date("2026-06-01T10:00:00+07:00"),
+    fetchImpl: async () => {
+      openAiCalls += 1;
+      return jsonResponse({
+        output_text: JSON.stringify({
+          expenses: [{
+            amount: 120,
+            currency: "THB",
+            description: "taxi",
+            category_slug: "transport",
+            tags: [],
+            spent_at: "2026-06-01T10:00:00.000+07:00",
+            budget_impact: "regular",
+            confidence: 0.9,
+            needs_review: false
+          }],
+          notes: []
+        })
+      });
+    }
+  });
+
+  const parsed = await parser.parse("I paid half of the taxi 120", {
+    onLlmTrace(metadata) {
+      trace = metadata;
+    }
+  });
+
+  assert.equal(openAiCalls, 1);
+  assert.equal(parsed.expenses[0].description, "taxi");
+  assert.equal(trace.parserEngine, "llm");
+  assert.equal(trace.localFastPathAccepted, false);
+  assert.equal(trace.localFastPathRejectReason, "split_semantics");
+  assert.equal(trace.llmSkipped, false);
+});
+
+test("shadow mode calls OpenAI and applies LLM result while recording disagreement", async () => {
+  let openAiCalls = 0;
+  let trace;
+  const parser = createExpenseParser({
+    apiKey: "test-key",
+    fastPathMode: "shadow",
+    now: () => new Date("2026-06-01T10:00:00+07:00"),
+    fetchImpl: async () => {
+      openAiCalls += 1;
+      return jsonResponse({
+        output_text: JSON.stringify({
+          expenses: [{
+            amount: 90,
+            currency: "THB",
+            description: "coffee",
+            category_slug: "food_cafe",
+            tags: [],
+            spent_at: "2026-06-01T10:00:00.000+07:00",
+            budget_impact: "regular",
+            confidence: 0.9,
+            needs_review: false
+          }],
+          notes: []
+        })
+      });
+    }
+  });
+
+  const parsed = await parser.parse("coffee 80", {
+    onLlmTrace(metadata) {
+      trace = metadata;
+    }
+  });
+
+  assert.equal(openAiCalls, 1);
+  assert.equal(parsed.expenses[0].amount, 90);
+  assert.equal(trace.parserEngine, "llm");
+  assert.equal(trace.fastPathMode, "shadow");
+  assert.equal(trace.localFastPathAccepted, true);
+  assert.equal(trace.shadowDisagreement, true);
+  assert.deepEqual(trace.shadowDisagreementFields, ["amount"]);
 });
 
 test("falls back to the local parser when OpenAI fails", async () => {
@@ -177,6 +363,7 @@ test("parsed expenses carry category_source parser", async () => {
           category_slug: "food_cafe",
           tags: [],
           spent_at: "2026-06-01T10:00:00.000+07:00",
+          budget_impact: "regular",
           confidence: 0.9,
           needs_review: false
         }],

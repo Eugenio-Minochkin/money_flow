@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { parseAdminTelegramIds } from "../src/adminAccess.js";
+import { createExpenseParser } from "../src/expenseParser.js";
 import { createTelegramBot, processQueuedMessage, sendTelegramMessage, sendWeeklyReports } from "../src/telegram.js";
 
 test("exports the Telegram message sender used by the production server", async () => {
@@ -372,6 +373,191 @@ test("voice message performance summary includes download and transcription stag
   assert.match(summary, /llm=\d+ms/);
   assert.match(summary, /db=\d+ms/);
   assert.match(summary, /telegram=\d+ms/);
+});
+
+test("completed text message app event includes parser metadata", async () => {
+  const repo = fakeRepository();
+  const originalLog = console.log;
+  console.log = () => {};
+  try {
+    const bot = createTelegramBot({
+      token: "",
+      miniAppUrl: "http://localhost:3000",
+      repository: repo,
+      expenseParser: {
+        model: "local-parser",
+        async parse(_text, options = {}) {
+          options.onLlmTrace({
+            parserEngine: "local-fast-path",
+            localFastPathAccepted: true,
+            localFastPathRejectReason: null,
+            categoryResolution: "resolved",
+            llmSkipped: true,
+            fastPathMode: "enabled",
+            shadowDisagreement: null,
+            shadowDisagreementFields: [],
+            model: "local-parser",
+            promptChars: 9,
+            responseChars: 220
+          });
+          return {
+            expenses: [{
+              amount: 80,
+              currency: "THB",
+              description: "coffee",
+              category_slug: "food_cafe",
+              tags: [],
+              spent_at: "2026-06-02T10:00:00+07:00",
+              confidence: 0.9,
+              needs_review: false
+            }]
+          };
+        }
+      }
+    });
+
+    await bot.handleUpdate({
+      message: {
+        chat: { id: 10 },
+        from: { id: 100, first_name: "M" },
+        text: "coffee 80"
+      }
+    });
+  } finally {
+    console.log = originalLog;
+  }
+
+  const completed = repo.events.find((event) => event.eventName === "message_processing_completed");
+  assert.ok(completed);
+  assert.equal(completed.metadata.inputType, "text");
+  assert.equal(completed.metadata.parserEngine, "local-fast-path");
+  assert.equal(completed.metadata.localFastPathAccepted, true);
+  assert.equal(completed.metadata.llmSkipped, true);
+  assert.equal(completed.metadata.fastPathMode, "enabled");
+  assert.equal(completed.metadata.categoryResolution, "resolved");
+  assert.equal(Number.isFinite(completed.metadata.processingTotalMs), true);
+});
+
+test("completed voice message app event includes parser metadata and transcript size", async () => {
+  const repo = fakeRepository();
+  const originalLog = console.log;
+  console.log = () => {};
+  try {
+    const bot = createTelegramBot({
+      token: "",
+      miniAppUrl: "http://localhost:3000",
+      repository: repo,
+      voiceTranscriber: {
+        isConfigured: () => true,
+        async transcribeTelegramVoice(_voice, options = {}) {
+          options.onPerfStage("telegram_file_download_start", { audioDurationSec: 3 });
+          options.onPerfStage("telegram_file_download_end", { audioDurationSec: 3, fileSizeKb: 12 });
+          options.onPerfStage("transcription_start", { transcriptionProvider: "deepgram" });
+          options.onPerfStage("transcription_end", { transcriptionProvider: "deepgram", responseChars: 9 });
+          return "coffee 80";
+        }
+      },
+      expenseParser: {
+        model: "local-parser",
+        async parse(_text, options = {}) {
+          options.onLlmTrace({
+            parserEngine: "local-fast-path",
+            localFastPathAccepted: true,
+            localFastPathRejectReason: null,
+            categoryResolution: "resolved",
+            llmSkipped: true,
+            fastPathMode: "enabled",
+            shadowDisagreement: null,
+            shadowDisagreementFields: [],
+            model: "local-parser",
+            promptChars: 9,
+            responseChars: 220
+          });
+          return {
+            expenses: [{
+              amount: 80,
+              currency: "THB",
+              description: "coffee",
+              category_slug: "food_cafe",
+              tags: [],
+              spent_at: "2026-06-02T10:00:00+07:00",
+              confidence: 0.9,
+              needs_review: false
+            }]
+          };
+        }
+      }
+    });
+
+    await bot.handleUpdate({
+      message: {
+        chat: { id: 10 },
+        from: { id: 100, first_name: "M" },
+        voice: { file_id: "voice-file-id", mime_type: "audio/ogg", duration: 3 }
+      }
+    });
+  } finally {
+    console.log = originalLog;
+  }
+
+  const completed = repo.events.find((event) => event.eventName === "message_processing_completed");
+  assert.ok(completed);
+  assert.equal(completed.metadata.inputType, "voice");
+  assert.equal(completed.metadata.parserEngine, "local-fast-path");
+  assert.equal(completed.metadata.llmSkipped, true);
+  assert.equal(completed.metadata.transcriptChars, 9);
+});
+
+test("enabled fast-path creates voice draft metadata without OpenAI call", async () => {
+  const repo = fakeRepository();
+  let openAiCalls = 0;
+  let createdDraft = null;
+  repo.createDraft = async (userId, sourceText, items) => {
+    createdDraft = { userId, sourceText, items };
+    return { id: 42 };
+  };
+  const originalLog = console.log;
+  console.log = () => {};
+  try {
+    const bot = createTelegramBot({
+      token: "",
+      miniAppUrl: "http://localhost:3000",
+      repository: repo,
+      voiceTranscriber: {
+        isConfigured: () => true,
+        async transcribeTelegramVoice() {
+          return "coffee 80";
+        }
+      },
+      expenseParser: createExpenseParser({
+        apiKey: "test-key",
+        fastPathMode: "enabled",
+        now: () => new Date("2026-06-02T10:00:00+07:00"),
+        fetchImpl: async () => {
+          openAiCalls += 1;
+          throw new Error("OpenAI should not be called");
+        }
+      })
+    });
+
+    await bot.handleUpdate({
+      message: {
+        chat: { id: 10 },
+        from: { id: 100, first_name: "M" },
+        voice: { file_id: "voice-file-id", mime_type: "audio/ogg", duration: 3 }
+      }
+    });
+  } finally {
+    console.log = originalLog;
+  }
+
+  assert.equal(openAiCalls, 0);
+  assert.equal(createdDraft.sourceText, "coffee 80");
+  assert.equal(createdDraft.items[0].amount, 80);
+  const completed = repo.events.find((event) => event.eventName === "message_processing_completed");
+  assert.equal(completed.metadata.parserEngine, "local-fast-path");
+  assert.equal(completed.metadata.llmSkipped, true);
+  assert.equal(completed.metadata.fastPathMode, "enabled");
 });
 
 test("confirm callback saves draft and returns an informative summary", async () => {

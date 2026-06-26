@@ -78,6 +78,76 @@ test("parses added currency aliases and education category", () => {
   assert.equal(result.expenses[0].category_slug, "education");
 });
 
+test("parses amount before English description", () => {
+  const result = parseExpenseText("120 grab", {
+    now: new Date("2026-06-01T12:30:00+07:00")
+  });
+
+  assert.equal(result.expenses.length, 1);
+  assert.equal(result.expenses[0].amount, 120);
+  assert.equal(result.expenses[0].description, "grab");
+  assert.equal(result.expenses[0].category_slug, "transport");
+});
+
+test("parses English relative dates and category keywords", () => {
+  const result = parseExpenseText("yesterday groceries 900", {
+    now: new Date("2026-06-03T12:00:00+07:00")
+  });
+
+  assert.equal(result.expenses.length, 1);
+  assert.equal(result.expenses[0].spent_at.slice(0, 10), "2026-06-02");
+  assert.equal(result.expenses[0].category_slug, "groceries");
+});
+
+test("parses attached currency symbols deterministically", () => {
+  const examples = [
+    ["coffee $50", 50, "USD"],
+    ["coffee 50฿", 50, "THB"],
+    ["coffee 120₽", 120, "RUB"],
+    ["coffee 20€", 20, "EUR"],
+    ["coffee 30₾", 30, "GEL"]
+  ];
+
+  for (const [text, amount, currency] of examples) {
+    const result = parseExpenseText(text);
+    assert.equal(result.expenses[0].amount, amount, text);
+    assert.equal(result.expenses[0].currency, currency, text);
+  }
+});
+
+test("rejects ambiguous amount formats locally", () => {
+  const result = parseExpenseText("coffee 1,200");
+
+  assert.equal(result.expenses.length, 0);
+});
+
+test("rejects small leading bare integer that could be quantity", () => {
+  const result = parseExpenseText("2 coffee");
+  const russian = parseExpenseText("2 кофе");
+
+  assert.equal(result.expenses.length, 0);
+  assert.equal(russian.expenses.length, 0);
+});
+
+test("parses small trailing bare integer as amount after description", () => {
+  const english = parseExpenseText("coffee 8");
+  const russian = parseExpenseText("чай 8");
+
+  assert.equal(english.expenses.length, 1);
+  assert.equal(english.expenses[0].amount, 8);
+  assert.equal(russian.expenses.length, 1);
+  assert.equal(russian.expenses[0].amount, 8);
+  assert.equal(russian.expenses[0].category_slug, "other");
+});
+
+test("parses clean English multi-expense split", () => {
+  const result = parseExpenseText("taxi 120, coffee 80");
+
+  assert.equal(result.expenses.length, 2);
+  assert.deepEqual(result.expenses.map((expense) => expense.amount), [120, 80]);
+  assert.deepEqual(result.expenses.map((expense) => expense.category_slug), ["transport", "food_cafe"]);
+});
+
 test("applies relative dates per expense segment", () => {
   const result = parseExpenseText("вчера кофе 200 бат, сегодня шоколадка 100 бат", {
     now: new Date("2026-06-03T12:00:00+07:00")

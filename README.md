@@ -230,6 +230,7 @@ Edit `.env.production`:
 - `POSTGRES_PASSWORD` - strong database password
 - `OPENAI_API_KEY` - optional; enables AI parsing for text messages
 - `OPENAI_MODEL` - optional; defaults to `gpt-5-mini`
+- `EXPENSE_FAST_PATH_MODE` - `off`, `shadow`, or `enabled`; `off` restores LLM-first parsing after the API process restarts
 - `DEEPGRAM_API_KEY` - optional; enables Telegram voice message transcription
 
 Start:

@@ -24,6 +24,7 @@ export const config = {
   defaultMonthlyBudget: Number(process.env.DEFAULT_MONTHLY_BUDGET ?? 45000),
   openAiApiKey: process.env.OPENAI_API_KEY,
   openAiModel: process.env.OPENAI_MODEL ?? "gpt-5-mini",
+  expenseFastPathMode: process.env.EXPENSE_FAST_PATH_MODE ?? "off",
   deepgramApiKey: process.env.DEEPGRAM_API_KEY,
   telegramWebhookSecret: process.env.TELEGRAM_WEBHOOK_SECRET,
   requireTelegramInitData: process.env.REQUIRE_TELEGRAM_INIT_DATA === "true",

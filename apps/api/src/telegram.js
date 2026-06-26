@@ -223,6 +223,7 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
   const chatId = message.chat.id;
   let processingResult = inputType ? "processing_failed" : undefined;
   let processingDraftType;
+  let transcriptChars = null;
 
   try {
     if (isOnboardingActive(user)) {
@@ -248,6 +249,7 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
       if (!text && hasVoice) {
         try {
           text = await transcribeVoice(message, voiceTranscriber, trace);
+          transcriptChars = String(text ?? "").length;
         } catch (error) {
           processingResult = "transcription_failed";
           await safeRecordAppEvent(repository, user.id, "voice_transcription_failed", { result: "transcription_failed" });
@@ -392,6 +394,15 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
         promptChars: traceMetadata.llmParse?.promptChars,
         responseChars: traceMetadata.llmParse?.responseChars,
         fallback: traceMetadata.llmParse?.fallback,
+        parserEngine: traceMetadata.llmParse?.parserEngine,
+        localFastPathAccepted: traceMetadata.llmParse?.localFastPathAccepted,
+        localFastPathRejectReason: traceMetadata.llmParse?.localFastPathRejectReason,
+        categoryResolution: traceMetadata.llmParse?.categoryResolution,
+        llmSkipped: traceMetadata.llmParse?.llmSkipped,
+        fastPathMode: traceMetadata.llmParse?.fastPathMode,
+        shadowDisagreement: traceMetadata.llmParse?.shadowDisagreement,
+        shadowDisagreementFields: traceMetadata.llmParse?.shadowDisagreementFields,
+        transcriptChars,
         audioDurationSec: inputType === "voice" ? traceMetadata.audioDurationSec : undefined
       });
     }
@@ -1397,6 +1408,10 @@ function createPerfTrace({ update, logger }) {
       logStage(stage, 0, success, metadata, error);
     },
 
+    elapsed() {
+      return elapsedSince(startedAt);
+    },
+
     failActive(stages, error) {
       for (const stage of stages) {
         if (starts.has(stage)) {
@@ -1474,7 +1489,15 @@ function pickLlmMetadata(metadata) {
       model: metadata.model,
       promptChars: metadata.promptChars,
       responseChars: metadata.responseChars,
-      fallback: metadata.fallback
+      fallback: metadata.fallback,
+      parserEngine: metadata.parserEngine,
+      localFastPathAccepted: metadata.localFastPathAccepted,
+      localFastPathRejectReason: metadata.localFastPathRejectReason,
+      categoryResolution: metadata.categoryResolution,
+      llmSkipped: metadata.llmSkipped,
+      fastPathMode: metadata.fastPathMode,
+      shadowDisagreement: metadata.shadowDisagreement,
+      shadowDisagreementFields: metadata.shadowDisagreementFields
     }).filter(([, value]) => value !== undefined)
   );
 }
