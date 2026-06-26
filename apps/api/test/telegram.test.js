@@ -2703,6 +2703,73 @@ test("updateDraftMessageToSaved is a no-op without a stored reference", async ()
   await updateDraftMessageToSaved({ token: null, draft: { id: 7, tg_chat_id: null, tg_message_id: null }, text: "x", replyMarkup: null, telegramClient });
 });
 
+test("updateTelegramMessageAfterExpenseDelete shows the deleted-state when no expenses remain", async () => {
+  const { updateTelegramMessageAfterExpenseDelete } = await import("../src/telegram.js");
+  const calls = [];
+  const telegramClient = {
+    editMessageText: async (message) => { calls.push({ method: "editMessageText", ...message }); return { ok: true }; },
+    sendMessage: async () => { throw new Error("sendMessage should not be called"); },
+    editMessageReplyMarkup: async () => { throw new Error("editMessageReplyMarkup should not be called"); }
+  };
+  await updateTelegramMessageAfterExpenseDelete({
+    token: "test-token",
+    draft: { id: 7, tg_chat_id: 5, tg_message_id: 9 },
+    remainingExpenses: [],
+    dashboardSnapshot: {},
+    language: "en",
+    miniAppUrl: "http://x",
+    telegramUserId: 100,
+    telegramClient
+  });
+  const edit = calls.find((call) => call.method === "editMessageText");
+  assert.ok(edit, "expected editMessageText");
+  assert.equal(edit.text, "🗑 Entry deleted.\nThis expense was deleted in Mini App and no longer counts.");
+  assert.ok(edit.replyMarkup?.inline_keyboard?.[0]?.[0]?.web_app?.url?.includes("http://x?telegramUserId=100"), "expected the Mini App web_app url");
+});
+
+test("updateTelegramMessageAfterExpenseDelete re-renders the saved summary when expenses remain", async () => {
+  const { updateTelegramMessageAfterExpenseDelete } = await import("../src/telegram.js");
+  const calls = [];
+  const telegramClient = {
+    editMessageText: async (message) => { calls.push({ method: "editMessageText", ...message }); return { ok: true }; },
+    sendMessage: async () => { throw new Error("sendMessage should not be called"); },
+    editMessageReplyMarkup: async () => { throw new Error("editMessageReplyMarkup should not be called"); }
+  };
+  const remaining = [{ amount_base: 120, amount_original: 120, currency_original: "THB", description: "latte", category_slug: "food_cafe" }];
+  await updateTelegramMessageAfterExpenseDelete({
+    token: "test-token",
+    draft: { id: 7, tg_chat_id: 5, tg_message_id: 9 },
+    remainingExpenses: remaining,
+    dashboardSnapshot: { baseCurrency: "THB", today: 0, monthlyBudget: 45000 },
+    language: "en",
+    miniAppUrl: "http://x",
+    telegramUserId: 100,
+    telegramClient
+  });
+  const edit = calls.find((call) => call.method === "editMessageText");
+  assert.ok(edit, "expected editMessageText");
+  assert.match(edit.text, /latte/);
+});
+
+test("updateTelegramMessageAfterExpenseDelete is a no-op without a stored reference", async () => {
+  const { updateTelegramMessageAfterExpenseDelete } = await import("../src/telegram.js");
+  const calls = [];
+  const telegramClient = {
+    editMessageText: async (message) => { calls.push({ method: "editMessageText", ...message }); return { ok: true }; }
+  };
+  await updateTelegramMessageAfterExpenseDelete({
+    token: "test-token",
+    draft: { id: 7, tg_chat_id: null, tg_message_id: null },
+    remainingExpenses: [],
+    dashboardSnapshot: {},
+    language: "en",
+    miniAppUrl: "http://x",
+    telegramUserId: 100,
+    telegramClient
+  });
+  assert.equal(calls.length, 0, "editMessageText should not be called without a stored reference");
+});
+
 test("updateDraftMessageToDraftState edits the stored draft preview with the current items", async () => {
   const { updateDraftMessageToDraftState } = await import("../src/telegram.js");
   const calls = [];
