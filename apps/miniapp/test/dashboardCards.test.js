@@ -17,14 +17,16 @@ const labels = {
   "dashboard.todayCaption": "потрачено {spent} · бюджет дня {budget}",
   "dashboard.todayOverrun": "Перерасход сегодня",
   "dashboard.todayRemaining": "Осталось сегодня",
-  "dashboard.tooltip.month": "Остаток бюджета месяца. Потрачено {monthSpent} из {monthBudget} → остаток {monthRemaining}. Плановые и резерв здесь не вычтены — их учитывает «До конца месяца».",
-  "dashboard.tooltip.monthFree": "Сколько реально можно потратить до конца месяца. Остаток бюджета {monthRemaining}, плановые {plannedRemaining} → свободно {freeRemaining}.",
-  "dashboard.tooltip.monthFreeWithReserve": "Сколько реально можно потратить до конца месяца. Остаток бюджета {monthRemaining}, плановые {plannedRemaining}, резерв {reserveAmount} → свободно {freeRemaining}.",
-  "dashboard.tooltip.planned": "Будущие плановые оплаты до конца месяца. Сейчас впереди {plannedRemaining}.",
-  "dashboard.tooltip.heroTodayOnTrack": "hero on track tooltip",
-  "dashboard.tooltip.heroTodayOverspend": "hero overspend tooltip",
-  "dashboard.tooltip.weekMonthBinding": "Доступно на неделю, но не больше, чем свободно до конца месяца. По неделе осталось {weekRemainingRaw}, месяц разрешает {freeRemaining} → доступно {weekAvailable}.",
-  "dashboard.tooltip.weekWeekBinding": "Остаток недели. Потрачено {weekSpent} из {weekBudget} → доступно {weekAvailable}.",
+  "dashboard.tooltip.month.title": "Сколько осталось от общего бюджета месяца: {remaining} из {budget} (потрачено {spent}).",
+  "dashboard.tooltip.month.body": "month body text",
+  "dashboard.tooltip.monthFree.title": "Деньги, которыми реально можно распоряжаться до конца месяца.",
+  "dashboard.tooltip.monthFree.body": "monthFree body text",
+  "dashboard.tooltip.planned.title": "planned title",
+  "dashboard.tooltip.planned.body": "planned body",
+  "dashboard.tooltip.heroToday.title": "Твой безопасный лимит на сегодня.",
+  "dashboard.tooltip.heroToday.body": "hero body text",
+  "dashboard.tooltip.week.title": "week title",
+  "dashboard.tooltip.week.body": "По недельному темпу свободно {weeklyPace}, но месяц даёт только {monthlyAllowance} — берём меньшее.",
   "dashboard.untilMonthEnd": "До конца месяца",
   "dashboard.week": "Неделя"
 };
@@ -132,7 +134,10 @@ test("builds hero metric from today-only budget fields", () => {
     display: "~$8.07",
     caption: "потрачено 676 THB · бюджет дня 397 THB",
     state: "bad",
-    tooltip: "hero overspend tooltip"
+    tooltip: {
+      title: "Твой безопасный лимит на сегодня.",
+      body: "hero body text"
+    }
   });
 });
 
@@ -148,10 +153,13 @@ test("builds on-track hero title caption and tooltip", () => {
   assert.equal(hero.title, "Осталось сегодня");
   assert.equal(hero.amount, "147 THB");
   assert.equal(hero.caption, "потрачено 250 THB · бюджет дня 397 THB");
-  assert.equal(hero.tooltip, "hero on track tooltip");
+  assert.deepEqual(hero.tooltip, {
+    title: "Твой безопасный лимит на сегодня.",
+    body: "hero body text"
+  });
 });
 
-test("renders card flip backs and avoids the old limit wording", () => {
+test("renders card flip backs with separate bold title and body", () => {
   const cards = buildDashboardCards(semanticSnapshot, helpers);
   const container = { innerHTML: "" };
 
@@ -166,7 +174,29 @@ test("renders card flip backs and avoids the old limit wording", () => {
   assert.match(container.innerHTML, /dashboard-card__info/);
   assert.doesNotMatch(container.innerHTML, /dashboard-card__tooltip/);
   assert.match(container.innerHTML, /aria-label="Объяснить: До конца месяца"/);
-  assert.match(container.innerHTML, /Сколько реально можно потратить/);
-  assert.doesNotMatch(container.innerHTML, /лимит/);
-  assert.doesNotMatch(container.innerHTML, /limit/);
+  assert.match(container.innerHTML, /<strong class="dashboard-card__back-title">[^]*<\/strong>\s*<span class="dashboard-card__back-body">/s);
+  assert.match(container.innerHTML, /Деньги, которыми реально/);
+});
+
+test("month tooltip shows remaining (budget minus spent), not spent", () => {
+  const cards = buildDashboardCards(semanticSnapshot, helpers);
+  const monthCard = cards.find((card) => card.title === "Месяц");
+
+  assert.equal(monthCard.tooltip.title, "Сколько осталось от общего бюджета месяца: 2519 THB из 48000 THB (потрачено 45481 THB).");
+  assert.equal(semanticSnapshot.month, 45481);
+  assert.equal(semanticSnapshot.monthlyBudget, 48000);
+  assert.equal(semanticSnapshot.monthRemaining, 2519);
+});
+
+test("tooltips never leak raw placeholders into rendered markup", () => {
+  const cards = buildDashboardCards(semanticSnapshot, helpers);
+  const container = { innerHTML: "" };
+
+  renderDashboardCards(container, cards);
+
+  assert.doesNotMatch(container.innerHTML, /\{remaining\}/);
+  assert.doesNotMatch(container.innerHTML, /\{spent\}/);
+  assert.doesNotMatch(container.innerHTML, /\{budget\}/);
+  assert.doesNotMatch(container.innerHTML, /\{weeklyPace\}/);
+  assert.doesNotMatch(container.innerHTML, /\{monthlyAllowance\}/);
 });
