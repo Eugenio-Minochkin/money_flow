@@ -424,6 +424,73 @@ test("uses provided dashboard display values instead of the monthly spending rat
   assert.equal(snapshot.display.weeklyBudget, displayFromBase(11200));
 });
 
+test("dashboard visible values reconcile after zero-decimal currency rounding", () => {
+  const snapshot = calculateBudgetSnapshot({
+    baseCurrency: "THB",
+    todayTotal: 0,
+    weekTotal: 3874,
+    monthTotal: 45542.49,
+    monthlyBudget: 48000,
+    weeklyBudget: 11200,
+    plannedRemainingTotal: 887.51,
+    reserveAmount: 0,
+    dayPlanLimit: 361,
+    now: new Date("2026-06-26T12:00:00+07:00"),
+    timeZone: "Asia/Bangkok"
+  });
+
+  assert.equal(snapshot.monthRemaining, 2458);
+  assert.equal(snapshot.plannedRemaining, 888);
+  assert.equal(snapshot.freeRemaining, 1570);
+  assert.equal(snapshot.weekRemainingRaw, 7326);
+  assert.equal(snapshot.weekAvailable, 1570);
+  assert.equal(snapshot.monthRemaining - snapshot.plannedRemaining, snapshot.freeRemaining);
+  assert.equal(snapshot.weekAvailable, Math.min(snapshot.weekRemainingRaw, snapshot.freeRemaining));
+});
+
+test("dashboard visible values reconcile reserve after zero-decimal currency rounding", () => {
+  const snapshot = calculateBudgetSnapshot({
+    baseCurrency: "THB",
+    todayTotal: 0,
+    weekTotal: 3874,
+    monthTotal: 45542.49,
+    monthlyBudget: 48000,
+    weeklyBudget: 11200,
+    plannedRemainingTotal: 887.51,
+    reserveAmount: 400,
+    dayPlanLimit: 361,
+    now: new Date("2026-06-26T12:00:00+07:00"),
+    timeZone: "Asia/Bangkok"
+  });
+
+  assert.equal(snapshot.monthRemaining, 2458);
+  assert.equal(snapshot.plannedRemaining, 888);
+  assert.equal(snapshot.reservedAhead, 1288);
+  assert.equal(snapshot.freeRemaining, 1170);
+  assert.equal(snapshot.monthRemaining - snapshot.plannedRemaining - snapshot.reserve.amount, snapshot.freeRemaining);
+});
+
+test("dashboard visible values keep two decimals for two-decimal base currencies", () => {
+  const snapshot = calculateBudgetSnapshot({
+    baseCurrency: "USD",
+    todayTotal: 0,
+    weekTotal: 38.744,
+    monthTotal: 455.424,
+    monthlyBudget: 480,
+    weeklyBudget: 112,
+    plannedRemainingTotal: 8.875,
+    reserveAmount: 0,
+    now: new Date("2026-06-26T12:00:00+07:00"),
+    timeZone: "Asia/Bangkok"
+  });
+
+  assert.equal(snapshot.monthRemaining, 24.58);
+  assert.equal(snapshot.plannedRemaining, 8.88);
+  assert.equal(snapshot.freeRemaining, 15.7);
+  assert.equal(snapshot.weekRemainingRaw, 73.26);
+  assert.equal(snapshot.weekAvailable, 15.7);
+});
+
 test("does not subtract planned payments twice from week availability", () => {
   const snapshot = calculateBudgetSnapshot({
     weekTotal: 3000,

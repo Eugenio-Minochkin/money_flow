@@ -53,9 +53,9 @@ export function buildDashboardCards(snapshot, helpers) {
     reserveLine: reserveAmount > 0 ? helpers.t("dashboard.reserveIncluded", { amount: helpers.moneyBase(reserveAmount) }) : undefined,
     tooltip: helpers.t(reserveAmount > 0 ? "dashboard.tooltip.monthFreeWithReserve" : "dashboard.tooltip.monthFree", {
       monthRemaining: helpers.moneyBase(monthRemaining),
-      plannedRemaining: helpers.moneyBase(plannedRemaining),
+      plannedAhead: helpers.moneyBase(plannedRemaining),
       reserveAmount: helpers.moneyBase(reserveAmount),
-      freeRemaining: helpers.moneyBase(freeRemaining)
+      monthFree: helpers.moneyBase(freeRemaining)
     })
   };
   const plannedCard = {
@@ -102,7 +102,7 @@ export function buildDashboardCards(snapshot, helpers) {
       weekSpent: helpers.moneyBase(snapshot.week),
       weekBudget: helpers.moneyBase(snapshot.weekPlanLimit ?? 0),
       weekRemainingRaw: helpers.moneyBase(weekRemainingRaw),
-      freeRemaining: helpers.moneyBase(freeRemaining),
+      monthFree: helpers.moneyBase(freeRemaining),
       weekAvailable: helpers.moneyBase(weekAvailable)
     })
   };
@@ -138,23 +138,30 @@ function renderCard(card) {
   const display = card.display ? `<div class="dashboard-card__display">${escapeHtml(card.display)}</div>` : "";
   const caption = card.caption ? `<div class="dashboard-card__caption">${escapeHtml(card.caption)}</div>` : "";
   const reserveLine = card.reserveLine ? `<div class="dashboard-card__reserve">${escapeHtml(card.reserveLine)}</div>` : "";
-  const tooltip = card.tooltip ? `<div class="dashboard-card__tooltip" id="${escapeHtml(tooltipId)}" role="tooltip" hidden>${escapeHtml(card.tooltip)}</div>` : "";
+  const back = card.tooltip ? `
+        <div class="dashboard-card__face dashboard-card__face--back" id="${escapeHtml(tooltipId)}" role="note" tabindex="-1" aria-hidden="true" aria-live="polite">
+          <p class="dashboard-card__back-text">${escapeHtml(card.tooltip)}</p>
+        </div>` : "";
 
   return `
-    <article class="dashboard-card${card.progress ? " dashboard-card--progress" : ""}${card.state === "danger" || card.state === "bad" ? " dashboard-card--danger" : ""}">
-      <div class="dashboard-card__top">
-        <span class="dashboard-card__title">${escapeHtml(card.title)}</span>
-        ${percent}
-        ${info}
+    <article class="dashboard-card${card.tooltip ? " dashboard-card--flip" : ""}${card.progress ? " dashboard-card--progress" : ""}${card.state === "danger" || card.state === "bad" ? " dashboard-card--danger" : ""}"${card.tooltip ? " data-dashboard-card" : ""}>
+      <div class="dashboard-card__flip-inner">
+        <div class="dashboard-card__face dashboard-card__face--front">
+          <div class="dashboard-card__top">
+            <span class="dashboard-card__title">${escapeHtml(card.title)}</span>
+            ${percent}
+            ${info}
+          </div>
+          <strong class="dashboard-card__amount">${escapeHtml(card.amount)}</strong>
+          ${lines}
+          ${display}
+          ${caption}
+          ${reserveLine}
+          <div class="dashboard-card__spacer"></div>
+          ${progress}
+        </div>
+        ${back}
       </div>
-      <strong class="dashboard-card__amount">${escapeHtml(card.amount)}</strong>
-      ${lines}
-      ${display}
-      ${caption}
-      ${reserveLine}
-      <div class="dashboard-card__spacer"></div>
-      ${progress}
-      ${tooltip}
     </article>
   `;
 }

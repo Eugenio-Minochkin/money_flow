@@ -533,38 +533,46 @@ function renderSnapshot(snapshot) {
 }
 
 function bindDashboardTooltips() {
-  document.querySelectorAll(".dashboard-card").forEach((card) => {
+  document.querySelectorAll(".dashboard-card[data-dashboard-card]").forEach((card) => {
     const button = card.querySelector("[data-dashboard-tooltip]");
-    if (!button) return;
     card.addEventListener("click", (event) => {
       if (event.target.closest("[data-dashboard-tooltip]")) return;
-      toggleDashboardTooltip(button);
+      toggleDashboardTooltip(card);
     });
-  });
-  document.querySelectorAll("[data-dashboard-tooltip]").forEach((button) => {
-    button.addEventListener("click", (event) => {
+    button?.addEventListener("click", (event) => {
       event.stopPropagation();
-      toggleDashboardTooltip(button);
+      toggleDashboardTooltip(card);
+    });
+    button?.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      toggleDashboardTooltip(card);
     });
   });
 }
 
-function toggleDashboardTooltip(button) {
-  const isOpen = button.getAttribute("aria-expanded") === "true";
+function toggleDashboardTooltip(card) {
+  const isOpen = card.classList.contains("is-flipped");
   closeDashboardTooltips();
   if (isOpen) return;
-  const tooltip = document.getElementById(button.getAttribute("aria-controls"));
-  button.setAttribute("aria-expanded", "true");
-  if (tooltip) tooltip.hidden = false;
+  setDashboardCardFlipped(card, true);
 }
 
 function closeDashboardTooltips() {
-  document.querySelectorAll("[data-dashboard-tooltip][aria-expanded='true']").forEach((button) => {
-    button.setAttribute("aria-expanded", "false");
+  document.querySelectorAll(".dashboard-card.is-flipped").forEach((card) => {
+    setDashboardCardFlipped(card, false);
   });
-  document.querySelectorAll(".dashboard-card__tooltip:not([hidden])").forEach((tooltip) => {
-    tooltip.hidden = true;
-  });
+}
+
+function setDashboardCardFlipped(card, isFlipped) {
+  card.classList.toggle("is-flipped", isFlipped);
+  const button = card.querySelector("[data-dashboard-tooltip]");
+  const front = card.querySelector(".dashboard-card__face--front");
+  const back = card.querySelector(".dashboard-card__face--back");
+  button?.setAttribute("aria-expanded", String(isFlipped));
+  front?.setAttribute("aria-hidden", String(isFlipped));
+  back?.setAttribute("aria-hidden", String(!isFlipped));
+  if (isFlipped) back?.focus?.({ preventScroll: true });
 }
 
 function renderSettings(user) {

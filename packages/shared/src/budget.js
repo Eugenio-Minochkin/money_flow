@@ -39,10 +39,8 @@ export function calculateBudgetSnapshot({
   const remaining = monthlyBudget - monthTotal;
   const budgetProgressPercent = monthlyBudget > 0 ? roundMoney((monthTotal / monthlyBudget) * 100) : 0;
   const reserve = Math.max(Number(reserveAmount ?? 0), 0);
-  const reservedAhead = roundMoney(Number(plannedRemainingTotal ?? 0) + reserve);
-  const freeRemaining = remaining - reservedAhead;
-  const fallbackReservedAheadDisplay = roundMoney(Number(plannedRemainingDisplayTotal ?? 0) + Number(reserveDisplayAmount ?? 0));
-  const reservedAheadDisplay = displayValue(providedReservedAheadDisplay, fallbackReservedAheadDisplay);
+  const reservedAheadRaw = roundMoney(Number(plannedRemainingTotal ?? 0) + reserve);
+  const freeRemainingRaw = remaining - reservedAheadRaw;
   const monthState = timeZoneMonthState(now, timeZone);
   const daysLeftInMonth = monthDaysLeft(now, timeZone);
   const elapsedDaysInMonth = monthState.dayOfMonth;
@@ -82,7 +80,13 @@ export function calculateBudgetSnapshot({
   const forecastMonthTotal = roundMoney((regularMonthTotal / elapsedDaysInMonth) * daysInMonth + nonDailyMonthTotal + plannedRemainingTotal);
   const plannedSpendToDate = monthlyBudget * (elapsedDaysInMonth / daysInMonth);
   const planDeviation = roundMoney(monthTotal - plannedSpendToDate);
-  const monthRemaining = roundMoney(remaining);
+  const monthRemaining = roundForDisplayCurrency(remaining, baseCurrency);
+  const plannedRemainingVisible = roundForDisplayCurrency(plannedRemainingTotal, baseCurrency);
+  const reserveVisible = roundForDisplayCurrency(reserve, baseCurrency);
+  const reservedAhead = roundForDisplayCurrency(plannedRemainingVisible + reserveVisible, baseCurrency);
+  const freeRemaining = roundForDisplayCurrency(monthRemaining - reservedAhead, baseCurrency);
+  const fallbackReservedAheadDisplay = roundMoney(Number(plannedRemainingDisplayTotal ?? 0) + Number(reserveDisplayAmount ?? 0));
+  const reservedAheadDisplay = displayValue(providedReservedAheadDisplay, fallbackReservedAheadDisplay);
   const monthlyBudgetDisplay = displayValue(providedMonthlyBudgetDisplay, displayFromBase(monthlyBudget, monthTotal, monthDisplayTotal));
   const weeklyBudgetDisplay = displayValue(providedWeeklyBudgetDisplay, displayFromBase(resolvedWeeklyBudget, monthTotal, monthDisplayTotal));
   const monthDisplayRemaining = displayValue(providedMonthRemainingDisplay, displayFromBase(monthRemaining, monthTotal, monthDisplayTotal));
@@ -92,7 +96,7 @@ export function calculateBudgetSnapshot({
       ? 0
       : monthDisplayRemaining - reservedAheadDisplay
   );
-  const safeToSpendPerDay = roundMoney(Math.max(freeRemaining, 0) / daysLeftInMonth);
+  const safeToSpendPerDay = roundMoney(Math.max(freeRemainingRaw, 0) / daysLeftInMonth);
   const safeToSpendDisplayPerDay = roundMoney(freeRemainingDisplay / daysLeftInMonth);
   const dayPlanLimit = fixedDayPlanLimit == null
     ? safeToSpendPerDay
@@ -108,8 +112,8 @@ export function calculateBudgetSnapshot({
   const weekPlanLimit = resolvedWeeklyBudget;
   const plannedThisWeek = roundMoney(plannedThisWeekTotal);
   const weekRemaining = roundMoney(Math.max(weekPlanLimit - weekTotal - plannedThisWeek, 0));
-  const weekRemainingRaw = roundMoney(weekPlanLimit - weekTotal);
-  const weekAvailable = roundMoney(Math.min(weekRemainingRaw, freeRemaining));
+  const weekRemainingRaw = roundForDisplayCurrency(weekPlanLimit - weekTotal, baseCurrency);
+  const weekAvailable = roundForDisplayCurrency(Math.min(weekRemainingRaw, freeRemaining), baseCurrency);
   const isMonthBinding = freeRemaining < weekRemainingRaw;
   const weekProgressPercent = percent(weekTotal, weekPlanLimit);
   const plannedThisWeekDisplay = roundMoney(plannedThisWeekDisplayTotal);
@@ -135,7 +139,7 @@ export function calculateBudgetSnapshot({
     monthTotal,
     monthDisplayTotal,
     forecastMonthTotal,
-    freeRemaining,
+    freeRemaining: freeRemainingRaw,
     safeToSpendPerDay,
     daysLeftInMonth,
     todayTotal,
@@ -151,14 +155,14 @@ export function calculateBudgetSnapshot({
     month: roundMoney(monthTotal),
     baseCurrency,
     monthlyBudget: roundMoney(monthlyBudget),
-    remaining: roundMoney(remaining),
-    plannedRemaining: roundMoney(plannedRemainingTotal),
+    remaining: monthRemaining,
+    plannedRemaining: plannedRemainingVisible,
     reservedAhead,
     freeRemaining: roundMoney(freeRemaining),
     ...(reserveState ? {
       availableRegular: reserveState.availableRegular,
       reserve: {
-        amount: roundMoney(reserve),
+        amount: reserveVisible,
         ...reserveState,
         forecast: reserveForecast
       }
@@ -229,6 +233,22 @@ function displayValue(provided, fallback) {
   const value = Number(provided);
   if (Number.isFinite(value)) return roundMoney(value);
   return roundMoney(fallback);
+}
+
+const ZERO_DECIMAL_DISPLAY_CURRENCIES = ["THB", "RUB", "IDR", "BYN"];
+const TWO_DECIMAL_DISPLAY_CURRENCIES = ["USD", "EUR", "GEL"];
+
+function roundForDisplayCurrency(value, currency) {
+  const decimals = displayDecimalsForCurrency(currency);
+  const factor = 10 ** decimals;
+  return Math.round((Number(value ?? 0) + Number.EPSILON) * factor) / factor;
+}
+
+function displayDecimalsForCurrency(currency) {
+  const normalized = String(currency || "THB").toUpperCase();
+  if (ZERO_DECIMAL_DISPLAY_CURRENCIES.includes(normalized)) return 0;
+  if (TWO_DECIMAL_DISPLAY_CURRENCIES.includes(normalized)) return 2;
+  return 2;
 }
 
 function budgetStatus({ monthTotal, monthlyBudget, now, timeZone }) {
