@@ -13,17 +13,29 @@ test("Mini App translations cover dashboard, plan, history and settings labels",
     "actions.pay",
     "dashboard.safeToday",
     "dashboard.safeToSpendPerDay",
-    "dashboard.canStillSpendToday",
+    "dashboard.todayRemaining",
     "dashboard.todayOverrun",
-    "dashboard.ofDayBudget",
+    "dashboard.todayCaption",
     "dashboard.dayBudget",
     "dashboard.afterBudgetAndPlanned",
-    "dashboard.today",
+    "dashboard.untilMonthEnd",
+    "dashboard.plannedAhead",
+    "dashboard.plannedAheadCaption",
+    "dashboard.noPlannedAhead",
+    "dashboard.freeAfterPlanned",
+    "dashboard.freeAfterPlannedAndReserve",
+    "dashboard.reserveIncluded",
+    "dashboard.spent",
+    "dashboard.available",
+    "dashboard.explain",
+    "dashboard.tooltip.monthFree",
+    "dashboard.tooltip.monthFreeWithReserve",
+    "dashboard.tooltip.planned",
+    "dashboard.tooltip.month",
+    "dashboard.tooltip.weekMonthBinding",
+    "dashboard.tooltip.weekWeekBinding",
     "dashboard.week",
-    "dashboard.remaining",
     "dashboard.month",
-    "dashboard.limitPrefix",
-    "dashboard.leftTodayPrefix",
     "history.latestExpenses",
     "history.search",
     "history.choosePeriod",
@@ -75,11 +87,13 @@ test("settings translations distinguish regular and current month budgets", () =
   assert.equal(createTranslator("en")("settings.currentMonthBudgetHint"), "Only changes the limit for the current month. Your regular monthly budget will not change.");
 });
 
-test("dashboard labels distinguish today's limit from daily budget", () => {
-  assert.equal(createTranslator("ru")("dashboard.limitPrefix"), "лимит");
-  assert.equal(createTranslator("ru")("dashboard.leftTodayPrefix"), "можно еще");
-  assert.equal(createTranslator("en")("dashboard.limitPrefix"), "limit");
-  assert.equal(createTranslator("en")("dashboard.leftTodayPrefix"), "left today");
+test("dashboard labels use the semantic cleanup vocabulary", () => {
+  assert.equal(createTranslator("ru")("dashboard.todayRemaining"), "Осталось сегодня");
+  assert.equal(createTranslator("ru")("dashboard.untilMonthEnd"), "До конца месяца");
+  assert.equal(createTranslator("ru")("dashboard.todayCaption", { spent: "676 THB", budget: "397 THB" }), "потрачено 676 THB · бюджет дня 397 THB");
+  assert.equal(createTranslator("en")("dashboard.todayRemaining"), "Left today");
+  assert.equal(createTranslator("en")("dashboard.untilMonthEnd"), "Until month-end");
+  assert.equal(createTranslator("en")("dashboard.todayCaption", { spent: "676 THB", budget: "397 THB" }), "spent 676 THB · day budget 397 THB");
 });
 
 test("translator falls back to English and formats count labels", () => {

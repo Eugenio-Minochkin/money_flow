@@ -113,11 +113,13 @@ document.querySelector("#historyCalendarGrid")?.addEventListener("click", (event
 document.querySelector("#applyHistoryPeriodButton")?.addEventListener("click", applyHistoryCustomRange);
 document.querySelector("#resetHistoryPeriodButton")?.addEventListener("click", resetHistoryPeriod);
 document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") closeDashboardTooltips();
   if (event.key === "Escape" && !document.querySelector("#historyDateSheet")?.classList.contains("hidden")) {
     closeHistoryDatePicker();
   }
 });
 document.addEventListener("click", (event) => {
+  if (!event.target.closest(".dashboard-card")) closeDashboardTooltips();
   const popover = document.querySelector("#plannedDuePopover");
   if (!popover || popover.classList.contains("hidden")) return;
   if (popover.contains(event.target) || event.target.closest("[data-planned-menu]")) return;
@@ -527,15 +529,30 @@ function renderSnapshot(snapshot) {
     moneyDisplay,
     percent: (value) => `${percentNumber.format(Number(value ?? 0))}%`
   }));
+  bindDashboardTooltips();
+}
 
-  const status = document.querySelector("#heroStatus");
-  status.textContent = {
-    above_plan: t("dashboard.abovePlan"),
-    below_plan: t("dashboard.belowPlan"),
-    on_plan: t("dashboard.withinPlan")
-  }[snapshot.status] ?? snapshot.status;
-  status.classList.toggle("above", snapshot.status === "above_plan");
-  status.classList.toggle("below", snapshot.status === "below_plan");
+function bindDashboardTooltips() {
+  document.querySelectorAll("[data-dashboard-tooltip]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const isOpen = button.getAttribute("aria-expanded") === "true";
+      closeDashboardTooltips();
+      if (isOpen) return;
+      const tooltip = document.getElementById(button.getAttribute("aria-controls"));
+      button.setAttribute("aria-expanded", "true");
+      if (tooltip) tooltip.hidden = false;
+    });
+  });
+}
+
+function closeDashboardTooltips() {
+  document.querySelectorAll("[data-dashboard-tooltip][aria-expanded='true']").forEach((button) => {
+    button.setAttribute("aria-expanded", "false");
+  });
+  document.querySelectorAll(".dashboard-card__tooltip:not([hidden])").forEach((tooltip) => {
+    tooltip.hidden = true;
+  });
 }
 
 function renderSettings(user) {

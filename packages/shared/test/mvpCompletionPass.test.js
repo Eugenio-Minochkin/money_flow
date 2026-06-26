@@ -125,7 +125,7 @@ test("MVP pass: active reserve expected values stay separate from planned and la
   assert.equal(snapshot.month, 45000);
   assert.equal(snapshot.monthRemaining, 15000);
   assert.equal(snapshot.plannedRemaining, 12500);
-  assert.equal(snapshot.freeRemaining, 0);
+  assert.equal(snapshot.freeRemaining, -1500);
   assert.equal(snapshot.averageDailyRegularSpending, 4000);
   assert.equal(snapshot.forecastMonthTotal, 137500);
   assert.equal(snapshot.availableRegular, 40500);

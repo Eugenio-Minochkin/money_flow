@@ -1561,6 +1561,7 @@ export function createRepository(pool, options = {}) {
       const plannedRemainingTotal = calculatePlannedRemaining(plannedExpenses, now, calculationTimeZone);
       const plannedThisWeekTotal = calculatePlannedThisWeek(plannedExpenses, now, calculationTimeZone);
       const paidPlannedMonthTotal = await paidPlannedTotalForMonth(pool, user.id, now, calculationTimeZone);
+      const activeReserveAmount = reserveInstance?.status === "active" ? Number(reserveInstance.reserve_amount) : 0;
       const dayBudgetSnapshot = await getOrCreateDailyBudgetSnapshot(pool, user, now, {
         todayTotal: totals.today,
         monthTotal: totals.month,
@@ -1575,7 +1576,8 @@ export function createRepository(pool, options = {}) {
         plannedThisWeekDisplayTotal: displayFromBase(plannedThisWeekTotal, user),
         paidPlannedMonthTotal,
         largeOneOffMonthTotal: totals.largeMonth,
-        reserveAmount: reserveInstance?.status === "active" ? Number(reserveInstance.reserve_amount) : 0,
+        reserveAmount: activeReserveAmount,
+        reserveDisplayAmount: displayFromBase(activeReserveAmount, user),
         baseCurrency: user.base_currency ?? "THB",
         displayCurrency: user.display_currency ?? "USD",
         budgetAdviceEnabled: user.budget_advice_enabled !== false,
@@ -1602,7 +1604,8 @@ export function createRepository(pool, options = {}) {
         dayPlanDays: currentBudget.partialPeriodDays,
         weeklyBudget: user.weekly_budget_amount == null ? null : Number(user.weekly_budget_amount),
         budgetAdviceEnabled: user.budget_advice_enabled !== false,
-        reserveAmount: reserveInstance?.status === "active" ? Number(reserveInstance.reserve_amount) : 0,
+        reserveAmount: activeReserveAmount,
+        reserveDisplayAmount: displayFromBase(activeReserveAmount, user),
         plannedRemainingTotal,
         plannedRemainingDisplayTotal: displayFromBase(plannedRemainingTotal, user),
         plannedThisWeekTotal,

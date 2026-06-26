@@ -168,18 +168,31 @@ test("dashboard card CSS does not rely on broad tag selectors", async () => {
 
 test("dashboard uses compact header, inbox before month plan, and bottom navigation", async () => {
   const html = await readFile(join(miniAppRoot, "index.html"), "utf8");
+  const app = await readFile(join(miniAppRoot, "app.js"), "utf8");
   const css = await readFile(join(miniAppRoot, "styles.css"), "utf8");
 
   assert.match(html, /<body data-theme="light">/);
   assert.doesNotMatch(html, /class="quick-actions"/);
   assert.doesNotMatch(html, /id="themeToggleButton"/);
-  assert.match(html, /id="heroStatus"/);
+  assert.doesNotMatch(html, /id="heroStatus"/);
+  assert.doesNotMatch(app, /#heroStatus/);
   assert.ok(html.indexOf('id="dashboardInboxBlock"') < html.indexOf('id="monthlyForecast"'));
   assert.match(html, /class="bottom-tabs"/);
   assert.match(css, /\.bottom-tabs\s*{/);
   assert.match(css, /\.dashboard-card\s*{[^}]*grid-template-rows:/s);
   assert.match(css, /body\[data-theme="dark"\]/);
   assert.match(css, /body\[data-theme="light"\]/);
+});
+
+test("dashboard cards expose tooltip controls without hero status wiring", async () => {
+  const renderer = await readFile(join(miniAppRoot, "dashboardCards.js"), "utf8");
+  const app = await readFile(join(miniAppRoot, "app.js"), "utf8");
+
+  assert.match(renderer, /data-dashboard-tooltip/);
+  assert.match(renderer, /role="tooltip"/);
+  assert.match(app, /bindDashboardTooltips/);
+  assert.match(app, /closeDashboardTooltips/);
+  assert.doesNotMatch(app, /heroStatus/);
 });
 
 test("planned summary uses stacked paid and remaining rows", async () => {

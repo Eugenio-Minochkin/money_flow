@@ -18,6 +18,7 @@ export function calculateBudgetSnapshot({
   monthDisplayTotal = 0,
   plannedRemainingDisplayTotal = 0,
   plannedThisWeekDisplayTotal = 0,
+  reserveDisplayAmount = 0,
   reserveAmount = 0,
   dayPlanLimit: fixedDayPlanLimit = null,
   dayDisplayPlanLimit: fixedDayDisplayPlanLimit = null,
@@ -31,10 +32,11 @@ export function calculateBudgetSnapshot({
   const remaining = monthlyBudget - monthTotal;
   const budgetProgressPercent = monthlyBudget > 0 ? roundMoney((monthTotal / monthlyBudget) * 100) : 0;
   const reserve = Math.max(Number(reserveAmount ?? 0), 0);
-  const freeRemaining = Math.max(remaining - plannedRemainingTotal - reserve, 0);
+  const reservedAhead = roundMoney(Number(plannedRemainingTotal ?? 0) + reserve);
+  const freeRemaining = remaining - reservedAhead;
   const freeRemainingDisplay = Math.max(monthDisplayTotal, 0) === 0 && monthTotal === 0
     ? 0
-    : Math.max(displayFromBase(freeRemaining, monthTotal, monthDisplayTotal), 0);
+    : roundMoney(displayFromBase(remaining, monthTotal, monthDisplayTotal) - Number(plannedRemainingDisplayTotal ?? 0) - Number(reserveDisplayAmount ?? 0));
   const monthState = timeZoneMonthState(now, timeZone);
   const daysLeftInMonth = monthDaysLeft(now, timeZone);
   const elapsedDaysInMonth = monthState.dayOfMonth;
@@ -90,14 +92,19 @@ export function calculateBudgetSnapshot({
   const weekPlanLimit = resolvedWeeklyBudget;
   const plannedThisWeek = roundMoney(plannedThisWeekTotal);
   const weekRemaining = roundMoney(Math.max(weekPlanLimit - weekTotal - plannedThisWeek, 0));
+  const weekRemainingRaw = roundMoney(weekPlanLimit - weekTotal);
+  const weekAvailable = roundMoney(Math.min(weekRemainingRaw, freeRemaining));
+  const isMonthBinding = freeRemaining < weekRemainingRaw;
   const weekProgressPercent = percent(weekTotal, weekPlanLimit);
-  const monthRemaining = roundMoney(Math.max(remaining, 0));
+  const monthRemaining = roundMoney(remaining);
   const monthlyBudgetDisplay = roundMoney(displayFromBase(monthlyBudget, monthTotal, monthDisplayTotal));
   const weeklyBudgetDisplay = roundMoney(displayFromBase(resolvedWeeklyBudget, monthTotal, monthDisplayTotal));
   const plannedThisWeekDisplay = roundMoney(plannedThisWeekDisplayTotal);
   const weekDisplayPlanLimit = weeklyBudgetDisplay;
   const weekDisplayRemaining = roundMoney(Math.max(weekDisplayPlanLimit - weekDisplayTotal - plannedThisWeekDisplay, 0));
-  const monthDisplayRemaining = roundMoney(Math.max(displayFromBase(monthRemaining, monthTotal, monthDisplayTotal), 0));
+  const weekDisplayRemainingRaw = roundMoney(weekDisplayPlanLimit - weekDisplayTotal);
+  const weekDisplayAvailable = roundMoney(displayFromBase(weekAvailable, monthTotal, monthDisplayTotal));
+  const monthDisplayRemaining = roundMoney(displayFromBase(monthRemaining, monthTotal, monthDisplayTotal));
   const forecastDisplayMonthTotal = roundMoney(displayFromBase(forecastMonthTotal, monthTotal, monthDisplayTotal));
   const planDisplayDeviation = roundMoney(displayFromBase(planDeviation, monthTotal, monthDisplayTotal));
   const nonDailyDisplayMonthTotal = Number(paidPlannedMonthDisplayTotal ?? 0) + Number(largeOneOffMonthDisplayTotal ?? 0);
@@ -134,6 +141,7 @@ export function calculateBudgetSnapshot({
     monthlyBudget: roundMoney(monthlyBudget),
     remaining: roundMoney(remaining),
     plannedRemaining: roundMoney(plannedRemainingTotal),
+    reservedAhead,
     freeRemaining: roundMoney(freeRemaining),
     ...(reserveState ? {
       availableRegular: reserveState.availableRegular,
@@ -158,6 +166,9 @@ export function calculateBudgetSnapshot({
     weekPlanLimit,
     plannedThisWeek,
     weekRemaining,
+    weekRemainingRaw,
+    weekAvailable,
+    isMonthBinding,
     weekProgressPercent,
     monthRemaining,
     forecastMonthTotal,
@@ -173,6 +184,8 @@ export function calculateBudgetSnapshot({
       month: roundMoney(monthDisplayTotal),
       monthlyBudget: monthlyBudgetDisplay,
       plannedRemaining: roundMoney(plannedRemainingDisplayTotal),
+      reservedAhead: roundMoney(Number(plannedRemainingDisplayTotal ?? 0) + Number(reserveDisplayAmount ?? 0)),
+      reserveAmount: roundMoney(reserveDisplayAmount),
       freeRemaining: roundMoney(freeRemainingDisplay),
       dailyPlanLimit: dailyPlanDisplayLimit,
       dayPlanLimit: dayDisplayPlanLimit,
@@ -182,6 +195,8 @@ export function calculateBudgetSnapshot({
       weekPlanLimit: weekDisplayPlanLimit,
       plannedThisWeek: plannedThisWeekDisplay,
       weekRemaining: weekDisplayRemaining,
+      weekRemainingRaw: weekDisplayRemainingRaw,
+      weekAvailable: weekDisplayAvailable,
       monthRemaining: monthDisplayRemaining,
       forecastMonthTotal: forecastDisplayMonthTotal,
       averageDailyRegularSpending: averageDailyRegularDisplaySpending,

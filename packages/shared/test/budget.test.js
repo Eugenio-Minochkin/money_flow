@@ -19,6 +19,7 @@ test("calculates month remaining and safe-to-spend", () => {
     monthlyBudget: 45000,
     remaining: 16500,
     plannedRemaining: 0,
+    reservedAhead: 0,
     freeRemaining: 16500,
     budgetProgressPercent: 63.33,
     daysInMonth: 30,
@@ -35,6 +36,9 @@ test("calculates month remaining and safe-to-spend", () => {
     weekPlanLimit: 10500,
     plannedThisWeek: 0,
     weekRemaining: 10500,
+    weekRemainingRaw: 10500,
+    weekAvailable: 10500,
+    isMonthBinding: false,
     weekProgressPercent: 0,
     monthRemaining: 16500,
     forecastMonthTotal: 122142.86,
@@ -70,6 +74,8 @@ test("calculates month remaining and safe-to-spend", () => {
       month: 0,
       monthlyBudget: 0,
       plannedRemaining: 0,
+      reservedAhead: 0,
+      reserveAmount: 0,
       freeRemaining: 0,
       dailyPlanLimit: 0,
       dayPlanLimit: 0,
@@ -79,6 +85,8 @@ test("calculates month remaining and safe-to-spend", () => {
       weekPlanLimit: 0,
       plannedThisWeek: 0,
       weekRemaining: 0,
+      weekRemainingRaw: 0,
+      weekAvailable: 0,
       monthRemaining: 0,
       forecastMonthTotal: 0,
       averageDailyRegularSpending: 0,
@@ -346,12 +354,81 @@ test("subtracts reserve from regular spending availability and reports reserve s
     now: new Date("2026-06-10T10:00:00+07:00")
   });
 
-  assert.equal(snapshot.freeRemaining, 0);
+  assert.equal(snapshot.freeRemaining, -1500);
   assert.equal(snapshot.availableRegular, 43500);
   assert.equal(snapshot.reserve.amount, 4000);
   assert.equal(snapshot.reserve.savedAmount, 2500);
   assert.equal(snapshot.reserve.eatenAmount, 1500);
   assert.equal(snapshot.reserve.status, "partially_used");
+});
+
+test("calculates month-free and clamps week availability by month", () => {
+  const snapshot = calculateBudgetSnapshot({
+    todayTotal: 676,
+    weekTotal: 3813,
+    monthTotal: 45481,
+    monthlyBudget: 48000,
+    weeklyBudget: 11200,
+    plannedRemainingTotal: 712,
+    reserveAmount: 0,
+    dayPlanLimit: 397,
+    now: new Date("2026-06-25T12:00:00+07:00"),
+    timeZone: "Asia/Bangkok"
+  });
+
+  assert.equal(snapshot.monthRemaining, 2519);
+  assert.equal(snapshot.reservedAhead, 712);
+  assert.equal(snapshot.freeRemaining, 1807);
+  assert.equal(snapshot.weekRemainingRaw, 7387);
+  assert.equal(snapshot.weekAvailable, 1807);
+  assert.equal(snapshot.isMonthBinding, true);
+  assert.equal(snapshot.dayOverrun, 279);
+  assert.equal(snapshot.dayRemaining, 0);
+});
+
+test("does not subtract planned payments twice from week availability", () => {
+  const snapshot = calculateBudgetSnapshot({
+    weekTotal: 3000,
+    monthlyBudget: 50000,
+    monthTotal: 10000,
+    weeklyBudget: 10000,
+    plannedRemainingTotal: 5000,
+    plannedThisWeekTotal: 2000,
+    now: new Date("2026-06-10T12:00:00+07:00"),
+    timeZone: "Asia/Bangkok"
+  });
+
+  assert.equal(snapshot.weekRemainingRaw, 7000);
+  assert.equal(snapshot.weekAvailable, 7000);
+});
+
+test("keeps negative free remaining when obligations exceed month remaining", () => {
+  const snapshot = calculateBudgetSnapshot({
+    monthTotal: 9500,
+    monthlyBudget: 10000,
+    plannedRemainingTotal: 1000,
+    reserveAmount: 0,
+    now: new Date("2026-06-20T12:00:00+07:00"),
+    timeZone: "Asia/Bangkok"
+  });
+
+  assert.equal(snapshot.monthRemaining, 500);
+  assert.equal(snapshot.freeRemaining, -500);
+});
+
+test("subtracts active reserve from month free amount", () => {
+  const snapshot = calculateBudgetSnapshot({
+    monthTotal: 30000,
+    monthlyBudget: 50000,
+    plannedRemainingTotal: 5000,
+    reserveAmount: 4000,
+    now: new Date("2026-06-15T12:00:00+07:00"),
+    timeZone: "Asia/Bangkok"
+  });
+
+  assert.equal(snapshot.monthRemaining, 20000);
+  assert.equal(snapshot.reservedAhead, 9000);
+  assert.equal(snapshot.freeRemaining, 11000);
 });
 
 test("falls back to live safe-to-spend when no fixed daily snapshot is provided", () => {
