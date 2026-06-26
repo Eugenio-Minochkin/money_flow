@@ -433,6 +433,9 @@ async function handleAdminReleaseCommand({ text, from, chatId, token, telegramCl
   if (!result.sent && result.reason === "no_public_release_notes") {
     return sendTelegramResponse(trace, () => sendMessage(token, chatId, "Нет новых публичных изменений для пользователей с прошлого дайджеста — отправлять нечего.", null, telegramClient));
   }
+  if (!result.sent && result.reason === "no_active_release_push_users") {
+    return sendTelegramResponse(trace, () => sendMessage(token, chatId, "Нет активных пользователей для release push — digest не был отправлен.", null, telegramClient));
+  }
   return sendTelegramResponse(trace, () => sendMessage(token, chatId, formatReleaseSendSummary(result), null, telegramClient));
 }
 

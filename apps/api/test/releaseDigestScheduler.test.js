@@ -24,10 +24,16 @@ test("releaseDigestLocalParts uses the configured timezone and h23 hour", () => 
 test("disabled scheduler skips without checking the repository or sending", async () => {
   let repositoryChecks = 0;
   let sends = 0;
+  const logs = [];
   const scheduler = createReleaseDigestScheduler({
     enabled: false,
     timezone: "Asia/Bangkok",
     sendHour: 21,
+    logger: {
+      info(message, metadata) {
+        logs.push({ level: "info", message, metadata });
+      }
+    },
     repo: {
       async getReleaseDigestRunForLocalDate() {
         repositoryChecks += 1;
@@ -45,6 +51,11 @@ test("disabled scheduler skips without checking the repository or sending", asyn
   assert.deepEqual(result, { skipped: true, reason: "disabled" });
   assert.equal(repositoryChecks, 0);
   assert.equal(sends, 0);
+  assert.deepEqual(logs, [{
+    level: "info",
+    message: "[release-digest] auto disabled",
+    metadata: { timezone: "Asia/Bangkok", sendHour: 21 }
+  }]);
 });
 
 test("scheduler skips outside the configured local hour", async () => {
@@ -74,10 +85,16 @@ test("scheduler skips outside the configured local hour", async () => {
 test("scheduler sends only once for the same local date", async () => {
   let existingRun = null;
   const calls = [];
+  const logs = [];
   const scheduler = createReleaseDigestScheduler({
     enabled: true,
     timezone: "Asia/Bangkok",
     sendHour: 21,
+    logger: {
+      info(message, metadata) {
+        logs.push({ level: "info", message, metadata });
+      }
+    },
     repo: {
       async getReleaseDigestRunForLocalDate(localDate, timezone) {
         calls.push({ type: "guard", localDate, timezone });
@@ -88,13 +105,27 @@ test("scheduler sends only once for the same local date", async () => {
       async sendReleaseDigestSinceLastRun(now, options) {
         calls.push({ type: "send", now, options });
         existingRun = { status: "success" };
-        return { sent: true };
+        return {
+          sent: true,
+          users: 12,
+          success: 12,
+          errors: 0,
+          skipped: 0,
+          blocked: 0
+        };
       }
     }
   });
   const firstNow = new Date("2026-06-19T14:00:00Z");
 
-  assert.deepEqual(await scheduler.tick(firstNow), { sent: true });
+  assert.deepEqual(await scheduler.tick(firstNow), {
+    sent: true,
+    users: 12,
+    success: 12,
+    errors: 0,
+    skipped: 0,
+    blocked: 0
+  });
   assert.deepEqual(
     await scheduler.tick(new Date("2026-06-19T14:15:00Z")),
     { skipped: true, reason: "existing_run" }
@@ -112,6 +143,71 @@ test("scheduler sends only once for the same local date", async () => {
     },
     { type: "guard", localDate: "2026-06-19", timezone: "Asia/Bangkok" }
   ]);
+  assert.deepEqual(logs, [{
+    level: "info",
+    message: "[release-digest] run summary",
+    metadata: {
+      sent: true,
+      reason: null,
+      trigger: "auto",
+      localDate: "2026-06-19",
+      timezone: "Asia/Bangkok",
+      users: 12,
+      success: 12,
+      errors: 0,
+      skipped: 0,
+      blocked: 0
+    }
+  }]);
+});
+
+test("scheduler warns when a digest run finds no active release push users", async () => {
+  const logs = [];
+  const scheduler = createReleaseDigestScheduler({
+    enabled: true,
+    timezone: "Asia/Bangkok",
+    sendHour: 21,
+    logger: {
+      info(message, metadata) {
+        logs.push({ level: "info", message, metadata });
+      },
+      warn(message, metadata) {
+        logs.push({ level: "warn", message, metadata });
+      }
+    },
+    repo: {
+      async getReleaseDigestRunForLocalDate() {
+        return null;
+      }
+    },
+    releaseNotesService: {
+      async sendReleaseDigestSinceLastRun() {
+        return {
+          sent: false,
+          reason: "no_active_release_push_users",
+          users: 0,
+          success: 0,
+          errors: 0,
+          skipped: 0,
+          blocked: 0
+        };
+      }
+    }
+  });
+
+  await scheduler.tick(new Date("2026-06-19T14:00:00Z"));
+
+  assert.ok(logs.some((log) => (
+    log.level === "warn" &&
+    log.message === "[release-digest] no active release push users" &&
+    log.metadata.reason === "no_active_release_push_users" &&
+    log.metadata.users === 0
+  )));
+  assert.ok(logs.some((log) => (
+    log.level === "info" &&
+    log.message === "[release-digest] run summary" &&
+    log.metadata.reason === "no_active_release_push_users"
+  )));
 });
 
 test("concurrent ticks are protected by an in-memory lock", async () => {

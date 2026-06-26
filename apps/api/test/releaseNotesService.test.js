@@ -489,6 +489,33 @@ test("send since last run creates a skipped run when no public notes exist", asy
   assert.deepEqual(repo.skippedRuns, [[1, "no_public_release_notes"]]);
 });
 
+test("send since last run skips without marking notes sent when no active release push users exist", async () => {
+  const sent = [];
+  const repo = fakeReleaseRepository({
+    notes: [releaseNote()],
+    users: []
+  });
+  const service = createReleaseNotesService({
+    repository: repo,
+    sendMessage: async (message) => sent.push(message)
+  });
+
+  const result = await service.sendReleaseDigestSinceLastRun(
+    new Date("2026-06-19T14:00:00Z"),
+    { trigger: "auto", timezone: "Asia/Bangkok", localDate: "2026-06-19" }
+  );
+
+  assert.equal(result.sent, false);
+  assert.equal(result.reason, "no_active_release_push_users");
+  assert.equal(result.users, 0);
+  assert.equal(sent.length, 0);
+  assert.deepEqual(repo.deliveries, []);
+  assert.deepEqual(repo.sentNotes, []);
+  assert.deepEqual(repo.skippedRuns, [[1, "no_active_release_push_users"]]);
+  assert.equal(repo.successRuns.length, 0);
+  assert.equal(repo.failedRuns.length, 0);
+});
+
 test("duplicate or concurrent run exits without sending", async () => {
   const sent = [];
   const repo = fakeReleaseRepository({
@@ -855,7 +882,10 @@ test("blocked users are marked without failing the digest run", async () => {
 });
 
 test("missing sender marks an already-created digest run as failed", async () => {
-  const repo = fakeReleaseRepository({ notes: [releaseNote()] });
+  const repo = fakeReleaseRepository({
+    notes: [releaseNote()],
+    users: [{ id: 1, telegram_user_id: 100, interface_language: "ru" }]
+  });
   const service = createReleaseNotesService({ repository: repo });
 
   await assert.rejects(
