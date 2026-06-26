@@ -1203,6 +1203,27 @@ export async function updateDraftMessageToSaved({ token, draft, text, replyMarku
   }
 }
 
+export async function updateDraftMessageToDraftState({ token, draft, items, miniAppUrl, telegramUserId, language, baseCurrency, telegramClient }) {
+  const chatId = draft?.tg_chat_id;
+  const messageId = draft?.tg_message_id;
+  if (!chatId || !messageId) {
+    console.log("[telegram] no stored message reference for draft", draft?.id);
+    return;
+  }
+  const text = formatDraft(items ?? [], { language, baseCurrency: baseCurrency ?? "THB" });
+  const replyMarkup = draftKeyboard(draft.id, items ?? [], miniAppUrl, telegramUserId, language);
+  try {
+    await editMessageText(token, chatId, messageId, text, replyMarkup, telegramClient);
+  } catch (error) {
+    if (isMessageNotModified(error)) return;
+    console.error("[telegram] update draft message to draft state failed; sending fallback", error.message);
+    try { await sendMessage(token, chatId, text, replyMarkup, telegramClient); }
+    catch (sendError) { console.error("[telegram] fallback draft preview failed", sendError.message); }
+    try { await editMessageReplyMarkup(token, chatId, messageId, { inline_keyboard: [] }, telegramClient); }
+    catch (markupError) { console.error("[telegram] could not clear old draft keyboard", markupError.message); }
+  }
+}
+
 export async function updateDraftMessageToCanceled({ token, draft, text, telegramClient }) {
   const chatId = draft?.tg_chat_id;
   const messageId = draft?.tg_message_id;

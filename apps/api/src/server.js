@@ -25,6 +25,7 @@ import {
   sendWeeklyReports,
   shouldSendWeeklyReport,
   updateDraftMessageToCanceled,
+  updateDraftMessageToDraftState,
   updateDraftMessageToSaved
 } from "./telegram.js";
 import { formatSavedSummary } from "./telegramFormat.js";
@@ -426,6 +427,19 @@ async function route(req, res) {
           return sendJson(res, 409, { error: "draft_version_conflict", draft: fresh });
         }
         return sendJson(res, 404, { error: "draft_not_found" });
+      }
+      const user = await repository.getUserByTelegramId(auth.telegramUserId).catch(() => null);
+      if (user) {
+        await updateDraftMessageToDraftState({
+          token: config.telegramBotToken,
+          draft,
+          items: draft.items ?? [],
+          miniAppUrl: config.miniAppUrl,
+          telegramUserId: auth.telegramUserId,
+          language: user.interface_language ?? "en",
+          baseCurrency: user.base_currency ?? "THB",
+          telegramClient: null
+        }).catch((error) => console.error("[server] draft preview update failed", error.message));
       }
       return sendJson(res, 200, { draft });
     }
