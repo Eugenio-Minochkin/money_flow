@@ -226,9 +226,22 @@ test("updateMonthlyBudget deletes daily_budget_snapshots for current day after u
 test("updates user budget and display currency settings", async () => {
   const queries = [];
   const repo = createRepository(fakePool((sql, params) => {
-    queries.push({ sql, params });
+    const query = String(sql);
+    queries.push({ sql: query, params });
+    if (query.startsWith("SELECT * FROM users")) {
+      return {
+        rows: [{
+          id: 7,
+          telegram_user_id: "100",
+          base_currency: "THB",
+          budget_advice_enabled: true,
+          daily_entry_reminder_enabled: true
+        }]
+      };
+    }
     return {
       rows: [{
+        id: 7,
         monthly_budget_amount: params[0],
         base_currency: params[1],
         display_currency: params[2],
@@ -236,8 +249,9 @@ test("updates user budget and display currency settings", async () => {
         weekly_budget_amount: params[4],
         interface_language: params[5],
         budget_advice_enabled: params[6],
-        interface_theme: params[7],
-        timezone: params[8]
+        daily_entry_reminder_enabled: params[7],
+        interface_theme: params[8],
+        timezone: params[9]
       }]
     };
   }));
@@ -262,20 +276,115 @@ test("updates user budget and display currency settings", async () => {
   assert.equal(user.interface_theme, "light");
   assert.equal(user.timezone, "America/New_York");
   assert.equal(Number(user.usd_thb_rate), 36.5);
-  assert.equal(queries[0].params[3], 36.5);
-  assert.equal(queries[0].params[4], 12000);
-  assert.equal(queries[0].params[5], "ru");
-  assert.equal(queries[0].params[6], false);
-  assert.equal(queries[0].params[7], "light");
-  assert.equal(queries[0].params[8], "America/New_York");
-  assert.equal(queries[0].params[9], 100);
+  assert.equal(user.daily_entry_reminder_enabled, true);
+  const updateQuery = queries.find((query) => query.sql.startsWith("UPDATE users"));
+  assert.equal(updateQuery.params[3], 36.5);
+  assert.equal(updateQuery.params[4], 12000);
+  assert.equal(updateQuery.params[5], "ru");
+  assert.equal(updateQuery.params[6], false);
+  assert.equal(updateQuery.params[7], true);
+  assert.equal(updateQuery.params[8], "light");
+  assert.equal(updateQuery.params[9], "America/New_York");
+  assert.equal(updateQuery.params[10], 100);
+});
+
+test("updateUserSettings preserves disabled budget advice when omitted", async () => {
+  const repo = createRepository(fakePool((sql, params) => {
+    const query = String(sql);
+    if (query.startsWith("SELECT * FROM users")) {
+      return { rows: [{ id: 7, telegram_user_id: "100", base_currency: "THB", budget_advice_enabled: false, daily_entry_reminder_enabled: true }] };
+    }
+    return { rows: [{ id: 7, budget_advice_enabled: params[6], daily_entry_reminder_enabled: params[7] }] };
+  }));
+
+  const user = await repo.updateUserSettings(100, {
+    monthlyBudgetAmount: 60000,
+    baseCurrency: "THB",
+    displayCurrency: "USD",
+    usdThbRate: 32.65,
+    interfaceLanguage: "en",
+    interfaceTheme: "dark"
+  });
+
+  assert.equal(user.budget_advice_enabled, false);
+});
+
+test("updateUserSettings explicitly saves budget advice boolean when included", async () => {
+  for (const budgetAdviceEnabled of [true, false]) {
+    const repo = createRepository(fakePool((sql, params) => {
+      const query = String(sql);
+      if (query.startsWith("SELECT * FROM users")) {
+        return { rows: [{ id: 7, telegram_user_id: "100", base_currency: "THB", budget_advice_enabled: !budgetAdviceEnabled, daily_entry_reminder_enabled: true }] };
+      }
+      return { rows: [{ id: 7, budget_advice_enabled: params[6] }] };
+    }));
+
+    const user = await repo.updateUserSettings(100, {
+      monthlyBudgetAmount: 60000,
+      baseCurrency: "THB",
+      displayCurrency: "USD",
+      usdThbRate: 32.65,
+      interfaceLanguage: "en",
+      interfaceTheme: "dark",
+      budgetAdviceEnabled
+    });
+
+    assert.equal(user.budget_advice_enabled, budgetAdviceEnabled);
+  }
+});
+
+test("updateUserSettings saves disabled daily entry reminder from payload", async () => {
+  const repo = createRepository(fakePool((sql, params) => {
+    const query = String(sql);
+    if (query.startsWith("SELECT * FROM users")) {
+      return { rows: [{ id: 7, telegram_user_id: "100", base_currency: "THB", budget_advice_enabled: true, daily_entry_reminder_enabled: true }] };
+    }
+    return { rows: [{ id: 7, daily_entry_reminder_enabled: params[7] }] };
+  }));
+
+  const user = await repo.updateUserSettings(100, {
+    monthlyBudgetAmount: 60000,
+    baseCurrency: "THB",
+    displayCurrency: "USD",
+    usdThbRate: 32.65,
+    interfaceLanguage: "en",
+    interfaceTheme: "dark",
+    dailyEntryReminderEnabled: false
+  });
+
+  assert.equal(user.daily_entry_reminder_enabled, false);
+});
+
+test("updateUserSettings preserves daily entry reminder when omitted", async () => {
+  const repo = createRepository(fakePool((sql, params) => {
+    const query = String(sql);
+    if (query.startsWith("SELECT * FROM users")) {
+      return { rows: [{ id: 7, telegram_user_id: "100", base_currency: "THB", budget_advice_enabled: true, daily_entry_reminder_enabled: false }] };
+    }
+    return { rows: [{ id: 7, daily_entry_reminder_enabled: params[7] }] };
+  }));
+
+  const user = await repo.updateUserSettings(100, {
+    monthlyBudgetAmount: 60000,
+    baseCurrency: "THB",
+    displayCurrency: "USD",
+    usdThbRate: 32.65,
+    interfaceLanguage: "en",
+    interfaceTheme: "dark"
+  });
+
+  assert.equal(user.daily_entry_reminder_enabled, false);
 });
 
 test("falls back to Bangkok when settings timezone is invalid", async () => {
   const queries = [];
   const repo = createRepository(fakePool((sql, params) => {
-    queries.push({ sql: String(sql), params });
-    return { rows: [{ timezone: params[8] }] };
+    const query = String(sql);
+    queries.push({ sql: query, params });
+    if (query.startsWith("SELECT * FROM users")) {
+      return { rows: [{ id: 7, telegram_user_id: "100", base_currency: "THB", budget_advice_enabled: true, daily_entry_reminder_enabled: true }] };
+    }
+    return { rows: [{ timezone: params[9] }] };
   }));
 
   const user = await repo.updateUserSettings(100, {
@@ -291,14 +400,19 @@ test("falls back to Bangkok when settings timezone is invalid", async () => {
   });
 
   assert.equal(user.timezone, "Asia/Bangkok");
-  assert.match(queries[0].sql, /timezone = \$9/);
+  const updateQuery = queries.find((query) => query.sql.startsWith("UPDATE users"));
+  assert.match(updateQuery.sql, /timezone = \$10/);
 });
 
 test("updateUserSettings deletes daily_budget_snapshots for current day after settings update", async () => {
   const queries = [];
   const repo = createRepository(fakePool((sql, params) => {
-    queries.push({ sql: String(sql), params });
-    if (String(sql).startsWith("UPDATE users")) {
+    const query = String(sql);
+    queries.push({ sql: query, params });
+    if (query.startsWith("SELECT * FROM users")) {
+      return { rows: [{ id: 7, telegram_user_id: "100", base_currency: "THB", budget_advice_enabled: true, daily_entry_reminder_enabled: true }] };
+    }
+    if (query.startsWith("UPDATE users")) {
       return { rows: [{ id: 7, monthly_budget_amount: params[0] }] };
     }
     return { rows: [] };
@@ -324,8 +438,12 @@ test("updateUserSettings deletes daily_budget_snapshots for current day after se
 test("persists dark interface theme without normalizing it back to light", async () => {
   const queries = [];
   const repo = createRepository(fakePool((sql, params) => {
-    queries.push({ sql: String(sql), params });
-    if (String(sql).startsWith("UPDATE users")) {
+    const query = String(sql);
+    queries.push({ sql: query, params });
+    if (query.startsWith("SELECT * FROM users")) {
+      return { rows: [{ id: 7, telegram_user_id: "100", base_currency: "THB", budget_advice_enabled: true, daily_entry_reminder_enabled: true }] };
+    }
+    if (query.startsWith("UPDATE users")) {
       return {
         rows: [{
           monthly_budget_amount: params[0],
@@ -335,7 +453,8 @@ test("persists dark interface theme without normalizing it back to light", async
           weekly_budget_amount: params[4],
           interface_language: params[5],
           budget_advice_enabled: params[6],
-          interface_theme: params[7]
+          daily_entry_reminder_enabled: params[7],
+          interface_theme: params[8]
         }]
       };
     }
@@ -353,7 +472,8 @@ test("persists dark interface theme without normalizing it back to light", async
   });
 
   assert.equal(user.interface_theme, "dark");
-  assert.equal(queries[0].params[7], "dark");
+  const updateQuery = queries.find((query) => query.sql.startsWith("UPDATE users"));
+  assert.equal(updateQuery.params[8], "dark");
 });
 
 test("updates only the current month budget override for a Telegram user", async () => {
@@ -2505,7 +2625,8 @@ test("dashboard returns USD display totals from converted amounts", async () => 
           telegram_user_id: "100",
           monthly_budget_amount: "45000",
           display_currency: "USD",
-          usd_thb_rate: "36"
+          usd_thb_rate: "36",
+          daily_entry_reminder_enabled: false
         }]
       };
     }
@@ -2536,6 +2657,7 @@ test("dashboard returns USD display totals from converted amounts", async () => 
 
   assert.equal(dashboard.snapshot.display.currency, "USD");
   assert.equal(dashboard.snapshot.display.month, 100);
+  assert.equal(dashboard.user.daily_entry_reminder_enabled, false);
   assert.equal(dashboard.latestExpenses[0].display.amount, 100);
   assert.equal(dashboard.topCategories[0].display.amount, 100);
   assert.ok(queries.some((query) => query.includes("ORDER BY spent_at") && !query.includes("planned_expense_payments")));

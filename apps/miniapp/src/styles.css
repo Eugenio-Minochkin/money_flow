@@ -1160,61 +1160,40 @@ select {
   padding-left: 42px;
 }
 
-.flag-icon {
+.currency-mark {
   position: absolute;
   left: 10px;
   top: 50%;
   z-index: 1;
-  width: 22px;
-  height: 15px;
-  border: 1px solid rgb(37 29 24 / 18%);
-  border-radius: 2px;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 16px;
   transform: translateY(-50%);
+}
+
+.currency-mark svg {
+  display: block;
+  width: 24px;
+  height: 16px;
+  overflow: hidden;
+  border: 1px solid rgb(37 29 24 / 18%);
+  border-radius: 3px;
   box-shadow: inset 0 0 0 1px rgb(255 255 255 / 25%);
 }
 
-.flag-icon[data-currency="THB"] {
-  background: linear-gradient(#c6283c 0 16%, #fff 16% 28%, #243a8f 28% 72%, #fff 72% 84%, #c6283c 84%);
-}
-
-.flag-icon[data-currency="USD"] {
-  background:
-    linear-gradient(90deg, #24468e 0 42%, transparent 42%),
-    repeating-linear-gradient(#b22234 0 8%, #fff 8% 16%);
-}
-
-.flag-icon[data-currency="RUB"] {
-  background: linear-gradient(#fff 0 33%, #1f57a4 33% 66%, #d52b1e 66%);
-}
-
-.flag-icon[data-currency="IDR"] {
-  background: linear-gradient(#ce1126 0 50%, #fff 50%);
-}
-
-.flag-icon[data-currency="EUR"] {
-  background: #1f57a4;
-}
-
-.flag-icon[data-currency="BYN"] {
-  background: linear-gradient(90deg, #fff 0 22%, transparent 22%), linear-gradient(#c8313e 0 68%, #238b45 68%);
-}
-
-.flag-icon[data-currency="GEL"] {
-  background:
-    linear-gradient(90deg, transparent 0 42%, #d52b1e 42% 58%, transparent 58%),
-    linear-gradient(transparent 0 42%, #d52b1e 42% 58%, transparent 58%),
-    #fff;
-}
-
-.flag-icon[data-language="ru"] {
-  background: linear-gradient(#fff 0 33%, #1f57a4 33% 66%, #d52b1e 66%);
-}
-
-.flag-icon[data-language="en"] {
-  background:
-    linear-gradient(90deg, transparent 0 42%, #c8102e 42% 58%, transparent 58%),
-    linear-gradient(transparent 0 42%, #c8102e 42% 58%, transparent 58%),
-    #012169;
+.currency-code-fallback {
+  display: inline-grid;
+  place-items: center;
+  min-width: 24px;
+  height: 16px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 8px;
+  font-weight: 800;
+  line-height: 1;
 }
 
 .toggle-setting {
@@ -1278,6 +1257,77 @@ select {
 
 .toggle-setting input:checked::after {
   transform: translateX(20px);
+}
+
+.settings-page {
+  display: grid;
+  gap: 14px;
+}
+
+.settings-section {
+  display: grid;
+  gap: 8px;
+}
+
+.settings-section-title {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+.settings-card {
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 12px;
+}
+
+.settings-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) minmax(160px, 1.4fr);
+  align-items: center;
+  gap: 12px;
+}
+
+.settings-row--stacked {
+  display: grid;
+  grid-template-columns: 1fr;
+  align-items: stretch;
+}
+
+.settings-hint,
+.settings-dirty-state {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.settings-toggle {
+  border: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.timezone-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.timezone-action {
+  min-height: 42px;
+  white-space: nowrap;
+}
+
+.settings-actions {
+  display: grid;
+  justify-items: end;
+  gap: 12px;
 }
 
 button {
@@ -1680,6 +1730,15 @@ button:disabled {
 
   .planned-header__summary strong {
     font-size: 22px;
+  }
+
+  .settings-row,
+  .timezone-control {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-actions {
+    align-items: stretch;
   }
 }
 

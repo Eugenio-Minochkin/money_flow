@@ -798,15 +798,20 @@ export function createRepository(pool, options = {}) {
       const displayCurrency = normalizeCurrency(settings.displayCurrency, "USD");
       const interfaceLanguage = normalizeLanguage(settings.interfaceLanguage);
       const interfaceTheme = normalizeTheme(settings.interfaceTheme);
-      const budgetAdviceEnabled = settings.budgetAdviceEnabled !== false;
       const timeZone = normalizeTimeZone(settings.timezone).timeZone;
+      const currentUser = await this.getUserByTelegramId(telegramUserId);
+      if (!currentUser) return null;
+      const budgetAdviceEnabled = Object.hasOwn(settings, "budgetAdviceEnabled")
+        ? settings.budgetAdviceEnabled === true
+        : currentUser.budget_advice_enabled !== false;
+      const dailyEntryReminderEnabled = Object.hasOwn(settings, "dailyEntryReminderEnabled")
+        ? settings.dailyEntryReminderEnabled === true
+        : currentUser.daily_entry_reminder_enabled !== false;
       if (typeof pool.connect === "function") {
-        const currentUser = await this.getUserByTelegramId(telegramUserId);
-        if (!currentUser) return null;
         if (baseCurrency !== currentUser.base_currency) {
           await assertReserveCurrencyChangeAllowed(pool, currentUser.id);
         }
-        await assertReserveBudgetCapacity(pool, currentUser, monthlyBudgetAmount, new Date());
+        await assertReserveBudgetCapacity(pool, currentUser, monthlyBudgetAmount, now);
       }
       const result = await pool.query(
         `UPDATE users
@@ -817,14 +822,27 @@ export function createRepository(pool, options = {}) {
              weekly_budget_amount = $5,
              interface_language = $6,
              budget_advice_enabled = $7,
-             interface_theme = $8,
-             timezone = $9
-         WHERE telegram_user_id = $10
+             daily_entry_reminder_enabled = $8,
+             interface_theme = $9,
+             timezone = $10
+         WHERE telegram_user_id = $11
          RETURNING *`,
-        [monthlyBudgetAmount, baseCurrency, displayCurrency, usdThbRate, weeklyBudgetAmount, interfaceLanguage, budgetAdviceEnabled, interfaceTheme, timeZone, telegramUserId]
+        [
+          monthlyBudgetAmount,
+          baseCurrency,
+          displayCurrency,
+          usdThbRate,
+          weeklyBudgetAmount,
+          interfaceLanguage,
+          budgetAdviceEnabled,
+          dailyEntryReminderEnabled,
+          interfaceTheme,
+          timeZone,
+          telegramUserId
+        ]
       );
       const user = result.rows[0] ?? null;
-      if (user) await invalidateDailyBudgetSnapshot(pool, user.id, new Date(), resolveUserTimeZone(user));
+      if (user) await invalidateDailyBudgetSnapshot(pool, user.id, now, resolveUserTimeZone(user));
       return user;
     },
 
