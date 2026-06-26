@@ -1561,21 +1561,46 @@ export function createRepository(pool, options = {}) {
       const plannedRemainingTotal = calculatePlannedRemaining(plannedExpenses, now, calculationTimeZone);
       const plannedThisWeekTotal = calculatePlannedThisWeek(plannedExpenses, now, calculationTimeZone);
       const paidPlannedMonthTotal = await paidPlannedTotalForMonth(pool, user.id, now, calculationTimeZone);
+      const activeReserveAmount = reserveInstance?.status === "active" ? Number(reserveInstance.reserve_amount) : 0;
+      const activeReserveDisplayAmount = displayFromBase(activeReserveAmount, user);
+      const plannedRemainingDisplayTotal = displayFromBase(plannedRemainingTotal, user);
+      const plannedThisWeekDisplayTotal = displayFromBase(plannedThisWeekTotal, user);
+      const paidPlannedMonthDisplayTotal = displayFromBase(paidPlannedMonthTotal, user);
+      const manualWeeklyBudget = user.weekly_budget_amount == null ? null : Number(user.weekly_budget_amount);
+      const daysInCurrentMonth = timeZoneMonthState(now, calculationTimeZone).daysInMonth;
+      const resolvedWeeklyBudget = roundMoney(
+        Number.isFinite(manualWeeklyBudget) && manualWeeklyBudget > 0
+          ? manualWeeklyBudget
+          : currentBudget.amount * (7 / daysInCurrentMonth)
+      );
+      const monthRemaining = roundMoney(currentBudget.amount - totals.month);
+      const reservedAhead = roundMoney(plannedRemainingTotal + activeReserveAmount);
+      const freeRemaining = roundMoney(monthRemaining - reservedAhead);
+      const weekRemainingRaw = roundMoney(resolvedWeeklyBudget - totals.week);
+      const weekAvailable = roundMoney(Math.min(weekRemainingRaw, freeRemaining));
       const dayBudgetSnapshot = await getOrCreateDailyBudgetSnapshot(pool, user, now, {
         todayTotal: totals.today,
         monthTotal: totals.month,
         todayDisplayTotal: totals.todayDisplay,
         monthDisplayTotal: totals.monthDisplay,
         monthlyBudget: currentBudget.amount,
+        monthlyBudgetDisplay: displayFromBase(currentBudget.amount, user),
         dayPlanDays: currentBudget.partialPeriodDays,
-        weeklyBudget: user.weekly_budget_amount == null ? null : Number(user.weekly_budget_amount),
+        weeklyBudget: manualWeeklyBudget,
+        weeklyBudgetDisplay: displayFromBase(resolvedWeeklyBudget, user),
         plannedRemainingTotal,
-        plannedRemainingDisplayTotal: displayFromBase(plannedRemainingTotal, user),
+        plannedRemainingDisplayTotal,
         plannedThisWeekTotal,
-        plannedThisWeekDisplayTotal: displayFromBase(plannedThisWeekTotal, user),
+        plannedThisWeekDisplayTotal,
         paidPlannedMonthTotal,
         largeOneOffMonthTotal: totals.largeMonth,
-        reserveAmount: reserveInstance?.status === "active" ? Number(reserveInstance.reserve_amount) : 0,
+        reserveAmount: activeReserveAmount,
+        reserveDisplayAmount: activeReserveDisplayAmount,
+        monthRemainingDisplay: displayFromBase(monthRemaining, user),
+        freeRemainingDisplay: displayFromBase(freeRemaining, user),
+        reservedAheadDisplay: displayFromBase(reservedAhead, user),
+        weekRemainingRawDisplay: displayFromBase(weekRemainingRaw, user),
+        weekAvailableDisplay: displayFromBase(weekAvailable, user),
         baseCurrency: user.base_currency ?? "THB",
         displayCurrency: user.display_currency ?? "USD",
         budgetAdviceEnabled: user.budget_advice_enabled !== false,
@@ -1599,18 +1624,26 @@ export function createRepository(pool, options = {}) {
         monthDisplayTotal: totals.monthDisplay,
         displayCurrency: user.display_currency ?? "USD",
         monthlyBudget: currentBudget.amount,
+        monthlyBudgetDisplay: displayFromBase(currentBudget.amount, user),
         dayPlanDays: currentBudget.partialPeriodDays,
-        weeklyBudget: user.weekly_budget_amount == null ? null : Number(user.weekly_budget_amount),
+        weeklyBudget: manualWeeklyBudget,
+        weeklyBudgetDisplay: displayFromBase(resolvedWeeklyBudget, user),
         budgetAdviceEnabled: user.budget_advice_enabled !== false,
-        reserveAmount: reserveInstance?.status === "active" ? Number(reserveInstance.reserve_amount) : 0,
+        reserveAmount: activeReserveAmount,
+        reserveDisplayAmount: activeReserveDisplayAmount,
         plannedRemainingTotal,
-        plannedRemainingDisplayTotal: displayFromBase(plannedRemainingTotal, user),
+        plannedRemainingDisplayTotal,
         plannedThisWeekTotal,
-        plannedThisWeekDisplayTotal: displayFromBase(plannedThisWeekTotal, user),
+        plannedThisWeekDisplayTotal,
         paidPlannedMonthTotal,
         largeOneOffMonthTotal: totals.largeMonth,
-        paidPlannedMonthDisplayTotal: displayFromBase(paidPlannedMonthTotal, user),
+        paidPlannedMonthDisplayTotal,
         largeOneOffMonthDisplayTotal: totals.largeMonthDisplay,
+        monthRemainingDisplay: displayFromBase(monthRemaining, user),
+        freeRemainingDisplay: displayFromBase(freeRemaining, user),
+        reservedAheadDisplay: displayFromBase(reservedAhead, user),
+        weekRemainingRawDisplay: displayFromBase(weekRemainingRaw, user),
+        weekAvailableDisplay: displayFromBase(weekAvailable, user),
         dayPlanLimit: dayBudgetSnapshot.budgetAmountBase,
         dayDisplayPlanLimit: dayBudgetSnapshot.budgetDisplayAmount,
         baseCurrency: user.base_currency ?? "THB",

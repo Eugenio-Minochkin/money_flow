@@ -2,271 +2,160 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { buildDashboardCards, buildHeroMetric, renderDashboardCards } from "../src/dashboardCards.js";
 
+const labels = {
+  "dashboard.available": "доступно",
+  "dashboard.budget": "бюджет",
+  "dashboard.explain": "Объяснить",
+  "dashboard.freeAfterPlanned": "свободно после плановых оплат",
+  "dashboard.freeAfterPlannedAndReserve": "свободно после плановых и резерва",
+  "dashboard.month": "Месяц",
+  "dashboard.noPlannedAhead": "нет оплат впереди",
+  "dashboard.plannedAhead": "Плановые",
+  "dashboard.plannedAheadCaption": "оплаты впереди до конца месяца",
+  "dashboard.reserveIncluded": "резерв {amount} учтен",
+  "dashboard.spent": "потрачено",
+  "dashboard.todayCaption": "потрачено {spent} · бюджет дня {budget}",
+  "dashboard.todayOverrun": "Перерасход сегодня",
+  "dashboard.todayRemaining": "Осталось сегодня",
+  "dashboard.tooltip.month": "Остаток бюджета месяца. Потрачено {monthSpent} из {monthBudget} → остаток {monthRemaining}. Плановые и резерв здесь не вычтены — их учитывает «До конца месяца».",
+  "dashboard.tooltip.monthFree": "Сколько реально можно потратить до конца месяца. Остаток бюджета {monthRemaining}, плановые {plannedRemaining} → свободно {freeRemaining}.",
+  "dashboard.tooltip.monthFreeWithReserve": "Сколько реально можно потратить до конца месяца. Остаток бюджета {monthRemaining}, плановые {plannedRemaining}, резерв {reserveAmount} → свободно {freeRemaining}.",
+  "dashboard.tooltip.planned": "Будущие плановые оплаты до конца месяца. Сейчас впереди {plannedRemaining}.",
+  "dashboard.tooltip.weekMonthBinding": "Доступно на неделю, но не больше, чем свободно до конца месяца. По неделе осталось {weekRemainingRaw}, месяц разрешает {freeRemaining} → доступно {weekAvailable}.",
+  "dashboard.tooltip.weekWeekBinding": "Остаток недели. Потрачено {weekSpent} из {weekBudget} → доступно {weekAvailable}.",
+  "dashboard.untilMonthEnd": "До конца месяца",
+  "dashboard.week": "Неделя"
+};
+
 const helpers = {
-  t: (key) => ({
-    "dashboard.today": "Сегодня",
-    "dashboard.week": "Неделя",
-    "dashboard.remaining": "Осталось",
-    "dashboard.month": "Месяц",
-    "dashboard.remainingPrefix": "осталось",
-    "dashboard.limitPrefix": "лимит",
-    "dashboard.budget": "бюджет",
-    "dashboard.dayBudget": "бюджет дня",
-    "dashboard.ofDayBudget": "из бюджета дня",
-    "dashboard.canStillSpendToday": "Можно ещё сегодня",
-    "dashboard.todayOverrun": "Перерасход сегодня",
-    "dashboard.overrun": "перерасход",
-    "dashboard.safeToSpendPerDay": "Можно в день до конца месяца",
-    "dashboard.afterExpensesAndPlanned": "после расходов и плановых оплат"
-  })[key] ?? key,
+  t: (key, values = {}) => {
+    const template = labels[key] ?? key;
+    return Object.entries(values).reduce((text, [name, value]) => text.replaceAll(`{${name}}`, String(value)), template);
+  },
   moneyBase: (value) => `${value} THB`,
-  moneyDisplay: (value) => `~$${value}`,
+  moneyDisplay: (value) => (value == null ? "" : `~$${value}`),
   percent: (value) => `${value}%`
 };
 
-test("builds dashboard cards with MVP priority before secondary weekly analytics", () => {
+const semanticSnapshot = {
+  today: 676,
+  dayRemaining: 0,
+  dayOverrun: 279,
+  dayPlanLimit: 397,
+  week: 3813,
+  weekRemainingRaw: 7387,
+  weekAvailable: 1807,
+  weekPlanLimit: 11200,
+  isMonthBinding: true,
+  month: 45481,
+  monthRemaining: 2519,
+  monthlyBudget: 48000,
+  plannedRemaining: 712,
+  freeRemaining: 1807,
+  reserve: null,
+  weekProgressPercent: 34.04,
+  budgetProgressPercent: 94.75,
+  progress: {
+    week: { percent: 34.04, state: "good" },
+    month: { percent: 94.75, state: "danger" }
+  },
+  display: {
+    currency: "USD",
+    dayOverrun: 8.07,
+    dayRemaining: 0,
+    dayPlanLimit: 12.16,
+    today: 20.71,
+    weekAvailable: 55.35,
+    monthRemaining: 77.15,
+    plannedRemaining: 21.81,
+    freeRemaining: 55.35
+  }
+};
+
+test("builds the semantic dashboard card grid", () => {
+  const cards = buildDashboardCards(semanticSnapshot, helpers);
+
+  assert.equal(cards.length, 4);
+  assert.deepEqual(cards.map((card) => card.title), ["До конца месяца", "Плановые", "Месяц", "Неделя"]);
+  assert.equal(cards.some((card) => card.title === "Сегодня"), false);
+  assert.equal(cards[0].amount, "1807 THB");
+  assert.equal(cards[0].caption, "свободно после плановых оплат");
+  assert.equal(cards[1].amount, "712 THB");
+  assert.equal(cards[1].caption, "оплаты впереди до конца месяца");
+  assert.equal(cards[2].amount, "2519 THB");
+  assert.deepEqual(cards[2].lines.map((line) => `${line.label} ${line.amount}`), [
+    "потрачено 45481 THB",
+    "бюджет 48000 THB"
+  ]);
+  assert.equal(cards[3].amount, "1807 THB");
+  assert.deepEqual(cards[3].lines.map((line) => `${line.label} ${line.amount}`), [
+    "потрачено 3813 THB",
+    "бюджет 11200 THB"
+  ]);
+});
+
+test("uses reserve-aware caption without adding reserve to planned card", () => {
   const cards = buildDashboardCards({
-    today: 100,
-    week: 700,
-    month: 3000,
-    dayRemaining: 650,
-    dayPlanLimit: 750,
-    safeToSpendPerDay: 650,
-    weekRemaining: 1200,
-    weekPlanLimit: 1900,
-    freeRemaining: 16000,
-    monthRemaining: 34000,
-    monthlyBudget: 42000,
-    dayProgressPercent: 10,
-    weekProgressPercent: 80.61,
-    budgetProgressPercent: 18.81,
-    progress: {
-      day: { percent: 10, state: "good" },
-      week: { percent: 80.61, state: "warn" },
-      month: { percent: 18.81, state: "good" }
-    },
-    display: { currency: "USD", freeRemaining: 519.2 }
+    ...semanticSnapshot,
+    reserve: { amount: 4000, savedAmount: 4000, eatenAmount: 0, status: "saved" },
+    display: { ...semanticSnapshot.display, reserveAmount: 122.51 }
   }, helpers);
 
   assert.equal(cards.length, 4);
-  assert.deepEqual(cards.map((card) => card.title), ["Сегодня", "Осталось", "Месяц", "Неделя"]);
-  assert.deepEqual(cards[0].lines.map((line) => line.label), ["осталось", "бюджет дня"]);
-  assert.deepEqual(cards[0].lines.map((line) => line.amount), ["650 THB", "750 THB"]);
-  assert.deepEqual(cards[2].lines.map((line) => line.label), ["осталось", "бюджет"]);
-  assert.deepEqual(cards[3].lines.map((line) => line.label), ["осталось", "лимит"]);
+  assert.equal(cards[0].caption, "свободно после плановых и резерва");
+  assert.equal(cards[0].reserveLine, "резерв 4000 THB учтен");
+  assert.equal(cards[1].amount, "712 THB");
 });
 
-test("builds today's card as overrun when regular spend exceeds today's budget", () => {
+test("marks negative month-free values as danger and does not clamp them", () => {
   const cards = buildDashboardCards({
-    today: 802,
-    dayRemaining: 0,
-    dayOverrun: 187,
-    dayPlanLimit: 615,
-    safeToSpendPerDay: 428,
-    dayProgressPercent: 130.41
+    ...semanticSnapshot,
+    freeRemaining: -320,
+    weekAvailable: -320,
+    display: { ...semanticSnapshot.display, freeRemaining: -9.8, weekAvailable: -9.8 }
   }, helpers);
 
-  assert.deepEqual(cards[0].lines.map((line) => line.label), ["перерасход", "бюджет дня"]);
-  assert.deepEqual(cards[0].lines.map((line) => line.amount), ["187 THB", "615 THB"]);
+  assert.equal(cards[0].amount, "-320 THB");
+  assert.equal(cards[0].state, "danger");
+  assert.equal(cards[3].amount, "-320 THB");
+  assert.equal(cards[3].state, "danger");
 });
 
-test("today card shows the fixed daily budget and remaining, not the live pace", () => {
-  const cards = buildDashboardCards({
-    today: 10,
-    dayPlanLimit: 427,
-    dayRemaining: 417,
-    dayOverrun: 0,
-    safeToSpendPerDay: 428,
-    dayProgressPercent: 2.34,
-    progress: {
-      day: { percent: 2.34, state: "good" }
-    }
-  }, helpers);
-
-  assert.equal(cards[0].amount, "10 THB");
-  assert.deepEqual(cards[0].lines.map((line) => line.label), ["осталось", "бюджет дня"]);
-  assert.deepEqual(cards[0].lines.map((line) => line.amount), ["417 THB", "427 THB"]);
-  assert.ok(!cards[0].lines.some((line) => line.amount === "428 THB"));
-  assert.equal(cards[0].percent, "2.34%");
-  assert.deepEqual(cards[0].progress, { percent: 2.34, state: "good" });
-});
-
-test("today card restores percent and visible progress from daily budget fields", () => {
-  const cards = buildDashboardCards({
-    today: 120,
-    dayPlanLimit: 214,
-    dayRemaining: 94,
-    dayOverrun: 0,
-    safeToSpendPerDay: 180,
-    dayProgressPercent: 56.07,
-    progress: {
-      day: { percent: 56.07, state: "good" }
-    }
-  }, helpers);
-  const container = { innerHTML: "" };
-
-  renderDashboardCards(container, [cards[0]]);
-
-  assert.equal(cards[0].amount, "120 THB");
-  assert.equal(cards[0].percent, "56.07%");
-  assert.equal(cards[0].state, "good");
-  assert.deepEqual(cards[0].lines.map((line) => `${line.label} ${line.amount}`), [
-    "осталось 94 THB",
-    "бюджет дня 214 THB"
-  ]);
-  assert.deepEqual(cards[0].progress, { percent: 56.07, state: "good" });
-  assert.doesNotMatch(container.innerHTML, /dashboard-card__progress--hidden/);
-  assert.match(container.innerHTML, /style="width: 56\.07%"/);
-});
-
-test("today card shows overrun percent while capping red progress width", () => {
-  const cards = buildDashboardCards({
-    today: 235,
-    dayPlanLimit: 214,
-    dayRemaining: 0,
-    dayOverrun: 21,
-    safeToSpendPerDay: 180,
-    dayProgressPercent: 109.92,
-    progress: {
-      day: { percent: 109.92, state: "bad" }
-    }
-  }, helpers);
-  const container = { innerHTML: "" };
-
-  renderDashboardCards(container, [cards[0]]);
-
-  assert.equal(cards[0].amount, "235 THB");
-  assert.equal(cards[0].percent, "109.92%");
-  assert.equal(cards[0].state, "bad");
-  assert.deepEqual(cards[0].lines.map((line) => `${line.label} ${line.amount}`), [
-    "перерасход 21 THB",
-    "бюджет дня 214 THB"
-  ]);
-  assert.deepEqual(cards[0].progress, { percent: 109.92, state: "bad" });
-  assert.doesNotMatch(container.innerHTML, /dashboard-card__progress--hidden/);
-  assert.match(container.innerHTML, /data-state="bad" style="width: 100%"/);
-  assert.match(container.innerHTML, />109\.92%<\/b>/);
-});
-
-test("builds hero metric from day remaining instead of safe-to-spend pace", () => {
-  const hero = buildHeroMetric({
-    dayRemaining: 94,
-    dayPlanLimit: 214,
-    dayOverrun: 0,
-    safeToSpendPerDay: 180,
-    display: {
-      currency: "USD",
-      dayRemaining: 2.88,
-      safeToSpendPerDay: 5.51
-    }
-  }, helpers);
-
-  assert.deepEqual(hero, {
-    title: "Можно ещё сегодня",
-    amount: "94 THB",
-    display: "~$2.88",
-    caption: "из бюджета дня 214 THB",
-    state: "good"
-  });
-});
-
-test("builds hero metric from day overrun when today is over budget", () => {
-  const hero = buildHeroMetric({
-    dayRemaining: 0,
-    dayPlanLimit: 214,
-    dayOverrun: 21,
-    safeToSpendPerDay: 180,
-    display: {
-      currency: "USD",
-      dayOverrun: 0.64,
-      safeToSpendPerDay: 5.51
-    }
-  }, helpers);
+test("builds hero metric from today-only budget fields", () => {
+  const hero = buildHeroMetric(semanticSnapshot, helpers);
 
   assert.deepEqual(hero, {
     title: "Перерасход сегодня",
-    amount: "21 THB",
-    display: "~$0.64",
-    caption: "бюджет дня 214 THB",
+    amount: "279 THB",
+    display: "~$8.07",
+    caption: "потрачено 676 THB · бюджет дня 397 THB",
     state: "bad"
   });
 });
 
-test("renders dashboard cards with explicit component classes and progress state", () => {
-  const cards = buildDashboardCards({
-    today: 100,
-    week: 700,
-    month: 3000,
-    dayRemaining: 650,
-    dayPlanLimit: 750,
-    safeToSpendPerDay: 650,
-    weekRemaining: 1200,
-    weekPlanLimit: 1900,
-    freeRemaining: 16000,
-    monthRemaining: 34000,
-    monthlyBudget: 42000,
-    dayProgressPercent: 10,
-    weekProgressPercent: 80.61,
-    budgetProgressPercent: 18.81,
-    progress: {
-      day: { percent: 10, state: "good" },
-      week: { percent: 80.61, state: "warn" },
-      month: { percent: 18.81, state: "good" }
-    },
-    display: { currency: "USD", freeRemaining: 519.2 }
+test("builds on-track hero title and caption", () => {
+  const hero = buildHeroMetric({
+    today: 250,
+    dayRemaining: 147,
+    dayOverrun: 0,
+    dayPlanLimit: 397,
+    display: { currency: "USD", dayRemaining: 4.5 }
   }, helpers);
+
+  assert.equal(hero.title, "Осталось сегодня");
+  assert.equal(hero.amount, "147 THB");
+  assert.equal(hero.caption, "потрачено 250 THB · бюджет дня 397 THB");
+});
+
+test("renders tooltips and avoids the old limit wording", () => {
+  const cards = buildDashboardCards(semanticSnapshot, helpers);
   const container = { innerHTML: "" };
 
   renderDashboardCards(container, cards);
 
-  assert.match(container.innerHTML, /class="dashboard-card__title">Сегодня/);
-  assert.match(container.innerHTML, /class="dashboard-card__title">Осталось/);
-  assert.match(container.innerHTML, /class="dashboard-card__title">Месяц/);
-  assert.match(container.innerHTML, /class="dashboard-card__title">Неделя/);
-  assert.match(container.innerHTML, /class="dashboard-card__label">осталось/);
-  assert.match(container.innerHTML, /class="dashboard-card__value">650 THB/);
-  assert.match(container.innerHTML, /class="dashboard-card__display">~\$519\.2/);
-  assert.match(container.innerHTML, /class="dashboard-card__progress-fill" data-state="warn" style="width: 80\.61%"/);
-});
-
-test("adds an active reserve row inside the remaining card without adding a fifth card", () => {
-  const cards = buildDashboardCards({
-    today: 100,
-    week: 500,
-    month: 45000,
-    freeRemaining: 0,
-    monthlyBudget: 60000,
-    reserve: {
-      amount: 4000,
-      savedAmount: 2500,
-      eatenAmount: 1500,
-      status: "partially_used"
-    },
-    progress: {}
-  }, {
-    ...helpers,
-    t: (key, values = {}) => {
-      if (key === "reserve.dashboardPartiallyUsed") return `Reserve: used ${values.eaten} of ${values.amount}`;
-      return helpers.t(key);
-    }
-  });
-
-  assert.equal(cards.length, 4);
-  assert.equal(cards[1].title, helpers.t("dashboard.remaining"));
-  assert.equal(cards[1].reserveLine, "Reserve: used 1500 THB of 4000 THB");
-  assert.equal(cards.some((card) => card.title === "Reserve at risk"), false);
-});
-
-test("does not render any reserve placeholder when reserve is absent", () => {
-  const cards = buildDashboardCards({
-    today: 100,
-    week: 500,
-    month: 45000,
-    freeRemaining: 3000,
-    monthlyBudget: 60000,
-    progress: {}
-  }, helpers);
-
-  assert.equal(cards.length, 4);
-  assert.equal(cards[1].reserveLine, undefined);
+  assert.match(container.innerHTML, /dashboard-card__info/);
+  assert.match(container.innerHTML, /aria-label="Объяснить: До конца месяца"/);
+  assert.match(container.innerHTML, /Сколько реально можно потратить/);
+  assert.doesNotMatch(container.innerHTML, /лимит/);
+  assert.doesNotMatch(container.innerHTML, /limit/);
 });
