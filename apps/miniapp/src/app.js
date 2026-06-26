@@ -1386,7 +1386,7 @@ async function saveDraftItems(options = {}) {
       renderDraftEditor(draftState);
       draftDirty = false;
       showToast(t("toast.draftConflict"));
-      return;
+      return { saved: false };
     }
     throw error;
   }
@@ -1394,10 +1394,12 @@ async function saveDraftItems(options = {}) {
   renderDraftEditor(draftState);
   draftDirty = false;
   if (options.showFeedback) showToast(t("toast.draftSaved"));
+  return { saved: true };
 }
 
 async function confirmDraft() {
-  await saveDraftItems();
+  const saveResult = await saveDraftItems();
+  if (!saveResult?.saved) return;
   const data = await api(`/api/drafts/${draftState.id}/confirm`, { method: "POST", body: { telegramUserId, language: currentLanguage } });
   const outcome = classifyConfirmOutcome(data);
   document.querySelector("#draftEditorSection").classList.add("hidden");

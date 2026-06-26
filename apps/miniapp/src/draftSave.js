@@ -6,3 +6,7 @@ export function resolveDraftSaveResponse(status, body) {
 export function classifyConfirmOutcome(data) {
   return { alreadySaved: Boolean(data?.alreadySaved) };
 }
+
+export function shouldConfirmAfterSave(saveResult) {
+  return Boolean(saveResult?.saved);
+}
