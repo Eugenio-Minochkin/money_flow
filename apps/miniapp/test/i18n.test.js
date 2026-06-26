@@ -34,6 +34,8 @@ test("Mini App translations cover dashboard, plan, history and settings labels",
     "dashboard.tooltip.month",
     "dashboard.tooltip.todayOnTrack",
     "dashboard.tooltip.todayOverspend",
+    "dashboard.tooltip.heroTodayOnTrack",
+    "dashboard.tooltip.heroTodayOverspend",
     "dashboard.tooltip.weekMonthBinding",
     "dashboard.tooltip.weekWeekBinding",
     "dashboard.week",
@@ -123,6 +125,10 @@ test("dashboard tooltip translations are short and interpolate new placeholders"
     }),
     /1 570 THB/
   );
+  assert.match(createTranslator("ru")("dashboard.tooltip.heroTodayOnTrack"), /плановые уже вычтены/i);
+  assert.match(createTranslator("ru")("dashboard.tooltip.heroTodayOverspend"), /бюджета дня/i);
+  assert.match(createTranslator("en")("dashboard.tooltip.heroTodayOnTrack"), /planned payments already deducted/i);
+  assert.match(createTranslator("en")("dashboard.tooltip.heroTodayOverspend"), /today's budget/i);
 });
 
 test("translator falls back to English and formats count labels", () => {

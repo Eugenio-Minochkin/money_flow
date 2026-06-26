@@ -21,6 +21,8 @@ const labels = {
   "dashboard.tooltip.monthFree": "Сколько реально можно потратить до конца месяца. Остаток бюджета {monthRemaining}, плановые {plannedRemaining} → свободно {freeRemaining}.",
   "dashboard.tooltip.monthFreeWithReserve": "Сколько реально можно потратить до конца месяца. Остаток бюджета {monthRemaining}, плановые {plannedRemaining}, резерв {reserveAmount} → свободно {freeRemaining}.",
   "dashboard.tooltip.planned": "Будущие плановые оплаты до конца месяца. Сейчас впереди {plannedRemaining}.",
+  "dashboard.tooltip.heroTodayOnTrack": "hero on track tooltip",
+  "dashboard.tooltip.heroTodayOverspend": "hero overspend tooltip",
   "dashboard.tooltip.weekMonthBinding": "Доступно на неделю, но не больше, чем свободно до конца месяца. По неделе осталось {weekRemainingRaw}, месяц разрешает {freeRemaining} → доступно {weekAvailable}.",
   "dashboard.tooltip.weekWeekBinding": "Остаток недели. Потрачено {weekSpent} из {weekBudget} → доступно {weekAvailable}.",
   "dashboard.untilMonthEnd": "До конца месяца",
@@ -129,11 +131,12 @@ test("builds hero metric from today-only budget fields", () => {
     amount: "279 THB",
     display: "~$8.07",
     caption: "потрачено 676 THB · бюджет дня 397 THB",
-    state: "bad"
+    state: "bad",
+    tooltip: "hero overspend tooltip"
   });
 });
 
-test("builds on-track hero title and caption", () => {
+test("builds on-track hero title caption and tooltip", () => {
   const hero = buildHeroMetric({
     today: 250,
     dayRemaining: 147,
@@ -145,6 +148,7 @@ test("builds on-track hero title and caption", () => {
   assert.equal(hero.title, "Осталось сегодня");
   assert.equal(hero.amount, "147 THB");
   assert.equal(hero.caption, "потрачено 250 THB · бюджет дня 397 THB");
+  assert.equal(hero.tooltip, "hero on track tooltip");
 });
 
 test("renders card flip backs and avoids the old limit wording", () => {
@@ -153,7 +157,8 @@ test("renders card flip backs and avoids the old limit wording", () => {
 
   renderDashboardCards(container, cards);
 
-  assert.match(container.innerHTML, /data-dashboard-card/);
+  assert.match(container.innerHTML, /data-flip-card/);
+  assert.match(container.innerHTML, /data-flip-toggle/);
   assert.match(container.innerHTML, /dashboard-card__flip-inner/);
   assert.match(container.innerHTML, /dashboard-card__face dashboard-card__face--front/);
   assert.match(container.innerHTML, /dashboard-card__face dashboard-card__face--back/);

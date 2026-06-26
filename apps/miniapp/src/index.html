@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Money Flow</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/styles.css?v=20260616-forecast" />
+    <link rel="stylesheet" href="/styles.css?v=20260626-dashboard-v12" />
   </head>
   <body data-theme="light">
     <main class="shell">
@@ -16,13 +16,37 @@
       </header>
 
       <section id="dashboardTab">
-        <section class="hero-metric">
-          <div class="hero-topline">
-            <span id="heroTitle" data-i18n="dashboard.todayRemaining">Осталось сегодня</span>
+        <section class="hero-metric hero-metric--flip" data-flip-card data-state="good">
+          <div class="hero-metric__flip-inner">
+            <div class="hero-metric__face hero-metric__face--front" data-flip-front>
+              <div class="hero-topline">
+                <span id="heroTitle" data-i18n="dashboard.todayRemaining">Осталось сегодня</span>
+                <button
+                  class="hero-metric__info"
+                  type="button"
+                  aria-expanded="false"
+                  aria-controls="heroTooltip"
+                  aria-label="Объяснить"
+                  data-flip-toggle
+                >
+                  i
+                </button>
+              </div>
+              <strong id="safeToSpend">...</strong>
+              <em id="safeToSpendDisplay"></em>
+              <small id="heroCaption">...</small>
+            </div>
+            <div
+              class="hero-metric__face hero-metric__face--back"
+              id="heroTooltip"
+              role="note"
+              tabindex="-1"
+              aria-hidden="true"
+              data-flip-back
+            >
+              <p id="heroTooltipText" class="hero-metric__back-text"></p>
+            </div>
           </div>
-          <strong id="safeToSpend">...</strong>
-          <em id="safeToSpendDisplay"></em>
-          <small id="heroCaption">...</small>
         </section>
 
         <section class="metrics-grid" id="dashboardCards" aria-label="Основные показатели"></section>
@@ -344,6 +368,6 @@
     </nav>
 
     <div class="toast hidden" id="toast" role="status" aria-live="polite"></div>
-    <script src="/app.js?v=20260605-card-match" type="module"></script>
+    <script src="/app.js?v=20260626-dashboard-v12" type="module"></script>
   </body>
 </html>

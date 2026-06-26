@@ -29,7 +29,8 @@ export function buildHeroMetric(snapshot, helpers) {
       spent: helpers.moneyBase(todayTotal),
       budget: helpers.moneyBase(dayPlanLimit)
     }),
-    state: hasOverrun ? "bad" : "good"
+    state: hasOverrun ? "bad" : "good",
+    tooltip: helpers.t(hasOverrun ? "dashboard.tooltip.heroTodayOverspend" : "dashboard.tooltip.heroTodayOnTrack")
   };
 }
 
@@ -126,7 +127,7 @@ function renderCard(card) {
     : `<b class="dashboard-card__percent" aria-hidden="true">&nbsp;</b>`;
   const tooltipId = card.tooltip ? `dashboard-tooltip-${slugify(card.title)}` : "";
   const info = card.tooltip ? `
-        <button class="dashboard-card__info" type="button" aria-expanded="false" aria-controls="${escapeHtml(tooltipId)}" aria-label="${escapeHtml(`${card.infoLabel ?? "Объяснить"}: ${card.title}`)}" data-dashboard-tooltip>
+        <button class="dashboard-card__info" type="button" aria-expanded="false" aria-controls="${escapeHtml(tooltipId)}" aria-label="${escapeHtml(`${card.infoLabel ?? "Объяснить"}: ${card.title}`)}" data-flip-toggle>
           i
         </button>` : "";
   const lines = (card.lines ?? []).map((line) => `
@@ -139,14 +140,14 @@ function renderCard(card) {
   const caption = card.caption ? `<div class="dashboard-card__caption">${escapeHtml(card.caption)}</div>` : "";
   const reserveLine = card.reserveLine ? `<div class="dashboard-card__reserve">${escapeHtml(card.reserveLine)}</div>` : "";
   const back = card.tooltip ? `
-        <div class="dashboard-card__face dashboard-card__face--back" id="${escapeHtml(tooltipId)}" role="note" tabindex="-1" aria-hidden="true" aria-live="polite">
+        <div class="dashboard-card__face dashboard-card__face--back" id="${escapeHtml(tooltipId)}" role="note" tabindex="-1" aria-hidden="true" aria-live="polite" data-flip-back>
           <p class="dashboard-card__back-text">${escapeHtml(card.tooltip)}</p>
         </div>` : "";
 
   return `
-    <article class="dashboard-card${card.tooltip ? " dashboard-card--flip" : ""}${card.progress ? " dashboard-card--progress" : ""}${card.state === "danger" || card.state === "bad" ? " dashboard-card--danger" : ""}"${card.tooltip ? " data-dashboard-card" : ""}>
+    <article class="dashboard-card${card.tooltip ? " dashboard-card--flip" : ""}${card.progress ? " dashboard-card--progress" : ""}${card.state === "danger" || card.state === "bad" ? " dashboard-card--danger" : ""}"${card.tooltip ? " data-flip-card" : ""}>
       <div class="dashboard-card__flip-inner">
-        <div class="dashboard-card__face dashboard-card__face--front">
+        <div class="dashboard-card__face dashboard-card__face--front" data-flip-front>
           <div class="dashboard-card__top">
             <span class="dashboard-card__title">${escapeHtml(card.title)}</span>
             ${percent}
