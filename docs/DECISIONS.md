@@ -14,6 +14,10 @@ Reserve is already useful and complex enough for the MVP. Avoid multiple reserve
 
 Analytics should reflect the financial period a planned payment belongs to, not the date when the user clicked the payment button.
 
+## 2026-06-26 - Planned Payment Paid Status Source Of Truth
+
+A planned occurrence is paid when `planned_expense_payments` holds a row for that planned expense and occurrence whose linked expense exists and belongs to the same user. The local date of the linked expense (`expenses.spent_at`) is history/statistics placement only and must not decide paid status or allow a duplicate Pay. This rule shipped in PR #34, was accidentally reverted in PR #61 (daily reminders), and was restored on 2026-06-26. See ADR 0001.
+
 ## 2026-06 - Keep Dashboard Compact
 
 The dashboard should clearly show the state of money and budget, not turn into a dense analytics screen.

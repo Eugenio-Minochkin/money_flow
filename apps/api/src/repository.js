@@ -1427,12 +1427,10 @@ export function createRepository(pool, options = {}) {
            FROM planned_expense_payments pep
            JOIN expenses e ON e.id = pep.expense_id
                            AND e.user_id = $3
-                           AND (pep.occurrence_date IS NULL
-                                OR (e.spent_at AT TIME ZONE $4)::date = pep.occurrence_date)
            WHERE pep.planned_expense_id = $1
              AND pep.paid_month = $2
            ORDER BY pep.occurrence_date`,
-          [planned.id, monthKey(paidAt, timeZone), planned.user_id, timeZone]
+          [planned.id, monthKey(paidAt, timeZone), planned.user_id]
         );
         const requestedOccurrence = resolveOccurrenceDate(planned, paidAt, options.occurrenceDate, paidResult.rows, timeZone);
         if (requestedOccurrence.error) {
@@ -1954,13 +1952,10 @@ async function listPlannedExpensesForTelegramUserAt(pool, telegramUserId, now) {
               ) FILTER (WHERE pep.occurrence_date IS NOT NULL), '{}'::jsonb) AS paid_occurrences
        FROM planned_expense_payments pep
        JOIN planned_expenses pe ON pe.id = pep.planned_expense_id
-       JOIN users pu ON pu.id = pe.user_id
-     JOIN expenses e ON e.id = pep.expense_id
-                     AND e.user_id = pe.user_id
-                     AND (pep.occurrence_date IS NULL
-                          OR (e.spent_at AT TIME ZONE COALESCE(NULLIF(pu.timezone, ''), 'Asia/Bangkok'))::date = pep.occurrence_date)
-     WHERE pep.paid_month = $2
-       GROUP BY pep.planned_expense_id
+       JOIN expenses e ON e.id = pep.expense_id
+                       AND e.user_id = pe.user_id
+      WHERE pep.paid_month = $2
+        GROUP BY pep.planned_expense_id
      ) paid ON paid.planned_expense_id = planned_expenses.id
      WHERE users.telegram_user_id = $1 AND planned_expenses.active = true
      ORDER BY planned_expenses.id DESC`,
