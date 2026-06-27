@@ -91,6 +91,16 @@ async function periodStats(pool, period, usersCreatedAtAvailable) {
       llmParse: secondsOrNull(events.p95VoiceLlmParseMs),
       dbSave: secondsOrNull(events.p95VoiceDbSaveMs)
     },
+    localFastPathCount: Number(events.localFastPathCount),
+    llmCount: Number(events.llmCount),
+    llmSkippedCount: Number(events.llmSkippedCount),
+    categoryNeedsReviewCount: Number(events.categoryNeedsReviewCount),
+    shadowDisagreementCount: Number(events.shadowDisagreementCount),
+    shadowComparedCount: Number(events.shadowComparedCount),
+    avgLocalFastPathProcessingSeconds: secondsOrNull(events.avgLocalFastPathProcessingMs),
+    avgLlmProcessingSeconds: secondsOrNull(events.avgLlmProcessingMs),
+    localFastPathRejectReasons: objectFromJson(events.localFastPathRejectReasons),
+    shadowDisagreementFields: objectFromJson(events.shadowDisagreementFields),
     confirmRate: draftsCreated > 0 ? Math.round((draftsConfirmed / draftsCreated) * 100) : null,
     parseFailedRate: messagesTotal > 0 ? Math.round((parseFailed / messagesTotal) * 100) : null
   };
@@ -253,7 +263,74 @@ async function aggregateEvents(pool, period) {
          WHERE event_name = 'message_processing_completed'
            AND metadata->>'inputType' = 'voice'
            AND metadata->>'dbSaveMs' ~ '^[0-9]+(\\.[0-9]+)?$'
-       )::float AS p95_voice_db_save_ms
+       )::float AS p95_voice_db_save_ms,
+       COUNT(*) FILTER (
+         WHERE event_name = 'message_processing_completed'
+           AND metadata->>'parserEngine' = 'local-fast-path'
+       )::int AS local_fast_path_count,
+       COUNT(*) FILTER (
+         WHERE event_name = 'message_processing_completed'
+           AND metadata->>'parserEngine' = 'llm'
+       )::int AS llm_count,
+       COUNT(*) FILTER (
+         WHERE event_name = 'message_processing_completed'
+           AND metadata->>'llmSkipped' = 'true'
+       )::int AS llm_skipped_count,
+       COUNT(*) FILTER (
+         WHERE event_name = 'message_processing_completed'
+           AND metadata->>'categoryResolution' = 'needs_user_review'
+       )::int AS category_needs_review_count,
+       COUNT(*) FILTER (
+         WHERE event_name = 'message_processing_completed'
+           AND metadata->>'shadowDisagreement' = 'true'
+       )::int AS shadow_disagreement_count,
+       COUNT(*) FILTER (
+         WHERE event_name = 'message_processing_completed'
+           AND metadata ? 'shadowDisagreement'
+           AND metadata->>'shadowDisagreement' IN ('true', 'false')
+       )::int AS shadow_compared_count,
+       AVG(CASE
+         WHEN metadata->>'processingTotalMs' ~ '^[0-9]+(\\.[0-9]+)?$'
+         THEN (metadata->>'processingTotalMs')::numeric
+       END) FILTER (
+         WHERE event_name = 'message_processing_completed'
+           AND metadata->>'parserEngine' = 'local-fast-path'
+       )::float AS avg_local_fast_path_processing_ms,
+       AVG(CASE
+         WHEN metadata->>'processingTotalMs' ~ '^[0-9]+(\\.[0-9]+)?$'
+         THEN (metadata->>'processingTotalMs')::numeric
+       END) FILTER (
+         WHERE event_name = 'message_processing_completed'
+           AND metadata->>'parserEngine' = 'llm'
+       )::float AS avg_llm_processing_ms,
+       (
+         SELECT COALESCE(jsonb_object_agg(reason, count), '{}'::jsonb)
+         FROM (
+           SELECT metadata->>'localFastPathRejectReason' AS reason, COUNT(*)::int AS count
+           FROM app_events
+           WHERE created_at >= $1 AND created_at < $2
+             AND event_name = 'message_processing_completed'
+             AND metadata->>'localFastPathRejectReason' IS NOT NULL
+           GROUP BY reason
+         ) reject_reasons
+       ) AS local_fast_path_reject_reasons,
+       (
+         SELECT COALESCE(jsonb_object_agg(field, count), '{}'::jsonb)
+         FROM (
+           SELECT field, COUNT(*)::int AS count
+           FROM app_events,
+             LATERAL jsonb_array_elements_text(
+               CASE
+                 WHEN jsonb_typeof(metadata->'shadowDisagreementFields') = 'array'
+                 THEN metadata->'shadowDisagreementFields'
+                 ELSE '[]'::jsonb
+               END
+             ) AS field
+           WHERE created_at >= $1 AND created_at < $2
+             AND event_name = 'message_processing_completed'
+           GROUP BY field
+         ) disagreement_fields
+       ) AS shadow_disagreement_fields
      FROM app_events
      WHERE created_at >= $1 AND created_at < $2`,
     [period.start, period.end]
@@ -294,7 +371,17 @@ async function aggregateEvents(pool, period) {
     p95VoiceLlmParseMs: nullableNumeric(row.p95_voice_llm_parse_ms),
     avgVoiceTelegramResponseMs: nullableNumeric(row.avg_voice_telegram_response_ms),
     avgVoiceDbSaveMs: nullableNumeric(row.avg_voice_db_save_ms),
-    p95VoiceDbSaveMs: nullableNumeric(row.p95_voice_db_save_ms)
+    p95VoiceDbSaveMs: nullableNumeric(row.p95_voice_db_save_ms),
+    localFastPathCount: numeric(row.local_fast_path_count),
+    llmCount: numeric(row.llm_count),
+    llmSkippedCount: numeric(row.llm_skipped_count),
+    categoryNeedsReviewCount: numeric(row.category_needs_review_count),
+    shadowDisagreementCount: numeric(row.shadow_disagreement_count),
+    shadowComparedCount: numeric(row.shadow_compared_count),
+    avgLocalFastPathProcessingMs: nullableNumeric(row.avg_local_fast_path_processing_ms),
+    avgLlmProcessingMs: nullableNumeric(row.avg_llm_processing_ms),
+    localFastPathRejectReasons: row.local_fast_path_reject_reasons,
+    shadowDisagreementFields: row.shadow_disagreement_fields
   };
 }
 
@@ -351,7 +438,13 @@ function formatPeriod(label, period, options) {
     formatTextStages(period.avgTextStageSeconds),
     formatVoiceStages(period.avgVoiceStageSeconds),
     formatTextP95Stages(period.p95TextStageSeconds),
-    formatVoiceP95Stages(period.p95VoiceStageSeconds)
+    formatVoiceP95Stages(period.p95VoiceStageSeconds),
+    `Parser: local ${period.localFastPathCount} / LLM ${period.llmCount} / skipped ${period.llmSkippedCount}`,
+    `Parser avg: local ${formatSeconds(period.avgLocalFastPathProcessingSeconds)} / LLM ${formatSeconds(period.avgLlmProcessingSeconds)}`,
+    `Review: category ${period.categoryNeedsReviewCount}`,
+    `Shadow: ${period.shadowDisagreementCount}/${period.shadowComparedCount} disagreements`,
+    ...formatMapLine("Rejects", period.localFastPathRejectReasons),
+    ...formatMapLine("Shadow fields", period.shadowDisagreementFields)
   ].join("\n");
 }
 
@@ -399,3 +492,23 @@ function nullableNumeric(value) {
   return Number.isFinite(number) ? number : null;
 }
 
+function objectFromJson(value) {
+  if (!value) return {};
+  if (typeof value === "object" && !Array.isArray(value)) return value;
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function formatMapLine(label, value) {
+  const entries = Object.entries(objectFromJson(value));
+  if (entries.length === 0) return [];
+  const formatted = entries
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, count]) => `${key} ${count}`)
+    .join(" / ");
+  return [`${label}: ${formatted}`];
+}

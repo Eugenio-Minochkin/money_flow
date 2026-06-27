@@ -52,7 +52,8 @@ const repository = createRepository(pool, {
 const adminStatsService = createAdminStatsService({ pool });
 const expenseParser = createExpenseParser({
   apiKey: config.openAiApiKey,
-  model: config.openAiModel
+  model: config.openAiModel,
+  fastPathMode: config.expenseFastPathMode
 });
 const voiceTranscriber = createVoiceTranscriber({
   telegramBotToken: config.telegramBotToken,
