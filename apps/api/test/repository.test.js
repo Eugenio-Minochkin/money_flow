@@ -2015,6 +2015,38 @@ test("date-mismatched linked expense blocks duplicate planned payment", async ()
   assert.ok(!queries.some((query) => String(query.sql).includes("INSERT INTO expenses")));
 });
 
+test("paying a monthly expense recognizes Date object paid occurrence rows", async () => {
+  const queries = [];
+  const repo = createRepository({
+    async connect() {
+      return fakePayClient({
+        planned: {
+          id: "9",
+          user_id: "1",
+          amount: "500",
+          currency: "THB",
+          amount_base: "500",
+          description: "server",
+          category_slug: "subscriptions",
+          tags: [],
+          recurrence: "monthly",
+          due_day: 6,
+          due_days: [6],
+          base_currency: "THB"
+        },
+        paidOccurrences: [{ occurrence_date: new Date("2026-06-06T00:00:00.000Z"), paid_key: "2026-06" }],
+        queries
+      });
+    }
+  }, { exchangeRates: fixedRates() });
+
+  await assert.rejects(
+    repo.payPlannedExpenseForTelegramUser(9, 100, new Date("2026-06-16T09:00:00+07:00"), { occurrenceDate: "2026-06-06" }),
+    (error) => error.code === "already_paid"
+  );
+  assert.ok(!queries.some((query) => String(query.sql).includes("INSERT INTO expenses")));
+});
+
 test("paying a planned expense uses paid_key as the conflict arbiter", async () => {
   const queries = [];
   const repo = createRepository({
@@ -2155,6 +2187,45 @@ test("paying with an explicit occurrenceDate creates the expense on that occurre
   assert.equal(expenseInsert.params[6], "2026-06-06");
   assert.equal(new Date(expenseInsert.params[11]).toISOString(), "2026-06-06T05:00:00.000Z");
   assert.equal(paymentInsert.params[4], "2026-06-06");
+});
+
+test("paying with occurrenceDate as a Date object normalizes occurrence date and paid_key", async () => {
+  const queries = [];
+  const repo = createRepository({
+    async connect() {
+      return fakePayClient({
+        planned: {
+          id: "5",
+          user_id: "1",
+          amount: "17000",
+          currency: "THB",
+          amount_base: "17000",
+          description: "server",
+          category_slug: "subscriptions",
+          tags: [],
+          recurrence: "monthly",
+          due_day: 6,
+          due_days: [6],
+          base_currency: "THB"
+        },
+        queries
+      });
+    }
+  }, { exchangeRates: fixedRates() });
+
+  await repo.payPlannedExpenseForTelegramUser(
+    5,
+    100,
+    new Date("2026-06-16T09:00:00+07:00"),
+    { occurrenceDate: new Date("2026-06-06T00:00:00.000Z") }
+  );
+
+  const expenseInsert = queries.find((query) => String(query.sql).includes("INSERT INTO expenses"));
+  const paymentInsert = queries.find((query) => String(query.sql).includes("INSERT INTO planned_expense_payments"));
+  assert.equal(expenseInsert.params[6], "2026-06-06");
+  assert.equal(new Date(expenseInsert.params[11]).toISOString(), "2026-06-06T05:00:00.000Z");
+  assert.equal(paymentInsert.params[4], "2026-06-06");
+  assert.equal(paymentInsert.params[5], "2026-06");
 });
 
 test("paying with occurrenceDate does not pay a different occurrence", async () => {
@@ -2489,6 +2560,167 @@ test("dashboard keeps unpaid twice-monthly occurrences in planned reserve", asyn
 
   assert.equal(dashboard.snapshot.plannedRemaining, 2000);
   assert.equal(dashboard.snapshot.freeRemaining, 43000);
+});
+
+test("dashboard counts current-month one-off planned expenses when due_date is a Date from pg", async () => {
+  const repo = createRepository(dashboardPoolWithPlannedExpenses([{
+    id: "26",
+    user_id: "1",
+    amount: "1234",
+    amount_base: "1234",
+    currency: "THB",
+    description: "one-off",
+    category_slug: "other",
+    recurrence: "one_off",
+    due_date: new Date("2026-06-10T00:00:00.000Z"),
+    paid_count: 0,
+    paid_occurrence_dates: []
+  }]));
+
+  const dashboard = await repo.dashboard(222386362, new Date("2026-06-10T10:00:00+07:00"));
+
+  assert.equal(dashboard.snapshot.plannedRemaining, 1234);
+  assert.equal(dashboard.snapshot.freeRemaining, 43766);
+});
+
+test("dashboard accepts one-off planned due_date as ISO and local date strings", async () => {
+  const repo = createRepository(dashboardPoolWithPlannedExpenses([
+    {
+      id: "25",
+      user_id: "1",
+      amount: "1000",
+      amount_base: "1000",
+      currency: "THB",
+      description: "iso one-off",
+      category_slug: "other",
+      recurrence: "one_off",
+      due_date: "2026-06-06T00:00:00.000Z",
+      paid_count: 0,
+      paid_occurrence_dates: []
+    },
+    {
+      id: "24",
+      user_id: "1",
+      amount: "2000",
+      amount_base: "2000",
+      currency: "THB",
+      description: "date one-off",
+      category_slug: "other",
+      recurrence: "one_time",
+      due_date: "2026-06-10",
+      paid_count: 0,
+      paid_occurrence_dates: []
+    }
+  ]));
+
+  const dashboard = await repo.dashboard(100, new Date("2026-06-10T10:00:00+07:00"));
+
+  assert.equal(dashboard.snapshot.plannedRemaining, 3000);
+});
+
+test("dashboard skips invalid one-off planned due_date and logs a safe warning", async () => {
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = (...args) => warnings.push(args);
+  try {
+    const repo = createRepository(dashboardPoolWithPlannedExpenses([{
+      id: "27",
+      user_id: "1",
+      amount: "9999",
+      amount_base: "9999",
+      currency: "THB",
+      description: "bad one-off",
+      category_slug: "other",
+      recurrence: "one_off",
+      due_date: "2026-02-31",
+      paid_count: 0,
+      paid_occurrence_dates: []
+    }]));
+
+    const dashboard = await repo.dashboard(100, new Date("2026-06-10T10:00:00+07:00"));
+
+    assert.equal(dashboard.snapshot.plannedRemaining, 0);
+    assert.equal(warnings.length, 1);
+    assert.equal(warnings[0][0], "Invalid planned expense due_date");
+    assert.deepEqual(warnings[0][1], {
+      plannedExpenseId: "27",
+      userId: "1",
+      recurrence: "one_off",
+      dueDateType: "string",
+      dueDateValue: "2026-02-31"
+    });
+  } finally {
+    console.warn = originalWarn;
+  }
+});
+
+test("dashboard excludes one-off due_date from a previous month", async () => {
+  const repo = createRepository(dashboardPoolWithPlannedExpenses([{
+    id: "23",
+    user_id: "1",
+    amount: "5000",
+    amount_base: "5000",
+    currency: "THB",
+    description: "past one-off",
+    category_slug: "other",
+    recurrence: "one_off",
+    due_date: new Date("2026-05-31T00:00:00.000Z"),
+    paid_count: 0,
+    paid_occurrence_dates: []
+  }]));
+
+  const dashboard = await repo.dashboard(100, new Date("2026-06-10T10:00:00+07:00"));
+
+  assert.equal(dashboard.snapshot.plannedRemaining, 0);
+});
+
+test("dashboard keeps monthly weekly and twice-monthly planned calculations unchanged", async () => {
+  const repo = createRepository(dashboardPoolWithPlannedExpenses([
+    {
+      id: "1",
+      user_id: "1",
+      amount: "100",
+      amount_base: "100",
+      currency: "THB",
+      description: "monthly",
+      category_slug: "other",
+      recurrence: "monthly",
+      due_day: 6,
+      due_days: [6],
+      paid_count: 0,
+      paid_occurrence_dates: []
+    },
+    {
+      id: "2",
+      user_id: "1",
+      amount: "200",
+      amount_base: "200",
+      currency: "THB",
+      description: "weekly",
+      category_slug: "other",
+      recurrence: "weekly",
+      weekday: 3,
+      paid_count: 0,
+      paid_occurrence_dates: []
+    },
+    {
+      id: "3",
+      user_id: "1",
+      amount: "300",
+      amount_base: "300",
+      currency: "THB",
+      description: "twice",
+      category_slug: "other",
+      recurrence: "twice_monthly",
+      due_days: [4, 18],
+      paid_count: 0,
+      paid_occurrence_dates: []
+    }
+  ]));
+
+  const dashboard = await repo.dashboard(100, new Date("2026-06-10T10:00:00+07:00"));
+
+  assert.equal(dashboard.snapshot.plannedRemaining, 1500);
 });
 
 test("dashboard uses current month override only for the matching calendar month", async () => {
@@ -3013,6 +3245,30 @@ function fakeConfirmClient({ draftRow, onQuery = () => {} }) {
     },
     release() {}
   };
+}
+
+function dashboardPoolWithPlannedExpenses(plannedExpenses) {
+  return fakePool((sql) => {
+    const query = String(sql);
+    if (query.startsWith("SELECT * FROM users")) {
+      return {
+        rows: [{
+          id: "1",
+          telegram_user_id: "100",
+          monthly_budget_amount: "45000",
+          display_currency: "USD",
+          usd_thb_rate: "30"
+        }]
+      };
+    }
+    if (query.includes("planned_expense_payments")) return { rows: plannedExpenses };
+    if (query.includes("COALESCE(SUM(amount_base)") && query.includes("display_total")) {
+      return { rows: [{ total: 0, display_total: 0 }] };
+    }
+    if (query.includes("FROM expenses") && query.includes("ORDER BY spent_at")) return { rows: [] };
+    if (query.includes("GROUP BY category_slug")) return { rows: [] };
+    return { rows: [] };
+  });
 }
 
 function fakePayClient({ planned, paidOccurrences = [], queries = [] }) {

@@ -17,6 +17,8 @@ import {
 import { calculateReserveState, validateReserveCapacity } from "../../../packages/shared/src/reserve.js";
 import { createExchangeRateProvider } from "./exchangeRates.js";
 
+const INVALID_PLANNED_DUE_DATE_LOGGED = Symbol("invalidPlannedDueDateLogged");
+
 export class DraftCanceledError extends Error {
   constructor() { super("Draft is canceled"); this.name = "DraftCanceledError"; }
 }
@@ -2379,7 +2381,12 @@ function plannedOccurrenceCountForPeriod(item, period) {
     return count;
   }
   if (item.recurrence === "one_off" || item.recurrence === "one_time") {
-    return String(item.due_date ?? "").slice(0, 7) === period ? 1 : 0;
+    const dueDateKey = normalizeOccurrenceKey(item.due_date);
+    if (!dueDateKey) {
+      if (item.due_date) logInvalidPlannedDueDate(item);
+      return 0;
+    }
+    return dueDateKey.slice(0, 7) === period ? 1 : 0;
   }
   const days = Array.isArray(item.due_days) && item.due_days.length
     ? item.due_days
@@ -2409,6 +2416,10 @@ function plannedDueDatesThisMonth(item, now, timeZone = userTimezone(item)) {
   if (item.recurrence === "one_off" || item.recurrence === "one_time") {
     if (!item.due_date) return [];
     const dueDate = plannedLocalDate(item.due_date, timeZone);
+    if (!dueDate) {
+      logInvalidPlannedDueDate(item);
+      return [];
+    }
     return monthKey(dueDate, timeZone) === monthKey(now, timeZone) ? [dueDate] : [];
   }
   return dueDaysInMonthValues(item, now, timeZone).map((day) => plannedLocalDateForMonthDay(now, day, timeZone));
@@ -2416,7 +2427,9 @@ function plannedDueDatesThisMonth(item, now, timeZone = userTimezone(item)) {
 
 function unpaidPlannedDueDatesThisMonth(item, now, timeZone = userTimezone(item)) {
   const dueDates = plannedDueDatesThisMonth(item, now, timeZone);
-  const paidDates = new Set(Array.isArray(item.paid_occurrence_dates) ? item.paid_occurrence_dates : []);
+  const paidDates = new Set((Array.isArray(item.paid_occurrence_dates) ? item.paid_occurrence_dates : [])
+    .map(normalizeOccurrenceKey)
+    .filter(Boolean));
   if (paidDates.size) return dueDates.filter((date) => !paidDates.has(localDayKey(date, timeZone)));
   const legacyPaid = item.paid_month === monthKey(now, timeZone) ? 1 : 0;
   const paidCount = Math.min(Number(item.paid_count ?? legacyPaid), dueDates.length);
@@ -2427,7 +2440,14 @@ function occurrencesThisMonth(item, now) {
   const timeZone = userTimezone(item);
   if (item.recurrence === "weekly") return weekdaysInMonth(now, Number(item.weekday ?? localWeekday(now, timeZone)), timeZone);
   if (item.recurrence === "twice_monthly") return dueDaysInMonth(item);
-  if (item.recurrence === "one_off" || item.recurrence === "one_time") return item.due_date && monthKey(new Date(item.due_date), timeZone) === monthKey(now, timeZone) ? 1 : 0;
+  if (item.recurrence === "one_off" || item.recurrence === "one_time") {
+    const dueDate = plannedLocalDate(item.due_date, timeZone);
+    if (!dueDate) {
+      if (item.due_date) logInvalidPlannedDueDate(item);
+      return 0;
+    }
+    return monthKey(dueDate, timeZone) === monthKey(now, timeZone) ? 1 : 0;
+  }
   return dueDaysInMonth(item);
 }
 
@@ -2471,15 +2491,23 @@ function weeklyDueDatesThisMonth(now, weekday, timeZone = "Asia/Bangkok") {
 }
 
 function plannedLocalDate(value, timeZone = "Asia/Bangkok") {
-  const [year, month, day] = String(value).slice(0, 10).split("-").map(Number);
-  return localPeriodBounds(new Date(Date.UTC(year, month - 1, day, 12)), "today", timeZone).start;
+  const parts = plannedDateParts(value);
+  if (!parts) return null;
+  return localPeriodBounds(new Date(Date.UTC(parts.year, parts.month - 1, parts.day, 12)), "today", timeZone).start;
 }
 
 function plannedExpenseSpentAt(occurrenceDate, paidAt = new Date(), timeZone = "Asia/Bangkok") {
-  const occurrenceKey = String(occurrenceDate).slice(0, 10);
+  const occurrenceParts = plannedDateParts(occurrenceDate);
+  if (!occurrenceParts) {
+    throw Object.assign(new Error("Invalid occurrence date"), { code: "invalid_occurrence" });
+  }
+  const occurrenceKey = plannedDateKey(occurrenceParts);
   if (occurrenceKey === localDayKey(paidAt, timeZone)) return paidAt;
-  const [year, month, day] = occurrenceKey.split("-").map(Number);
-  const start = localPeriodBounds(new Date(Date.UTC(year, month - 1, day, 12)), "today", timeZone).start;
+  const start = localPeriodBounds(
+    new Date(Date.UTC(occurrenceParts.year, occurrenceParts.month - 1, occurrenceParts.day, 12)),
+    "today",
+    timeZone
+  ).start;
   return new Date(start.getTime() + 12 * 60 * 60_000);
 }
 
@@ -2513,7 +2541,7 @@ function localDayBounds(now, timeZone = "Asia/Bangkok") {
 }
 
 function nextUnpaidOccurrenceDate(planned, now, paidOccurrenceDates = [], timeZone = userTimezone(planned)) {
-  const paid = new Set(paidOccurrenceDates.filter(Boolean).map((date) => String(date).slice(0, 10)));
+  const paid = new Set(paidOccurrenceDates.map(normalizeOccurrenceKey).filter(Boolean));
   const unpaid = plannedDueDatesThisMonth(planned, now, timeZone)
     .map((date) => localDayKey(date, timeZone))
     .filter((date) => !paid.has(date));
@@ -2533,27 +2561,75 @@ function resolveOccurrenceDate(planned, now, requested, paidRows = [], timeZone 
   if (!dueDates.has(normalized)) return { error: "Invalid occurrence date", code: "invalid_occurrence" };
   const today = localDayKey(now, timeZone);
   if (normalized > today) return { error: "Occurrence is in the future", code: "future_occurrence" };
-  const paidDates = new Set(paidRows.map((row) => String(row.occurrence_date ?? "").slice(0, 10)));
+  const paidDates = new Set(paidRows.map((row) => normalizeOccurrenceKey(row.occurrence_date)).filter(Boolean));
   if (paidDates.has(normalized)) return { error: "Planned expense is already paid for this month", code: "already_paid" };
   return { value: normalized };
 }
 
 function normalizeOccurrenceKey(value) {
-  const match = String(value).match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (!match) return null;
-  const [, year, month, day] = match;
-  const date = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)));
-  if (date.getUTCFullYear() !== Number(year) || date.getUTCMonth() !== Number(month) - 1 || date.getUTCDate() !== Number(day)) {
-    return null;
+  const parts = plannedDateParts(value);
+  if (!parts) return null;
+  return plannedDateKey(parts);
+}
+
+function plannedDateParts(value) {
+  if (value == null || value === "") return null;
+
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) return null;
+    return {
+      year: value.getUTCFullYear(),
+      month: value.getUTCMonth() + 1,
+      day: value.getUTCDate()
+    };
   }
-  return `${year}-${month}-${day}`;
+
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(value));
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) return null;
+
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) return null;
+  return { year, month, day };
+}
+
+function plannedDateKey(parts) {
+  return `${parts.year}-${String(parts.month).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}`;
 }
 
 function plannedPaymentKey(planned, occurrenceDate) {
-  if (planned.recurrence === "weekly" || planned.recurrence === "twice_monthly") {
-    return `${String(occurrenceDate).slice(0, 7)}:${occurrenceDate}`;
+  const occurrenceKey = normalizeOccurrenceKey(occurrenceDate);
+  if (!occurrenceKey) {
+    throw Object.assign(new Error("Invalid occurrence date"), { code: "invalid_occurrence" });
   }
-  return String(occurrenceDate).slice(0, 7);
+  if (planned.recurrence === "weekly" || planned.recurrence === "twice_monthly") {
+    return `${occurrenceKey.slice(0, 7)}:${occurrenceKey}`;
+  }
+  return occurrenceKey.slice(0, 7);
+}
+
+function logInvalidPlannedDueDate(item) {
+  if (item[INVALID_PLANNED_DUE_DATE_LOGGED]) return;
+  Object.defineProperty(item, INVALID_PLANNED_DUE_DATE_LOGGED, {
+    value: true,
+    enumerable: false
+  });
+  console.warn("Invalid planned expense due_date", {
+    plannedExpenseId: item.id,
+    userId: item.user_id,
+    recurrence: item.recurrence,
+    dueDateType: item.due_date instanceof Date ? "Date" : typeof item.due_date,
+    dueDateValue: safeDueDateLogValue(item.due_date)
+  });
+}
+
+function safeDueDateLogValue(value) {
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? "Invalid Date" : value.toISOString();
+  if (value == null) return value;
+  return String(value);
 }
 
 async function totalForPeriod(pool, userId, period, now, user = {}, timeZone = userTimezone(user)) {
