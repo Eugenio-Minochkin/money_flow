@@ -2,21 +2,25 @@
 
 This project deploys from GitHub Actions to the existing production server over SSH.
 
-## Daily Local Flow
+## Safe Change Flow
 
-Use this when you change code yourself:
+Agents and Codex must not push directly to `master` and must not trigger production deploys themselves. Use a branch and PR for every code or documentation change:
 
 ```bash
 git status
+git checkout -b codex/<short-change-name>
 npm test
 git add <files>
 git commit -m "Describe the change"
-git push origin master
+git push -u origin codex/<short-change-name>
+gh pr create --base master --head codex/<short-change-name> --title "Describe the change" --body-file <pr-body.md>
 ```
 
-After `git push origin master`, GitHub Actions runs tests and then deploys production if tests pass.
+After opening or updating the PR, send the user the PR link for review and stop. Do not merge the PR, push to `master`, run deployment, SSH into production, or run production commands unless the user explicitly asks for that exact action.
 
-Useful checks:
+Production deploy happens only after an approved PR is merged into `master` and CI passes, or through an explicit manual `workflow_dispatch` rollback/deploy requested by the user.
+
+Useful checks before opening the PR:
 
 ```bash
 git log --oneline -n 10

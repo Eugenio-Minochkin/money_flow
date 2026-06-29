@@ -104,7 +104,10 @@ test('deployment runbook documents secrets, local flow, deploy, and rollback', (
   assert.match(runbook, /PROD_SSH_KEY/);
   assert.match(runbook, /npm test/);
   assert.match(runbook, /git commit/);
-  assert.match(runbook, /git push origin master/);
+  assert.match(runbook, /git checkout -b codex\/<short-change-name>/);
+  assert.match(runbook, /git push -u origin codex\/<short-change-name>/);
+  assert.match(runbook, /gh pr create --base master/);
+  assert.match(runbook, /must not push directly to `master`/);
   assert.match(runbook, /\/opt\/money-flow/);
   assert.match(runbook, /\.env\.production/);
   assert.match(runbook, /Rollback/i);
