@@ -116,3 +116,18 @@ test('deployment runbook documents secrets, local flow, deploy, and rollback', (
   assert.match(runbook, /RELEASE_DIGEST_AUTO_SEND_ENABLED/);
   assert.match(runbook, /GITHUB_REPOSITORY/);
 });
+
+test('production compose enables strict Telegram Mini App auth', () => {
+  const compose = readText('compose.prod.yml');
+
+  assert.match(compose, /NODE_ENV:\s*production/);
+  assert.match(compose, /TELEGRAM_WEBHOOK_SECRET:\s*\$\{TELEGRAM_WEBHOOK_SECRET\}/);
+  assert.match(compose, /REQUIRE_TELEGRAM_INIT_DATA:\s*\$\{REQUIRE_TELEGRAM_INIT_DATA:-true\}/);
+});
+
+test('production env example documents required Telegram security settings', () => {
+  const envExample = readText('.env.production.example');
+
+  assert.match(envExample, /TELEGRAM_WEBHOOK_SECRET=replace_with_long_random_secret/);
+  assert.match(envExample, /REQUIRE_TELEGRAM_INIT_DATA=true/);
+});

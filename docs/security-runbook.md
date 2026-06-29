@@ -30,6 +30,8 @@ nano /opt/money-flow/.env.production
 chmod 600 /opt/money-flow/.env.production
 ```
 
+Production must keep `TELEGRAM_WEBHOOK_SECRET` non-empty and `REQUIRE_TELEGRAM_INIT_DATA=true`.
+
 4. If the Telegram token or webhook secret changed, reset the webhook:
 
 ```bash

@@ -7,6 +7,7 @@ Keep changes focused on helping one user understand day-to-day money movement wi
 
 - Treat `master` and production as protected. Do not push directly to `master`, merge your own PR, deploy, roll back, SSH into production, or run production commands unless the user explicitly asks for that exact action in the current task.
 - Make code and documentation changes on a short-lived branch, open a GitHub PR into `master`, and send the user the PR link for review. Stop after opening or updating the PR unless the user explicitly asks to merge or deploy.
+- Opening or updating a draft PR is the required completion step for code/documentation changes and does not require separate approval. Only merge, deploy, production access, and database writes require explicit approval.
 - Use the mandatory skills before implementation: `grill-with-docs` / "grill with docs" for doc-grounded understanding and `superpowers` for planning/execution. If a task already has a plan under `docs/superpowers/plans/`, follow it checkbox by checkbox and keep the plan status honest.
 - Ask clarifying questions when requirements are ambiguous, especially around product behavior, budgets, currencies, planned payments, reserve, onboarding, reminders, Telegram UX, release notes, security, migrations, database writes, or production operations. If progress is still safe without an answer, document assumptions in the PR.
 - Keep the scope narrow. Do not include drive-by refactors, dependency upgrades, formatting churn, or unrelated fixes without asking first.

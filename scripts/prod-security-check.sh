@@ -8,6 +8,9 @@ set -a
 . ./.env.production
 set +a
 
+test "${REQUIRE_TELEGRAM_INIT_DATA:-}" = "true"
+test -n "${TELEGRAM_WEBHOOK_SECRET:-}"
+
 health=""
 for attempt in {1..30}; do
   echo "Waiting for API health... attempt $attempt/30"
@@ -27,12 +30,14 @@ done
 
 direct_code="$(curl -sS -o /tmp/money-flow-direct-dashboard.out -w '%{http_code}' 'http://127.0.0.1:3000/api/dashboard?telegramUserId=100001')"
 test "$direct_code" = "400"
+grep -q '"telegram_init_data_required"' /tmp/money-flow-direct-dashboard.out
 
 webhook_code="$(curl -sS -o /tmp/money-flow-webhook-no-secret.out -w '%{http_code}' \
   -X POST http://127.0.0.1:3000/telegram/webhook \
   -H 'content-type: application/json' \
   -d '{}')"
 test "$webhook_code" = "401"
+grep -q '"invalid_webhook_secret"' /tmp/money-flow-webhook-no-secret.out
 
 if ss -lntp | grep -E '0\.0\.0\.0:5432|\[::\]:5432' >/dev/null; then
   echo "Postgres is exposed on a public interface" >&2
