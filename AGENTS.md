@@ -13,6 +13,15 @@ Keep changes focused on helping one user understand day-to-day money movement wi
 - Keep the scope narrow. Do not include drive-by refactors, dependency upgrades, formatting churn, or unrelated fixes without asking first.
 - Before editing, inspect the relevant code, tests, and docs. Do not guess paths or rewrite flows from memory.
 
+## Start-Of-Task Git Hygiene
+
+- Before changing files, fetch and sync from `origin/master`.
+- If working on `master`, run `git pull --ff-only origin master` before creating a task branch.
+- Create task branches only from updated `master` / `origin/master`, not from stale local history.
+- Verify that repository instruction files such as `AGENTS.md` and required docs such as `docs/superpowers/` exist locally before editing.
+- If sync fails, the branch has diverged, the working tree is unexpectedly dirty, or required instruction/docs files are missing locally, stop and ask the user. Do not create missing instruction files from scratch.
+- Do not use `git reset --hard`, `git stash`, branch deletion, or overwrite local files unless the user explicitly approves that exact recovery action.
+
 ## Product Shape
 
 - Main flow: user sends an expense by text or voice -> bot parses it -> user confirms -> expense is saved -> dashboard refreshes the budget state.

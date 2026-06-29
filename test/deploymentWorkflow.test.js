@@ -117,6 +117,17 @@ test('deployment runbook documents secrets, local flow, deploy, and rollback', (
   assert.match(runbook, /GITHUB_REPOSITORY/);
 });
 
+test('deployment runbook documents start-of-task git sync preflight', () => {
+  const runbook = readText('docs/deployment-runbook.md');
+
+  assert.match(runbook, /git fetch origin --prune/);
+  assert.match(runbook, /git switch master/);
+  assert.match(runbook, /git pull --ff-only origin master/);
+  assert.match(runbook, /git status -sb/);
+  assert.match(runbook, /diverged branch/);
+  assert.match(runbook, /stop and ask the user/);
+});
+
 test('production compose enables strict Telegram Mini App auth', () => {
   const compose = readText('compose.prod.yml');
 
