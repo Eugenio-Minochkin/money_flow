@@ -94,6 +94,29 @@ test("planned expense changes invalidate daily snapshot and recreate it from ope
   assert.equal(dashboard.snapshot.dayRemaining, 5507.14);
 });
 
+test("paying a planned occurrence keeps the daily snapshot fixed without double subtraction", async () => {
+  const now = new Date("2026-06-30T10:00:00+07:00");
+  const state = createBudgetReserveState({
+    monthlyBudget: 45000,
+    plannedAmount: 2000,
+    reserveAmount: 0,
+    regularToday: 350,
+    regularMonth: 350,
+    storedDayBudget: 6142.86
+  });
+  const repo = createRepository(createBudgetReservePool(state));
+
+  await repo.payPlannedExpenseForTelegramUser(5, 100, now, { occurrenceDate: "2026-06-30" });
+  const dashboard = await repo.dashboard(100, now);
+
+  assert.equal(state.daySnapshotDeleted, false);
+  assert.equal(state.storedDayBudget, 6142.86);
+  assert.equal(dashboard.snapshot.plannedRemaining, 0);
+  assert.equal(dashboard.snapshot.dayPlanLimit, 6142.86);
+  assert.equal(dashboard.snapshot.dayRemaining, 5792.86);
+  assert.equal(dashboard.snapshot.plannedToday, 0);
+});
+
 test("reserve changes invalidate daily snapshot and recreate it from opening baseline", async () => {
   const now = new Date("2026-06-24T10:00:00+07:00");
   const state = createBudgetReserveState({
@@ -199,6 +222,7 @@ function createBudgetReserveState({
       title: "camera",
       status: "active"
     },
+    paidPlannedAmount: 0,
     totals: {
       today: { regular: regularToday, planned: plannedToday, largeOneOff: largeToday },
       week: { regular: regularWeek, planned: plannedWeek, largeOneOff: largeWeek },
@@ -255,6 +279,40 @@ function handleBudgetReserveQuery(state, sql, params) {
     return { rows: [state.planned] };
   }
 
+  if (sql.includes("SELECT planned_expenses.*, users.base_currency, users.usd_thb_rate")) {
+    return { rows: [{ ...state.planned, base_currency: state.user.base_currency, usd_thb_rate: state.user.usd_thb_rate }] };
+  }
+
+  if (sql.includes("SELECT pep.occurrence_date::text")) {
+    return {
+      rows: state.planned.paid_occurrence_dates.map((date) => ({
+        occurrence_date: date,
+        paid_key: date
+      }))
+    };
+  }
+
+  if (sql.includes("INSERT INTO expenses") && sql.includes("budget_impact")) {
+    state.paidPlannedAmount = Number(params[3]);
+    return {
+      rows: [{
+        id: "77",
+        user_id: params[0],
+        amount_base: params[3],
+        spent_at: params[11],
+        budget_impact: params[12]
+      }]
+    };
+  }
+
+  if (sql.includes("INSERT INTO planned_expense_payments")) {
+    state.planned = {
+      ...state.planned,
+      paid_occurrence_dates: [params[4]]
+    };
+    return { rows: [] };
+  }
+
   if (sql.includes("INSERT INTO monthly_reserve_instances")) {
     state.reserve = {
       ...state.reserve,
@@ -283,7 +341,7 @@ function handleBudgetReserveQuery(state, sql, params) {
 
   if (sql.includes("COUNT(planned_expense_payments.id)::int AS paid_count")) return { rows: [{ ...state.planned, paid_count: 0 }] };
   if (sql.includes("COALESCE(paid.paid_count")) return { rows: [{ ...state.planned, paid_count: 0 }] };
-  if (sql.includes("FROM planned_expense_payments") && sql.includes("JOIN expenses")) return { rows: [{ total: 0 }] };
+  if (sql.includes("FROM planned_expense_payments") && sql.includes("JOIN expenses")) return { rows: [{ total: state.paidPlannedAmount }] };
 
   if (sql.includes("FROM daily_budget_snapshots")) {
     return state.storedDayBudget == null
