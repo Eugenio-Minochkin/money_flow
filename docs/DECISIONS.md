@@ -2,6 +2,10 @@
 
 This is a lightweight log for product and domain decisions that future agents should preserve unless the user explicitly asks to revisit them.
 
+## 2026-06-29 - Agents Work Through Pull Requests
+
+Codex and other agents must treat `master` and production as protected. They work on short-lived branches, open GitHub PRs into `master`, send the PR link for review, and stop unless the user explicitly asks to merge or deploy. Agents must not change production data or run database write operations without explicit approval for the exact operation. Agent work should use `grill-with-docs` / "grill with docs" and `superpowers`, ask clarifying questions for ambiguous domain/data/security/product changes, and document assumptions in the PR.
+
 ## 2026-06 - Keep Settings Compact
 
 Settings already contain budget, currencies, planned payments, reserve, language, theme, and backup. Keep the surface compact so it does not start feeling like an admin panel.
