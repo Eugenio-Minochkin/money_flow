@@ -8,8 +8,15 @@ set -a
 . ./.env.production
 set +a
 
-test "${REQUIRE_TELEGRAM_INIT_DATA:-}" = "true"
-test -n "${TELEGRAM_WEBHOOK_SECRET:-}"
+if [ "${REQUIRE_TELEGRAM_INIT_DATA:-}" != "true" ]; then
+  echo "REQUIRE_TELEGRAM_INIT_DATA must be true" >&2
+  exit 1
+fi
+
+if [ -z "${TELEGRAM_WEBHOOK_SECRET:-}" ]; then
+  echo "TELEGRAM_WEBHOOK_SECRET must be non-empty" >&2
+  exit 1
+fi
 
 health=""
 for attempt in {1..30}; do

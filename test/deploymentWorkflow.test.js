@@ -121,7 +121,7 @@ test('production compose enables strict Telegram Mini App auth', () => {
   const compose = readText('compose.prod.yml');
 
   assert.match(compose, /NODE_ENV:\s*production/);
-  assert.match(compose, /TELEGRAM_WEBHOOK_SECRET:\s*\$\{TELEGRAM_WEBHOOK_SECRET\}/);
+  assert.match(compose, /TELEGRAM_WEBHOOK_SECRET:\s*\$\{TELEGRAM_WEBHOOK_SECRET:\?TELEGRAM_WEBHOOK_SECRET is required\}/);
   assert.match(compose, /REQUIRE_TELEGRAM_INIT_DATA:\s*\$\{REQUIRE_TELEGRAM_INIT_DATA:-true\}/);
 });
 
@@ -130,4 +130,16 @@ test('production env example documents required Telegram security settings', () 
 
   assert.match(envExample, /TELEGRAM_WEBHOOK_SECRET=replace_with_long_random_secret/);
   assert.match(envExample, /REQUIRE_TELEGRAM_INIT_DATA=true/);
+});
+
+test('production env example does not contain duplicate keys', () => {
+  const envExample = readText('.env.production.example');
+  const keys = envExample
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith('#'))
+    .map((line) => line.split('=', 1)[0]);
+  const duplicates = keys.filter((key, index) => keys.indexOf(key) !== index);
+
+  assert.deepEqual(duplicates, []);
 });
