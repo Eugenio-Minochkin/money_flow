@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import crypto from "node:crypto";
 
 import { createApiSecurity } from "../src/apiSecurity.js";
+import { buildConfig, requireRuntimeConfig } from "../src/config.js";
 import { createRateLimiter } from "../src/rateLimit.js";
 import { shouldRateLimitRequest } from "../src/routing.js";
 import { verifyTelegramInitData } from "../src/telegramAuth.js";
@@ -49,21 +50,7 @@ test("rate limiter applies to API and webhook but not Mini App static files", ()
   assert.equal(shouldRateLimitRequest({ method: "POST" }, new URL("http://localhost/telegram/webhook")), true);
 });
 
-test("API security rejects direct Mini App user ids when strict auth is enabled", () => {
-  const security = createApiSecurity({
-    telegramBotToken: "123456:test-token",
-    requireTelegramInitData: true,
-    telegramWebhookSecret: "webhook-secret"
-  });
-  const req = { headers: {} };
-  const url = new URL("http://localhost/api/dashboard?telegramUserId=100");
-
-  const result = security.resolveTelegramUserId(req, url);
-
-  assert.deepEqual(result, { error: "telegram_init_data_required" });
-});
-
-test("API security accepts signed Mini App init data and rejects mismatched declared ids", () => {
+test("API security accepts valid Telegram init data", () => {
   const botToken = "123456:test-token";
   const authDate = String(Math.floor(Date.now() / 1000));
   const initData = signInitData({ auth_date: authDate, user: JSON.stringify({ id: 100 }) }, botToken);
@@ -77,10 +64,63 @@ test("API security accepts signed Mini App init data and rejects mismatched decl
     security.resolveTelegramUserId(req, new URL("http://localhost/api/dashboard?telegramUserId=100")),
     { telegramUserId: 100 }
   );
+});
+
+test("API security rejects invalid Telegram init data hash", () => {
+  const botToken = "123456:test-token";
+  const authDate = String(Math.floor(Date.now() / 1000));
+  const initData = signInitData({ auth_date: authDate, user: JSON.stringify({ id: 100 }) }, botToken);
+  const security = createApiSecurity({
+    telegramBotToken: botToken,
+    requireTelegramInitData: true
+  });
+  const req = { headers: { "x-telegram-init-data": initData.replace("100", "101") } };
+
+  assert.deepEqual(
+    security.resolveTelegramUserId(req, new URL("http://localhost/api/dashboard?telegramUserId=100")),
+    { error: "invalid_hash" }
+  );
+});
+
+test("API security rejects Telegram init data user mismatch", () => {
+  const botToken = "123456:test-token";
+  const authDate = String(Math.floor(Date.now() / 1000));
+  const initData = signInitData({ auth_date: authDate, user: JSON.stringify({ id: 100 }) }, botToken);
+  const security = createApiSecurity({
+    telegramBotToken: botToken,
+    requireTelegramInitData: true
+  });
+  const req = { headers: { "x-telegram-init-data": initData } };
+
   assert.deepEqual(
     security.resolveTelegramUserId(req, new URL("http://localhost/api/dashboard?telegramUserId=101")),
     { error: "telegram_user_mismatch" }
   );
+});
+
+test("API security rejects missing Telegram init data when strict auth is enabled", () => {
+  const security = createApiSecurity({
+    telegramBotToken: "123456:test-token",
+    requireTelegramInitData: true,
+    telegramWebhookSecret: "webhook-secret"
+  });
+  const req = { headers: {} };
+  const url = new URL("http://localhost/api/dashboard?telegramUserId=100");
+
+  const result = security.resolveTelegramUserId(req, url);
+
+  assert.deepEqual(result, { error: "telegram_init_data_required" });
+});
+
+test("API security allows missing Telegram init data only when strict auth is disabled", () => {
+  const security = createApiSecurity({
+    telegramBotToken: "123456:test-token",
+    requireTelegramInitData: false
+  });
+  const req = { headers: {} };
+  const url = new URL("http://localhost/api/dashboard?telegramUserId=100001");
+
+  assert.deepEqual(security.resolveTelegramUserId(req, url), { telegramUserId: 100001 });
 });
 
 test("API security validates Telegram webhook secret when configured", () => {
@@ -92,6 +132,45 @@ test("API security validates Telegram webhook secret when configured", () => {
   assert.equal(security.isValidTelegramWebhook({ headers: {} }), false);
   assert.equal(security.isValidTelegramWebhook({ headers: { "x-telegram-bot-api-secret-token": "wrong" } }), false);
   assert.equal(security.isValidTelegramWebhook({ headers: { "x-telegram-bot-api-secret-token": "webhook-secret" } }), true);
+});
+
+test("production runtime config requires Telegram webhook secret", () => {
+  const productionConfig = buildConfig({
+    NODE_ENV: "production",
+    DATABASE_URL: "postgres://localhost/money_flow",
+    TELEGRAM_BOT_TOKEN: "123456:test-token",
+    REQUIRE_TELEGRAM_INIT_DATA: "true"
+  });
+
+  assert.throws(
+    () => requireRuntimeConfig(productionConfig),
+    /TELEGRAM_WEBHOOK_SECRET is required in production/
+  );
+});
+
+test("production runtime config requires strict Telegram init data auth", () => {
+  const productionConfig = buildConfig({
+    NODE_ENV: "production",
+    DATABASE_URL: "postgres://localhost/money_flow",
+    TELEGRAM_BOT_TOKEN: "123456:test-token",
+    TELEGRAM_WEBHOOK_SECRET: "webhook-secret",
+    REQUIRE_TELEGRAM_INIT_DATA: "false"
+  });
+
+  assert.throws(
+    () => requireRuntimeConfig(productionConfig),
+    /REQUIRE_TELEGRAM_INIT_DATA=true is required in production/
+  );
+});
+
+test("non-production runtime config keeps local direct telegram user sandbox available", () => {
+  const localConfig = buildConfig({
+    NODE_ENV: "development",
+    DATABASE_URL: "postgres://localhost/money_flow"
+  });
+
+  assert.equal(localConfig.requireTelegramInitData, false);
+  assert.doesNotThrow(() => requireRuntimeConfig(localConfig));
 });
 
 function signInitData(params, botToken) {

@@ -227,6 +227,8 @@ Edit `.env.production`:
 
 - `APP_DOMAIN` - public domain pointed to the server
 - `TELEGRAM_BOT_TOKEN` - token from BotFather
+- `TELEGRAM_WEBHOOK_SECRET` - strong random secret for Telegram webhook requests
+- `REQUIRE_TELEGRAM_INIT_DATA=true` - require signed Telegram Mini App init data in production
 - `POSTGRES_PASSWORD` - strong database password
 - `OPENAI_API_KEY` - optional; enables AI parsing for text messages
 - `OPENAI_MODEL` - optional; defaults to `gpt-5-mini`
