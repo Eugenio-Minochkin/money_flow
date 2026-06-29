@@ -2,6 +2,10 @@
 
 This is a lightweight log for product and domain decisions that future agents should preserve unless the user explicitly asks to revisit them.
 
+## 2026-06-29 - Agents Must Start From Fresh Master
+
+Codex and other agents must fetch and fast-forward local `master` from `origin/master` before changing files or creating a task branch. Task branches start from fresh `master` / `origin/master`, not stale local history. Agents must verify that repository instruction files such as `AGENTS.md` and required docs such as `docs/superpowers/` exist locally before editing. If sync fails, the branch has diverged, required instruction/docs files are missing, or the working tree is unexpectedly dirty, agents stop and ask the user. They must not create missing instruction files from scratch or use destructive recovery such as `git reset --hard`, `git stash`, branch deletion, or overwriting local files without explicit approval for that exact action.
+
 ## 2026-06-29 - Agents Work Through Pull Requests
 
 Codex and other agents must treat `master` and production as protected. They work on short-lived branches, open GitHub PRs into `master`, send the PR link for review, and stop unless the user explicitly asks to merge or deploy. Agents must not change production data or run database write operations without explicit approval for the exact operation. Agent work should use `grill-with-docs` / "grill with docs" and `superpowers`, ask clarifying questions for ambiguous domain/data/security/product changes, and document assumptions in the PR.

@@ -7,6 +7,17 @@ This project deploys from GitHub Actions to the existing production server over 
 Agents and Codex must not push directly to `master` and must not trigger production deploys themselves. Use a branch and PR for every code or documentation change:
 
 ```bash
+git fetch origin --prune
+git switch master
+git pull --ff-only origin master
+git status -sb
+```
+
+If `git pull --ff-only origin master` fails or shows a diverged branch, stop and ask the user. Do not repair history, reset, stash, delete branches, or overwrite local files without explicit approval for that exact recovery action.
+
+After the preflight succeeds, create a short-lived branch from the updated `master`:
+
+```bash
 git status
 git checkout -b codex/<short-change-name>
 npm test
