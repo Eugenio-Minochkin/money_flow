@@ -48,6 +48,7 @@ This file records stable product and business rules. Read it before changing bud
 
 - Out-of-budget expenses must not reduce the ordinary monthly budget.
 - Large one-off purchases must not distort analytics for regular spending pace.
+- Daily budget snapshot recalculation uses the current local day's opening baseline: exclude today's `regular` expenses from the snapshot's month total, but keep `planned` and `large_oneoff` in their non-daily monthly buckets.
 
 ## Currencies And Rounding
 

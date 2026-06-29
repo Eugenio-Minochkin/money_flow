@@ -201,9 +201,9 @@ test("recreates an invalidated daily snapshot from the updated monthly budget", 
   await repo.updateMonthlyBudget(100, 48000, now);
   const dashboard = await repo.dashboard(100, now);
 
-  assert.equal(storedDayBudget, 401.5);
-  assert.equal(dashboard.snapshot.dayPlanLimit, 401.5);
-  assert.equal(dashboard.snapshot.dayRemaining, 18.5);
+  assert.equal(storedDayBudget, 449.38);
+  assert.equal(dashboard.snapshot.dayPlanLimit, 449.38);
+  assert.equal(dashboard.snapshot.dayRemaining, 66.38);
   assert.equal(dashboard.snapshot.safeToSpendPerDay, 401.5);
 });
 
@@ -2762,7 +2762,7 @@ test("dashboard uses current month override only for the matching calendar month
   assert.equal(june.currentMonthBudget.amount, 12000);
   assert.equal(june.currentMonthBudget.isPartialMonth, true);
   assert.equal(june.currentMonthBudget.partialPeriodDays, 19);
-  assert.equal(june.snapshot.dayPlanLimit, 1125);
+  assert.equal(june.snapshot.dayPlanLimit, 1500);
   assert.equal(july.snapshot.monthlyBudget, 45000);
   assert.equal(july.currentMonthBudget.amount, 45000);
   assert.equal(july.currentMonthBudget.isPartialMonth, false);

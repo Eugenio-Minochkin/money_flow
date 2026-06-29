@@ -140,6 +140,7 @@ export function createRepository(pool, options = {}) {
         );
         template = templateResult.rows[0] ?? null;
       }
+      await invalidateDailyBudgetSnapshot(pool, user.id, now, resolveUserTimeZone(user));
       return { reserve: reserveRow, template };
     },
 
@@ -164,6 +165,9 @@ export function createRepository(pool, options = {}) {
           [user.id]
         );
         template = templateResult.rows[0] ?? null;
+      }
+      if (reserveResult.rows[0] || template) {
+        await invalidateDailyBudgetSnapshot(pool, user.id, now, resolveUserTimeZone(user));
       }
       return { reserve: reserveResult.rows[0] ?? null, template };
     },
@@ -1329,11 +1333,10 @@ export function createRepository(pool, options = {}) {
       return listPlannedExpensesForTelegramUserAt(pool, telegramUserId, new Date());
     },
 
-    async createPlannedExpense(telegramUserId, input) {
+    async createPlannedExpense(telegramUserId, input, now = new Date()) {
       const user = await this.getUserByTelegramId(telegramUserId);
       if (!user) return null;
       const planned = normalizePlannedExpense(input);
-      const now = new Date();
       const moneyAmounts = await buildMoneyAmounts(exchangeRates, planned.amount, planned.currency, now, user);
       await assertPlannedMutationCapacity(pool, user, {
         ...planned,
@@ -1362,13 +1365,14 @@ export function createRepository(pool, options = {}) {
           planned.due_date
         ]
       );
-      return result.rows[0] ?? null;
+      const row = result.rows[0] ?? null;
+      if (row) await invalidateDailyBudgetSnapshot(pool, user.id, now, resolveUserTimeZone(user));
+      return row;
     },
 
-    async updatePlannedExpense(telegramUserId, plannedExpenseId, input) {
+    async updatePlannedExpense(telegramUserId, plannedExpenseId, input, now = new Date()) {
       const planned = normalizePlannedExpense(input);
       const user = await this.getUserByTelegramId(telegramUserId);
-      const now = new Date();
       const moneyAmounts = await buildMoneyAmounts(exchangeRates, planned.amount, planned.currency, now, user);
       await assertPlannedMutationCapacity(pool, user, {
         ...planned,
@@ -1408,10 +1412,13 @@ export function createRepository(pool, options = {}) {
           telegramUserId
         ]
       );
-      return result.rows[0] ?? null;
+      const row = result.rows[0] ?? null;
+      if (row) await invalidateDailyBudgetSnapshot(pool, user.id, now, resolveUserTimeZone(user));
+      return row;
     },
 
-    async deactivatePlannedExpense(telegramUserId, plannedExpenseId) {
+    async deactivatePlannedExpense(telegramUserId, plannedExpenseId, now = new Date()) {
+      const user = await this.getUserByTelegramId(telegramUserId);
       const result = await pool.query(
         `UPDATE planned_expenses
          SET active = false
@@ -1420,7 +1427,9 @@ export function createRepository(pool, options = {}) {
          RETURNING id`,
         [plannedExpenseId, telegramUserId]
       );
-      return result.rows[0] ?? null;
+      const row = result.rows[0] ?? null;
+      if (row && user) await invalidateDailyBudgetSnapshot(pool, user.id, now, resolveUserTimeZone(user));
+      return row;
     },
 
     async payPlannedExpenseForTelegramUser(plannedExpenseId, telegramUserId, paidAt = new Date(), options = {}) {
@@ -1840,8 +1849,9 @@ async function getOrCreateDailyBudgetSnapshot(pool, user, now, input) {
     };
   }
 
+  const snapshotInput = dailyBudgetSnapshotOpeningInput(input);
   const snapshot = calculateBudgetSnapshot({
-    ...input,
+    ...snapshotInput,
     now,
     timeZone
   });
@@ -1858,6 +1868,16 @@ async function getOrCreateDailyBudgetSnapshot(pool, user, now, input) {
   return {
     budgetAmountBase: Number(inserted.rows[0]?.budget_amount_base ?? dayBudgetBase),
     budgetDisplayAmount: Number(inserted.rows[0]?.budget_display_amount ?? dayBudgetDisplay)
+  };
+}
+
+function dailyBudgetSnapshotOpeningInput(input) {
+  const todayRegular = Number(input.todayTotal ?? 0);
+  const todayRegularDisplay = Number(input.todayDisplayTotal ?? 0);
+  return {
+    ...input,
+    monthTotal: Math.max(Number(input.monthTotal ?? 0) - todayRegular, 0),
+    monthDisplayTotal: Math.max(Number(input.monthDisplayTotal ?? 0) - todayRegularDisplay, 0)
   };
 }
 
