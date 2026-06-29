@@ -28,8 +28,8 @@ Keep changes focused on helping one user understand day-to-day money movement wi
 
 ## Database And Production Safety
 
-- Never change production database contents without explicit user approval for the exact operation.
-- Do not run write SQL, destructive migrations, seed scripts, backfills, deletes, updates, restores, or rollbacks against any database without approval and a rollback plan.
+- Ephemeral local/test database writes performed by the automated test suite are allowed.
+- Never point tests, scripts, migrations, seeders, backfills, or ad-hoc SQL at production, staging, or any persistent/user-data database without explicit user approval for that exact operation.
 - Read-only diagnostic SQL is allowed only when it is needed to understand a bug. Redact real financial data, Telegram IDs, emails, tokens, and secrets from shared output.
 - For schema migrations, describe the DB impact and rollback/forward-fix plan in the PR. Destructive or data-rewriting migrations require explicit approval before implementation.
 
