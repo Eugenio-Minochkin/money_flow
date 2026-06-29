@@ -21,7 +21,7 @@ test("monthly budget changes invalidate stale daily budget and recalculate plann
 
   assert.equal(state.user.monthly_budget_amount, "48000");
   assert.equal(state.daySnapshotDeleted, true);
-  assert.equal(state.storedDayBudget, 4428.57);
+  assert.equal(state.storedDayBudget, 4442.86);
   assert.equal(dashboard.snapshot.monthlyBudget, 48000);
   assert.equal(dashboard.snapshot.plannedRemaining, 2000);
   assert.equal(dashboard.snapshot.reserve.amount, 5000);
@@ -29,12 +29,95 @@ test("monthly budget changes invalidate stale daily budget and recalculate plann
   assert.equal(dashboard.snapshot.reserve.eatenAmount, 0);
   assert.equal(dashboard.snapshot.freeRemaining, 31000);
   assert.equal(dashboard.snapshot.safeToSpendPerDay, 4428.57);
-  assert.equal(dashboard.snapshot.dayPlanLimit, 4428.57);
-  assert.equal(dashboard.snapshot.dayRemaining, 4328.57);
+  assert.equal(dashboard.snapshot.dayPlanLimit, 4442.86);
+  assert.equal(dashboard.snapshot.dayRemaining, 4342.86);
   assert.equal(dashboard.snapshot.forecastMonthTotal, 14500);
   assert.equal(dashboard.snapshot.averageDailyRegularSpending, 416.67);
   assert.equal(dashboard.snapshot.reserve.forecast.forecastRegularSpentAmount, 12500);
   assert.equal(dashboard.snapshot.reserve.forecast.savedAmount, 5000);
+});
+
+test("first daily budget snapshot created mid-day uses local day opening baseline", async () => {
+  const now = new Date("2026-06-24T15:00:00+07:00");
+  const state = createBudgetReserveState({
+    monthlyBudget: 45000,
+    plannedAmount: 0,
+    reserveAmount: 0,
+    regularToday: 350,
+    largeToday: 5000,
+    regularWeek: 350,
+    largeWeek: 5000,
+    regularMonth: 350,
+    largeMonth: 5000,
+    storedDayBudget: null
+  });
+  const repo = createRepository(createBudgetReservePool(state));
+
+  const dashboard = await repo.dashboard(100, now);
+
+  assert.equal(state.storedDayBudget, 5714.29);
+  assert.equal(dashboard.snapshot.dayPlanLimit, 5714.29);
+  assert.equal(dashboard.snapshot.dayRemaining, 5364.29);
+  assert.equal(dashboard.snapshot.largeToday, 5000);
+  assert.equal(dashboard.snapshot.month, 5350);
+});
+
+test("planned expense changes invalidate daily snapshot and recreate it from opening baseline", async () => {
+  const now = new Date("2026-06-24T10:00:00+07:00");
+  const state = createBudgetReserveState({
+    monthlyBudget: 45000,
+    plannedAmount: 2000,
+    reserveAmount: 0,
+    regularToday: 350,
+    regularMonth: 350,
+    storedDayBudget: 999
+  });
+  const repo = createRepository(createBudgetReservePool(state));
+
+  await repo.updatePlannedExpense(100, 5, {
+    amount: 4000,
+    currency: "THB",
+    description: "therapy",
+    category_slug: "health",
+    tags: [],
+    recurrence: "monthly",
+    due_day: 30,
+    due_days: [30],
+    active: true
+  }, now);
+  const dashboard = await repo.dashboard(100, now);
+
+  assert.equal(state.daySnapshotDeleted, true);
+  assert.equal(state.storedDayBudget, 5857.14);
+  assert.equal(dashboard.snapshot.plannedRemaining, 4000);
+  assert.equal(dashboard.snapshot.dayPlanLimit, 5857.14);
+  assert.equal(dashboard.snapshot.dayRemaining, 5507.14);
+});
+
+test("reserve changes invalidate daily snapshot and recreate it from opening baseline", async () => {
+  const now = new Date("2026-06-24T10:00:00+07:00");
+  const state = createBudgetReserveState({
+    monthlyBudget: 45000,
+    plannedAmount: 0,
+    reserveAmount: 2000,
+    regularToday: 350,
+    regularMonth: 350,
+    storedDayBudget: 999
+  });
+  const repo = createRepository(createBudgetReservePool(state));
+
+  await repo.upsertCurrentReserve(100, {
+    amount: 5000,
+    title: "camera",
+    scope: "current"
+  }, now);
+  const dashboard = await repo.dashboard(100, now);
+
+  assert.equal(state.daySnapshotDeleted, true);
+  assert.equal(state.storedDayBudget, 5714.29);
+  assert.equal(dashboard.snapshot.reserve.amount, 5000);
+  assert.equal(dashboard.snapshot.dayPlanLimit, 5714.29);
+  assert.equal(dashboard.snapshot.dayRemaining, 5364.29);
 });
 
 test("monthly budget changes reject values that cannot fit planned obligations and active reserve", async () => {
@@ -62,8 +145,14 @@ function createBudgetReserveState({
   plannedAmount,
   reserveAmount,
   regularToday = 0,
+  plannedToday = 0,
+  largeToday = 0,
   regularWeek = 0,
+  plannedWeek = 0,
+  largeWeek = 0,
   regularMonth = 0,
+  plannedMonth = 0,
+  largeMonth = 0,
   previousWeek = 0,
   storedDayBudget = null
 }) {
@@ -111,10 +200,10 @@ function createBudgetReserveState({
       status: "active"
     },
     totals: {
-      today: regularToday,
-      week: regularWeek,
-      month: regularMonth,
-      previousWeek
+      today: { regular: regularToday, planned: plannedToday, largeOneOff: largeToday },
+      week: { regular: regularWeek, planned: plannedWeek, largeOneOff: largeWeek },
+      month: { regular: regularMonth, planned: plannedMonth, largeOneOff: largeMonth },
+      previousWeek: { regular: previousWeek, planned: 0, largeOneOff: 0 }
     },
     storedDayBudget,
     storedDayDisplayBudget: 0,
@@ -145,6 +234,35 @@ function handleBudgetReserveQuery(state, sql, params) {
   if (sql.startsWith("UPDATE users") && sql.includes("monthly_budget_amount")) {
     state.user.monthly_budget_amount = String(params[0]);
     return { rows: [state.user] };
+  }
+
+  if (sql.startsWith("UPDATE planned_expenses")) {
+    state.planned = {
+      ...state.planned,
+      amount: String(params[0]),
+      currency: params[1],
+      amount_base: String(params[2]),
+      description: params[3],
+      category_slug: params[4],
+      tags: params[5],
+      recurrence: params[6],
+      due_day: params[7],
+      due_days: params[8],
+      weekday: params[9],
+      due_date: params[10],
+      active: params[11]
+    };
+    return { rows: [state.planned] };
+  }
+
+  if (sql.includes("INSERT INTO monthly_reserve_instances")) {
+    state.reserve = {
+      ...state.reserve,
+      reserve_amount: String(params[5]),
+      title: params[6],
+      status: "active"
+    };
+    return { rows: [state.reserve] };
   }
 
   if (sql.includes("DELETE FROM daily_budget_snapshots")) {
@@ -201,15 +319,19 @@ function handleBudgetReserveQuery(state, sql, params) {
 }
 
 function periodTotalRow(total) {
-  const display = total / 32.65;
+  const regular = typeof total === "object" ? Number(total.regular ?? 0) : Number(total);
+  const planned = typeof total === "object" ? Number(total.planned ?? 0) : 0;
+  const largeOneOff = typeof total === "object" ? Number(total.largeOneOff ?? 0) : 0;
+  const all = regular + planned + largeOneOff;
+  const display = all / 32.65;
   return {
-    total,
-    regular_total: total,
-    planned_total: 0,
-    large_oneoff_total: 0,
+    total: all,
+    regular_total: regular,
+    planned_total: planned,
+    large_oneoff_total: largeOneOff,
     display_total: display,
-    regular_display_total: display,
-    planned_display_total: 0,
-    large_oneoff_display_total: 0
+    regular_display_total: regular / 32.65,
+    planned_display_total: planned / 32.65,
+    large_oneoff_display_total: largeOneOff / 32.65
   };
 }
