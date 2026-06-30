@@ -219,6 +219,30 @@ export function formatPlannedDraft(item, options = {}) {
   ].join("\n");
 }
 
+export function formatBudgetTopupDraft(item, options = {}) {
+  const language = normalizeLanguage(options.language);
+  const monthName = formatMonthName(item.month_key, language);
+  const amount = formatMoney(item.amount, item.currency, language);
+  if (options.large === true) {
+    return language === "en"
+      ? `This is a very large top-up: +${amount}.\n\nPlease check the amount. Are you sure you want to add it to your ${monthName} budget?`
+      : `Это очень большое пополнение: +${amount}.\n\nПроверь сумму. Точно добавить её к бюджету ${monthName}?`;
+  }
+  return language === "en"
+    ? `Got it: budget top-up +${amount}\n\nAdd it to your ${monthName} budget?`
+    : `Понял: пополнение бюджета +${amount}\n\nДобавить к бюджету ${monthName}?`;
+}
+
+function formatMonthName(monthKey, language) {
+  const match = /^(\d{4})-(\d{2})$/.exec(String(monthKey ?? ""));
+  if (!match) return language === "en" ? "this month" : "этого месяца";
+  const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, 1));
+  return new Intl.DateTimeFormat(language === "en" ? "en-US" : "ru-RU", {
+    month: "long",
+    timeZone: "UTC"
+  }).format(date);
+}
+
 export function normalizeLanguage(value) {
   return value === "en" ? "en" : "ru";
 }

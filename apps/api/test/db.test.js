@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { resolve, dirname } from "node:path";
+import { readFile } from "node:fs/promises";
 import { runWithRetry, listMigrationFiles } from "../src/db.js";
 
 test("retries transient startup failures before succeeding", async () => {
@@ -27,4 +28,16 @@ test("migration files are listed in lexical order and include 001 and 002", asyn
   assert.ok(files.includes("001_initial.sql"));
   assert.ok(files.includes("002_draft_confirm_flow.sql"));
   assert.deepEqual(files, [...files].sort());
+});
+
+test("budget top-up migration creates drafts, topups, idempotency index, and explicit FX source", async () => {
+  const dir = resolve(dirname(fileURLToPath(import.meta.url)), "..", "migrations");
+  const sql = await readFile(resolve(dir, "003_budget_topups.sql"), "utf8");
+
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS budget_topup_drafts/i);
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS budget_topups/i);
+  assert.match(sql, /CREATE UNIQUE INDEX IF NOT EXISTS budget_topups_user_draft_unique/i);
+  assert.match(sql, /WHERE draft_id IS NOT NULL/i);
+  assert.match(sql, /exchange_rate_source TEXT NOT NULL[,)]/i);
+  assert.doesNotMatch(sql, /exchange_rate_source TEXT NOT NULL DEFAULT/i);
 });

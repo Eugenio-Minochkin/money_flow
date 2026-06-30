@@ -1,5 +1,6 @@
 import { createExpenseParser } from "./expenseParser.js";
 import { parseExpenseText } from "../../../packages/shared/src/parser.js";
+import { parseBudgetTopupText } from "../../../packages/shared/src/budgetTopupParser.js";
 import { parsePlannedExpenseText } from "../../../packages/shared/src/plannedParser.js";
 import { normalizeCurrency, SUPPORTED_CURRENCY_CODES } from "../../../packages/shared/src/currencies.js";
 import { isAdminTelegramId, normalizeBotCommand } from "./adminAccess.js";
@@ -12,8 +13,8 @@ import {
 } from "../../../packages/shared/src/time.js";
 import { formatAdminStats } from "./adminStatsService.js";
 import { createTelegramJobQueue } from "./telegramJobQueue.js";
-import { formatDraft, formatPlannedDraft, formatReserveClosedEvent, formatSavedSummary, formatTotals, formatWeeklyReport } from "./telegramFormat.js";
-import { appKeyboard, draftKeyboard, inboxDraftKeyboard, plannedDraftKeyboard, parseDraftCallback, categorySlugFromCode } from "./telegramKeyboards.js";
+import { formatBudgetTopupDraft, formatDraft, formatPlannedDraft, formatReserveClosedEvent, formatSavedSummary, formatTotals, formatWeeklyReport } from "./telegramFormat.js";
+import { appKeyboard, budgetTopupDraftKeyboard, budgetTopupUndoKeyboard, draftKeyboard, inboxDraftKeyboard, plannedDraftKeyboard, parseBudgetTopupCallback, parseDraftCallback, categorySlugFromCode } from "./telegramKeyboards.js";
 import { DraftCanceledError, CategoryRequiredError } from "./repository.js";
 
 // budget_setup is the primary onboarding path; base_currency/monthly_budget/month_opening_spend are legacy fallback states.
@@ -271,6 +272,51 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
       }
       if (!text) {
         throw new Error("No text to process");
+      }
+
+      const topupParsed = parseBudgetTopupText(text, {
+        now: now(),
+        defaultCurrency: user.base_currency ?? "THB",
+        timeZone: user.timezone
+      });
+      if (topupParsed.state === "failed") {
+        processingResult = "budget_topup_parse_failed";
+        await safeRecordAppEvent(repository, user.id, "budget_topup_parse_failed", { inputType });
+        return deliverResultMessage({
+          token,
+          chatId,
+          loaderMessageId: loader.messageId,
+          text: botText(language, "budgetTopupParseFailed"),
+          replyMarkup: null,
+          telegramClient,
+          trace
+        });
+      }
+      if (topupParsed.state === "recognized") {
+        trace.start("db_save");
+        const draft = await repository.createBudgetTopupDraft(user.id, text, topupParsed.item, now());
+        trace.end("db_save");
+        const baseBudget = Number(user.monthly_budget_amount ?? 0);
+        const large = baseBudget > 0
+          ? Number(topupParsed.item.amount) > baseBudget * 3
+          : Number(topupParsed.item.amount) >= 100000;
+        await safeRecordAppEvent(repository, user.id, "budget_topup_draft_created", {
+          inputType,
+          kind: topupParsed.item.kind,
+          currency: topupParsed.item.currency,
+          largeAmountConfirmation: large
+        });
+        processingResult = "budget_topup_draft_created";
+        processingDraftType = "budget_topup";
+        return deliverResultMessage({
+          token,
+          chatId,
+          loaderMessageId: loader.messageId,
+          text: formatBudgetTopupDraft(topupParsed.item, { language, large }),
+          replyMarkup: budgetTopupDraftKeyboard(draft.id, language, { large }),
+          telegramClient,
+          trace
+        });
       }
 
       let planned;
@@ -775,6 +821,11 @@ async function handleCallback({ update, repository, token, miniAppUrl, telegramC
   trace.end("user_context");
   const language = user?.interface_language ?? "en";
 
+  const budgetTopupCallback = parseBudgetTopupCallback(callback.data);
+  if (budgetTopupCallback) {
+    return handleBudgetTopupCallback({ callback, parsed: budgetTopupCallback, repository, token, telegramClient, language, user, trace, now });
+  }
+
   const draftCallback = parseDraftCallback(callback.data);
   if (draftCallback) {
     return handleDraftCallback({ callback, parsed: draftCallback, repository, token, miniAppUrl, telegramClient, language, user, trace });
@@ -903,6 +954,108 @@ async function handleCallback({ update, repository, token, miniAppUrl, telegramC
     await answerCallback(token, callback.id, botText(language, "openMiniAppCallback"), telegramClient);
       return sendMessage(token, callback.message.chat.id, botText(language, "editInMiniApp"), appKeyboard(miniAppUrl, telegramUserId, language), telegramClient);
   });
+}
+
+async function handleBudgetTopupCallback({ callback, parsed, repository, token, telegramClient, language, user, trace, now }) {
+  const telegramUserId = callback.from.id;
+  const chatId = callback.message?.chat?.id;
+  const messageId = callback.message?.message_id;
+  if (parsed.action === "cancel") {
+    trace.start("db_save");
+    const outcome = await repository.cancelBudgetTopupDraft(parsed.id, telegramUserId, now());
+    trace.end("db_save");
+    if (outcome.cancelled) {
+      await safeRecordAppEvent(repository, user?.id, "budget_topup_draft_cancelled", {});
+    }
+    return sendTelegramResponse(trace, async () => {
+      await answerCallback(token, callback.id, botText(language, "cancelledCallback"), telegramClient);
+      const text = botText(language, "budgetTopupCancelled");
+      if (messageId) {
+        try {
+          return await editMessageText(token, chatId, messageId, text, { inline_keyboard: [] }, telegramClient);
+        } catch {}
+      }
+      return sendMessage(token, chatId, text, { inline_keyboard: [] }, telegramClient);
+    });
+  }
+  if (parsed.action === "undo") {
+    trace.start("db_save");
+    const result = await repository.undoBudgetTopup(parsed.id, telegramUserId, now());
+    trace.end("db_save");
+    return sendTelegramResponse(trace, async () => {
+      await answerCallback(token, callback.id, result.undone ? botText(language, "savedCallback") : botText(language, "technicalError"), telegramClient);
+      const text = result.undone
+        ? formatBudgetTopupUndoSuccess(result.dashboardSnapshot, language)
+        : botText(language, "budgetTopupUndoExpired");
+      if (messageId) {
+        try {
+          return await editMessageText(token, chatId, messageId, text, { inline_keyboard: [] }, telegramClient);
+        } catch {}
+      }
+      return sendMessage(token, chatId, text, { inline_keyboard: [] }, telegramClient);
+    });
+  }
+
+  trace.start("db_save");
+  const result = await repository.confirmBudgetTopupDraft(parsed.id, telegramUserId, now());
+  trace.end("db_save");
+  if (result.outcome === "expired") {
+    return sendTelegramResponse(trace, () => answerCallback(token, callback.id, botText(language, "budgetTopupExpired"), telegramClient));
+  }
+  if (result.outcome === "replaced_by_newer") {
+    return sendTelegramResponse(trace, () => answerCallback(token, callback.id, botText(language, "budgetTopupReplacedByNewer"), telegramClient));
+  }
+  if (!result.alreadySaved) {
+    await safeRecordAppEvent(repository, user?.id, "budget_topup_draft_confirmed", {
+      kind: result.topup?.kind,
+      currency: result.topup?.currency_original,
+      amountBase: Number(result.topup?.amount_base ?? 0)
+    });
+  }
+  return sendTelegramResponse(trace, async () => {
+    await answerCallback(token, callback.id, result.alreadySaved ? botText(language, "alreadySavedCallback") : botText(language, "savedCallback"), telegramClient);
+    const text = formatBudgetTopupSuccess(result.topup, result.dashboardSnapshot, language);
+    const replyMarkup = budgetTopupUndoKeyboard(result.topup.id, language);
+    if (messageId) {
+      try {
+        return await editMessageText(token, chatId, messageId, text, replyMarkup, telegramClient);
+      } catch {}
+    }
+    return sendMessage(token, chatId, text, replyMarkup, telegramClient);
+  });
+}
+
+function formatBudgetTopupSuccess(topup, snapshot, language) {
+  const currency = snapshot?.baseCurrency ?? topup?.base_currency ?? "THB";
+  const monthBudget = Number(snapshot?.monthlyBudget ?? 0);
+  const remaining = Number(snapshot?.freeRemaining ?? snapshot?.monthRemaining ?? 0);
+  const original = formatTelegramMoney(topup?.amount_original ?? topup?.amount_base ?? 0, topup?.currency_original ?? currency, language);
+  const convertedLine = topup?.currency_original && topup.currency_original !== currency
+    ? (language === "en"
+        ? `\n\nIn your budget currency, that is +${formatTelegramMoney(topup.amount_base, currency, language)}.`
+        : `\n\nВ бюджете это учтено как +${formatTelegramMoney(topup.amount_base, currency, language)}.`)
+    : "";
+  return language === "en"
+    ? `Done. Added +${original} to your budget.${convertedLine}\n\nMonthly budget: ${formatTelegramMoney(monthBudget, currency, language)}\nRemaining: ${formatTelegramMoney(remaining, currency, language)}`
+    : `Готово. Добавил +${original} к бюджету.${convertedLine}\n\nБюджет месяца: ${formatTelegramMoney(monthBudget, currency, language)}\nОсталось: ${formatTelegramMoney(remaining, currency, language)}`;
+}
+
+function formatBudgetTopupUndoSuccess(snapshot, language) {
+  const currency = snapshot?.baseCurrency ?? "THB";
+  return language === "en"
+    ? `Okay, I’ve undone this budget top-up.\n\nMonthly budget: ${formatTelegramMoney(snapshot?.monthlyBudget ?? 0, currency, language)}\nRemaining: ${formatTelegramMoney(snapshot?.freeRemaining ?? 0, currency, language)}`
+    : `Ок, отменил пополнение бюджета.\n\nБюджет месяца: ${formatTelegramMoney(snapshot?.monthlyBudget ?? 0, currency, language)}\nОсталось: ${formatTelegramMoney(snapshot?.freeRemaining ?? 0, currency, language)}`;
+}
+
+function formatTelegramMoney(value, currency, language) {
+  const normalizedCurrency = String(currency || "THB").toUpperCase();
+  const decimals = ["THB", "RUB", "IDR", "BYN"].includes(normalizedCurrency) ? 0 : 2;
+  const numeric = Number(value ?? 0);
+  const formatted = new Intl.NumberFormat(language === "ru" ? "ru-RU" : "en-US", {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals
+  }).format(Number.isFinite(numeric) ? numeric : 0);
+  return `${formatted} ${normalizedCurrency}`;
 }
 
 async function handleDraftCallback({ callback, parsed, repository, token, miniAppUrl, telegramClient, language, user, trace }) {
@@ -1651,6 +1804,11 @@ function botText(language, key, values = {}) {
       globalQueueFull: "Сейчас обработка временно занята. Дождись, пожалуйста, результата по предыдущим сообщениям и отправь это ещё раз чуть позже.",
       jobProcessingFailed: "Не получилось обработать это сообщение. Попробуй отправить его ещё раз.",
       parseFailed: "Не получилось разобрать расход. Попробуй написать проще: <b>кофе 70 бат</b>.",
+      budgetTopupParseFailed: "Не удалось безопасно разобрать пополнение бюджета. Напиши сумму ещё раз.",
+      budgetTopupCancelled: "Ок, не учитываю это в бюджете.",
+      budgetTopupExpired: "Это пополнение уже устарело. Напиши сумму ещё раз, и я добавлю её к бюджету.",
+      budgetTopupReplacedByNewer: "Это пополнение уже не активно — есть более новое. Подтверди его кнопками ниже.",
+      budgetTopupUndoExpired: "Это пополнение уже нельзя отменить через кнопку. Открой Mini App или напиши мне, если нужно исправить бюджет.",
       transcriptionFailed: "Не смог разобрать голосовое. Попробуй ещё раз или напиши текстом: кофе 70 бат",
       amountNotFound: "Не нашел сумму. Напиши так: <b>кофе 70 бат</b>.",
       amountNotFoundWithTranscript: `Я услышал: «${formatTranscriptForTelegram(values.transcript)}». Но не нашёл сумму. Напиши, например: <b>кофе 70 бат</b>`,
@@ -1693,6 +1851,11 @@ function botText(language, key, values = {}) {
       globalQueueFull: "Processing is temporarily busy right now. Please wait for the previous messages to finish and send this again a bit later.",
       jobProcessingFailed: "I couldn’t process this message. Please try sending it again.",
       parseFailed: "I couldn’t parse the expense. Try a simpler message: <b>coffee 70 baht</b>.",
+      budgetTopupParseFailed: "I could not safely parse this budget top-up. Send the amount again.",
+      budgetTopupCancelled: "Okay, I will not count it in your budget.",
+      budgetTopupExpired: "This budget top-up has expired. Send the amount again and I’ll add it to your budget.",
+      budgetTopupReplacedByNewer: "This top-up is no longer active — there’s a newer one. Use the buttons on the most recent message.",
+      budgetTopupUndoExpired: "This top-up can no longer be undone from the button. Open the Mini App or message me if you need to fix the budget.",
       transcriptionFailed: "I couldn’t understand the voice message. Try again or type it: coffee 70 baht",
       amountNotFound: "I did not find an amount. Try: <b>coffee 70 baht</b>.",
       amountNotFoundWithTranscript: `I heard: “${formatTranscriptForTelegram(values.transcript)}”. But I couldn’t find an amount. Try: <b>coffee 70 baht</b>`,

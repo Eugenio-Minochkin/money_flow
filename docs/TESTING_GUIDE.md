@@ -5,6 +5,7 @@ Use this guide when changing business logic or UI around the main Money Flow sur
 ## Always Consider
 
 - Monthly budget calculation.
+- Budget top-up calculation on top of regular budgets, overrides, and partial-month budgets.
 - Mid-month onboarding budget behavior.
 - Planned payment occurrence logic.
 - User timezone behavior for today/yesterday, weeks, months, daily budget snapshots, planned payment dates, and reminders.
@@ -14,6 +15,7 @@ Use this guide when changing business logic or UI around the main Money Flow sur
 - Reserve logic.
 - Dashboard cards and budget state display.
 - Currency rounding and display currencies.
+- Budget top-up confirm/undo idempotency, current-day snapshot invalidation, and reserve budget synchronization.
 
 ## Practical Test Pointers
 

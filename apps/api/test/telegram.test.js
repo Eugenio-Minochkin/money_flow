@@ -2895,6 +2895,56 @@ test("regular draft delivery stores the originating telegram chat and message id
   assert.equal(refs[0].messageId, 777);
 });
 
+test("processQueuedMessage creates budget top-up draft before expense parser", async () => {
+  let topupDraft = null;
+  let expenseParserCalled = false;
+  const repository = {
+    async createBudgetTopupDraft(userId, sourceText, item) {
+      topupDraft = { userId, sourceText, item };
+      return { id: 42, status: "pending", item };
+    },
+    async recordAppEvent() {}
+  };
+  const expenseParser = {
+    async parse() {
+      expenseParserCalled = true;
+      return { expenses: [] };
+    }
+  };
+  const sent = [];
+  const telegramClient = {
+    async sendMessage(message) {
+      sent.push(message);
+      return { ok: true, result: { message_id: 777 } };
+    },
+    async editMessageText(message) {
+      sent.push(message);
+      return { ok: true, result: { message_id: 777 } };
+    }
+  };
+
+  await processQueuedMessage({
+    message: { chat: { id: 5 } },
+    from: { id: 100 },
+    user: { id: 1, interface_language: "en", base_currency: "THB", onboarding_step: "completed", timezone: "Asia/Bangkok" },
+    rawText: "bonus 10000",
+    inputType: null,
+    repository,
+    token: null,
+    miniAppUrl: "http://x",
+    expenseParser,
+    telegramClient,
+    now: () => new Date("2026-06-30T10:00:00Z"),
+    trace: stubTrace()
+  });
+
+  assert.equal(expenseParserCalled, false);
+  assert.equal(topupDraft.userId, 1);
+  assert.equal(topupDraft.item.amount, 10000);
+  assert.equal(topupDraft.item.kind, "income");
+  assert.ok(sent.some((message) => String(message.text).includes("budget top-up")));
+});
+
 test("updateDraftMessageToSaved edits the stored message and falls back to a new one on failure", async () => {
   const { updateDraftMessageToSaved } = await import("../src/telegram.js");
   const calls = [];

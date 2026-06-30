@@ -14,6 +14,10 @@ Codex and other agents must treat `master` and production as protected. They wor
 
 Settings already contain budget, currencies, planned payments, reserve, language, theme, and backup. Keep the surface compact so it does not start feeling like an admin panel.
 
+## 2026-06-30 - Budget Top-ups Are Monthly Budget Adjustments
+
+Budget top-ups are modeled as one-off additions to a specific month budget, not as income accounting, salary recurrence, transfers, or cashflow analytics. They live in their own draft and confirmed tables, are added on top of the regular monthly budget or month override, and are soft-deleted on undo so confirmation is idempotent and audit-friendly.
+
 ## 2026-06 - Do Not Expand Reserve Before MVP Without Explicit Request
 
 Reserve is already useful and complex enough for the MVP. Avoid multiple reserves, savings goals, and advanced reserve planning unless the user asks for that direction.

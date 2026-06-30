@@ -9,12 +9,14 @@ The product should feel simple, fast, and light: a user records expenses in the 
 - Make expense capture quick through text and voice.
 - Use confirmation before saving parsed expenses so the user stays in control.
 - Keep the Mini App dashboard focused on budget state, recent movement, and immediate next actions.
+- Allow simple one-off budget top-ups when extra money arrives during the month, without turning the product into income accounting.
 
 ## What It Is Not
 
 - Not an accounting system.
 - Not a back-office admin panel.
 - Not a full financial planning suite.
+- Not income accounting, salary planning, transfer tracking, or cashflow analytics.
 - Not a place for complex savings-goal management unless explicitly requested.
 
 ## Experience Principles

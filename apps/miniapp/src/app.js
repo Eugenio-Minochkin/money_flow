@@ -2,7 +2,7 @@ import { createApiClient } from "./apiClient.js";
 import { categories, categoryColor, categoryLabel } from "./categories.js";
 import { currencyOptions } from "./currencies.js";
 import { resolveDraftSaveResponse, classifyConfirmOutcome } from "./draftSave.js";
-import { buildDashboardCards, buildHeroMetric, renderDashboardCards } from "./dashboardCards.js";
+import { buildDashboardCards, buildHeroMetric, renderBudgetTopupBreakdown, renderDashboardCards } from "./dashboardCards.js";
 import {
   dateTimeLocal,
   escapeAttribute,
@@ -547,6 +547,11 @@ function renderSnapshot(snapshot) {
     moneyDisplay,
     percent: (value) => `${percentNumber.format(Number(value ?? 0))}%`
   }));
+  renderBudgetTopupBreakdown(document.querySelector("#budgetTopupBreakdown"), dashboardState?.currentMonthBudget, {
+    t,
+    moneyBase,
+    formatDate: (value) => formatDateOnly(value)
+  });
   bindDashboardTooltips();
 }
 

@@ -28,6 +28,39 @@ export function parseDraftCallback(data) {
   return null;
 }
 
+export function parseBudgetTopupCallback(data) {
+  const parts = String(data ?? "").split(":");
+  if (parts[0] !== "bt") return null;
+  const id = parts[1];
+  const action = parts[2];
+  if (action === "confirm" || action === "cancel" || action === "undo") {
+    return { scheme: "bt", id, action };
+  }
+  return null;
+}
+
+export function budgetTopupDraftKeyboard(draftId, language = "ru", options = {}) {
+  const text = keyboardText(language);
+  const confirm = text.budgetTopupConfirm ?? "Добавить к бюджету";
+  const confirmLarge = text.budgetTopupConfirmLarge ?? "Да, добавить";
+  const ignore = text.budgetTopupIgnore ?? "Не учитывать";
+  return {
+    inline_keyboard: [
+      [{ text: options.large ? confirmLarge : confirm, callback_data: `bt:${draftId}:confirm` }],
+      [{ text: ignore, callback_data: `bt:${draftId}:cancel` }],
+      [{ text: text.cancel, callback_data: `bt:${draftId}:cancel` }]
+    ]
+  };
+}
+
+export function budgetTopupUndoKeyboard(topupId, language = "ru") {
+  const text = keyboardText(language);
+  const undo = text.budgetTopupUndo ?? "Отменить пополнение";
+  return {
+    inline_keyboard: [[{ text: undo, callback_data: `bt:${topupId}:undo` }]]
+  };
+}
+
 export function draftKeyboard(draftId, items = [], miniAppUrl, telegramUserId, language = "ru") {
   const text = keyboardText(language);
   const rows = [[{ text: `✅ ${text.confirm}`, callback_data: `d:${draftId}:confirm` }]];
@@ -115,6 +148,10 @@ function keyboardText(language) {
   if (language === "en") {
     return {
       addPlanned: "Add planned expense",
+      budgetTopupConfirm: "Add to budget",
+      budgetTopupConfirmLarge: "Yes, add it",
+      budgetTopupIgnore: "Do not count",
+      budgetTopupUndo: "Undo top-up",
       cancel: "Cancel",
       confirm: "Confirm",
       edit: "Edit",
