@@ -216,8 +216,11 @@ test("renders compact budget top-up breakdown only when top-ups exist", () => {
       const labels = {
         "budgetTopup.title": "Monthly budget",
         "budgetTopup.baseBudget": "Base budget",
+        "budgetTopup.baseShort": "Base",
         "budgetTopup.topups": "Top-ups",
+        "budgetTopup.topupsShort": "top-ups",
         "budgetTopup.totalBudget": "Total budget",
+        "budgetTopup.details": "Details",
         "budgetTopup.historyTitle": "Recent top-ups",
         "budgetTopup.historyItem": `+${values.amount} · Budget top-up · ${values.date}`
       };
@@ -228,13 +231,15 @@ test("renders compact budget top-up breakdown only when top-ups exist", () => {
   });
 
   assert.match(container.innerHTML, /Monthly budget/);
-  assert.match(container.innerHTML, /Base budget/);
-  assert.match(container.innerHTML, /48000 THB/);
-  assert.match(container.innerHTML, /Top-ups/);
-  assert.match(container.innerHTML, /\+5000 THB/);
-  assert.match(container.innerHTML, /Total budget/);
   assert.match(container.innerHTML, /53000 THB/);
-  assert.match(container.innerHTML, /Budget top-up · Jun 29/);
+  assert.match(container.innerHTML, /Base 48000 THB/);
+  assert.match(container.innerHTML, /top-ups \+5000 THB/);
+  assert.match(container.innerHTML, /Details/);
+  assert.doesNotMatch(container.innerHTML, /Base budget/);
+  assert.doesNotMatch(container.innerHTML, /Top-ups/);
+  assert.doesNotMatch(container.innerHTML, /Total budget/);
+  assert.doesNotMatch(container.innerHTML, /Recent/);
+  assert.doesNotMatch(container.innerHTML, /Budget top-up/);
 
   const empty = { innerHTML: "x", classList: { hidden: false, toggle(_name, value) { this.hidden = value; } } };
   renderBudgetTopupBreakdown(empty, { topupsTotal: 0, topups: [] }, { t: () => "", moneyBase: () => "", formatDate: () => "" });
@@ -288,6 +293,10 @@ test("budget top-up breakdown is collapsed by default and expands locally", () =
   assert.match(container.innerHTML, /Details/);
   assert.match(container.innerHTML, /Base 48000 THB/);
   assert.match(container.innerHTML, /top-ups \+5000 THB/);
+  assert.doesNotMatch(container.innerHTML, /Base budget/);
+  assert.doesNotMatch(container.innerHTML, /Top-ups/);
+  assert.doesNotMatch(container.innerHTML, /Total budget/);
+  assert.doesNotMatch(container.innerHTML, /Recent/);
   assert.equal(typeof toggleHandler, "function");
 
   toggleHandler();
@@ -295,5 +304,9 @@ test("budget top-up breakdown is collapsed by default and expands locally", () =
   assert.match(container.innerHTML, /budget-topup-card--expanded/);
   assert.match(container.innerHTML, /aria-expanded="true"/);
   assert.match(container.innerHTML, /Collapse/);
+  assert.match(container.innerHTML, /Base budget/);
+  assert.match(container.innerHTML, /Top-ups/);
+  assert.match(container.innerHTML, /Total budget/);
+  assert.match(container.innerHTML, /Recent/);
   assert.match(container.innerHTML, /\+5000 THB - Jun 29/);
 });
