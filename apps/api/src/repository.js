@@ -980,9 +980,9 @@ export function createRepository(pool, options = {}) {
       try {
         await client.query("BEGIN");
         await client.query(
-          `SELECT *
-           FROM budget_topup_drafts
-           WHERE user_id = $1 AND status = 'pending'
+          `SELECT id
+           FROM users
+           WHERE id = $1
            FOR UPDATE`,
           [userId]
         );
@@ -1006,6 +1006,25 @@ export function createRepository(pool, options = {}) {
       } finally {
         client.release();
       }
+    },
+
+    async previewBudgetTopup(userId, item, now = new Date()) {
+      const userResult = await pool.query("SELECT * FROM users WHERE id = $1", [userId]);
+      const user = userResult.rows[0] ?? null;
+      if (!user) throw new Error("User not found");
+      const timeZone = userTimezone(user);
+      const occurredAt = new Date(item?.occurred_at ?? now);
+      const targetDate = Number.isFinite(occurredAt.getTime()) ? occurredAt : now;
+      const moneyAmounts = await buildMoneyAmounts(exchangeRates, item.amount, item.currency, targetDate, user);
+      const targetBudget = await currentMonthBudget(pool, user, targetDate, timeZone);
+      return {
+        amountBase: moneyAmounts.amountBase,
+        baseBudget: targetBudget.baseBudget,
+        monthKey: targetBudget.monthKey,
+        large: targetBudget.baseBudget > 0
+          ? moneyAmounts.amountBase > targetBudget.baseBudget * 3
+          : moneyAmounts.amountBase >= 100000
+      };
     },
 
     async confirmBudgetTopupDraft(draftId, telegramUserId, now = new Date()) {
@@ -1072,6 +1091,12 @@ export function createRepository(pool, options = {}) {
 
         const item = draft.item;
         const occurredAt = new Date(item.occurred_at ?? now);
+        const targetMonthKey = item.month_key ?? monthKey(occurredAt, userTimezone(draft));
+        const currentMonthKey = monthKey(now, userTimezone(draft));
+        if (targetMonthKey !== currentMonthKey) {
+          await client.query("ROLLBACK");
+          return { outcome: "wrong_month", targetMonthKey, currentMonthKey };
+        }
         const moneyAmounts = await buildMoneyAmounts(exchangeRates, item.amount, item.currency, occurredAt, draft);
         const inserted = await client.query(
           `INSERT INTO budget_topups (
@@ -1116,9 +1141,9 @@ export function createRepository(pool, options = {}) {
           [draft.id, now]
         );
         const currentBudget = await currentMonthBudget(client, draft, now, userTimezone(draft));
+        await updateOpenReserveBudget(client, draft.user_id, currentBudget.amount);
+        await invalidateDailyBudgetSnapshot(client, draft.user_id, now, userTimezone(draft));
         await client.query("COMMIT");
-        await updateOpenReserveBudget(pool, draft.user_id, currentBudget.amount);
-        await invalidateDailyBudgetSnapshot(pool, draft.user_id, now, userTimezone(draft));
         const dashboardSnapshot = (await this.dashboard(telegramUserId, now)).snapshot;
         return { topup: withDisplay(topup, draft), currentMonthBudget: currentBudget, dashboardSnapshot, alreadySaved: inserted.rows.length === 0, outcome: "confirmed" };
       } catch (error) {
@@ -1153,36 +1178,51 @@ export function createRepository(pool, options = {}) {
     },
 
     async undoBudgetTopup(topupId, telegramUserId, now = new Date()) {
-      const found = await pool.query(
-        `SELECT budget_topups.*,
-                users.telegram_user_id,
-                users.monthly_budget_amount,
-                users.base_currency,
-                users.display_currency,
-                users.usd_thb_rate,
-                users.timezone
-         FROM budget_topups
-         JOIN users ON users.id = budget_topups.user_id
-         WHERE budget_topups.id = $1
-           AND users.telegram_user_id = $2
-           AND budget_topups.deleted_at IS NULL`,
-        [topupId, telegramUserId]
-      );
-      const topup = found.rows[0] ?? null;
-      if (!topup) return { undone: false, reason: "not_found" };
-      if (new Date(topup.created_at).getTime() < now.getTime() - 10 * 60_000) {
-        return { undone: false, reason: "expired" };
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        const found = await client.query(
+          `SELECT budget_topups.*,
+                  users.telegram_user_id,
+                  users.monthly_budget_amount,
+                  users.base_currency,
+                  users.display_currency,
+                  users.usd_thb_rate,
+                  users.timezone
+           FROM budget_topups
+           JOIN users ON users.id = budget_topups.user_id
+           WHERE budget_topups.id = $1
+             AND users.telegram_user_id = $2
+             AND budget_topups.deleted_at IS NULL
+           FOR UPDATE`,
+          [topupId, telegramUserId]
+        );
+        const topup = found.rows[0] ?? null;
+        if (!topup) {
+          await client.query("ROLLBACK");
+          return { undone: false, reason: "not_found" };
+        }
+        if (new Date(topup.created_at).getTime() < now.getTime() - 10 * 60_000) {
+          await client.query("ROLLBACK");
+          return { undone: false, reason: "expired" };
+        }
+        await client.query(
+          `UPDATE budget_topups SET deleted_at = $2
+           WHERE id = $1 AND deleted_at IS NULL`,
+          [topupId, now]
+        );
+        const currentBudget = await currentMonthBudget(client, topup, now, userTimezone(topup));
+        await updateOpenReserveBudget(client, topup.user_id, currentBudget.amount);
+        await invalidateDailyBudgetSnapshot(client, topup.user_id, now, userTimezone(topup));
+        await client.query("COMMIT");
+        const dashboardSnapshot = (await this.dashboard(telegramUserId, now)).snapshot;
+        return { undone: true, currentMonthBudget: currentBudget, dashboardSnapshot };
+      } catch (error) {
+        try { await client.query("ROLLBACK"); } catch { /* ignore rollback failures */ }
+        throw error;
+      } finally {
+        client.release();
       }
-      await pool.query(
-        `UPDATE budget_topups SET deleted_at = $2
-         WHERE id = $1 AND deleted_at IS NULL`,
-        [topupId, now]
-      );
-      const currentBudget = await currentMonthBudget(pool, topup, now, userTimezone(topup));
-      await updateOpenReserveBudget(pool, topup.user_id, currentBudget.amount);
-      await invalidateDailyBudgetSnapshot(pool, topup.user_id, now, userTimezone(topup));
-      const dashboardSnapshot = (await this.dashboard(telegramUserId, now)).snapshot;
-      return { undone: true, currentMonthBudget: currentBudget, dashboardSnapshot };
     },
 
     async confirmPlannedDraft(plannedDraftId, telegramUserId) {
@@ -2483,7 +2523,7 @@ async function assertReserveBudgetCapacity(pool, user, budgetAmount, now) {
 }
 
 async function updateOpenReserveBudget(pool, userId, budgetAmount) {
-  if (typeof pool.connect !== "function") return;
+  if (typeof pool.query !== "function") return;
   await pool.query(
     `UPDATE monthly_reserve_instances
      SET budget_amount = $2, updated_at = now()

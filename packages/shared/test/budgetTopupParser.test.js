@@ -19,6 +19,7 @@ const positiveCases = [
   ["I got 5000 baht", { amount: 5000, currency: "THB", kind: "other" }],
   ["I received 5000 baht", { amount: 5000, currency: "THB", kind: "other" }],
   ["bonus 10000", { amount: 10000, currency: "THB", kind: "income" }],
+  ["salary 70000", { amount: 70000, currency: "THB", kind: "income" }],
   ["got paid 10000", { amount: 10000, currency: "THB", kind: "income" }],
   ["refund 800", { amount: 800, currency: "THB", kind: "refund" }],
   ["they returned 800 baht", { amount: 800, currency: "THB", kind: "refund" }],

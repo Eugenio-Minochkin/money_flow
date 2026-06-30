@@ -36,6 +36,9 @@ test("budget top-up migration creates drafts, topups, idempotency index, and exp
 
   assert.match(sql, /CREATE TABLE IF NOT EXISTS budget_topup_drafts/i);
   assert.match(sql, /CREATE TABLE IF NOT EXISTS budget_topups/i);
+  assert.match(sql, /CREATE UNIQUE INDEX IF NOT EXISTS budget_topup_drafts_one_pending_per_user/i);
+  assert.match(sql, /ON budget_topup_drafts\(user_id\)/i);
+  assert.match(sql, /WHERE status = 'pending'/i);
   assert.match(sql, /CREATE UNIQUE INDEX IF NOT EXISTS budget_topups_user_draft_unique/i);
   assert.match(sql, /WHERE draft_id IS NOT NULL/i);
   assert.match(sql, /exchange_rate_source TEXT NOT NULL[,)]/i);

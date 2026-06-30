@@ -13,6 +13,10 @@ CREATE TABLE IF NOT EXISTS budget_topup_drafts (
 CREATE INDEX IF NOT EXISTS budget_topup_drafts_user_status_idx
   ON budget_topup_drafts(user_id, status);
 
+CREATE UNIQUE INDEX IF NOT EXISTS budget_topup_drafts_one_pending_per_user
+  ON budget_topup_drafts(user_id)
+  WHERE status = 'pending';
+
 CREATE INDEX IF NOT EXISTS budget_topup_drafts_user_created_idx
   ON budget_topup_drafts(user_id, created_at DESC);
 

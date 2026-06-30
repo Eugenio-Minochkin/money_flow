@@ -18,6 +18,8 @@ Settings already contain budget, currencies, planned payments, reserve, language
 
 Budget top-ups are modeled as one-off additions to a specific month budget, not as income accounting, salary recurrence, transfers, or cashflow analytics. They live in their own draft and confirmed tables, are added on top of the regular monthly budget or month override, and are soft-deleted on undo so confirmation is idempotent and audit-friendly.
 
+On month boundaries, Telegram MVP confirmation refuses previous-month top-ups instead of showing a dashboard snapshot for the wrong current month. Remaining budget and top-ups never roll over automatically; carry-over, moving leftovers to reserve, and adding leftovers to the next month are future explicit actions.
+
 ## 2026-06 - Do Not Expand Reserve Before MVP Without Explicit Request
 
 Reserve is already useful and complex enough for the MVP. Avoid multiple reserves, savings goals, and advanced reserve planning unless the user asks for that direction.

@@ -294,16 +294,16 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
       }
       if (topupParsed.state === "recognized") {
         trace.start("db_save");
+        const preview = await repository.previewBudgetTopup(user.id, topupParsed.item, now());
         const draft = await repository.createBudgetTopupDraft(user.id, text, topupParsed.item, now());
         trace.end("db_save");
-        const baseBudget = Number(user.monthly_budget_amount ?? 0);
-        const large = baseBudget > 0
-          ? Number(topupParsed.item.amount) > baseBudget * 3
-          : Number(topupParsed.item.amount) >= 100000;
+        const large = preview.large === true;
         await safeRecordAppEvent(repository, user.id, "budget_topup_draft_created", {
           inputType,
           kind: topupParsed.item.kind,
           currency: topupParsed.item.currency,
+          amountBase: preview.amountBase,
+          baseBudget: preview.baseBudget,
           largeAmountConfirmation: large
         });
         processingResult = "budget_topup_draft_created";
@@ -812,7 +812,7 @@ function localMonthDay(now) {
   return timezoneLocalMonthDay(now);
 }
 
-async function handleCallback({ update, repository, token, miniAppUrl, telegramClient, trace, now = () => new Date() }) {
+export async function handleCallback({ update, repository, token, miniAppUrl, telegramClient, trace, now = () => new Date() }) {
   const callback = update.callback_query;
   const [action, draftId, itemIndex, value] = callback.data.split(":");
   const telegramUserId = callback.from.id;
@@ -1004,6 +1004,9 @@ async function handleBudgetTopupCallback({ callback, parsed, repository, token, 
   }
   if (result.outcome === "replaced_by_newer") {
     return sendTelegramResponse(trace, () => answerCallback(token, callback.id, botText(language, "budgetTopupReplacedByNewer"), telegramClient));
+  }
+  if (result.outcome === "wrong_month") {
+    return sendTelegramResponse(trace, () => answerCallback(token, callback.id, botText(language, "budgetTopupWrongMonth"), telegramClient));
   }
   if (!result.alreadySaved) {
     await safeRecordAppEvent(repository, user?.id, "budget_topup_draft_confirmed", {
@@ -1808,6 +1811,7 @@ function botText(language, key, values = {}) {
       budgetTopupCancelled: "Ок, не учитываю это в бюджете.",
       budgetTopupExpired: "Это пополнение уже устарело. Напиши сумму ещё раз, и я добавлю её к бюджету.",
       budgetTopupReplacedByNewer: "Это пополнение уже не активно — есть более новое. Подтверди его кнопками ниже.",
+      budgetTopupWrongMonth: "В MVP пополнения можно добавлять только к текущему месяцу. Для прошлого месяца это пополнение не сохранено.",
       budgetTopupUndoExpired: "Это пополнение уже нельзя отменить через кнопку. Открой Mini App или напиши мне, если нужно исправить бюджет.",
       transcriptionFailed: "Не смог разобрать голосовое. Попробуй ещё раз или напиши текстом: кофе 70 бат",
       amountNotFound: "Не нашел сумму. Напиши так: <b>кофе 70 бат</b>.",
@@ -1855,6 +1859,7 @@ function botText(language, key, values = {}) {
       budgetTopupCancelled: "Okay, I will not count it in your budget.",
       budgetTopupExpired: "This budget top-up has expired. Send the amount again and I’ll add it to your budget.",
       budgetTopupReplacedByNewer: "This top-up is no longer active — there’s a newer one. Use the buttons on the most recent message.",
+      budgetTopupWrongMonth: "For the MVP, budget top-ups can be added only to the current month. This previous-month top-up was not saved.",
       budgetTopupUndoExpired: "This top-up can no longer be undone from the button. Open the Mini App or message me if you need to fix the budget.",
       transcriptionFailed: "I couldn’t understand the voice message. Try again or type it: coffee 70 baht",
       amountNotFound: "I did not find an amount. Try: <b>coffee 70 baht</b>.",

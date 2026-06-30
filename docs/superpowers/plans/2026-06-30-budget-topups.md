@@ -187,3 +187,12 @@ Expected: no whitespace errors and no unrelated changes.
 - [x] **Step 4: Commit and open draft PR**
 
 Commit with `feat: add budget top-ups`, push `codex/budget-topups`, and open a draft PR into `master` with summary, changed areas, docs, tests, DB/prod impact, release notes, screenshots if applicable, and assumptions.
+
+### Review Follow-up: PR Blocking Fixes
+
+- [x] Add a partial unique index for one pending top-up draft per user and serialize draft replacement by locking the owning user row.
+- [x] Reject previous-month Telegram top-up confirmation in the MVP with a clear current-month-only message.
+- [x] Compute the large amount warning from converted base amount against the target-month base budget or override.
+- [x] Move confirm/undo reserve synchronization and current-day snapshot invalidation into the same transaction as the top-up write.
+- [x] Recognize salary top-up intent and document the voice amount-word limitation.
+- [x] Document month-end behavior: top-ups and leftovers never roll over automatically.

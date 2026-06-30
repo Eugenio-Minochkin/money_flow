@@ -47,8 +47,11 @@ This file records stable product and business rules. Read it before changing bud
 - A budget top-up increases the effective budget for its `month_key`: `base month budget + active top-ups`.
 - Active top-ups are rows in `budget_topups` with `deleted_at IS NULL`.
 - Confirming or undoing a top-up invalidates only the current local daily budget snapshot.
-- Backdated top-ups may change the historical month budget data, but historical daily budget snapshots are not recalculated or deleted.
+- MVP Telegram confirmation accepts only current-month top-ups. A top-up whose parsed `month_key` is not the user's current month must not be saved from the button flow.
+- Month-end rollover is explicit, never automatic. Remaining budget and top-ups from June do not carry into July; July starts from the regular monthly budget or July override.
+- Backdated top-ups may change historical month budget data only through a future explicit flow. Historical daily budget snapshots must not be recalculated or deleted implicitly.
 - Refund wording may create a top-up with `kind = refund` in the MVP. A future refund flow may reduce the original expense category if it links to the original expense.
+- Voice top-up parsing in the MVP depends on transcription producing digits or parser-supported numeric notation. Amount words such as "five thousand" are a future parser/LLM fallback improvement.
 
 ## Reserve
 
