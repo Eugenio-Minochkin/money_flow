@@ -98,6 +98,39 @@ export function renderDashboardCards(container, cards) {
   container.innerHTML = cards.map(renderCard).join("");
 }
 
+export function renderBudgetTopupBreakdown(container, currentMonthBudget, helpers) {
+  if (!container) return;
+  const topups = Array.isArray(currentMonthBudget?.topups) ? currentMonthBudget.topups : [];
+  const topupsTotal = Number(currentMonthBudget?.topupsTotal ?? 0);
+  if (topups.length === 0 && topupsTotal <= 0) {
+    container.innerHTML = "";
+    container.classList?.toggle?.("hidden", true);
+    return;
+  }
+  container.classList?.toggle?.("hidden", false);
+  const baseBudget = Number(currentMonthBudget.baseBudget ?? currentMonthBudget.amount ?? 0);
+  const totalBudget = Number(currentMonthBudget.amount ?? baseBudget + topupsTotal);
+  const history = topups.length > 0
+    ? `<div class="budget-topup__history">
+        <span class="budget-topup__history-title">${escapeHtml(helpers.t("budgetTopup.historyTitle"))}</span>
+        ${topups.map((topup) => {
+          const amount = helpers.moneyBase(Number(topup.amount_base ?? topup.amount ?? 0));
+          const date = helpers.formatDate?.(topup.occurred_at ?? topup.local_date) ?? "";
+          return `<div class="budget-topup__item">${escapeHtml(helpers.t("budgetTopup.historyItem", { amount, date }))}</div>`;
+        }).join("")}
+      </div>`
+    : "";
+  container.innerHTML = `
+    <section class="budget-topup" aria-label="${escapeHtml(helpers.t("budgetTopup.title"))}">
+      <h3>${escapeHtml(helpers.t("budgetTopup.title"))}</h3>
+      <div class="budget-topup__line"><span>${escapeHtml(helpers.t("budgetTopup.baseBudget"))}</span><b>${escapeHtml(helpers.moneyBase(baseBudget))}</b></div>
+      <div class="budget-topup__line"><span>${escapeHtml(helpers.t("budgetTopup.topups"))}</span><b>+${escapeHtml(helpers.moneyBase(topupsTotal))}</b></div>
+      <div class="budget-topup__line budget-topup__line--total"><span>${escapeHtml(helpers.t("budgetTopup.totalBudget"))}</span><b>${escapeHtml(helpers.moneyBase(totalBudget))}</b></div>
+      ${history}
+    </section>
+  `;
+}
+
 function cardLine(label, amount) {
   return { label, amount };
 }

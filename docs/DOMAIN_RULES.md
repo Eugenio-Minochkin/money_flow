@@ -5,9 +5,12 @@ This file records stable product and business rules. Read it before changing bud
 ## Monthly Budget
 
 - The monthly budget is the user's main recurring budget.
+- Budget top-ups are one-off additions to the effective budget of a specific month. They do not mutate the user's regular monthly budget and are added on top of any current-month override.
+- Budget top-ups are not expenses and are not income accounting. They must not increase spending totals, top categories, or heatmap values.
 - A temporary current-month budget is only for users going through mid-month onboarding.
 - A temporary current-month budget must disappear in the next month.
 - Existing users must not get a temporary current-month budget unless they are in the dedicated mid-month onboarding state.
+- Partial-month budget top-ups are not prorated. Add the full active top-up total to the partial-month base budget.
 
 ## Planned Payments
 
@@ -38,6 +41,17 @@ This file records stable product and business rules. Read it before changing bud
 - Do not send when the local day already has confirmed financial activity or a no-spending mark.
 - Enforce both one delivery per `user_id + local_date + reminder_type` and a 48-hour frequency cap.
 - Telegram blocked/forbidden errors must be logged and should mark the user as bot-blocked.
+
+## Budget Top-ups
+
+- A budget top-up increases the effective budget for its `month_key`: `base month budget + active top-ups`.
+- Active top-ups are rows in `budget_topups` with `deleted_at IS NULL`.
+- Confirming or undoing a top-up invalidates only the current local daily budget snapshot.
+- MVP Telegram confirmation accepts only current-month top-ups. A top-up whose parsed `month_key` is not the user's current month must not be saved from the button flow.
+- Month-end rollover is explicit, never automatic. Remaining budget and top-ups from June do not carry into July; July starts from the regular monthly budget or July override.
+- Backdated top-ups may change historical month budget data only through a future explicit flow. Historical daily budget snapshots must not be recalculated or deleted implicitly.
+- Refund wording may create a top-up with `kind = refund` in the MVP. A future refund flow may reduce the original expense category if it links to the original expense.
+- Voice top-up parsing in the MVP depends on transcription producing digits or parser-supported numeric notation. Amount words such as "five thousand" are a future parser/LLM fallback improvement.
 
 ## Reserve
 

@@ -2768,6 +2768,87 @@ test("dashboard uses current month override only for the matching calendar month
   assert.equal(july.currentMonthBudget.isPartialMonth, false);
 });
 
+test("dashboard adds active budget top-ups on top of current month override", async () => {
+  const repo = createRepository(fakePool((sql, params) => {
+    const query = String(sql);
+    if (query.startsWith("SELECT * FROM users")) {
+      return {
+        rows: [{
+          id: "1",
+          telegram_user_id: "100",
+          monthly_budget_amount: "48000",
+          base_currency: "THB",
+          display_currency: "USD",
+          usd_thb_rate: "30",
+          timezone: "Asia/Bangkok"
+        }]
+      };
+    }
+    if (query.includes("FROM monthly_budget_overrides")) {
+      return {
+        rows: [{
+          budget_amount_base: "42000",
+          is_partial_month: false,
+          updated_at: "2026-06-01T00:00:00.000Z"
+        }]
+      };
+    }
+    if (query.includes("FROM budget_topups") && query.includes("COALESCE(SUM(amount_base)")) {
+      assert.deepEqual(params, ["1", "2026-06"]);
+      return { rows: [{ total: 5000 }] };
+    }
+    if (query.includes("FROM budget_topups") && query.includes("ORDER BY occurred_at DESC")) {
+      return {
+        rows: [{
+          id: "9",
+          user_id: "1",
+          month_key: "2026-06",
+          local_date: "2026-06-20",
+          amount_original: "5000",
+          currency_original: "THB",
+          amount_base: "5000",
+          base_currency: "THB",
+          converted_amounts: { USD: 166.67, THB: 5000 },
+          kind: "income",
+          note: "bonus",
+          occurred_at: "2026-06-20T10:00:00.000Z"
+        }]
+      };
+    }
+    if (query.includes("planned_expense_payments")) return { rows: [] };
+    if (query.includes("COALESCE(SUM(amount_base)") && query.includes("display_total")) {
+      return {
+        rows: [{
+          total: 3000,
+          regular_total: 3000,
+          planned_total: 0,
+          large_oneoff_total: 0,
+          display_total: 100,
+          regular_display_total: 100,
+          planned_display_total: 0,
+          large_oneoff_display_total: 0
+        }]
+      };
+    }
+    if (query.includes("FROM daily_budget_snapshots")) return { rows: [] };
+    if (query.includes("INSERT INTO daily_budget_snapshots")) {
+      return { rows: [{ budget_amount_base: params[2], budget_display_amount: params[3] }] };
+    }
+    if (query.includes("FROM expenses") && query.includes("ORDER BY spent_at")) return { rows: [] };
+    if (query.includes("GROUP BY category_slug")) return { rows: [] };
+    return { rows: [] };
+  }));
+
+  const dashboard = await repo.dashboard(100, new Date("2026-06-20T12:00:00+07:00"));
+
+  assert.equal(dashboard.currentMonthBudget.regularMonthlyBudget, 48000);
+  assert.equal(dashboard.currentMonthBudget.baseBudget, 42000);
+  assert.equal(dashboard.currentMonthBudget.topupsTotal, 5000);
+  assert.equal(dashboard.currentMonthBudget.amount, 47000);
+  assert.equal(dashboard.currentMonthBudget.topups[0].id, "9");
+  assert.equal(dashboard.snapshot.monthlyBudget, 47000);
+});
+
 test("dashboard subtracts unpaid planned expenses due this week from weekly remaining", async () => {
   const repo = createRepository(fakePool((sql) => {
     const query = String(sql);
@@ -3460,6 +3541,292 @@ test("setDraftMessageRef writes tg_chat_id and tg_message_id", async () => {
   assert.equal(params[0], 7);
   assert.equal(params[2], 555);
   assert.equal(params[3], 999);
+});
+
+test("createBudgetTopupDraft expires existing pending top-up drafts transactionally", async () => {
+  const { createRepository } = await import("../src/repository.js");
+  const queries = [];
+  const client = {
+    async query(sql, params = []) {
+      queries.push({ sql: String(sql), params });
+      const query = String(sql);
+      if (query === "BEGIN" || query === "COMMIT" || query === "ROLLBACK") return { rows: [] };
+      if (query.includes("INSERT INTO budget_topup_drafts")) {
+        return { rows: [{ id: "11", user_id: params[0], status: "pending", source_text: params[1], item: JSON.parse(params[2]) }] };
+      }
+      return { rows: [] };
+    },
+    release() {}
+  };
+  const repo = createRepository({ async connect() { return client; } });
+
+  const draft = await repo.createBudgetTopupDraft(1, "bonus 5000", { amount: 5000, currency: "THB" }, new Date("2026-06-30T10:00:00Z"));
+
+  assert.equal(draft.id, "11");
+  assert.ok(queries.some((q) => q.sql === "BEGIN"));
+  assert.ok(queries.some((q) => q.sql.includes("FROM users") && q.sql.includes("FOR UPDATE")));
+  assert.ok(queries.some((q) => q.sql.includes("UPDATE budget_topup_drafts") && q.sql.includes("status = 'expired'")));
+  assert.ok(queries.some((q) => q.sql === "COMMIT"));
+});
+
+test("createBudgetTopupDraft serializes by locking the owning user before insert", async () => {
+  const { createRepository } = await import("../src/repository.js");
+  const queries = [];
+  const client = {
+    async query(sql, params = []) {
+      queries.push({ sql: String(sql), params });
+      const query = String(sql);
+      if (query === "BEGIN" || query === "COMMIT" || query === "ROLLBACK") return { rows: [] };
+      if (query.includes("FROM users") && query.includes("FOR UPDATE")) return { rows: [{ id: params[0] }] };
+      if (query.includes("INSERT INTO budget_topup_drafts")) {
+        return { rows: [{ id: "12", user_id: params[0], status: "pending", source_text: params[1], item: JSON.parse(params[2]) }] };
+      }
+      return { rows: [] };
+    },
+    release() {}
+  };
+  const repo = createRepository({ async connect() { return client; } });
+
+  await repo.createBudgetTopupDraft(1, "bonus 5000", { amount: 5000, currency: "THB" });
+
+  const userLockIndex = queries.findIndex((q) => q.sql.includes("FROM users") && q.sql.includes("FOR UPDATE"));
+  const expireIndex = queries.findIndex((q) => q.sql.includes("UPDATE budget_topup_drafts") && q.sql.includes("status = 'expired'"));
+  const insertIndex = queries.findIndex((q) => q.sql.includes("INSERT INTO budget_topup_drafts"));
+  assert.ok(userLockIndex > -1, "expected user row lock");
+  assert.ok(userLockIndex < expireIndex, "expected user lock before expiring pending drafts");
+  assert.ok(expireIndex < insertIndex, "expected old pending drafts expired before insert");
+});
+
+test("cancelBudgetTopupDraft is idempotent", async () => {
+  const { createRepository } = await import("../src/repository.js");
+  const repo = createRepository(fakePool((sql) => {
+    const query = String(sql);
+    if (query.includes("UPDATE budget_topup_drafts")) return { rows: [] };
+    if (query.includes("SELECT status FROM budget_topup_drafts")) return { rows: [{ status: "cancelled" }] };
+    return { rows: [] };
+  }));
+
+  const result = await repo.cancelBudgetTopupDraft(11, 100);
+
+  assert.equal(result.cancelled, false);
+  assert.equal(result.reason, "already_cancelled");
+});
+
+test("confirmBudgetTopupDraft creates one top-up and updates budget-dependent state", async () => {
+  const { createRepository } = await import("../src/repository.js");
+  const queries = [];
+  const draftItem = {
+    amount: 5000,
+    currency: "THB",
+    kind: "income",
+    note: "bonus",
+    occurred_at: "2026-06-30T10:00:00.000Z",
+    local_date: "2026-06-30",
+    month_key: "2026-06"
+  };
+  const client = {
+    async query(sql, params = []) {
+      queries.push({ sql: String(sql), params });
+      const query = String(sql);
+      if (query === "BEGIN" || query === "COMMIT" || query === "ROLLBACK") return { rows: [] };
+      if (query.includes("SELECT budget_topup_drafts.*")) {
+        return {
+          rows: [{
+            id: "11",
+            user_id: "1",
+            status: "pending",
+            source_text: "bonus 5000",
+            item: draftItem,
+            created_at: "2026-06-30T09:00:00.000Z",
+            base_currency: "THB",
+            display_currency: "USD",
+            usd_thb_rate: "30",
+            monthly_budget_amount: "48000",
+            timezone: "Asia/Bangkok"
+          }]
+        };
+      }
+      if (query.includes("INSERT INTO budget_topups")) {
+        return {
+          rows: [{
+            id: "20",
+            user_id: "1",
+            draft_id: "11",
+            month_key: "2026-06",
+            local_date: "2026-06-30",
+            amount_original: "5000",
+            currency_original: "THB",
+            amount_base: "5000",
+            base_currency: "THB",
+            converted_amounts: { THB: 5000, USD: 166.67 },
+            exchange_rate_source: "test-rates",
+            kind: "income",
+            note: "bonus",
+            occurred_at: "2026-06-30T10:00:00.000Z"
+          }]
+        };
+      }
+      if (query.includes("FROM monthly_budget_overrides")) return { rows: [] };
+      if (query.includes("FROM budget_topups") && query.includes("SUM(amount_base)")) return { rows: [{ total: 5000 }] };
+      if (query.includes("FROM budget_topups") && query.includes("ORDER BY occurred_at DESC")) return { rows: [] };
+      return { rows: [] };
+    },
+    release() {}
+  };
+  const repo = createRepository({
+    async connect() { return client; },
+    async query(sql, params = []) {
+      queries.push({ sql: String(sql), params });
+      return { rows: [] };
+    }
+  }, { exchangeRates: fixedRates() });
+  repo.dashboard = async () => ({ snapshot: { baseCurrency: "THB", monthlyBudget: 53000, freeRemaining: 53000 } });
+
+  const result = await repo.confirmBudgetTopupDraft(11, 100, new Date("2026-06-30T10:00:00Z"));
+
+  assert.equal(result.alreadySaved, false);
+  assert.equal(result.topup.id, "20");
+  assert.equal(result.currentMonthBudget.amount, 53000);
+  assert.ok(queries.some((q) => q.sql.includes("UPDATE budget_topup_drafts SET status = 'confirmed'")));
+  assert.ok(queries.some((q) => q.sql.includes("UPDATE monthly_reserve_instances")));
+  assert.ok(queries.some((q) => q.sql.includes("DELETE FROM daily_budget_snapshots")));
+  const reserveIndex = queries.findIndex((q) => q.sql.includes("UPDATE monthly_reserve_instances"));
+  const snapshotIndex = queries.findIndex((q) => q.sql.includes("DELETE FROM daily_budget_snapshots"));
+  const commitIndex = queries.findIndex((q) => q.sql === "COMMIT");
+  assert.ok(reserveIndex > -1 && reserveIndex < commitIndex, "expected reserve update before commit");
+  assert.ok(snapshotIndex > -1 && snapshotIndex < commitIndex, "expected snapshot invalidation before commit");
+});
+
+test("confirmBudgetTopupDraft rejects previous-month top-ups in the MVP", async () => {
+  const { createRepository } = await import("../src/repository.js");
+  const queries = [];
+  const draftItem = {
+    amount: 5000,
+    currency: "THB",
+    kind: "income",
+    occurred_at: "2026-06-30T17:00:00.000Z",
+    local_date: "2026-06-30",
+    month_key: "2026-06"
+  };
+  const client = {
+    async query(sql, params = []) {
+      queries.push({ sql: String(sql), params });
+      const query = String(sql);
+      if (query === "BEGIN" || query === "COMMIT" || query === "ROLLBACK") return { rows: [] };
+      if (query.includes("SELECT budget_topup_drafts.*")) {
+        return {
+          rows: [{
+            id: "11",
+            user_id: "1",
+            status: "pending",
+            source_text: "I got 5000 yesterday",
+            item: draftItem,
+            created_at: "2026-07-01T01:00:00.000+07:00",
+            base_currency: "THB",
+            display_currency: "USD",
+            usd_thb_rate: "30",
+            monthly_budget_amount: "48000",
+            timezone: "Asia/Bangkok"
+          }]
+        };
+      }
+      return { rows: [] };
+    },
+    release() {}
+  };
+  const repo = createRepository({ async connect() { return client; } });
+
+  const result = await repo.confirmBudgetTopupDraft(11, 100, new Date("2026-07-01T01:00:00+07:00"));
+
+  assert.equal(result.outcome, "wrong_month");
+  assert.equal(result.targetMonthKey, "2026-06");
+  assert.ok(queries.some((q) => q.sql === "ROLLBACK"));
+  assert.ok(!queries.some((q) => q.sql.includes("INSERT INTO budget_topups")));
+});
+
+test("previewBudgetTopup uses target-month override and base currency conversion for large warning", async () => {
+  const { createRepository } = await import("../src/repository.js");
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params = []) => {
+    queries.push({ sql: String(sql), params });
+    const query = String(sql);
+    if (query.includes("SELECT * FROM users")) {
+      return {
+        rows: [{
+          id: "1",
+          telegram_user_id: "100",
+          monthly_budget_amount: "48000",
+          base_currency: "THB",
+          display_currency: "USD",
+          usd_thb_rate: "30",
+          timezone: "Asia/Bangkok"
+        }]
+      };
+    }
+    if (query.includes("FROM monthly_budget_overrides")) {
+      return { rows: [{ budget_amount_base: "2000", is_partial_month: false, created_at: "2026-06-01T00:00:00Z" }] };
+    }
+    if (query.includes("FROM budget_topups") && query.includes("SUM(amount_base)")) return { rows: [{ total: 0 }] };
+    if (query.includes("FROM budget_topups") && query.includes("ORDER BY occurred_at DESC")) return { rows: [] };
+    return { rows: [] };
+  }), { exchangeRates: fixedRates() });
+
+  const preview = await repo.previewBudgetTopup(1, {
+    amount: 300,
+    currency: "USD",
+    occurred_at: "2026-06-20T10:00:00.000Z",
+    month_key: "2026-06"
+  }, new Date("2026-06-20T10:00:00Z"));
+
+  assert.equal(preview.amountBase, 9780);
+  assert.equal(preview.baseBudget, 2000);
+  assert.equal(preview.large, true);
+  assert.equal(preview.monthKey, "2026-06");
+});
+
+test("undoBudgetTopup soft deletes a recent top-up and refreshes budget-dependent state", async () => {
+  const { createRepository } = await import("../src/repository.js");
+  const queries = [];
+  const queriesByClient = [];
+  const client = {
+    async query(sql, params = []) {
+      queriesByClient.push({ sql: String(sql), params });
+      return handleQuery(sql, params);
+    },
+    release() {}
+  };
+  function handleQuery(sql, params = []) {
+    queries.push({ sql: String(sql), params });
+    const query = String(sql);
+    if (query === "BEGIN" || query === "COMMIT" || query === "ROLLBACK") return { rows: [] };
+    if (query.includes("FROM budget_topups") && query.includes("JOIN users")) {
+      return { rows: [{ id: "20", user_id: "1", created_at: "2026-06-30T10:00:00Z", timezone: "Asia/Bangkok", monthly_budget_amount: "48000", base_currency: "THB", display_currency: "USD", usd_thb_rate: "30" }] };
+    }
+    if (query.includes("UPDATE budget_topups SET deleted_at")) return { rows: [{ id: "20", deleted_at: "2026-06-30T10:05:00Z" }] };
+    if (query.includes("FROM monthly_budget_overrides")) return { rows: [] };
+    if (query.includes("FROM budget_topups") && query.includes("SUM(amount_base)")) return { rows: [{ total: 0 }] };
+    if (query.includes("FROM budget_topups") && query.includes("ORDER BY occurred_at DESC")) return { rows: [] };
+    return { rows: [] };
+  }
+  const repo = createRepository({
+    async connect() { return client; },
+    async query(sql, params = []) { return handleQuery(sql, params); }
+  });
+  repo.dashboard = async () => ({ snapshot: { baseCurrency: "THB", monthlyBudget: 48000, freeRemaining: 48000 } });
+
+  const result = await repo.undoBudgetTopup(20, 100, new Date("2026-06-30T10:05:00Z"));
+
+  assert.equal(result.undone, true);
+  assert.equal(result.currentMonthBudget.amount, 48000);
+  assert.ok(queries.some((q) => q.sql.includes("UPDATE budget_topups SET deleted_at")));
+  assert.ok(queries.some((q) => q.sql.includes("DELETE FROM daily_budget_snapshots")));
+  const updateIndex = queriesByClient.findIndex((q) => q.sql.includes("UPDATE budget_topups SET deleted_at"));
+  const reserveIndex = queriesByClient.findIndex((q) => q.sql.includes("UPDATE monthly_reserve_instances"));
+  const snapshotIndex = queriesByClient.findIndex((q) => q.sql.includes("DELETE FROM daily_budget_snapshots"));
+  const commitIndex = queriesByClient.findIndex((q) => q.sql === "COMMIT");
+  assert.ok(updateIndex > -1 && updateIndex < reserveIndex, "expected top-up undo before reserve update");
+  assert.ok(reserveIndex > -1 && reserveIndex < snapshotIndex, "expected reserve update before snapshot invalidation");
+  assert.ok(snapshotIndex > -1 && snapshotIndex < commitIndex, "expected snapshot invalidation before commit");
 });
 
 test("two saveDraftAsExpense calls on the same draft produce one expense set", async () => {

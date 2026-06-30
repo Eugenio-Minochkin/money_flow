@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { appKeyboard, dailyReminderKeyboard, draftKeyboard } from "../src/telegramKeyboards.js";
+import { appKeyboard, budgetTopupDraftKeyboard, budgetTopupUndoKeyboard, dailyReminderKeyboard, draftKeyboard } from "../src/telegramKeyboards.js";
 
 test("single-item draft keyboard uses d: scheme, radio type and checkbox category, no planned", () => {
   const keyboard = draftKeyboard(42, [{
@@ -88,6 +88,21 @@ test("parseDraftCallback decodes d: actions", async () => {
   assert.deepEqual(parseDraftCallback("d:42:c:food"), { scheme: "d", draftId: "42", action: "category", value: "food" });
   assert.deepEqual(parseDraftCallback("d:42:review"), { scheme: "d", draftId: "42", action: "review" });
   assert.equal(parseDraftCallback("confirm:42"), null);
+});
+
+test("budget top-up callbacks and keyboards use bt scheme", async () => {
+  const { parseBudgetTopupCallback } = await import("../src/telegramKeyboards.js");
+  assert.deepEqual(parseBudgetTopupCallback("bt:42:confirm"), { scheme: "bt", id: "42", action: "confirm" });
+  assert.deepEqual(parseBudgetTopupCallback("bt:42:cancel"), { scheme: "bt", id: "42", action: "cancel" });
+  assert.deepEqual(parseBudgetTopupCallback("bt:99:undo"), { scheme: "bt", id: "99", action: "undo" });
+  assert.equal(parseBudgetTopupCallback("d:42:confirm"), null);
+
+  const draftButtons = budgetTopupDraftKeyboard(42, "en").inline_keyboard.flat();
+  assert.ok(draftButtons.some((button) => button.callback_data === "bt:42:confirm"));
+  assert.ok(draftButtons.some((button) => button.callback_data === "bt:42:cancel"));
+
+  const undoButtons = budgetTopupUndoKeyboard(99, "en").inline_keyboard.flat();
+  assert.equal(undoButtons[0].callback_data, "bt:99:undo");
 });
 
 test("every quick category code round-trips to a known slug", async () => {

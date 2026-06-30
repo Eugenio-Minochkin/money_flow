@@ -2895,6 +2895,139 @@ test("regular draft delivery stores the originating telegram chat and message id
   assert.equal(refs[0].messageId, 777);
 });
 
+test("processQueuedMessage creates budget top-up draft before expense parser", async () => {
+  let topupDraft = null;
+  let expenseParserCalled = false;
+  const repository = {
+    async createBudgetTopupDraft(userId, sourceText, item) {
+      topupDraft = { userId, sourceText, item };
+      return { id: 42, status: "pending", item };
+    },
+    async previewBudgetTopup() {
+      return { amountBase: 10000, baseBudget: 48000, large: false, monthKey: "2026-06" };
+    },
+    async recordAppEvent() {}
+  };
+  const expenseParser = {
+    async parse() {
+      expenseParserCalled = true;
+      return { expenses: [] };
+    }
+  };
+  const sent = [];
+  const telegramClient = {
+    async sendMessage(message) {
+      sent.push(message);
+      return { ok: true, result: { message_id: 777 } };
+    },
+    async editMessageText(message) {
+      sent.push(message);
+      return { ok: true, result: { message_id: 777 } };
+    }
+  };
+
+  await processQueuedMessage({
+    message: { chat: { id: 5 } },
+    from: { id: 100 },
+    user: { id: 1, interface_language: "en", base_currency: "THB", onboarding_step: "completed", timezone: "Asia/Bangkok" },
+    rawText: "bonus 10000",
+    inputType: null,
+    repository,
+    token: null,
+    miniAppUrl: "http://x",
+    expenseParser,
+    telegramClient,
+    now: () => new Date("2026-06-30T10:00:00Z"),
+    trace: stubTrace()
+  });
+
+  assert.equal(expenseParserCalled, false);
+  assert.equal(topupDraft.userId, 1);
+  assert.equal(topupDraft.item.amount, 10000);
+  assert.equal(topupDraft.item.kind, "income");
+  assert.ok(sent.some((message) => String(message.text).includes("budget top-up")));
+});
+
+test("processQueuedMessage uses base-currency preview for large budget top-up warning", async () => {
+  const repository = {
+    async createBudgetTopupDraft(userId, sourceText, item) {
+      return { id: 42, status: "pending", item };
+    },
+    async previewBudgetTopup(userId, item) {
+      assert.equal(userId, 1);
+      assert.equal(item.currency, "USD");
+      return { amountBase: 9780, baseBudget: 2000, large: true, monthKey: "2026-06" };
+    },
+    async recordAppEvent() {}
+  };
+  const sent = [];
+  const telegramClient = {
+    async sendMessage(message) {
+      sent.push(message);
+      return { ok: true, result: { message_id: 777 } };
+    },
+    async editMessageText(message) {
+      sent.push(message);
+      return { ok: true, result: { message_id: 777 } };
+    }
+  };
+
+  await processQueuedMessage({
+    message: { chat: { id: 5 } },
+    from: { id: 100 },
+    user: { id: 1, interface_language: "en", base_currency: "THB", onboarding_step: "completed", timezone: "Asia/Bangkok", monthly_budget_amount: "48000" },
+    rawText: "add $300 to my budget",
+    inputType: null,
+    repository,
+    token: null,
+    miniAppUrl: "http://x",
+    expenseParser: { async parse() { throw new Error("expense parser should not be called"); } },
+    telegramClient,
+    now: () => new Date("2026-06-30T10:00:00Z"),
+    trace: stubTrace()
+  });
+
+  assert.ok(sent.some((message) => String(message.text).includes("very large top-up")));
+});
+
+test("budget top-up confirm explains previous-month top-ups are not supported", async () => {
+  const { handleCallback } = await import("../src/telegram.js");
+  const calls = [];
+  const repository = {
+    async getUserByTelegramId() {
+      return { id: 1, telegram_user_id: "100", interface_language: "en", onboarding_step: "completed" };
+    },
+    async confirmBudgetTopupDraft() {
+      return { outcome: "wrong_month", targetMonthKey: "2026-06" };
+    }
+  };
+  const telegramClient = {
+    async answerCallbackQuery(args) {
+      calls.push(args);
+      return { ok: true };
+    }
+  };
+
+  await handleCallback({
+    update: {
+      callback_query: {
+        id: "cb-1",
+        data: "bt:42:confirm",
+        from: { id: 100 },
+        message: { chat: { id: 5 }, message_id: 10 }
+      }
+    },
+    repository,
+    token: null,
+    miniAppUrl: "http://x",
+    telegramClient,
+    trace: stubTrace(),
+    now: () => new Date("2026-07-01T01:00:00+07:00")
+  });
+
+  assert.ok(calls.some((call) => String(call.text).includes("current month")));
+});
+
 test("updateDraftMessageToSaved edits the stored message and falls back to a new one on failure", async () => {
   const { updateDraftMessageToSaved } = await import("../src/telegram.js");
   const calls = [];

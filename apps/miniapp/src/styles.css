@@ -472,6 +472,51 @@ body[data-theme="dark"] .monthly-forecast {
   overflow-wrap: anywhere;
 }
 
+.budget-topup-shell.hidden {
+  display: none;
+}
+
+.budget-topup {
+  display: grid;
+  gap: 8px;
+  margin: 10px 0 14px;
+  padding: 12px 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.budget-topup h3 {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.2;
+}
+
+.budget-topup__line,
+.budget-topup__item {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 14px;
+  line-height: 1.25;
+}
+
+.budget-topup__line span,
+.budget-topup__history-title,
+.budget-topup__item {
+  color: #6f6258;
+}
+
+.budget-topup__line--total {
+  padding-top: 6px;
+  border-top: 1px dashed var(--border);
+}
+
+.budget-topup__history {
+  display: grid;
+  gap: 6px;
+  padding-top: 6px;
+}
+
 .dashboard-card--progress {
   align-content: stretch;
   min-height: 214px;

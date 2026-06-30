@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildDashboardCards, buildHeroMetric, renderDashboardCards } from "../src/dashboardCards.js";
+import { buildDashboardCards, buildHeroMetric, renderBudgetTopupBreakdown, renderDashboardCards } from "../src/dashboardCards.js";
 
 const labels = {
   "dashboard.available": "доступно",
@@ -202,4 +202,42 @@ test("tooltips never leak raw placeholders into rendered markup", () => {
   assert.doesNotMatch(container.innerHTML, /\{budget\}/);
   assert.doesNotMatch(container.innerHTML, /\{weeklyPace\}/);
   assert.doesNotMatch(container.innerHTML, /\{monthlyAllowance\}/);
+});
+
+test("renders compact budget top-up breakdown only when top-ups exist", () => {
+  const container = { innerHTML: "", classList: { toggled: [], toggle(name, value) { this.toggled.push([name, value]); } } };
+  renderBudgetTopupBreakdown(container, {
+    baseBudget: 48000,
+    topupsTotal: 5000,
+    amount: 53000,
+    topups: [{ amount_base: 5000, occurred_at: "2026-06-29T10:00:00Z" }]
+  }, {
+    t: (key, values = {}) => {
+      const labels = {
+        "budgetTopup.title": "Monthly budget",
+        "budgetTopup.baseBudget": "Base budget",
+        "budgetTopup.topups": "Top-ups",
+        "budgetTopup.totalBudget": "Total budget",
+        "budgetTopup.historyTitle": "Recent top-ups",
+        "budgetTopup.historyItem": `+${values.amount} · Budget top-up · ${values.date}`
+      };
+      return labels[key] ?? key;
+    },
+    moneyBase: (value) => `${value} THB`,
+    formatDate: () => "Jun 29"
+  });
+
+  assert.match(container.innerHTML, /Monthly budget/);
+  assert.match(container.innerHTML, /Base budget/);
+  assert.match(container.innerHTML, /48000 THB/);
+  assert.match(container.innerHTML, /Top-ups/);
+  assert.match(container.innerHTML, /\+5000 THB/);
+  assert.match(container.innerHTML, /Total budget/);
+  assert.match(container.innerHTML, /53000 THB/);
+  assert.match(container.innerHTML, /Budget top-up · Jun 29/);
+
+  const empty = { innerHTML: "x", classList: { hidden: false, toggle(_name, value) { this.hidden = value; } } };
+  renderBudgetTopupBreakdown(empty, { topupsTotal: 0, topups: [] }, { t: () => "", moneyBase: () => "", formatDate: () => "" });
+  assert.equal(empty.innerHTML, "");
+  assert.equal(empty.classList.hidden, true);
 });

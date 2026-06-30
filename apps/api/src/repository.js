@@ -28,6 +28,9 @@ export class CategoryRequiredError extends Error {
 export class DraftNotFoundError extends Error {
   constructor() { super("Draft not found"); this.name = "DraftNotFoundError"; }
 }
+export class BudgetTopupDraftNotFoundError extends Error {
+  constructor() { super("Budget top-up draft not found"); this.name = "BudgetTopupDraftNotFoundError"; }
+}
 
 export function createRepository(pool, options = {}) {
   const defaultMonthlyBudget = options.defaultMonthlyBudget ?? 45000;
@@ -972,6 +975,256 @@ export function createRepository(pool, options = {}) {
       return normalizePlannedDraft(result.rows[0]);
     },
 
+    async createBudgetTopupDraft(userId, sourceText, item, now = new Date()) {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query(
+          `SELECT id
+           FROM users
+           WHERE id = $1
+           FOR UPDATE`,
+          [userId]
+        );
+        await client.query(
+          `UPDATE budget_topup_drafts
+           SET status = 'expired', expired_at = $2
+           WHERE user_id = $1 AND status = 'pending'`,
+          [userId, now]
+        );
+        const result = await client.query(
+          `INSERT INTO budget_topup_drafts (user_id, status, source_text, item, created_at)
+           VALUES ($1, 'pending', $2, $3::jsonb, $4)
+           RETURNING *`,
+          [userId, sourceText, JSON.stringify(item), now]
+        );
+        await client.query("COMMIT");
+        return normalizeBudgetTopupDraft(result.rows[0]);
+      } catch (error) {
+        try { await client.query("ROLLBACK"); } catch { /* ignore rollback failures */ }
+        throw error;
+      } finally {
+        client.release();
+      }
+    },
+
+    async previewBudgetTopup(userId, item, now = new Date()) {
+      const userResult = await pool.query("SELECT * FROM users WHERE id = $1", [userId]);
+      const user = userResult.rows[0] ?? null;
+      if (!user) throw new Error("User not found");
+      const timeZone = userTimezone(user);
+      const occurredAt = new Date(item?.occurred_at ?? now);
+      const targetDate = Number.isFinite(occurredAt.getTime()) ? occurredAt : now;
+      const moneyAmounts = await buildMoneyAmounts(exchangeRates, item.amount, item.currency, targetDate, user);
+      const targetBudget = await currentMonthBudget(pool, user, targetDate, timeZone);
+      return {
+        amountBase: moneyAmounts.amountBase,
+        baseBudget: targetBudget.baseBudget,
+        monthKey: targetBudget.monthKey,
+        large: targetBudget.baseBudget > 0
+          ? moneyAmounts.amountBase > targetBudget.baseBudget * 3
+          : moneyAmounts.amountBase >= 100000
+      };
+    },
+
+    async confirmBudgetTopupDraft(draftId, telegramUserId, now = new Date()) {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        const draftResult = await client.query(
+          `SELECT budget_topup_drafts.*,
+                  users.telegram_user_id,
+                  users.monthly_budget_amount,
+                  users.base_currency,
+                  users.display_currency,
+                  users.usd_thb_rate,
+                  users.timezone
+           FROM budget_topup_drafts
+           JOIN users ON users.id = budget_topup_drafts.user_id
+           WHERE budget_topup_drafts.id = $1
+             AND users.telegram_user_id = $2
+           FOR UPDATE`,
+          [draftId, telegramUserId]
+        );
+        const draft = normalizeBudgetTopupDraft(draftResult.rows[0] ?? null);
+        if (!draft) {
+          await client.query("ROLLBACK");
+          throw new BudgetTopupDraftNotFoundError();
+        }
+        if (draft.status === "cancelled") {
+          await client.query("ROLLBACK");
+          return { outcome: "cancelled" };
+        }
+        if (draft.status === "expired") {
+          await client.query("ROLLBACK");
+          const newer = await pool.query(
+            `SELECT id FROM budget_topup_drafts
+             WHERE user_id = $1 AND created_at > $2
+             ORDER BY created_at DESC
+             LIMIT 1`,
+            [draft.user_id, draft.created_at]
+          );
+          return { outcome: newer.rows[0] ? "replaced_by_newer" : "expired" };
+        }
+        if (new Date(draft.created_at).getTime() < now.getTime() - 24 * 60 * 60_000) {
+          await client.query(
+            `UPDATE budget_topup_drafts
+             SET status = 'expired', expired_at = $2
+             WHERE id = $1`,
+            [draft.id, now]
+          );
+          await client.query("COMMIT");
+          return { outcome: "expired" };
+        }
+        if (draft.status === "confirmed") {
+          const existing = await client.query(
+            `SELECT * FROM budget_topups
+             WHERE user_id = $1 AND draft_id = $2
+             LIMIT 1`,
+            [draft.user_id, draft.id]
+          );
+          await client.query("COMMIT");
+          const currentBudget = await currentMonthBudget(pool, draft, now, userTimezone(draft));
+          const dashboardSnapshot = (await this.dashboard(telegramUserId, now)).snapshot;
+          return { topup: withDisplay(existing.rows[0], draft), currentMonthBudget: currentBudget, dashboardSnapshot, alreadySaved: true, outcome: "confirmed" };
+        }
+
+        const item = draft.item;
+        const occurredAt = new Date(item.occurred_at ?? now);
+        const targetMonthKey = item.month_key ?? monthKey(occurredAt, userTimezone(draft));
+        const currentMonthKey = monthKey(now, userTimezone(draft));
+        if (targetMonthKey !== currentMonthKey) {
+          await client.query("ROLLBACK");
+          return { outcome: "wrong_month", targetMonthKey, currentMonthKey };
+        }
+        const moneyAmounts = await buildMoneyAmounts(exchangeRates, item.amount, item.currency, occurredAt, draft);
+        const inserted = await client.query(
+          `INSERT INTO budget_topups (
+             user_id, draft_id, month_key, local_date,
+             amount_original, currency_original, amount_base, base_currency,
+             converted_amounts, exchange_rate_date, exchange_rate_source,
+             kind, note, source_text, occurred_at
+           )
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13, $14, $15)
+           ON CONFLICT (user_id, draft_id) WHERE draft_id IS NOT NULL DO NOTHING
+           RETURNING *`,
+          [
+            draft.user_id,
+            draft.id,
+            item.month_key,
+            item.local_date,
+            item.amount,
+            item.currency,
+            moneyAmounts.amountBase,
+            draft.base_currency,
+            JSON.stringify(moneyAmounts.convertedAmounts),
+            occurredAt.toISOString().slice(0, 10),
+            moneyAmounts.source,
+            item.kind ?? "other",
+            item.note ?? null,
+            draft.source_text,
+            occurredAt
+          ]
+        );
+        let topup = inserted.rows[0] ?? null;
+        if (!topup) {
+          const existing = await client.query(
+            `SELECT * FROM budget_topups
+             WHERE user_id = $1 AND draft_id = $2
+             LIMIT 1`,
+            [draft.user_id, draft.id]
+          );
+          topup = existing.rows[0] ?? null;
+        }
+        await client.query(
+          `UPDATE budget_topup_drafts SET status = 'confirmed', confirmed_at = $2 WHERE id = $1`,
+          [draft.id, now]
+        );
+        const currentBudget = await currentMonthBudget(client, draft, now, userTimezone(draft));
+        await updateOpenReserveBudget(client, draft.user_id, currentBudget.amount);
+        await invalidateDailyBudgetSnapshot(client, draft.user_id, now, userTimezone(draft));
+        await client.query("COMMIT");
+        const dashboardSnapshot = (await this.dashboard(telegramUserId, now)).snapshot;
+        return { topup: withDisplay(topup, draft), currentMonthBudget: currentBudget, dashboardSnapshot, alreadySaved: inserted.rows.length === 0, outcome: "confirmed" };
+      } catch (error) {
+        try { await client.query("ROLLBACK"); } catch { /* ignore rollback failures */ }
+        throw error;
+      } finally {
+        client.release();
+      }
+    },
+
+    async cancelBudgetTopupDraft(draftId, telegramUserId, now = new Date()) {
+      const result = await pool.query(
+        `UPDATE budget_topup_drafts
+         SET status = 'cancelled', cancelled_at = $3
+         WHERE id = $1
+           AND user_id = (SELECT id FROM users WHERE telegram_user_id = $2)
+           AND status = 'pending'
+         RETURNING *`,
+        [draftId, telegramUserId, now]
+      );
+      if (result.rows[0]) return { cancelled: true };
+      const current = await pool.query(
+        `SELECT status FROM budget_topup_drafts
+         WHERE id = $1 AND user_id = (SELECT id FROM users WHERE telegram_user_id = $2)`,
+        [draftId, telegramUserId]
+      );
+      const status = current.rows[0]?.status;
+      if (status === "cancelled") return { cancelled: false, reason: "already_cancelled" };
+      if (status === "confirmed") return { cancelled: false, reason: "already_confirmed" };
+      if (status === "expired") return { cancelled: false, reason: "expired" };
+      return { cancelled: false, reason: "not_found" };
+    },
+
+    async undoBudgetTopup(topupId, telegramUserId, now = new Date()) {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        const found = await client.query(
+          `SELECT budget_topups.*,
+                  users.telegram_user_id,
+                  users.monthly_budget_amount,
+                  users.base_currency,
+                  users.display_currency,
+                  users.usd_thb_rate,
+                  users.timezone
+           FROM budget_topups
+           JOIN users ON users.id = budget_topups.user_id
+           WHERE budget_topups.id = $1
+             AND users.telegram_user_id = $2
+             AND budget_topups.deleted_at IS NULL
+           FOR UPDATE`,
+          [topupId, telegramUserId]
+        );
+        const topup = found.rows[0] ?? null;
+        if (!topup) {
+          await client.query("ROLLBACK");
+          return { undone: false, reason: "not_found" };
+        }
+        if (new Date(topup.created_at).getTime() < now.getTime() - 10 * 60_000) {
+          await client.query("ROLLBACK");
+          return { undone: false, reason: "expired" };
+        }
+        await client.query(
+          `UPDATE budget_topups SET deleted_at = $2
+           WHERE id = $1 AND deleted_at IS NULL`,
+          [topupId, now]
+        );
+        const currentBudget = await currentMonthBudget(client, topup, now, userTimezone(topup));
+        await updateOpenReserveBudget(client, topup.user_id, currentBudget.amount);
+        await invalidateDailyBudgetSnapshot(client, topup.user_id, now, userTimezone(topup));
+        await client.query("COMMIT");
+        const dashboardSnapshot = (await this.dashboard(telegramUserId, now)).snapshot;
+        return { undone: true, currentMonthBudget: currentBudget, dashboardSnapshot };
+      } catch (error) {
+        try { await client.query("ROLLBACK"); } catch { /* ignore rollback failures */ }
+        throw error;
+      } finally {
+        client.release();
+      }
+    },
+
     async confirmPlannedDraft(plannedDraftId, telegramUserId) {
       const client = await pool.connect();
       try {
@@ -1907,6 +2160,14 @@ function normalizePlannedDraft(draft) {
   };
 }
 
+function normalizeBudgetTopupDraft(draft) {
+  if (!draft) return null;
+  return {
+    ...draft,
+    item: typeof draft.item === "string" ? JSON.parse(draft.item) : draft.item
+  };
+}
+
 async function monthBaselineTotal(pool, userId, now, timeZone = "Asia/Bangkok") {
   const result = await pool.query(
     `SELECT COALESCE(amount_base, 0)::float AS total
@@ -1919,6 +2180,7 @@ async function monthBaselineTotal(pool, userId, now, timeZone = "Asia/Bangkok") 
 
 async function currentMonthBudget(pool, user, now, timeZone = userTimezone(user)) {
   const regularAmount = roundMoney(Number(user.monthly_budget_amount ?? 0));
+  const period = monthKey(now, timeZone);
   const result = await pool.query(
     `SELECT COALESCE(budget_amount_base, 0)::float AS budget_amount_base,
             is_partial_month,
@@ -1926,28 +2188,62 @@ async function currentMonthBudget(pool, user, now, timeZone = userTimezone(user)
             updated_at
      FROM monthly_budget_overrides
      WHERE user_id = $1 AND month_key = $2`,
-    [user.id, monthKey(now, timeZone)]
+    [user.id, period]
   );
   const override = result.rows[0];
-  const amount = override ? roundMoney(Number(override.budget_amount_base ?? 0)) : regularAmount;
+  const baseBudget = override ? roundMoney(Number(override.budget_amount_base ?? 0)) : regularAmount;
+  const topupsTotal = await budgetTopupsTotalForMonth(pool, user.id, period);
+  const amount = roundMoney(baseBudget + topupsTotal);
+  const topups = await listBudgetTopupsForMonth(pool, user, period);
   const isPartialMonth = Boolean(override?.is_partial_month);
   const effectiveDate = override?.updated_at ?? override?.created_at ?? null;
   const partialPeriodDays = isPartialMonth
     ? partialMonthPeriodDays(effectiveDate ?? now, now, normalizeTimeZone(user.timezone))
     : null;
   return {
-    monthKey: monthKey(now, timeZone),
+    monthKey: period,
     amount,
+    baseBudget,
+    topupsTotal,
     regularMonthlyBudget: regularAmount,
     isPartialMonth,
     hasOverride: Boolean(override),
     effectiveDate,
     partialPeriodDays,
+    topups,
     display: {
       currency: user.display_currency ?? "USD",
-      amount: displayFromBase(amount, user)
+      amount: displayFromBase(amount, user),
+      baseBudget: displayFromBase(baseBudget, user),
+      topupsTotal: displayFromBase(topupsTotal, user)
     }
   };
+}
+
+async function budgetTopupsTotalForMonth(pool, userId, period) {
+  const result = await pool.query(
+    `SELECT COALESCE(SUM(amount_base), 0)::float AS total
+     FROM budget_topups
+     WHERE user_id = $1
+       AND month_key = $2
+       AND deleted_at IS NULL`,
+    [userId, period]
+  );
+  return roundMoney(Number(result.rows[0]?.total ?? 0));
+}
+
+async function listBudgetTopupsForMonth(pool, user, period) {
+  const result = await pool.query(
+    `SELECT *
+     FROM budget_topups
+     WHERE user_id = $1
+       AND month_key = $2
+       AND deleted_at IS NULL
+     ORDER BY occurred_at DESC, id DESC
+     LIMIT 10`,
+    [user.id, period]
+  );
+  return result.rows.map((row) => withDisplay(row, user));
 }
 
 function partialMonthPeriodDays(effectiveDate, now, timeZone) {
@@ -2227,7 +2523,7 @@ async function assertReserveBudgetCapacity(pool, user, budgetAmount, now) {
 }
 
 async function updateOpenReserveBudget(pool, userId, budgetAmount) {
-  if (typeof pool.connect !== "function") return;
+  if (typeof pool.query !== "function") return;
   await pool.query(
     `UPDATE monthly_reserve_instances
      SET budget_amount = $2, updated_at = now()
