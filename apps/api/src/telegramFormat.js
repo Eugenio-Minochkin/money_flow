@@ -221,16 +221,43 @@ export function formatPlannedDraft(item, options = {}) {
 
 export function formatBudgetTopupDraft(item, options = {}) {
   const language = normalizeLanguage(options.language);
-  const monthName = formatMonthName(item.month_key, language);
+  const monthName = formatMonthName(item.month_key ?? monthKeyFromDate(item.occurred_at), language);
   const amount = formatMoney(item.amount, item.currency, language);
   if (options.large === true) {
     return language === "en"
-      ? `This is a very large top-up: +${amount}.\n\nPlease check the amount. Are you sure you want to add it to your ${monthName} budget?`
-      : `Это очень большое пополнение: +${amount}.\n\nПроверь сумму. Точно добавить её к бюджету ${monthName}?`;
+      ? `\u26a0\ufe0f <b>Very large top-up:</b>\n+${amount}\n\nPlease check the amount. Add it to your ${monthName} budget?`
+      : `\u26a0\ufe0f <b>Очень большое пополнение:</b>\n+${amount}\n\nПроверь сумму. Добавить к бюджету на ${monthName}?`;
   }
   return language === "en"
-    ? `Got it: budget top-up +${amount}\n\nAdd it to your ${monthName} budget?`
-    : `Понял: пополнение бюджета +${amount}\n\nДобавить к бюджету ${monthName}?`;
+    ? `\u2795 <b>Budget top-up:</b>\n+${amount}\n\nAdd it to your ${monthName} budget?`
+    : `\u2795 <b>Пополнение бюджета:</b>\n+${amount}\n\nДобавить к бюджету на ${monthName}?`;
+}
+
+export function formatBudgetTopupSuccess(topup, snapshot, languageValue = "ru") {
+  const language = normalizeLanguage(languageValue);
+  const currency = snapshot?.baseCurrency ?? topup?.base_currency ?? "THB";
+  const monthBudget = Number(snapshot?.monthlyBudget ?? 0);
+  const remaining = Number(snapshot?.freeRemaining ?? snapshot?.monthRemaining ?? 0);
+  const original = formatMoney(topup?.amount_original ?? topup?.amount_base ?? 0, topup?.currency_original ?? currency, language);
+  const convertedLine = topup?.currency_original && topup.currency_original !== currency
+    ? (language === "en"
+        ? `\n\nIn your budget currency, that is +${formatMoney(topup.amount_base, currency, language)}.`
+        : `\n\nВ бюджете это учтено как +${formatMoney(topup.amount_base, currency, language)}.`)
+    : "";
+  return language === "en"
+    ? `\u2705 <b>Budget updated:</b>\n+${original} · Budget top-up${convertedLine}\n\n\ud83d\udccc <b>Today</b>\nMonthly budget: <b>${formatMoney(monthBudget, currency, language)}</b>\nRemaining: <b>${formatMoney(remaining, currency, language)}</b>\n\n\u21a9\ufe0f You can undo this top-up for 10 minutes.`
+    : `\u2705 <b>Бюджет обновлён:</b>\n+${original} · Пополнение бюджета${convertedLine}\n\n\ud83d\udccc <b>Сегодня</b>\nБюджет месяца: <b>${formatMoney(monthBudget, currency, language)}</b>\nОсталось: <b>${formatMoney(remaining, currency, language)}</b>\n\n\u21a9\ufe0f Можно отменить пополнение в течение 10 минут.`;
+}
+
+export function formatBudgetTopupUndoSuccess(topup, snapshot, languageValue = "ru") {
+  const language = normalizeLanguage(languageValue);
+  const currency = snapshot?.baseCurrency ?? topup?.base_currency ?? "THB";
+  const amountLine = topup
+    ? `\n-${formatMoney(topup.amount_original ?? topup.amount_base ?? 0, topup.currency_original ?? currency, language)}`
+    : "";
+  return language === "en"
+    ? `\u21a9\ufe0f <b>Top-up undone:</b>${amountLine}\n\nMonthly budget: <b>${formatMoney(snapshot?.monthlyBudget ?? 0, currency, language)}</b>\nRemaining: <b>${formatMoney(snapshot?.freeRemaining ?? 0, currency, language)}</b>`
+    : `\u21a9\ufe0f <b>Пополнение отменено:</b>${amountLine}\n\nБюджет месяца: <b>${formatMoney(snapshot?.monthlyBudget ?? 0, currency, language)}</b>\nОсталось: <b>${formatMoney(snapshot?.freeRemaining ?? 0, currency, language)}</b>`;
 }
 
 function formatMonthName(monthKey, language) {
@@ -241,6 +268,12 @@ function formatMonthName(monthKey, language) {
     month: "long",
     timeZone: "UTC"
   }).format(date);
+}
+
+function monthKeyFromDate(value) {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return null;
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
 }
 
 export function normalizeLanguage(value) {

@@ -1,7 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { appKeyboard, budgetTopupDraftKeyboard, budgetTopupUndoKeyboard, dailyReminderKeyboard, draftKeyboard } from "../src/telegramKeyboards.js";
+import {
+  appKeyboard,
+  budgetTopupDraftKeyboard,
+  budgetTopupMiniAppKeyboard,
+  budgetTopupSuccessKeyboard,
+  budgetTopupUndoKeyboard,
+  dailyReminderKeyboard,
+  draftKeyboard
+} from "../src/telegramKeyboards.js";
 
 test("single-item draft keyboard uses d: scheme, radio type and checkbox category, no planned", () => {
   const keyboard = draftKeyboard(42, [{
@@ -98,11 +106,35 @@ test("budget top-up callbacks and keyboards use bt scheme", async () => {
   assert.equal(parseBudgetTopupCallback("d:42:confirm"), null);
 
   const draftButtons = budgetTopupDraftKeyboard(42, "en").inline_keyboard.flat();
-  assert.ok(draftButtons.some((button) => button.callback_data === "bt:42:confirm"));
-  assert.ok(draftButtons.some((button) => button.callback_data === "bt:42:cancel"));
+  assert.ok(draftButtons.some((button) => button.callback_data === "bt:42:confirm" && button.text === "\u2705 Add to budget"));
+  assert.ok(draftButtons.some((button) => button.callback_data === "bt:42:cancel" && button.text === "\ud83d\uddd1 Cancel"));
+  assert.ok(draftButtons.some((button) => button.callback_data === "bt:42:cancel" && button.text === "\ud83d\udeab Do not count"));
 
   const undoButtons = budgetTopupUndoKeyboard(99, "en").inline_keyboard.flat();
   assert.equal(undoButtons[0].callback_data, "bt:99:undo");
+  assert.equal(undoButtons[0].text, "\u21a9\ufe0f Undo top-up");
+});
+
+test("large budget top-up draft keyboard only offers confirm and cancel", () => {
+  const keyboard = budgetTopupDraftKeyboard(42, "en", { large: true });
+  const buttons = keyboard.inline_keyboard.flat();
+
+  assert.deepEqual(buttons.map((button) => button.callback_data), ["bt:42:confirm", "bt:42:cancel"]);
+  assert.equal(buttons[0].text, "\u2705 Yes, add it");
+  assert.equal(buttons[1].text, "\ud83d\uddd1 Cancel");
+});
+
+test("budget top-up success and terminal keyboards include Mini App buttons", () => {
+  const success = budgetTopupSuccessKeyboard(99, "http://localhost:3000", 100, "en");
+  assert.equal(success.inline_keyboard[0][0].callback_data, "bt:99:undo");
+  assert.equal(success.inline_keyboard[0][0].text, "\u21a9\ufe0f Undo top-up");
+  assert.equal(success.inline_keyboard[1][0].text, "\ud83d\udcf1 Open Mini App");
+  assert.equal(success.inline_keyboard[1][0].web_app.url, "http://localhost:3000?telegramUserId=100");
+
+  const miniAppOnly = budgetTopupMiniAppKeyboard("http://localhost:3000", 100, "en");
+  assert.equal(miniAppOnly.inline_keyboard.length, 1);
+  assert.equal(miniAppOnly.inline_keyboard[0][0].text, "\ud83d\udcf1 Open Mini App");
+  assert.equal(miniAppOnly.inline_keyboard[0][0].web_app.url, "http://localhost:3000?telegramUserId=100");
 });
 
 test("every quick category code round-trips to a known slug", async () => {

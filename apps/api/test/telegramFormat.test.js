@@ -1,7 +1,16 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { formatDraft, formatReserveClosedEvent, formatSavedSummary, formatTotals, formatWeeklyReport } from "../src/telegramFormat.js";
+import {
+  formatBudgetTopupDraft,
+  formatBudgetTopupSuccess,
+  formatBudgetTopupUndoSuccess,
+  formatDraft,
+  formatReserveClosedEvent,
+  formatSavedSummary,
+  formatTotals,
+  formatWeeklyReport
+} from "../src/telegramFormat.js";
 import { categoryName } from "../../../packages/shared/src/categories.js";
 
 test("formats a draft with total and review warning", () => {
@@ -215,6 +224,66 @@ test("formats money decimals by currency in Telegram UI", () => {
   assert.match(normalizeSpaces(formatDraft([{ amount: 266.58, currency: "USD", description: "food", category_slug: "other" }], { language: "en" })), /266\.58 USD/);
   assert.match(normalizeSpaces(formatDraft([{ amount: 45.2, currency: "EUR", description: "food", category_slug: "other" }], { language: "en" })), /45\.20 EUR/);
   assert.match(normalizeSpaces(formatDraft([{ amount: 120.5, currency: "GEL", description: "food", category_slug: "other" }], { language: "en" })), /120\.50 GEL/);
+});
+
+test("formats budget top-up draft with compact title and large warning", () => {
+  const normal = formatBudgetTopupDraft({
+    amount: 200,
+    currency: "USD",
+    occurred_at: "2026-06-15T10:00:00Z"
+  }, { language: "en", large: false });
+  const large = formatBudgetTopupDraft({
+    amount: 1000000,
+    currency: "THB",
+    occurred_at: "2026-06-15T10:00:00Z"
+  }, { language: "en", large: true });
+
+  assert.match(normal, /\u2795 <b>Budget top-up:<\/b>/);
+  assert.match(normal, /\+200\.00 USD/);
+  assert.match(normal, /Add it to your June budget\?/);
+  assert.match(large, /\u26a0\ufe0f <b>Very large top-up:<\/b>/);
+  assert.match(large, /\+1,000,000 THB/);
+  assert.match(large, /Please check the amount/);
+});
+
+test("formats budget top-up success with budget context and undo hint", () => {
+  const text = formatBudgetTopupSuccess({
+    amount_original: 200,
+    currency_original: "USD",
+    amount_base: 7300,
+    base_currency: "THB",
+    kind: "salary"
+  }, {
+    baseCurrency: "THB",
+    monthlyBudget: 55300,
+    freeRemaining: 14000
+  }, "en");
+  const normalized = normalizeSpaces(text);
+
+  assert.match(normalized, /\u2705 <b>Budget updated:<\/b>/);
+  assert.match(normalized, /\+200\.00 USD/);
+  assert.match(normalized, /Budget top-up/);
+  assert.match(normalized, /In your budget currency, that is \+7,300 THB/);
+  assert.match(normalized, /Monthly budget: <b>55,300 THB<\/b>/);
+  assert.match(normalized, /Remaining: <b>14,000 THB<\/b>/);
+  assert.match(normalized, /\u21a9\ufe0f You can undo this top-up for 10 minutes/);
+});
+
+test("formats budget top-up undo success with amount when available", () => {
+  const text = formatBudgetTopupUndoSuccess({
+    amount_original: 200,
+    currency_original: "USD"
+  }, {
+    baseCurrency: "THB",
+    monthlyBudget: 48000,
+    freeRemaining: 9000
+  }, "en");
+  const normalized = normalizeSpaces(text);
+
+  assert.match(normalized, /\u21a9\ufe0f <b>Top-up undone:<\/b>/);
+  assert.match(normalized, /-200\.00 USD/);
+  assert.match(normalized, /Monthly budget: <b>48,000 THB<\/b>/);
+  assert.match(normalized, /Remaining: <b>9,000 THB<\/b>/);
 });
 
 test("formats weekly report with top categories", () => {

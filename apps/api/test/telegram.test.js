@@ -2945,7 +2945,7 @@ test("processQueuedMessage creates budget top-up draft before expense parser", a
   assert.equal(topupDraft.userId, 1);
   assert.equal(topupDraft.item.amount, 10000);
   assert.equal(topupDraft.item.kind, "income");
-  assert.ok(sent.some((message) => String(message.text).includes("budget top-up")));
+  assert.ok(sent.some((message) => String(message.text).includes("Budget top-up")));
 });
 
 test("processQueuedMessage uses base-currency preview for large budget top-up warning", async () => {
@@ -2987,7 +2987,7 @@ test("processQueuedMessage uses base-currency preview for large budget top-up wa
     trace: stubTrace()
   });
 
-  assert.ok(sent.some((message) => String(message.text).includes("very large top-up")));
+  assert.ok(sent.some((message) => String(message.text).includes("Very large top-up")));
 });
 
 test("budget top-up confirm explains previous-month top-ups are not supported", async () => {
@@ -3026,6 +3026,103 @@ test("budget top-up confirm explains previous-month top-ups are not supported", 
   });
 
   assert.ok(calls.some((call) => String(call.text).includes("current month")));
+});
+
+test("budget top-up confirm keeps undo and Mini App actions on success", async () => {
+  const { handleCallback } = await import("../src/telegram.js");
+  const calls = [];
+  const repository = {
+    async getUserByTelegramId() {
+      return { id: 1, telegram_user_id: "100", interface_language: "en", onboarding_step: "completed" };
+    },
+    async confirmBudgetTopupDraft() {
+      return {
+        outcome: "confirmed",
+        alreadySaved: false,
+        topup: {
+          id: 99,
+          kind: "income",
+          amount_original: 200,
+          currency_original: "USD",
+          amount_base: 7300,
+          base_currency: "THB"
+        },
+        dashboardSnapshot: {
+          baseCurrency: "THB",
+          monthlyBudget: 55300,
+          freeRemaining: 14000
+        }
+      };
+    },
+    async recordAppEvent() {}
+  };
+
+  await handleCallback({
+    update: {
+      callback_query: {
+        id: "cb-confirm-topup",
+        data: "bt:42:confirm",
+        from: { id: 100 },
+        message: { chat: { id: 5 }, message_id: 10 }
+      }
+    },
+    repository,
+    token: null,
+    miniAppUrl: "http://x",
+    telegramClient: capturingClient(calls),
+    trace: stubTrace(),
+    now: () => new Date("2026-06-30T10:00:00Z")
+  });
+
+  const edit = calls.find((call) => call.method === "editMessageText");
+  assert.ok(edit);
+  assert.match(edit.text, /Budget updated/);
+  assert.equal(edit.replyMarkup.inline_keyboard[0][0].callback_data, "bt:99:undo");
+  assert.equal(edit.replyMarkup.inline_keyboard[1][0].web_app.url, "http://x?telegramUserId=100");
+});
+
+test("budget top-up cancel and undo leave a Mini App action", async () => {
+  const { handleCallback } = await import("../src/telegram.js");
+  for (const action of ["cancel", "undo"]) {
+    const calls = [];
+    const repository = {
+      async getUserByTelegramId() {
+        return { id: 1, telegram_user_id: "100", interface_language: "en", onboarding_step: "completed" };
+      },
+      async cancelBudgetTopupDraft() {
+        return { cancelled: true };
+      },
+      async undoBudgetTopup() {
+        return {
+          undone: true,
+          topup: { amount_original: 200, currency_original: "USD" },
+          dashboardSnapshot: { baseCurrency: "THB", monthlyBudget: 48000, freeRemaining: 9000 }
+        };
+      },
+      async recordAppEvent() {}
+    };
+
+    await handleCallback({
+      update: {
+        callback_query: {
+          id: `cb-topup-${action}`,
+          data: action === "cancel" ? "bt:42:cancel" : "bt:99:undo",
+          from: { id: 100 },
+          message: { chat: { id: 5 }, message_id: 10 }
+        }
+      },
+      repository,
+      token: null,
+      miniAppUrl: "http://x",
+      telegramClient: capturingClient(calls),
+      trace: stubTrace(),
+      now: () => new Date("2026-06-30T10:00:00Z")
+    });
+
+    const edit = calls.find((call) => call.method === "editMessageText");
+    assert.ok(edit, action);
+    assert.equal(edit.replyMarkup.inline_keyboard[0][0].web_app.url, "http://x?telegramUserId=100", action);
+  }
 });
 
 test("updateDraftMessageToSaved edits the stored message and falls back to a new one on failure", async () => {
