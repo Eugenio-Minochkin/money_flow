@@ -1216,7 +1216,7 @@ export function createRepository(pool, options = {}) {
         await invalidateDailyBudgetSnapshot(client, topup.user_id, now, userTimezone(topup));
         await client.query("COMMIT");
         const dashboardSnapshot = (await this.dashboard(telegramUserId, now)).snapshot;
-        return { undone: true, currentMonthBudget: currentBudget, dashboardSnapshot };
+        return { undone: true, topup: withDisplay(topup, topup), currentMonthBudget: currentBudget, dashboardSnapshot };
       } catch (error) {
         try { await client.query("ROLLBACK"); } catch { /* ignore rollback failures */ }
         throw error;

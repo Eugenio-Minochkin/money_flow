@@ -66,11 +66,18 @@ test("Mini App translations cover dashboard, plan, history and settings labels",
     "budgetAdvice.dangerText",
     "budgetTopup.title",
     "budgetTopup.baseBudget",
+    "budgetTopup.baseShort",
     "budgetTopup.topups",
+    "budgetTopup.topupsShort",
     "budgetTopup.totalBudget",
+    "budgetTopup.total",
+    "budgetTopup.details",
+    "budgetTopup.collapse",
     "budgetTopup.historyTitle",
+    "budgetTopup.recent",
     "budgetTopup.empty",
-    "budgetTopup.historyItem"
+    "budgetTopup.historyItem",
+    "budgetTopup.historyItemCompact"
   ];
 
   for (const language of ["ru", "en"]) {

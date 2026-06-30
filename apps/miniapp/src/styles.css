@@ -517,6 +517,84 @@ body[data-theme="dark"] .monthly-forecast {
   padding-top: 6px;
 }
 
+.budget-topup-card {
+  display: grid;
+  gap: 8px;
+  margin: 10px 0 14px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent-soft) 32%, var(--panel));
+}
+
+.budget-topup-card__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.budget-topup-card__title {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.budget-topup-card__title span,
+.budget-topup-card__summary,
+.budget-topup-card__history-title,
+.budget-topup-card__item {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.25;
+}
+
+.budget-topup-card__title strong {
+  color: var(--ink);
+  font-size: 20px;
+  line-height: 1.1;
+  overflow-wrap: anywhere;
+}
+
+.budget-topup-card__toggle {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.budget-topup-card__details {
+  display: grid;
+  gap: 7px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--line);
+}
+
+.budget-topup-card__line,
+.budget-topup-card__item {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.budget-topup-card__line {
+  font-size: 14px;
+  line-height: 1.25;
+}
+
+.budget-topup-card__line span {
+  color: var(--muted);
+}
+
+.budget-topup-card__line--total {
+  padding-top: 6px;
+  border-top: 1px dashed var(--line);
+}
+
+.budget-topup-card__history {
+  display: grid;
+  gap: 6px;
+  padding-top: 4px;
+}
+
 .dashboard-card--progress {
   align-content: stretch;
   min-height: 214px;

@@ -41,24 +41,34 @@ export function parseBudgetTopupCallback(data) {
 
 export function budgetTopupDraftKeyboard(draftId, language = "ru", options = {}) {
   const text = keyboardText(language);
-  const confirm = text.budgetTopupConfirm ?? "Добавить к бюджету";
-  const confirmLarge = text.budgetTopupConfirmLarge ?? "Да, добавить";
-  const ignore = text.budgetTopupIgnore ?? "Не учитывать";
-  return {
-    inline_keyboard: [
-      [{ text: options.large ? confirmLarge : confirm, callback_data: `bt:${draftId}:confirm` }],
-      [{ text: ignore, callback_data: `bt:${draftId}:cancel` }],
-      [{ text: text.cancel, callback_data: `bt:${draftId}:cancel` }]
-    ]
-  };
+  const topupConfirm = text.budgetTopupConfirm ?? "\u2705 Добавить к бюджету";
+  const topupConfirmLarge = text.budgetTopupConfirmLarge ?? "\u2705 Да, добавить";
+  const topupIgnore = text.budgetTopupIgnore ?? "\ud83d\udeab Не учитывать";
+  const topupCancel = text.budgetTopupCancel ?? "\ud83d\uddd1 Отменить";
+  const rows = [
+    [{ text: options.large ? topupConfirmLarge : topupConfirm, callback_data: `bt:${draftId}:confirm` }]
+  ];
+  if (!options.large) rows.push([{ text: topupIgnore, callback_data: `bt:${draftId}:cancel` }]);
+  rows.push([{ text: topupCancel, callback_data: `bt:${draftId}:cancel` }]);
+  return { inline_keyboard: rows };
 }
 
 export function budgetTopupUndoKeyboard(topupId, language = "ru") {
   const text = keyboardText(language);
-  const undo = text.budgetTopupUndo ?? "Отменить пополнение";
+  const topupUndo = text.budgetTopupUndo ?? "\u21a9\ufe0f Отменить пополнение";
   return {
-    inline_keyboard: [[{ text: undo, callback_data: `bt:${topupId}:undo` }]]
+    inline_keyboard: [[{ text: topupUndo, callback_data: `bt:${topupId}:undo` }]]
   };
+}
+
+export function budgetTopupSuccessKeyboard(topupId, miniAppUrl, telegramUserId, language = "ru") {
+  const rows = budgetTopupUndoKeyboard(topupId, language).inline_keyboard;
+  rows.push([miniAppButton(miniAppUrl, telegramUserId, language)]);
+  return { inline_keyboard: rows };
+}
+
+export function budgetTopupMiniAppKeyboard(miniAppUrl, telegramUserId, language = "ru") {
+  return { inline_keyboard: [[miniAppButton(miniAppUrl, telegramUserId, language)]] };
 }
 
 export function draftKeyboard(draftId, items = [], miniAppUrl, telegramUserId, language = "ru") {
@@ -121,6 +131,11 @@ export function appKeyboard(miniAppUrl, telegramUserId, language = "ru") {
   };
 }
 
+function miniAppButton(miniAppUrl, telegramUserId, language = "ru") {
+  const text = keyboardText(language);
+  return { text: text.budgetTopupOpenMiniApp ?? `\ud83d\udcf1 ${text.openApp}`, web_app: { url: `${miniAppUrl}?telegramUserId=${telegramUserId}` } };
+}
+
 export function inboxDraftKeyboard(miniAppUrl, telegramUserId, draftId, language = "ru") {
   const text = keyboardText(language);
   return {
@@ -148,10 +163,12 @@ function keyboardText(language) {
   if (language === "en") {
     return {
       addPlanned: "Add planned expense",
-      budgetTopupConfirm: "Add to budget",
-      budgetTopupConfirmLarge: "Yes, add it",
-      budgetTopupIgnore: "Do not count",
-      budgetTopupUndo: "Undo top-up",
+      budgetTopupCancel: "\ud83d\uddd1 Cancel",
+      budgetTopupConfirm: "\u2705 Add to budget",
+      budgetTopupConfirmLarge: "\u2705 Yes, add it",
+      budgetTopupIgnore: "\ud83d\udeab Do not count",
+      budgetTopupOpenMiniApp: "\ud83d\udcf1 Open Mini App",
+      budgetTopupUndo: "\u21a9\ufe0f Undo top-up",
       cancel: "Cancel",
       confirm: "Confirm",
       edit: "Edit",

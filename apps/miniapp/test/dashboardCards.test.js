@@ -241,3 +241,59 @@ test("renders compact budget top-up breakdown only when top-ups exist", () => {
   assert.equal(empty.innerHTML, "");
   assert.equal(empty.classList.hidden, true);
 });
+
+test("budget top-up breakdown is collapsed by default and expands locally", () => {
+  let toggleHandler = null;
+  const container = {
+    innerHTML: "",
+    classList: { toggle() {} },
+    querySelector(selector) {
+      if (selector !== "[data-budget-topup-toggle]") return null;
+      return { addEventListener(_event, handler) { toggleHandler = handler; } };
+    }
+  };
+  const helpers = {
+    t: (key, values = {}) => {
+      const labels = {
+        "budgetTopup.title": "Monthly budget",
+        "budgetTopup.baseBudget": "Base budget",
+        "budgetTopup.baseShort": "Base",
+        "budgetTopup.topups": "Top-ups",
+        "budgetTopup.topupsShort": "top-ups",
+        "budgetTopup.totalBudget": "Total budget",
+        "budgetTopup.total": "Total",
+        "budgetTopup.details": "Details",
+        "budgetTopup.collapse": "Collapse",
+        "budgetTopup.historyTitle": "Recent top-ups",
+        "budgetTopup.recent": "Recent",
+        "budgetTopup.historyItem": `+${values.amount} - Budget top-up - ${values.date}`,
+        "budgetTopup.historyItemCompact": `+${values.amount} - ${values.date}`
+      };
+      return labels[key] ?? key;
+    },
+    moneyBase: (value) => `${value} THB`,
+    formatDate: () => "Jun 29"
+  };
+  const currentMonthBudget = {
+    baseBudget: 48000,
+    topupsTotal: 5000,
+    amount: 53000,
+    topups: [{ amount_base: 5000, occurred_at: "2026-06-29T10:00:00Z" }]
+  };
+
+  renderBudgetTopupBreakdown(container, currentMonthBudget, helpers);
+
+  assert.match(container.innerHTML, /budget-topup-card/);
+  assert.match(container.innerHTML, /aria-expanded="false"/);
+  assert.match(container.innerHTML, /Details/);
+  assert.match(container.innerHTML, /Base 48000 THB/);
+  assert.match(container.innerHTML, /top-ups \+5000 THB/);
+  assert.equal(typeof toggleHandler, "function");
+
+  toggleHandler();
+
+  assert.match(container.innerHTML, /budget-topup-card--expanded/);
+  assert.match(container.innerHTML, /aria-expanded="true"/);
+  assert.match(container.innerHTML, /Collapse/);
+  assert.match(container.innerHTML, /\+5000 THB - Jun 29/);
+});

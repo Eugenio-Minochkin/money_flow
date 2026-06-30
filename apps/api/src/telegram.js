@@ -13,8 +13,8 @@ import {
 } from "../../../packages/shared/src/time.js";
 import { formatAdminStats } from "./adminStatsService.js";
 import { createTelegramJobQueue } from "./telegramJobQueue.js";
-import { formatBudgetTopupDraft, formatDraft, formatPlannedDraft, formatReserveClosedEvent, formatSavedSummary, formatTotals, formatWeeklyReport } from "./telegramFormat.js";
-import { appKeyboard, budgetTopupDraftKeyboard, budgetTopupUndoKeyboard, draftKeyboard, inboxDraftKeyboard, plannedDraftKeyboard, parseBudgetTopupCallback, parseDraftCallback, categorySlugFromCode } from "./telegramKeyboards.js";
+import { formatBudgetTopupDraft, formatBudgetTopupSuccess, formatBudgetTopupUndoSuccess, formatDraft, formatPlannedDraft, formatReserveClosedEvent, formatSavedSummary, formatTotals, formatWeeklyReport } from "./telegramFormat.js";
+import { appKeyboard, budgetTopupDraftKeyboard, budgetTopupMiniAppKeyboard, budgetTopupSuccessKeyboard, draftKeyboard, inboxDraftKeyboard, plannedDraftKeyboard, parseBudgetTopupCallback, parseDraftCallback, categorySlugFromCode } from "./telegramKeyboards.js";
 import { DraftCanceledError, CategoryRequiredError } from "./repository.js";
 
 // budget_setup is the primary onboarding path; base_currency/monthly_budget/month_opening_spend are legacy fallback states.
@@ -823,7 +823,7 @@ export async function handleCallback({ update, repository, token, miniAppUrl, te
 
   const budgetTopupCallback = parseBudgetTopupCallback(callback.data);
   if (budgetTopupCallback) {
-    return handleBudgetTopupCallback({ callback, parsed: budgetTopupCallback, repository, token, telegramClient, language, user, trace, now });
+    return handleBudgetTopupCallback({ callback, parsed: budgetTopupCallback, repository, token, miniAppUrl, telegramClient, language, user, trace, now });
   }
 
   const draftCallback = parseDraftCallback(callback.data);
@@ -956,7 +956,7 @@ export async function handleCallback({ update, repository, token, miniAppUrl, te
   });
 }
 
-async function handleBudgetTopupCallback({ callback, parsed, repository, token, telegramClient, language, user, trace, now }) {
+async function handleBudgetTopupCallback({ callback, parsed, repository, token, miniAppUrl, telegramClient, language, user, trace, now }) {
   const telegramUserId = callback.from.id;
   const chatId = callback.message?.chat?.id;
   const messageId = callback.message?.message_id;
@@ -970,12 +970,13 @@ async function handleBudgetTopupCallback({ callback, parsed, repository, token, 
     return sendTelegramResponse(trace, async () => {
       await answerCallback(token, callback.id, botText(language, "cancelledCallback"), telegramClient);
       const text = botText(language, "budgetTopupCancelled");
+      const replyMarkup = budgetTopupMiniAppKeyboard(miniAppUrl, telegramUserId, language);
       if (messageId) {
         try {
-          return await editMessageText(token, chatId, messageId, text, { inline_keyboard: [] }, telegramClient);
+          return await editMessageText(token, chatId, messageId, text, replyMarkup, telegramClient);
         } catch {}
       }
-      return sendMessage(token, chatId, text, { inline_keyboard: [] }, telegramClient);
+      return sendMessage(token, chatId, text, replyMarkup, telegramClient);
     });
   }
   if (parsed.action === "undo") {
@@ -985,14 +986,17 @@ async function handleBudgetTopupCallback({ callback, parsed, repository, token, 
     return sendTelegramResponse(trace, async () => {
       await answerCallback(token, callback.id, result.undone ? botText(language, "savedCallback") : botText(language, "technicalError"), telegramClient);
       const text = result.undone
-        ? formatBudgetTopupUndoSuccess(result.dashboardSnapshot, language)
+        ? formatBudgetTopupUndoSuccess(result.topup, result.dashboardSnapshot, language)
         : botText(language, "budgetTopupUndoExpired");
+      const replyMarkup = result.undone
+        ? budgetTopupMiniAppKeyboard(miniAppUrl, telegramUserId, language)
+        : { inline_keyboard: [] };
       if (messageId) {
         try {
-          return await editMessageText(token, chatId, messageId, text, { inline_keyboard: [] }, telegramClient);
+          return await editMessageText(token, chatId, messageId, text, replyMarkup, telegramClient);
         } catch {}
       }
-      return sendMessage(token, chatId, text, { inline_keyboard: [] }, telegramClient);
+      return sendMessage(token, chatId, text, replyMarkup, telegramClient);
     });
   }
 
@@ -1018,7 +1022,7 @@ async function handleBudgetTopupCallback({ callback, parsed, repository, token, 
   return sendTelegramResponse(trace, async () => {
     await answerCallback(token, callback.id, result.alreadySaved ? botText(language, "alreadySavedCallback") : botText(language, "savedCallback"), telegramClient);
     const text = formatBudgetTopupSuccess(result.topup, result.dashboardSnapshot, language);
-    const replyMarkup = budgetTopupUndoKeyboard(result.topup.id, language);
+    const replyMarkup = budgetTopupSuccessKeyboard(result.topup.id, miniAppUrl, telegramUserId, language);
     if (messageId) {
       try {
         return await editMessageText(token, chatId, messageId, text, replyMarkup, telegramClient);
@@ -1026,39 +1030,6 @@ async function handleBudgetTopupCallback({ callback, parsed, repository, token, 
     }
     return sendMessage(token, chatId, text, replyMarkup, telegramClient);
   });
-}
-
-function formatBudgetTopupSuccess(topup, snapshot, language) {
-  const currency = snapshot?.baseCurrency ?? topup?.base_currency ?? "THB";
-  const monthBudget = Number(snapshot?.monthlyBudget ?? 0);
-  const remaining = Number(snapshot?.freeRemaining ?? snapshot?.monthRemaining ?? 0);
-  const original = formatTelegramMoney(topup?.amount_original ?? topup?.amount_base ?? 0, topup?.currency_original ?? currency, language);
-  const convertedLine = topup?.currency_original && topup.currency_original !== currency
-    ? (language === "en"
-        ? `\n\nIn your budget currency, that is +${formatTelegramMoney(topup.amount_base, currency, language)}.`
-        : `\n\nВ бюджете это учтено как +${formatTelegramMoney(topup.amount_base, currency, language)}.`)
-    : "";
-  return language === "en"
-    ? `Done. Added +${original} to your budget.${convertedLine}\n\nMonthly budget: ${formatTelegramMoney(monthBudget, currency, language)}\nRemaining: ${formatTelegramMoney(remaining, currency, language)}`
-    : `Готово. Добавил +${original} к бюджету.${convertedLine}\n\nБюджет месяца: ${formatTelegramMoney(monthBudget, currency, language)}\nОсталось: ${formatTelegramMoney(remaining, currency, language)}`;
-}
-
-function formatBudgetTopupUndoSuccess(snapshot, language) {
-  const currency = snapshot?.baseCurrency ?? "THB";
-  return language === "en"
-    ? `Okay, I’ve undone this budget top-up.\n\nMonthly budget: ${formatTelegramMoney(snapshot?.monthlyBudget ?? 0, currency, language)}\nRemaining: ${formatTelegramMoney(snapshot?.freeRemaining ?? 0, currency, language)}`
-    : `Ок, отменил пополнение бюджета.\n\nБюджет месяца: ${formatTelegramMoney(snapshot?.monthlyBudget ?? 0, currency, language)}\nОсталось: ${formatTelegramMoney(snapshot?.freeRemaining ?? 0, currency, language)}`;
-}
-
-function formatTelegramMoney(value, currency, language) {
-  const normalizedCurrency = String(currency || "THB").toUpperCase();
-  const decimals = ["THB", "RUB", "IDR", "BYN"].includes(normalizedCurrency) ? 0 : 2;
-  const numeric = Number(value ?? 0);
-  const formatted = new Intl.NumberFormat(language === "ru" ? "ru-RU" : "en-US", {
-    minimumFractionDigits: decimals,
-    maximumFractionDigits: decimals
-  }).format(Number.isFinite(numeric) ? numeric : 0);
-  return `${formatted} ${normalizedCurrency}`;
 }
 
 async function handleDraftCallback({ callback, parsed, repository, token, miniAppUrl, telegramClient, language, user, trace }) {

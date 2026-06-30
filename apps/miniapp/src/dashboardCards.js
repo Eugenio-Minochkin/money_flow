@@ -1,5 +1,7 @@
 import { escapeHtml } from "./formatters.js";
 
+const budgetTopupExpandedByContainer = new WeakMap();
+
 export function remainingLine(label, amount) {
   return cardLine(label, amount);
 }
@@ -110,25 +112,44 @@ export function renderBudgetTopupBreakdown(container, currentMonthBudget, helper
   container.classList?.toggle?.("hidden", false);
   const baseBudget = Number(currentMonthBudget.baseBudget ?? currentMonthBudget.amount ?? 0);
   const totalBudget = Number(currentMonthBudget.amount ?? baseBudget + topupsTotal);
-  const history = topups.length > 0
-    ? `<div class="budget-topup__history">
-        <span class="budget-topup__history-title">${escapeHtml(helpers.t("budgetTopup.historyTitle"))}</span>
+  const expanded = budgetTopupExpandedByContainer.get(container) === true;
+  const recent = topups.length > 0
+    ? `<div class="budget-topup-card__history">
+        <span class="budget-topup-card__history-title">${escapeHtml(helpers.t("budgetTopup.recent"))}</span>
         ${topups.map((topup) => {
           const amount = helpers.moneyBase(Number(topup.amount_base ?? topup.amount ?? 0));
           const date = helpers.formatDate?.(topup.occurred_at ?? topup.local_date) ?? "";
-          return `<div class="budget-topup__item">${escapeHtml(helpers.t("budgetTopup.historyItem", { amount, date }))}</div>`;
+          const fullLabel = helpers.t("budgetTopup.historyItem", { amount, date });
+          return `<div class="budget-topup-card__item" aria-label="${escapeHtml(fullLabel)}">${escapeHtml(helpers.t("budgetTopup.historyItemCompact", { amount, date }))}</div>`;
         }).join("")}
       </div>`
     : "";
+  const summary = `${escapeHtml(helpers.t("budgetTopup.baseShort"))} ${escapeHtml(helpers.moneyBase(baseBudget))} · ${escapeHtml(helpers.t("budgetTopup.topupsShort"))} +${escapeHtml(helpers.moneyBase(topupsTotal))}`;
   container.innerHTML = `
-    <section class="budget-topup" aria-label="${escapeHtml(helpers.t("budgetTopup.title"))}">
-      <h3>${escapeHtml(helpers.t("budgetTopup.title"))}</h3>
-      <div class="budget-topup__line"><span>${escapeHtml(helpers.t("budgetTopup.baseBudget"))}</span><b>${escapeHtml(helpers.moneyBase(baseBudget))}</b></div>
-      <div class="budget-topup__line"><span>${escapeHtml(helpers.t("budgetTopup.topups"))}</span><b>+${escapeHtml(helpers.moneyBase(topupsTotal))}</b></div>
-      <div class="budget-topup__line budget-topup__line--total"><span>${escapeHtml(helpers.t("budgetTopup.totalBudget"))}</span><b>${escapeHtml(helpers.moneyBase(totalBudget))}</b></div>
-      ${history}
+    <section class="budget-topup-card${expanded ? " budget-topup-card--expanded" : ""}" aria-label="${escapeHtml(helpers.t("budgetTopup.title"))}">
+      <div class="budget-topup-card__head">
+        <div class="budget-topup-card__title">
+          <span>${escapeHtml(helpers.t("budgetTopup.title"))}</span>
+          <strong>${escapeHtml(helpers.moneyBase(totalBudget))}</strong>
+        </div>
+        <button class="ghost-button budget-topup-card__toggle" type="button" aria-expanded="${expanded ? "true" : "false"}" data-budget-topup-toggle>
+          ${expanded ? "⌃" : "⌄"} ${escapeHtml(helpers.t(expanded ? "budgetTopup.collapse" : "budgetTopup.details"))}
+        </button>
+      </div>
+      <div class="budget-topup-card__summary">${summary}</div>
+      <div class="budget-topup-card__details" ${expanded ? "" : "hidden"}>
+        <div class="budget-topup-card__line"><span>${escapeHtml(helpers.t("budgetTopup.baseBudget"))}</span><b>${escapeHtml(helpers.moneyBase(baseBudget))}</b></div>
+        <div class="budget-topup-card__line"><span>${escapeHtml(helpers.t("budgetTopup.topups"))}</span><b>+${escapeHtml(helpers.moneyBase(topupsTotal))}</b></div>
+        <div class="budget-topup-card__line budget-topup-card__line--total"><span>${escapeHtml(helpers.t("budgetTopup.totalBudget"))}</span><b>${escapeHtml(helpers.moneyBase(totalBudget))}</b></div>
+        ${recent}
+      </div>
     </section>
   `;
+  const toggle = container.querySelector?.("[data-budget-topup-toggle]");
+  toggle?.addEventListener?.("click", () => {
+    budgetTopupExpandedByContainer.set(container, !expanded);
+    renderBudgetTopupBreakdown(container, currentMonthBudget, helpers);
+  });
 }
 
 function cardLine(label, amount) {
