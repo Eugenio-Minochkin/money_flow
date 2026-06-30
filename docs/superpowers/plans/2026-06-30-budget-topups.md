@@ -184,6 +184,6 @@ Expected: PASS.
 Run: `git diff --check` and `git diff`
 Expected: no whitespace errors and no unrelated changes.
 
-- [ ] **Step 4: Commit and open draft PR**
+- [x] **Step 4: Commit and open draft PR**
 
 Commit with `feat: add budget top-ups`, push `codex/budget-topups`, and open a draft PR into `master` with summary, changed areas, docs, tests, DB/prod impact, release notes, screenshots if applicable, and assumptions.
