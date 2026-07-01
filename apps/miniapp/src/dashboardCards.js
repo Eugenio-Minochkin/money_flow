@@ -125,6 +125,14 @@ export function renderBudgetTopupBreakdown(container, currentMonthBudget, helper
       </div>`
     : "";
   const summary = `${escapeHtml(helpers.t("budgetTopup.baseShort"))} ${escapeHtml(helpers.moneyBase(baseBudget))} · ${escapeHtml(helpers.t("budgetTopup.topupsShort"))} +${escapeHtml(helpers.moneyBase(topupsTotal))}`;
+  const details = expanded
+    ? `<div class="budget-topup-card__details">
+        <div class="budget-topup-card__line"><span>${escapeHtml(helpers.t("budgetTopup.baseBudget"))}</span><b>${escapeHtml(helpers.moneyBase(baseBudget))}</b></div>
+        <div class="budget-topup-card__line"><span>${escapeHtml(helpers.t("budgetTopup.topups"))}</span><b>+${escapeHtml(helpers.moneyBase(topupsTotal))}</b></div>
+        <div class="budget-topup-card__line budget-topup-card__line--total"><span>${escapeHtml(helpers.t("budgetTopup.totalBudget"))}</span><b>${escapeHtml(helpers.moneyBase(totalBudget))}</b></div>
+        ${recent}
+      </div>`
+    : "";
   container.innerHTML = `
     <section class="budget-topup-card${expanded ? " budget-topup-card--expanded" : ""}" aria-label="${escapeHtml(helpers.t("budgetTopup.title"))}">
       <div class="budget-topup-card__head">
@@ -137,12 +145,7 @@ export function renderBudgetTopupBreakdown(container, currentMonthBudget, helper
         </button>
       </div>
       <div class="budget-topup-card__summary">${summary}</div>
-      <div class="budget-topup-card__details" ${expanded ? "" : "hidden"}>
-        <div class="budget-topup-card__line"><span>${escapeHtml(helpers.t("budgetTopup.baseBudget"))}</span><b>${escapeHtml(helpers.moneyBase(baseBudget))}</b></div>
-        <div class="budget-topup-card__line"><span>${escapeHtml(helpers.t("budgetTopup.topups"))}</span><b>+${escapeHtml(helpers.moneyBase(topupsTotal))}</b></div>
-        <div class="budget-topup-card__line budget-topup-card__line--total"><span>${escapeHtml(helpers.t("budgetTopup.totalBudget"))}</span><b>${escapeHtml(helpers.moneyBase(totalBudget))}</b></div>
-        ${recent}
-      </div>
+      ${details}
     </section>
   `;
   const toggle = container.querySelector?.("[data-budget-topup-toggle]");
