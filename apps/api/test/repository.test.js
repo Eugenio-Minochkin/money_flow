@@ -1151,6 +1151,94 @@ test("updates report deliveries as sent failed and skipped", async () => {
   assert.deepEqual(queries[2].params, [1, "monthly", "2026-06", "no_activity", JSON.stringify({ checked: true })]);
 });
 
+test("builds report data with paid actual planned amount and unpaid planned occurrences", async () => {
+  const user = {
+    id: 1,
+    telegram_user_id: 100,
+    monthly_budget_amount: 50000,
+    base_currency: "THB",
+    display_currency: "THB",
+    timezone: "Asia/Bangkok",
+    interface_language: "en"
+  };
+  const repo = createRepository(fakePool((sql) => {
+    const query = String(sql);
+    if (query.includes("FROM expenses") && query.includes("ORDER BY spent_at ASC")) {
+      return {
+        rows: [
+          {
+            id: "10",
+            amount_base: 450,
+            converted_amounts: { THB: 450 },
+            description: "Internet actual",
+            category_slug: "utilities",
+            budget_impact: "planned",
+            spent_at: new Date("2026-06-05T05:00:00Z"),
+            local_date: "2026-06-05"
+          }
+        ]
+      };
+    }
+    if (query.includes("FROM planned_expenses") && query.includes("JOIN users")) {
+      return {
+        rows: [{
+          id: "7",
+          description: "Internet",
+          amount_base: 1200,
+          recurrence: "twice_monthly",
+          due_day: 5,
+          due_days: [5, 20],
+          timezone: "Asia/Bangkok",
+          paid_count: 1,
+          paid_occurrence_dates: ["2026-06-05"],
+          paid_occurrences: { "2026-06-05": { expense_id: "10" } }
+        }]
+      };
+    }
+    if (query.includes("FROM planned_expense_payments") && query.includes("JOIN planned_expenses")) {
+      return {
+        rows: [{
+          expense_id: "10",
+          name: "Internet",
+          planned_amount_base: 1200,
+          amount_base: 450,
+          occurrence_date: "2026-06-05",
+          local_date: "2026-06-05"
+        }]
+      };
+    }
+    if (query.includes("FROM budget_topups") && query.includes("occurred_at")) return { rows: [] };
+    if (query.includes("GROUP BY category_slug")) return { rows: [{ category_slug: "utilities", total: 450 }] };
+    if (query === "SELECT timezone FROM users WHERE telegram_user_id = $1") return { rows: [{ timezone: "Asia/Bangkok" }] };
+    if (query.includes("FROM monthly_budget_overrides")) return { rows: [] };
+    if (query.includes("COALESCE(SUM(amount_base)") && query.includes("month_key")) return { rows: [{ total: 0 }] };
+    if (query.includes("FROM budget_topups") && query.includes("month_key")) return { rows: [] };
+    if (query.includes("FROM month_baselines")) return { rows: [] };
+    return { rows: [] };
+  }));
+
+  const report = await repo.buildReportDataForDelivery(user, "monthly", {
+    periodKey: "2026-06",
+    periodStartUtc: new Date("2026-05-31T17:00:00Z"),
+    periodEndUtc: new Date("2026-06-30T17:00:00Z"),
+    timezoneUsed: "Asia/Bangkok",
+    localStartDate: "2026-06-01",
+    localEndDate: "2026-06-30"
+  }, new Date("2026-07-01T03:00:00Z"));
+
+  assert.equal(report.metrics.totalSpent, 450);
+  assert.equal(report.metrics.plannedPaidTotal, 450);
+  assert.deepEqual(report.plannedPayments.map((payment) => ({
+    name: payment.name,
+    amount: payment.amount,
+    paid: payment.paid,
+    dueDate: payment.dueDate
+  })), [
+    { name: "Internet", amount: 450, paid: true, dueDate: "2026-06-05" },
+    { name: "Internet", amount: 1200, paid: false, dueDate: "2026-06-20" }
+  ]);
+});
+
 test("checks confirmed financial activity using supplied local bounds", async () => {
   const bounds = { start: new Date("2026-06-24T17:00:00Z"), end: new Date("2026-06-25T17:00:00Z") };
   const repo = createRepository(fakePool((sql, params) => {

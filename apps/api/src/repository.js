@@ -1082,13 +1082,15 @@ export function createRepository(pool, options = {}) {
     async buildReportDataForDelivery(user, reportType, period, now = new Date()) {
       const timeZone = period.timezoneUsed ?? userTimezone(user);
       const bounds = { start: period.periodStartUtc, end: period.periodEndUtc };
-      const [expenses, paidPlannedPayments, budgetTopups, topCategories] = await Promise.all([
+      const reportDate = reportType === "monthly" ? new Date(period.periodStartUtc.getTime() + 12 * 60 * 60_000) : now;
+      const [expenses, paidPlannedPayments, budgetTopups, topCategories, plannedExpenses] = await Promise.all([
         reportExpensesForPeriod(pool, user, bounds, timeZone),
         reportPaidPlannedPaymentsForPeriod(pool, user, bounds, timeZone),
         reportBudgetTopupsForPeriod(pool, user, bounds, timeZone),
-        reportTopCategoriesForPeriod(pool, user, bounds)
+        reportTopCategoriesForPeriod(pool, user, bounds),
+        listPlannedExpensesForTelegramUserAt(pool, user.telegram_user_id, reportDate)
       ]);
-      const budgetDate = reportType === "monthly" ? new Date(period.periodStartUtc.getTime() + 12 * 60 * 60_000) : now;
+      const budgetDate = reportDate;
       const budget = await currentMonthBudget(pool, user, budgetDate, timeZone);
       const monthBaseline = reportType === "monthly"
         ? await monthBaselineTotal(pool, user.id, budgetDate, timeZone)
@@ -1116,12 +1118,15 @@ export function createRepository(pool, options = {}) {
           amount: budget.amount,
           remaining
         },
-        plannedPayments: paidPlannedPayments.map((payment) => ({
-          name: payment.name,
-          amount: Number(payment.amount_base ?? 0),
-          paid: true,
-          dueDate: payment.occurrence_date
-        })),
+        plannedPayments: [
+          ...paidPlannedPayments.map((payment) => ({
+            name: payment.name,
+            amount: Number(payment.amount_base ?? 0),
+            paid: true,
+            dueDate: payment.occurrence_date
+          })),
+          ...reportUnpaidPlannedPayments(plannedExpenses, user, budgetDate, timeZone, period)
+        ],
         largeExpenses: expenses
           .filter((expense) => expense.budget_impact === "large_oneoff")
           .slice(0, reportType === "monthly" ? 5 : 3)
@@ -2990,6 +2995,26 @@ function calculatePlannedThisWeek(plannedExpenses, now, timeZone = "Asia/Bangkok
       .filter((date) => date >= bounds.start && date < bounds.end);
     return sum + Number(item.amount_base) * dueDates.length;
   }, 0);
+}
+
+function reportUnpaidPlannedPayments(plannedExpenses, user, now, timeZone, period) {
+  const periodStart = period.localStartDate ?? localDayKey(period.periodStartUtc, timeZone);
+  const periodEnd = period.localEndDate ?? localDayKey(new Date(period.periodEndUtc.getTime() - 1), timeZone);
+  return plannedExpenses.flatMap((planned) => {
+    return unpaidPlannedDueDatesThisMonth(planned, now, timeZone)
+      .map((date) => localDayKey(date, timeZone))
+      .filter((dateKey) => dateKey >= periodStart && dateKey <= periodEnd)
+      .map((dateKey) => ({
+        name: planned.description,
+        amount: Number(planned.amount_base ?? 0),
+        paid: false,
+        dueDate: dateKey,
+        display: {
+          currency: user.display_currency ?? "USD",
+          amount: displayFromBase(planned.amount_base, user)
+        }
+      }));
+  });
 }
 
 function localFullWeekBounds(now, timeZone = "Asia/Bangkok") {
