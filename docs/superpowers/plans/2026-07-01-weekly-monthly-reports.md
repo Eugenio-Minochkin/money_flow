@@ -564,3 +564,11 @@ Release notes:
 - [x] Secondary display currency is rendered only as separate `≈ ...` equivalent lines for total spent, final/effective budget, and remaining/overspent.
 - [x] Partition, planned payment items, large totals, categories, and budget top-up item totals stay in report currency only.
 - [x] Historical locked report currency remains a follow-up if users can change base currency mid-month.
+
+## Follow-Up Formatting And Metrics Scope
+
+- [x] Add primary `reportDisplay` partition so rounded report-currency planned + regular values visually equal rounded total spent.
+- [x] Show everyday spending pace as the primary weekly/monthly pace, with total including planned payments as secondary only when paid planned payments exist.
+- [x] Rename the large block to notable one-off expenses and select explicit `large_oneoff` plus non-planned expenses above threshold, sorted by amount descending.
+- [x] Keep notable expenses display-only; total accounting remains paid planned plus derived regular/other.
+- [x] Bold key Telegram report numbers and HTML-escape user-provided names/categories before rendering.

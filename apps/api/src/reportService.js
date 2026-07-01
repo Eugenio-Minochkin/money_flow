@@ -40,6 +40,11 @@ export function buildReportMetrics(input = {}) {
   );
   const regularTotal = roundMoney(Math.max(totalSpent - plannedPaidTotal, 0));
   const dailyProjectionBase = roundMoney(Math.max(totalSpent - plannedPaidTotal - explicitLargeOneOffTotal, 0));
+  const reportDisplayPartition = roundPartitionForDisplay({
+    total: totalSpent,
+    planned: plannedPaidTotal,
+    currency
+  });
   const displayPartition = roundPartitionForDisplay({
     total: displayTotalFor(expenses, totalSpent, input.totalDisplay),
     planned: displayPlannedTotalFor(paidPlannedPayments, plannedPaidTotal),
@@ -58,15 +63,32 @@ export function buildReportMetrics(input = {}) {
     largeTotal,
     explicitLargeOneOffTotal,
     dailyProjectionBase,
+    ...(Number(input.periodDays ?? 0) > 0
+      ? averageMetrics(totalSpent, regularTotal, input.periodDays)
+      : {}),
     budgetTopupsTotal,
     outOfBudgetTotal,
     showOutsideBudget: outOfBudgetTotal > 0,
+    reportDisplay: {
+      currency,
+      totalSpent: reportDisplayPartition.total,
+      plannedPaidTotal: reportDisplayPartition.plannedPaidTotal,
+      regularTotal: reportDisplayPartition.regularTotal
+    },
     display: {
       currency: input.displayCurrency ?? currency,
       totalSpent: displayPartition.total,
       plannedPaidTotal: displayPartition.plannedPaidTotal,
       regularTotal: displayPartition.regularTotal
     }
+  };
+}
+
+function averageMetrics(totalSpent, regularTotal, periodDays) {
+  const days = Math.max(Number(periodDays ?? 0), 1);
+  return {
+    averagePerDay: roundMoney(totalSpent / days),
+    regularAveragePerDay: roundMoney(regularTotal / days)
   };
 }
 

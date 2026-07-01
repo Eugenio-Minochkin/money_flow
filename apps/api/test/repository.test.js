@@ -1347,6 +1347,103 @@ test("report data includes display equivalents for budget amount and remaining",
   });
 });
 
+test("report notable expenses include regular one-offs above threshold and exclude paid planned expenses", async () => {
+  const user = {
+    id: 1,
+    telegram_user_id: 100,
+    monthly_budget_amount: 50000,
+    base_currency: "THB",
+    display_currency: "THB",
+    timezone: "Asia/Bangkok",
+    interface_language: "en"
+  };
+  const repo = createRepository(fakePool((sql) => {
+    const query = String(sql);
+    if (query.includes("FROM expenses") && query.includes("ORDER BY spent_at ASC")) {
+      return {
+        rows: [
+          {
+            id: "10",
+            amount_base: 7000,
+            converted_amounts: { THB: 7000 },
+            description: "Rent",
+            category_slug: "home",
+            budget_impact: "planned",
+            spent_at: new Date("2026-06-01T05:00:00Z"),
+            local_date: "2026-06-01"
+          },
+          {
+            id: "11",
+            amount_base: 6200,
+            converted_amounts: { THB: 6200 },
+            description: "New chair",
+            category_slug: "home",
+            budget_impact: "regular",
+            spent_at: new Date("2026-06-11T05:00:00Z"),
+            local_date: "2026-06-11"
+          },
+          {
+            id: "12",
+            amount_base: 2500,
+            converted_amounts: { THB: 2500 },
+            description: "Dentist",
+            category_slug: "health",
+            budget_impact: "large_oneoff",
+            spent_at: new Date("2026-06-12T05:00:00Z"),
+            local_date: "2026-06-12"
+          },
+          {
+            id: "13",
+            amount_base: 2100,
+            converted_amounts: { THB: 2100 },
+            description: "Shoes",
+            category_slug: "clothes",
+            budget_impact: "regular",
+            spent_at: new Date("2026-06-13T05:00:00Z"),
+            local_date: "2026-06-13"
+          }
+        ]
+      };
+    }
+    if (query.includes("FROM planned_expenses") && query.includes("JOIN users")) return { rows: [] };
+    if (query.includes("FROM planned_expense_payments") && query.includes("JOIN planned_expenses")) {
+      return {
+        rows: [{
+          expense_id: "10",
+          name: "Rent",
+          planned_amount_base: 7000,
+          amount_base: 7000,
+          occurrence_date: "2026-06-01",
+          local_date: "2026-06-01"
+        }]
+      };
+    }
+    if (query.includes("FROM budget_topups") && query.includes("occurred_at")) return { rows: [] };
+    if (query.includes("GROUP BY category_slug")) return { rows: [] };
+    if (query === "SELECT timezone FROM users WHERE telegram_user_id = $1") return { rows: [{ timezone: "Asia/Bangkok" }] };
+    if (query.includes("FROM monthly_budget_overrides")) return { rows: [] };
+    if (query.includes("COALESCE(SUM(amount_base)") && query.includes("month_key")) return { rows: [{ total: 0 }] };
+    if (query.includes("FROM budget_topups") && query.includes("month_key")) return { rows: [] };
+    if (query.includes("FROM month_baselines")) return { rows: [] };
+    return { rows: [] };
+  }));
+
+  const report = await repo.buildReportDataForDelivery(user, "monthly", {
+    periodKey: "2026-06",
+    periodStartUtc: new Date("2026-05-31T17:00:00Z"),
+    periodEndUtc: new Date("2026-06-30T17:00:00Z"),
+    timezoneUsed: "Asia/Bangkok",
+    localStartDate: "2026-06-01",
+    localEndDate: "2026-06-30"
+  }, new Date("2026-07-01T03:00:00Z"));
+
+  assert.deepEqual(report.largeExpenses.map((expense) => expense.name), ["New chair", "Dentist"]);
+  assert.deepEqual(report.largeExpenses.map((expense) => expense.amount), [6200, 2500]);
+  assert.equal(report.largeExpensesTotal, 8700);
+  assert.equal(report.largeExpensesCount, 2);
+  assert.equal(report.metrics.largeTotal, 8700);
+});
+
 test("weekly report data includes unpaid planned occurrences from previous month when week crosses month boundary", async () => {
   const user = {
     id: 1,

@@ -93,6 +93,42 @@ test("report metrics display partition derives regular display from rounded tota
   assert.equal(metrics.display.plannedPaidTotal + metrics.display.regularTotal, metrics.display.totalSpent);
 });
 
+test("report metrics include primary report display partition with rounded regular remainder", () => {
+  const metrics = buildReportMetrics({
+    currency: "THB",
+    expenses: [
+      expense({ id: 1, amount: 27646, impact: "regular" }),
+      expense({ id: 2, amount: 22118, impact: "planned" }),
+      expense({ id: 3, amount: 1, impact: "regular" })
+    ],
+    paidPlannedPayments: [
+      { expense_id: 2, amount_base: 22118 }
+    ]
+  });
+
+  assert.equal(metrics.reportDisplay.totalSpent, 49765);
+  assert.equal(metrics.reportDisplay.plannedPaidTotal, 22118);
+  assert.equal(metrics.reportDisplay.regularTotal, 27647);
+  assert.equal(metrics.reportDisplay.plannedPaidTotal + metrics.reportDisplay.regularTotal, metrics.reportDisplay.totalSpent);
+});
+
+test("report metrics expose regular average per day separately from total average", () => {
+  const metrics = buildReportMetrics({
+    currency: "THB",
+    expenses: [
+      expense({ id: 1, amount: 27647, impact: "regular" }),
+      expense({ id: 2, amount: 22118, impact: "planned" })
+    ],
+    paidPlannedPayments: [
+      { expense_id: 2, amount_base: 22118 }
+    ],
+    periodDays: 30
+  });
+
+  assert.equal(metrics.averagePerDay, 1658.83);
+  assert.equal(metrics.regularAveragePerDay, 921.57);
+});
+
 test("budget top-ups are capacity and do not count as spending", () => {
   const metrics = buildReportMetrics({
     currency: "THB",
