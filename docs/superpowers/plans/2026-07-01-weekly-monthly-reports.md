@@ -497,7 +497,7 @@ git add apps/api docs package.json
 git commit -m "feat: add weekly and monthly reports"
 ```
 
-- [ ] **Step 5: Push branch**
+- [x] **Step 5: Push branch**
 
 Run:
 
@@ -505,7 +505,7 @@ Run:
 git push -u origin codex/reports-weekly-monthly
 ```
 
-- [ ] **Step 6: Open draft PR**
+- [x] **Step 6: Open draft PR**
 
 PR body must include:
 
