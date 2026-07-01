@@ -10,12 +10,12 @@ export function formatWeeklyReport(report, options = {}) {
     `${labels.weeklyTitle}`,
     periodLabel,
     "",
-    ...lineWithSecondary(`${labels.spent}: ${formatReportMoney(metrics.totalSpent, report.currency, language)}`, secondaryDisplayLine(metrics.display, "totalSpent", report.currency, language)),
-    `${labels.average}: ${formatReportMoney(metrics.averagePerDay ?? 0, report.currency, language)}/${labels.day}`,
+    ...lineWithSecondary(`${labels.spent}: ${boldMoney(metrics.totalSpent, report.currency, language)}`, secondaryDisplayLine(metrics.display, "totalSpent", report.currency, language)),
+    ...paceLines(metrics, report.currency, language),
     "",
     `${labels.inside}:`,
-    `${labels.plannedPaid} — ${formatReportMoney(partition.plannedPaidTotal, partition.currency, language)}`,
-    `${labels.regular} — ${formatReportMoney(partition.regularTotal, partition.currency, language)}`
+    `${labels.plannedPaid} — ${boldMoney(partition.plannedPaidTotal, partition.currency, language)}`,
+    `${labels.regular} — ${boldMoney(partition.regularTotal, partition.currency, language)}`
   ];
   pushOptional(lines, formatBudgetTopupsBlock(report.budgetTopups, metrics.budgetTopupsTotal, report.currency, language, true));
   pushOptional(lines, formatPlannedPaymentsBlock(report.plannedPayments, report.currency, language));
@@ -34,17 +34,17 @@ export function formatMonthlyReport(report, options = {}) {
   const lines = [
     `${labels.monthlyTitle(monthNameFromPeriod(report.period?.periodKey, language))}`,
     "",
-    ...lineWithSecondary(`${labels.spent}: ${formatReportMoney(metrics.totalSpent, report.currency, language)}`, secondaryDisplayLine(metrics.display, "totalSpent", report.currency, language)),
+    ...lineWithSecondary(`${labels.spent}: ${boldMoney(metrics.totalSpent, report.currency, language)}`, secondaryDisplayLine(metrics.display, "totalSpent", report.currency, language)),
     "",
     `${labels.monthlyBudget}:`,
     ...monthlyBudgetLines(report.budget, report.currency, language),
     "",
     `${labels.monthlyPace}:`,
-    `${labels.average}: ${formatReportMoney(metrics.averagePerDay ?? 0, report.currency, language)}/${labels.day}`,
+    ...paceLines(metrics, report.currency, language),
     "",
     `${labels.madeUp}:`,
-    `${labels.plannedPaid} — ${formatReportMoney(partition.plannedPaidTotal, partition.currency, language)}`,
-    `${labels.regular} — ${formatReportMoney(partition.regularTotal, partition.currency, language)}`
+    `${labels.plannedPaid} — ${boldMoney(partition.plannedPaidTotal, partition.currency, language)}`,
+    `${labels.regular} — ${boldMoney(partition.regularTotal, partition.currency, language)}`
   ];
   pushOptional(lines, formatBudgetTopupsBlock(report.budgetTopups, metrics.budgetTopupsTotal, report.currency, language, false));
   pushOptional(lines, formatPlannedPaymentsBlock(report.plannedPayments, report.currency, language));
@@ -67,6 +67,14 @@ export function formatReportMoney(value, currency = "THB", language = "ru") {
 }
 
 function displayPartition(metrics = {}, fallbackCurrency = "THB") {
+  const reportDisplay = metrics.reportDisplay;
+  if (reportDisplay?.currency && String(reportDisplay.currency).toUpperCase() === String(fallbackCurrency).toUpperCase()) {
+    return {
+      currency: reportDisplay.currency,
+      plannedPaidTotal: reportDisplay.plannedPaidTotal ?? metrics.plannedPaidTotal ?? 0,
+      regularTotal: reportDisplay.regularTotal ?? metrics.regularTotal ?? 0
+    };
+  }
   const displayCurrency = metrics.display?.currency;
   if (displayCurrency && String(displayCurrency).toUpperCase() !== String(fallbackCurrency).toUpperCase()) {
     return {
@@ -82,8 +90,29 @@ function displayPartition(metrics = {}, fallbackCurrency = "THB") {
   };
 }
 
+function paceLines(metrics = {}, currency, language) {
+  const labels = language === "en" ? enLabels : ruLabels;
+  const average = metrics.averagePerDay ?? 0;
+  const regularAverage = metrics.regularAveragePerDay ?? average;
+  if (Number(metrics.plannedPaidTotal ?? 0) > 0) {
+    return [
+      `${labels.everydaySpending}: ${bold(`${formatReportMoney(regularAverage, currency, language)}/${labels.day}`)}`,
+      `${labels.includingPlanned}: ${formatReportMoney(average, currency, language)}/${labels.day}`
+    ];
+  }
+  return [`${labels.average}: ${bold(`${formatReportMoney(regularAverage, currency, language)}/${labels.day}`)}`];
+}
+
 function lineWithSecondary(primaryLine, secondaryLine) {
   return secondaryLine ? [primaryLine, secondaryLine] : [primaryLine];
+}
+
+function boldMoney(value, currency, language) {
+  return bold(formatReportMoney(value, currency, language));
+}
+
+function bold(value) {
+  return `<b>${value}</b>`;
 }
 
 function secondaryDisplayLine(display = {}, field, primaryCurrency, language, absolute = false) {
@@ -100,11 +129,11 @@ function monthlyBudgetLines(budget = {}, currency, language) {
   const finalEquivalent = secondaryDisplayLine(budget.display, "amount", currency, language);
   const remainingEquivalent = secondaryDisplayLine(budget.display, "remaining", currency, language, true);
   const finalLine = language === "en"
-    ? (hasTopups ? `Final budget — ${formatReportMoney(budget.amount, currency, language)}` : `Budget — ${formatReportMoney(budget.amount, currency, language)}`)
-    : (hasTopups ? `Итоговый бюджет — ${formatReportMoney(budget.amount, currency, language)}` : `Бюджет — ${formatReportMoney(budget.amount, currency, language)}`);
+    ? (hasTopups ? `Final budget — ${boldMoney(budget.amount, currency, language)}` : `Budget — ${boldMoney(budget.amount, currency, language)}`)
+    : (hasTopups ? `Итоговый бюджет — ${boldMoney(budget.amount, currency, language)}` : `Бюджет — ${boldMoney(budget.amount, currency, language)}`);
   const remainingLine = remaining >= 0
-    ? (language === "en" ? `Remaining: ${formatReportMoney(remaining, currency, language)}` : `Осталось: ${formatReportMoney(remaining, currency, language)}`)
-    : (language === "en" ? `Overspent: ${formatReportMoney(Math.abs(remaining), currency, language)}` : `Перерасход: ${formatReportMoney(Math.abs(remaining), currency, language)}`);
+    ? (language === "en" ? `Remaining: ${boldMoney(remaining, currency, language)}` : `Осталось: ${boldMoney(remaining, currency, language)}`)
+    : (language === "en" ? `Overspent: ${boldMoney(Math.abs(remaining), currency, language)}` : `Перерасход: ${boldMoney(Math.abs(remaining), currency, language)}`);
   if (language === "en") {
     return [
       ...(hasTopups
@@ -167,19 +196,23 @@ function formatPlannedPaymentsBlock(items = [], currency, language) {
     const status = item.paid
       ? (language === "en" ? "paid" : "оплачено")
       : `${language === "en" ? "not marked" : "не отмечено"}, ${formatDate(item.dueDate, language)}`;
-    return `• ${item.name} — ${formatReportMoney(item.amount, currency, language)}, ${status}`;
+    return `• ${escapeHtml(item.name)} — ${formatReportMoney(item.amount, currency, language)}, ${status}`;
   }));
   return lines.join("\n");
 }
 
 function formatLargeExpensesBlock(items = [], total, currency, language) {
   if (!Array.isArray(items) || items.length === 0) return null;
-  const heading = language === "en" ? "⚡ Large expenses inside the total:" : "⚡ Крупные траты внутри суммы:";
-  const totalLabel = language === "en" ? "Large total" : "Всего крупными";
+  const heading = language === "en" ? "⚡ Notable one-off expenses inside the total:" : "⚡ Заметные разовые траты внутри суммы:";
+  const totalLabel = language === "en" ? "Notable total" : "Всего заметными";
+  const countLine = items.totalCount > items.length
+    ? (language === "en" ? `Shown ${items.length} of ${items.totalCount}` : `Показано ${items.length} из ${items.totalCount}`)
+    : null;
   return [
     heading,
-    ...items.map((item) => `• ${formatDate(item.date, language)} — ${item.name} — ${formatReportMoney(item.amount, currency, language)}`),
-    `${totalLabel}: ${formatReportMoney(total ?? sum(items, "amount"), currency, language)}`
+    ...items.map((item) => `• ${formatDate(item.date, language)} — ${escapeHtml(item.name)} — ${formatReportMoney(item.amount, currency, language)}`),
+    ...(countLine ? [countLine] : []),
+    `${totalLabel}: ${boldMoney(total ?? items.totalAmount ?? sum(items, "amount"), currency, language)}`
   ].join("\n");
 }
 
@@ -188,7 +221,7 @@ function formatTopCategoriesBlock(items = [], currency, language, limit) {
   const heading = language === "en" ? "🏷️ Top categories:" : "🏷️ Главные категории:";
   return [
     heading,
-    ...items.slice(0, limit).map((item, index) => `${index + 1}. ${item.name} — ${formatReportMoney(item.amount, currency, language)}`)
+    ...items.slice(0, limit).map((item, index) => `${index + 1}. ${escapeHtml(item.name)} — ${formatReportMoney(item.amount, currency, language)}`)
   ].join("\n");
 }
 
@@ -258,6 +291,14 @@ function compactMessage(lines) {
   return lines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
 function sum(items, field) {
   return items.reduce((total, item) => total + Number(item?.[field] ?? 0), 0);
 }
@@ -277,7 +318,9 @@ const ruLabels = {
   plannedPaid: "Плановые оплаты",
   regular: "Остальные расходы",
   monthlyBudget: "💰 Бюджет месяца",
-  monthlyPace: "📊 Темп месяца"
+  monthlyPace: "📊 Темп месяца",
+  everydaySpending: "Повседневные расходы",
+  includingPlanned: "Всего с плановыми"
 };
 
 const enLabels = {
@@ -291,7 +334,9 @@ const enLabels = {
   plannedPaid: "Planned payments",
   regular: "Other expenses",
   monthlyBudget: "💰 Monthly budget",
-  monthlyPace: "📊 Monthly pace"
+  monthlyPace: "📊 Monthly pace",
+  everydaySpending: "Everyday spending",
+  includingPlanned: "Including planned payments"
 };
 
 function capitalize(value) {

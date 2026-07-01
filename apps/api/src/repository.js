@@ -1134,17 +1134,22 @@ export function createRepository(pool, options = {}) {
       const monthBaseline = reportType === "monthly"
         ? await monthBaselineTotal(pool, user.id, budgetDate, timeZone)
         : 0;
+      const days = Math.max(Math.round((period.periodEndUtc.getTime() - period.periodStartUtc.getTime()) / 86_400_000), 1);
+      const largeThreshold = reportLargeExpenseThreshold(user, budget);
       const metrics = buildReportMetrics({
         currency: user.base_currency ?? "THB",
         displayCurrency: user.display_currency ?? "USD",
         expenses,
         paidPlannedPayments,
         budgetTopups,
-        monthBaseline
+        monthBaseline,
+        largeThreshold,
+        periodDays: days
       });
-      const days = Math.max(Math.round((period.periodEndUtc.getTime() - period.periodStartUtc.getTime()) / 86_400_000), 1);
       metrics.averagePerDay = roundMoney(metrics.totalSpent / days);
+      metrics.regularAveragePerDay = roundMoney(metrics.regularTotal / days);
       const remaining = roundMoney(budget.amount - metrics.totalSpent);
+      const notableExpenses = reportNotableExpenses(expenses, paidPlannedPayments, largeThreshold, reportType === "monthly" ? 5 : 3);
 
       return {
         reportType,
@@ -1170,14 +1175,9 @@ export function createRepository(pool, options = {}) {
           })),
           ...reportUnpaidPlannedPayments(plannedExpenses, user, budgetDate, timeZone, period)
         ],
-        largeExpenses: expenses
-          .filter((expense) => expense.budget_impact === "large_oneoff")
-          .slice(0, reportType === "monthly" ? 5 : 3)
-          .map((expense) => ({
-            date: expense.local_date,
-            name: expense.description || expense.category_slug,
-            amount: Number(expense.amount_base ?? 0)
-          })),
+        largeExpenses: notableExpenses.items,
+        largeExpensesTotal: notableExpenses.total,
+        largeExpensesCount: notableExpenses.count,
         budgetTopups: budgetTopups.map((topup) => ({
           date: topup.local_date,
           amount: Number(topup.amount_base ?? 0)
@@ -2497,6 +2497,45 @@ function deterministicReportInsight(metrics, topCategories, language) {
   if (!metrics.totalSpent) return "За период расходов не найдено.";
   if (metrics.largeTotal > 0) return `Главная зона расходов — ${topCategory}; крупные разовые траты тоже повлияли на итог.`;
   return `Главная зона расходов — ${topCategory}.`;
+}
+
+function reportLargeExpenseThreshold(user, budget = {}) {
+  const currency = normalizeCurrency(user?.base_currency, "THB");
+  const fixedByCurrency = {
+    THB: 2000,
+    RUB: 5000,
+    USD: 50,
+    EUR: 50
+  };
+  const fixed = fixedByCurrency[currency] ?? 0;
+  const budgetAmount = Number(budget.baseBudget ?? budget.amount ?? user?.monthly_budget_amount ?? 0);
+  const budgetThreshold = budgetAmount > 0 ? budgetAmount * 0.05 : 0;
+  return Math.max(fixed, budgetThreshold);
+}
+
+function reportNotableExpenses(expenses = [], paidPlannedPayments = [], threshold = 0, limit = 5) {
+  const plannedExpenseIds = new Set(
+    paidPlannedPayments
+      .map((payment) => payment.expense_id ?? payment.expenseId)
+      .filter((id) => id != null)
+      .map(String)
+  );
+  const notable = expenses
+    .filter((expense) => {
+      if (expense.budget_impact === "large_oneoff") return true;
+      if (plannedExpenseIds.has(String(expense.id))) return false;
+      return Number(threshold ?? 0) > 0 && Number(expense.amount_base ?? 0) >= Number(threshold);
+    })
+    .sort((left, right) => Number(right.amount_base ?? 0) - Number(left.amount_base ?? 0));
+  const total = roundMoney(notable.reduce((sum, expense) => sum + Number(expense.amount_base ?? 0), 0));
+  const items = notable.slice(0, limit).map((expense) => ({
+    date: expense.local_date,
+    name: expense.description || expense.category_slug,
+    amount: Number(expense.amount_base ?? 0)
+  }));
+  items.totalAmount = total;
+  items.totalCount = notable.length;
+  return { items, total, count: notable.length };
 }
 
 async function currentMonthBudget(pool, user, now, timeZone = userTimezone(user)) {

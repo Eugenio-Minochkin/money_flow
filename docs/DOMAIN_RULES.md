@@ -64,7 +64,8 @@ This file records stable product and business rules. Read it before changing bud
 - Large one-off purchases must not distort analytics for regular spending pace.
 - Daily budget snapshot recalculation uses the current local day's opening baseline: exclude today's `regular` expenses from the snapshot's month total, but keep `planned` and `large_oneoff` in their non-daily monthly buckets.
 - Reports preserve the same semantics: `large_oneoff` is included in the reported total spent, but explicit large one-off spending is not extrapolated as daily pace.
-- Large expenses in reports are a display view inside the total, not a third accounting partition. The visual partition remains paid planned expenses plus derived other expenses.
+- Notable one-off expenses in reports are a display view inside the total, not a third accounting partition. They include explicit `large_oneoff` rows and non-planned individual expenses above the report threshold, while paid planned payments are excluded from the automatic notable list.
+- The visual report partition remains paid planned expenses plus derived other expenses.
 - Reports must not invent a new outside-budget model. If no separate existing outside-budget amount exists, the outside-budget block stays hidden.
 
 ## Reports
@@ -73,6 +74,8 @@ This file records stable product and business rules. Read it before changing bud
 - The Mini App remains the live recalculation surface for historical weeks and months.
 - Report core accounting uses one report currency for all formula lines. In this PR the report currency is the user's base currency/current budget currency.
 - Display currency may appear only as a secondary equivalent line, not inside accounting partitions or category/payment item totals.
+- Report visual partitions must reconcile after currency rounding: rounded total spent equals rounded paid planned plus derived rounded other expenses.
+- Report pace highlights everyday spending first (`regularTotal / days`). The total average including paid planned payments may appear as a secondary line when paid planned payments exist.
 - Weekly reports use the previous completed local week. Monthly reports use the previous completed local calendar month.
 - Report delivery idempotency is tracked by user, report type, and period key. Sending may only happen after a delivery row is successfully claimed as `pending`; failed rows may be retried, and force sends explicitly reclaim existing rows.
 - Report backfills may only send closed months. Current and future months are rejected.
