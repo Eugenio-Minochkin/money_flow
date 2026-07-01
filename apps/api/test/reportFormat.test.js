@@ -83,7 +83,28 @@ test("formats partition in the same currency as the spent total", () => {
   assert.match(text, /Spent: 1,700 THB/);
   assert.match(text, /Planned payments .* 500 THB/);
   assert.match(text, /Other expenses .* 1,200 THB/);
-  assert.doesNotMatch(text, /USD/);
+  assert.match(text, /≈ 52\.15 USD/);
+  assert.doesNotMatch(text, /Planned payments .* USD/);
+  assert.doesNotMatch(text, /Other expenses .* USD/);
+});
+
+test("does not render secondary equivalent when display currency equals report currency", () => {
+  const text = formatWeeklyReport({
+    ...reportFixture(),
+    currency: "THB",
+    metrics: {
+      ...reportFixture().metrics,
+      display: {
+        currency: "THB",
+        totalSpent: 1700,
+        plannedPaidTotal: 500,
+        regularTotal: 1200
+      }
+    }
+  }, { language: "en" });
+
+  assert.match(text, /Spent: 1,700 THB/);
+  assert.doesNotMatch(text, /≈/);
 });
 
 test("formats RU monthly report with unpaid planned due date", () => {
@@ -107,6 +128,61 @@ test("formats EN monthly report", () => {
   assert.match(text, /Top-ups — \+1,000 THB/);
   assert.match(text, /Final budget — 11,000 THB/);
   assert.match(text, /internet — 700 THB, not marked, June 25/);
+});
+
+test("formats monthly budget and remaining equivalents as secondary display lines", () => {
+  const text = formatMonthlyReport({
+    ...reportFixture({ reportType: "monthly" }),
+    currency: "THB",
+    metrics: {
+      ...reportFixture().metrics,
+      totalSpent: 48000,
+      plannedPaidTotal: 14500,
+      regularTotal: 33500,
+      display: {
+        currency: "USD",
+        totalSpent: 1310,
+        plannedPaidTotal: 395,
+        regularTotal: 915
+      }
+    },
+    budget: {
+      baseBudget: 45000,
+      topupsTotal: 5000,
+      amount: 50000,
+      remaining: 2000,
+      display: {
+        currency: "USD",
+        amount: 1365,
+        remaining: 55
+      }
+    }
+  }, { language: "en" });
+
+  assert.match(text, /Spent: 48,000 THB\n≈ 1,310\.00 USD/);
+  assert.match(text, /Final budget — 50,000 THB\n≈ 1,365\.00 USD/);
+  assert.match(text, /Remaining: 2,000 THB\n≈ 55\.00 USD/);
+  assert.match(text, /Planned payments .* 14,500 THB/);
+  assert.match(text, /Other expenses .* 33,500 THB/);
+  assert.doesNotMatch(text, /Planned payments .* USD/);
+  assert.doesNotMatch(text, /Other expenses .* USD/);
+});
+
+test("formats overspent equivalent as a secondary display line", () => {
+  const text = formatMonthlyReport({
+    ...reportFixture({ reportType: "monthly" }),
+    currency: "THB",
+    budget: {
+      ...reportFixture().budget,
+      remaining: -3000,
+      display: {
+        currency: "USD",
+        remaining: -82
+      }
+    }
+  }, { language: "en" });
+
+  assert.match(text, /Overspent: 3,000 THB\n≈ 82\.00 USD/);
 });
 
 test("formats RU monthly report titles with nominative month names", () => {

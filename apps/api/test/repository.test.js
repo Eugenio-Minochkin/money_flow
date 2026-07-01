@@ -1290,6 +1290,63 @@ test("builds report data with paid actual planned amount and unpaid planned occu
   ]);
 });
 
+test("report data includes display equivalents for budget amount and remaining", async () => {
+  const user = {
+    id: 1,
+    telegram_user_id: 100,
+    monthly_budget_amount: 50000,
+    base_currency: "THB",
+    display_currency: "USD",
+    usd_thb_rate: 40,
+    timezone: "Asia/Bangkok",
+    interface_language: "en"
+  };
+  const repo = createRepository(fakePool((sql) => {
+    const query = String(sql);
+    if (query.includes("FROM expenses") && query.includes("ORDER BY spent_at ASC")) {
+      return {
+        rows: [{
+          id: "10",
+          amount_base: 48000,
+          converted_amounts: { USD: 1200 },
+          description: "month spend",
+          category_slug: "other",
+          budget_impact: "regular",
+          spent_at: new Date("2026-06-15T05:00:00Z"),
+          local_date: "2026-06-15"
+        }]
+      };
+    }
+    if (query.includes("FROM planned_expenses") && query.includes("JOIN users")) return { rows: [] };
+    if (query.includes("FROM planned_expense_payments") && query.includes("JOIN planned_expenses")) return { rows: [] };
+    if (query.includes("FROM budget_topups") && query.includes("occurred_at")) return { rows: [] };
+    if (query.includes("GROUP BY category_slug")) return { rows: [] };
+    if (query === "SELECT timezone FROM users WHERE telegram_user_id = $1") return { rows: [{ timezone: "Asia/Bangkok" }] };
+    if (query.includes("FROM monthly_budget_overrides")) return { rows: [] };
+    if (query.includes("COALESCE(SUM(amount_base)") && query.includes("month_key")) return { rows: [{ total: 0 }] };
+    if (query.includes("FROM budget_topups") && query.includes("month_key")) return { rows: [] };
+    if (query.includes("FROM month_baselines")) return { rows: [] };
+    return { rows: [] };
+  }));
+
+  const report = await repo.buildReportDataForDelivery(user, "monthly", {
+    periodKey: "2026-06",
+    periodStartUtc: new Date("2026-05-31T17:00:00Z"),
+    periodEndUtc: new Date("2026-06-30T17:00:00Z"),
+    timezoneUsed: "Asia/Bangkok",
+    localStartDate: "2026-06-01",
+    localEndDate: "2026-06-30"
+  }, new Date("2026-07-01T03:00:00Z"));
+
+  assert.deepEqual(report.budget.display, {
+    currency: "USD",
+    amount: 1250,
+    baseBudget: 1250,
+    topupsTotal: 0,
+    remaining: 50
+  });
+});
+
 test("weekly report data includes unpaid planned occurrences from previous month when week crosses month boundary", async () => {
   const user = {
     id: 1,

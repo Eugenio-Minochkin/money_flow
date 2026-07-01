@@ -1155,7 +1155,11 @@ export function createRepository(pool, options = {}) {
           baseBudget: budget.baseBudget,
           topupsTotal: budget.topupsTotal,
           amount: budget.amount,
-          remaining
+          remaining,
+          display: {
+            ...budget.display,
+            remaining: displayFromBase(remaining, user)
+          }
         },
         plannedPayments: [
           ...paidPlannedPayments.map((payment) => ({

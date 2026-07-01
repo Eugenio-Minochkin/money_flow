@@ -71,6 +71,8 @@ This file records stable product and business rules. Read it before changing bud
 
 - Telegram weekly and monthly report messages are snapshots generated at send time.
 - The Mini App remains the live recalculation surface for historical weeks and months.
+- Report core accounting uses one report currency for all formula lines. In this PR the report currency is the user's base currency/current budget currency.
+- Display currency may appear only as a secondary equivalent line, not inside accounting partitions or category/payment item totals.
 - Weekly reports use the previous completed local week. Monthly reports use the previous completed local calendar month.
 - Report delivery idempotency is tracked by user, report type, and period key. Sending may only happen after a delivery row is successfully claimed as `pending`; failed rows may be retried, and force sends explicitly reclaim existing rows.
 - Report backfills may only send closed months. Current and future months are rejected.

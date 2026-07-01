@@ -10,7 +10,7 @@ export function formatWeeklyReport(report, options = {}) {
     `${labels.weeklyTitle}`,
     periodLabel,
     "",
-    `${labels.spent}: ${formatReportMoney(metrics.totalSpent, report.currency, language)}`,
+    ...lineWithSecondary(`${labels.spent}: ${formatReportMoney(metrics.totalSpent, report.currency, language)}`, secondaryDisplayLine(metrics.display, "totalSpent", report.currency, language)),
     `${labels.average}: ${formatReportMoney(metrics.averagePerDay ?? 0, report.currency, language)}/${labels.day}`,
     "",
     `${labels.inside}:`,
@@ -34,7 +34,7 @@ export function formatMonthlyReport(report, options = {}) {
   const lines = [
     `${labels.monthlyTitle(monthNameFromPeriod(report.period?.periodKey, language))}`,
     "",
-    `${labels.spent}: ${formatReportMoney(metrics.totalSpent, report.currency, language)}`,
+    ...lineWithSecondary(`${labels.spent}: ${formatReportMoney(metrics.totalSpent, report.currency, language)}`, secondaryDisplayLine(metrics.display, "totalSpent", report.currency, language)),
     "",
     `${labels.monthlyBudget}:`,
     ...monthlyBudgetLines(report.budget, report.currency, language),
@@ -82,21 +82,39 @@ function displayPartition(metrics = {}, fallbackCurrency = "THB") {
   };
 }
 
+function lineWithSecondary(primaryLine, secondaryLine) {
+  return secondaryLine ? [primaryLine, secondaryLine] : [primaryLine];
+}
+
+function secondaryDisplayLine(display = {}, field, primaryCurrency, language, absolute = false) {
+  const currency = display?.currency;
+  if (!currency || String(currency).toUpperCase() === String(primaryCurrency).toUpperCase()) return null;
+  const value = display[field];
+  if (value == null || !Number.isFinite(Number(value))) return null;
+  return `≈ ${formatReportMoney(absolute ? Math.abs(Number(value)) : value, currency, language)}`;
+}
+
 function monthlyBudgetLines(budget = {}, currency, language) {
   const hasTopups = Number(budget.topupsTotal ?? 0) > 0;
   const remaining = Number(budget.remaining ?? 0);
+  const finalEquivalent = secondaryDisplayLine(budget.display, "amount", currency, language);
+  const remainingEquivalent = secondaryDisplayLine(budget.display, "remaining", currency, language, true);
+  const finalLine = language === "en"
+    ? (hasTopups ? `Final budget — ${formatReportMoney(budget.amount, currency, language)}` : `Budget — ${formatReportMoney(budget.amount, currency, language)}`)
+    : (hasTopups ? `Итоговый бюджет — ${formatReportMoney(budget.amount, currency, language)}` : `Бюджет — ${formatReportMoney(budget.amount, currency, language)}`);
+  const remainingLine = remaining >= 0
+    ? (language === "en" ? `Remaining: ${formatReportMoney(remaining, currency, language)}` : `Осталось: ${formatReportMoney(remaining, currency, language)}`)
+    : (language === "en" ? `Overspent: ${formatReportMoney(Math.abs(remaining), currency, language)}` : `Перерасход: ${formatReportMoney(Math.abs(remaining), currency, language)}`);
   if (language === "en") {
     return [
       ...(hasTopups
         ? [
             `Starting budget — ${formatReportMoney(budget.baseBudget, currency, language)}`,
             `Top-ups — +${formatReportMoney(budget.topupsTotal, currency, language)}`,
-            `Final budget — ${formatReportMoney(budget.amount, currency, language)}`
+            ...lineWithSecondary(finalLine, finalEquivalent)
           ]
-        : [`Budget — ${formatReportMoney(budget.amount, currency, language)}`]),
-      remaining >= 0
-        ? `Remaining: ${formatReportMoney(remaining, currency, language)}`
-        : `Overspent: ${formatReportMoney(Math.abs(remaining), currency, language)}`
+        : lineWithSecondary(finalLine, finalEquivalent)),
+      ...lineWithSecondary(remainingLine, remainingEquivalent)
     ];
   }
   return [
@@ -104,12 +122,10 @@ function monthlyBudgetLines(budget = {}, currency, language) {
       ? [
           `Стартовый бюджет — ${formatReportMoney(budget.baseBudget, currency, language)}`,
           `Пополнения — +${formatReportMoney(budget.topupsTotal, currency, language)}`,
-          `Итоговый бюджет — ${formatReportMoney(budget.amount, currency, language)}`
+          ...lineWithSecondary(finalLine, finalEquivalent)
         ]
-      : [`Бюджет — ${formatReportMoney(budget.amount, currency, language)}`]),
-    remaining >= 0
-      ? `Осталось: ${formatReportMoney(remaining, currency, language)}`
-      : `Перерасход: ${formatReportMoney(Math.abs(remaining), currency, language)}`
+      : lineWithSecondary(finalLine, finalEquivalent)),
+    ...lineWithSecondary(remainingLine, remainingEquivalent)
   ];
 }
 

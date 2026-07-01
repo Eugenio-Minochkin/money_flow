@@ -557,3 +557,10 @@ Release notes:
 - [x] Retry/force delivery claim: non-empty reports must claim a `pending` delivery row before sending; failed rows and forced rows are updated back to pending.
 - [x] RU monthly title: title month names use nominative Russian names instead of mutating genitive names.
 - [x] Cross-month weekly planned payments: unpaid planned occurrences are expanded across every month touched by the report period.
+
+## Third Review Currency Scope Fixed
+
+- [x] Report core accounting renders in one report currency (`report.currency`, currently user base/current budget currency).
+- [x] Secondary display currency is rendered only as separate `≈ ...` equivalent lines for total spent, final/effective budget, and remaining/overspent.
+- [x] Partition, planned payment items, large totals, categories, and budget top-up item totals stay in report currency only.
+- [x] Historical locked report currency remains a follow-up if users can change base currency mid-month.
