@@ -7,7 +7,7 @@ import {
   shouldSendWeeklyReportForUser,
   weeklyPeriodForSend
 } from "./reportPeriods.js";
-import { normalizeTimeZone, timeZoneMonthBounds } from "../../../packages/shared/src/time.js";
+import { localMonthKey, normalizeTimeZone, timeZoneMonthBounds } from "../../../packages/shared/src/time.js";
 
 const ZERO_DECIMAL_DISPLAY_CURRENCIES = new Set(["THB", "RUB", "IDR", "BYN"]);
 
@@ -113,11 +113,13 @@ export function createReportService(options = {}) {
     },
     async backfillMonthlyReport(periodKey, input = {}) {
       const dryRun = input.dryRun !== false;
+      const current = input.now ?? now();
+      ensureClosedBackfillMonth(periodKey, current);
       const users = await repository.listReportCandidates();
       const summary = { checked: users.length, eligible: 0, willSend: 0, sent: 0, failed: 0, skipped: 0 };
       for (const user of users) {
         const period = monthlyBackfillPeriod(periodKey, user.timezone);
-        const outcome = await deliverReportForUser(user, "monthly", period, { dryRun, force: input.force === true, current: input.now ?? now() });
+        const outcome = await deliverReportForUser(user, "monthly", period, { dryRun, force: input.force === true, current });
         summary[outcome] = (summary[outcome] ?? 0) + 1;
       }
       return summary;
@@ -130,10 +132,27 @@ export function createReportService(options = {}) {
       if (["sent", "skipped", "pending"].includes(existing.status)) return "skipped";
     }
 
-    if (input.dryRun === true) return "willSend";
-
     const report = await buildReportForDelivery(user, reportType, period, input.current);
-    await repository.createReportDelivery({
+    if (isNoActivityReport(report)) {
+      if (input.dryRun === true) return "skipped";
+      const delivery = await repository.createReportDelivery({
+        userId: user.id,
+        reportType,
+        periodKey: period.periodKey,
+        periodStartUtc: period.periodStartUtc,
+        periodEndUtc: period.periodEndUtc,
+        timezoneUsed: period.timezoneUsed,
+        status: "skipped",
+        generatedAt: report.generatedAt ?? input.current,
+        skipReason: "no_activity",
+        metadata: deliveryMetadata(report)
+      });
+      if (!delivery) return "skipped";
+      await repository.recordAppEvent?.(user.id, `${reportType}_report_skipped`, { ...deliveryMetadata(report), skip_reason: "no_activity" });
+      return "skipped";
+    }
+    if (input.dryRun === true) return "willSend";
+    const delivery = await repository.createReportDelivery({
       userId: user.id,
       reportType,
       periodKey: period.periodKey,
@@ -144,6 +163,7 @@ export function createReportService(options = {}) {
       generatedAt: report.generatedAt ?? input.current,
       metadata: deliveryMetadata(report)
     });
+    if (!delivery) return "skipped";
     await repository.recordAppEvent?.(user.id, `${reportType}_report_generated`, deliveryMetadata(report));
 
     try {
@@ -232,6 +252,13 @@ function deliveryMetadata(report) {
   };
 }
 
+function ensureClosedBackfillMonth(periodKey, current) {
+  const currentMonth = localMonthKey(current, "UTC");
+  if (String(periodKey) >= currentMonth) {
+    throw new Error(`Monthly report backfill period must be a closed month before ${currentMonth}`);
+  }
+}
+
 function monthlyBackfillPeriod(periodKey, timeZoneValue) {
   const timeZone = normalizeTimeZone(timeZoneValue).timeZone;
   const bounds = timeZoneMonthBounds(periodKey, timeZone);
@@ -248,6 +275,24 @@ function monthlyBackfillPeriod(periodKey, timeZoneValue) {
     localStartDate: `${yearText}-${monthText}-01`,
     localEndDate: `${yearText}-${monthText}-${String(daysInMonth).padStart(2, "0")}`
   };
+}
+
+function isNoActivityReport(report) {
+  const metrics = report.metrics ?? {};
+  const totalSpent = money(metrics.totalSpent);
+  const topups = money(metrics.budgetTopupsTotal);
+  const reserveTotal = money(metrics.reserveTotal ?? metrics.reserveAmount ?? report.reserve?.amount ?? report.reserve?.total);
+  return totalSpent <= 0
+    && topups <= 0
+    && reserveTotal <= 0
+    && !hasItems(report.plannedPayments)
+    && !hasItems(report.budgetTopups)
+    && !hasItems(report.largeExpenses)
+    && !hasItems(report.topCategories);
+}
+
+function hasItems(value) {
+  return Array.isArray(value) && value.length > 0;
 }
 
 function isDisplayLargeExpense(expense, plannedExpenseIds, largeThreshold) {

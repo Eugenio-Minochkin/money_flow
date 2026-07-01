@@ -74,6 +74,25 @@ test("visual partition sums to displayed total after rounding", () => {
   assert.equal(partition.plannedPaidTotal + partition.regularTotal, partition.total);
 });
 
+test("report metrics display partition derives regular display from rounded total minus rounded planned", () => {
+  const metrics = buildReportMetrics({
+    currency: "THB",
+    displayCurrency: "USD",
+    expenses: [
+      expense({ id: 1, amount: 66.665, impact: "regular", displayAmount: 66.665 }),
+      expense({ id: 2, amount: 33.335, impact: "planned", displayAmount: 33.335 })
+    ],
+    paidPlannedPayments: [
+      { expense_id: 2, amount_base: 33.335, display: { amount: 33.335 } }
+    ]
+  });
+
+  assert.equal(metrics.display.totalSpent, 100);
+  assert.equal(metrics.display.plannedPaidTotal, 33.34);
+  assert.equal(metrics.display.regularTotal, 66.66);
+  assert.equal(metrics.display.plannedPaidTotal + metrics.display.regularTotal, metrics.display.totalSpent);
+});
+
 test("budget top-ups are capacity and do not count as spending", () => {
   const metrics = buildReportMetrics({
     currency: "THB",
@@ -148,6 +167,30 @@ test("runDueReports skips duplicate sent deliveries", async () => {
   assert.equal(summary.sent, 0);
 });
 
+test("delivery race skips when createReportDelivery loses ON CONFLICT DO NOTHING", async () => {
+  const sent = [];
+  const repo = reportRepo({
+    now: new Date("2026-07-06T02:30:00Z"),
+    createDeliveryResult: null
+  });
+  const service = createReportService({
+    repository: repo,
+    miniAppUrl: "http://localhost:3000",
+    now: () => new Date("2026-07-06T02:30:00Z"),
+    sendMessage: async (message) => {
+      sent.push(message);
+      return { message_id: 1 };
+    }
+  });
+
+  const summary = await service.runDueReports();
+
+  assert.equal(summary.skipped, 1);
+  assert.equal(summary.sent, 0);
+  assert.equal(sent.length, 0);
+  assert.equal(repo.created.length, 1);
+});
+
 test("blocked Telegram errors mark delivery failed and user bot blocked", async () => {
   const repo = reportRepo({ now: new Date("2026-07-06T02:30:00Z") });
   const service = createReportService({
@@ -169,11 +212,99 @@ test("blocked Telegram errors mark delivery failed and user bot blocked", async 
   assert.equal(repo.failed[0].reportType, "weekly");
 });
 
-function expense({ id, amount, impact }) {
+test("monthly backfill skips no-activity reports and records skipped delivery", async () => {
+  const repo = reportRepo({
+    reportData: {
+      metrics: {
+        totalSpent: 0,
+        averagePerDay: 0,
+        plannedPaidTotal: 0,
+        regularTotal: 0,
+        largeTotal: 0,
+        budgetTopupsTotal: 0,
+        outOfBudgetTotal: 0,
+        showOutsideBudget: false
+      },
+      plannedPayments: [],
+      largeExpenses: [],
+      budgetTopups: [],
+      topCategories: []
+    }
+  });
+  const service = createReportService({
+    repository: repo,
+    miniAppUrl: "http://localhost:3000",
+    now: () => new Date("2026-07-01T02:30:00Z"),
+    sendMessage: async () => {
+      throw new Error("should not send");
+    }
+  });
+
+  const summary = await service.backfillMonthlyReport("2026-06", { dryRun: false });
+
+  assert.equal(summary.skipped, 1);
+  assert.equal(summary.sent, 0);
+  assert.equal(repo.created.length, 1);
+  assert.equal(repo.created[0].status, "skipped");
+  assert.equal(repo.created[0].skipReason, "no_activity");
+  assert.equal(repo.skipped.length, 0);
+});
+
+test("monthly backfill dry-run reports no-activity skip without delivery side effects", async () => {
+  const repo = reportRepo({
+    reportData: {
+      metrics: {
+        totalSpent: 0,
+        averagePerDay: 0,
+        plannedPaidTotal: 0,
+        regularTotal: 0,
+        largeTotal: 0,
+        budgetTopupsTotal: 0,
+        outOfBudgetTotal: 0,
+        showOutsideBudget: false
+      },
+      plannedPayments: [],
+      largeExpenses: [],
+      budgetTopups: [],
+      topCategories: []
+    }
+  });
+  const service = createReportService({
+    repository: repo,
+    miniAppUrl: "http://localhost:3000",
+    now: () => new Date("2026-07-01T02:30:00Z")
+  });
+
+  const summary = await service.backfillMonthlyReport("2026-06");
+
+  assert.equal(summary.skipped, 1);
+  assert.equal(summary.willSend, 0);
+  assert.equal(repo.created.length, 0);
+  assert.equal(repo.skipped.length, 0);
+});
+
+test("monthly backfill rejects current and future periods", async () => {
+  const service = createReportService({
+    repository: reportRepo(),
+    miniAppUrl: "http://localhost:3000",
+    now: () => new Date("2026-07-01T02:30:00Z")
+  });
+
+  await assert.rejects(
+    () => service.backfillMonthlyReport("2026-07"),
+    /closed month/
+  );
+  await assert.rejects(
+    () => service.backfillMonthlyReport("2026-08"),
+    /closed month/
+  );
+});
+
+function expense({ id, amount, impact, displayAmount = amount }) {
   return {
     id,
     amount_base: amount,
-    display: { amount },
+    display: { amount: displayAmount },
     budget_impact: impact,
     description: `expense ${id}`,
     category_slug: "other",
@@ -203,6 +334,7 @@ function reportRepo(options = {}) {
     },
     async createReportDelivery(input) {
       this.created.push(input);
+      if ("createDeliveryResult" in options) return options.createDeliveryResult;
       return { id: this.created.length, ...input };
     },
     async markReportDeliverySent(input) {
@@ -224,11 +356,12 @@ function reportRepo(options = {}) {
       this.events.push({ userId, name, metadata });
     },
     async buildReportDataForDelivery(_user, reportType, period) {
+      const override = options.reportData ?? {};
       return {
         reportType,
         currency: "THB",
         period,
-        metrics: {
+        metrics: override.metrics ?? {
           totalSpent: 100,
           averagePerDay: 10,
           plannedPaidTotal: 0,
@@ -239,10 +372,10 @@ function reportRepo(options = {}) {
           showOutsideBudget: false
         },
         budget: { amount: 1000, baseBudget: 1000, topupsTotal: 0, remaining: 900 },
-        plannedPayments: [],
-        largeExpenses: [],
-        budgetTopups: [],
-        topCategories: [{ name: "Food", amount: 100 }],
+        plannedPayments: override.plannedPayments ?? [],
+        largeExpenses: override.largeExpenses ?? [],
+        budgetTopups: override.budgetTopups ?? [],
+        topCategories: override.topCategories ?? [{ name: "Food", amount: 100 }],
         insight: reportType,
         generatedAt: now
       };

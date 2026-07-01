@@ -5,6 +5,7 @@ export function formatWeeklyReport(report, options = {}) {
   const labels = language === "en" ? enLabels : ruLabels;
   const periodLabel = formatPeriodLabel(report.period, language);
   const metrics = report.metrics ?? {};
+  const partition = displayPartition(metrics, report.currency);
   const lines = [
     `${labels.weeklyTitle}`,
     periodLabel,
@@ -13,8 +14,8 @@ export function formatWeeklyReport(report, options = {}) {
     `${labels.average}: ${formatReportMoney(metrics.averagePerDay ?? 0, report.currency, language)}/${labels.day}`,
     "",
     `${labels.inside}:`,
-    `${labels.plannedPaid} — ${formatReportMoney(metrics.plannedPaidTotal ?? 0, report.currency, language)}`,
-    `${labels.regular} — ${formatReportMoney(metrics.regularTotal ?? 0, report.currency, language)}`
+    `${labels.plannedPaid} — ${formatReportMoney(partition.plannedPaidTotal, partition.currency, language)}`,
+    `${labels.regular} — ${formatReportMoney(partition.regularTotal, partition.currency, language)}`
   ];
   pushOptional(lines, formatBudgetTopupsBlock(report.budgetTopups, metrics.budgetTopupsTotal, report.currency, language, true));
   pushOptional(lines, formatPlannedPaymentsBlock(report.plannedPayments, report.currency, language));
@@ -29,6 +30,7 @@ export function formatMonthlyReport(report, options = {}) {
   const language = normalizeLanguage(options.language);
   const labels = language === "en" ? enLabels : ruLabels;
   const metrics = report.metrics ?? {};
+  const partition = displayPartition(metrics, report.currency);
   const lines = [
     `${labels.monthlyTitle(monthNameFromPeriod(report.period?.periodKey, language))}`,
     "",
@@ -41,8 +43,8 @@ export function formatMonthlyReport(report, options = {}) {
     `${labels.average}: ${formatReportMoney(metrics.averagePerDay ?? 0, report.currency, language)}/${labels.day}`,
     "",
     `${labels.madeUp}:`,
-    `${labels.plannedPaid} — ${formatReportMoney(metrics.plannedPaidTotal ?? 0, report.currency, language)}`,
-    `${labels.regular} — ${formatReportMoney(metrics.regularTotal ?? 0, report.currency, language)}`
+    `${labels.plannedPaid} — ${formatReportMoney(partition.plannedPaidTotal, partition.currency, language)}`,
+    `${labels.regular} — ${formatReportMoney(partition.regularTotal, partition.currency, language)}`
   ];
   pushOptional(lines, formatBudgetTopupsBlock(report.budgetTopups, metrics.budgetTopupsTotal, report.currency, language, false));
   pushOptional(lines, formatPlannedPaymentsBlock(report.plannedPayments, report.currency, language));
@@ -62,6 +64,14 @@ export function formatReportMoney(value, currency = "THB", language = "ru") {
     maximumFractionDigits: decimals
   }).format(amount).replace(/[\u00a0\u202f]/g, " ");
   return `${formatted} ${normalized}`;
+}
+
+function displayPartition(metrics = {}, fallbackCurrency = "THB") {
+  return {
+    currency: metrics.display?.currency ?? fallbackCurrency,
+    plannedPaidTotal: metrics.display?.plannedPaidTotal ?? metrics.plannedPaidTotal ?? 0,
+    regularTotal: metrics.display?.regularTotal ?? metrics.regularTotal ?? 0
+  };
 }
 
 function monthlyBudgetLines(budget = {}, currency, language) {

@@ -73,6 +73,8 @@ This file records stable product and business rules. Read it before changing bud
 - The Mini App remains the live recalculation surface for historical weeks and months.
 - Weekly reports use the previous completed local week. Monthly reports use the previous completed local calendar month.
 - Report delivery idempotency is tracked by user, report type, and period key.
+- Report backfills may only send closed months. Current and future months are rejected.
+- Empty report snapshots with no spending, planned payments, budget top-ups, reserve, baseline, or category activity are marked `no_activity` and skipped instead of being sent.
 
 ## Currencies And Rounding
 

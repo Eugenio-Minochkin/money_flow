@@ -19,6 +19,20 @@
 - Do not invent outside-budget accounting in this PR. Hide the outside-budget block unless an existing separate model supplies a positive value.
 - Preserve dashboard semantics and reuse current budget/topup/planned-payment behavior.
 
+## Current PR Scope And Follow-Up
+
+This PR implements the report delivery foundation and the first user-facing weekly/monthly summaries: period gates, delivery ledger, idempotent Telegram sending, monthly dry-run backfill, RU/EN formatting, Mini App buttons, budget top-ups, paid/unpaid planned payments, large-expense display, and the accounting semantics above.
+
+The richer analytical lines from the larger product spec are intentionally follow-up work, not part of this PR's acceptance surface:
+
+- `forecast`
+- `safe_daily`
+- `committed_remaining`
+- previous-week delta
+- `planned_daily_pace`
+
+Those fields should be added in a later PR from the existing dashboard/budget model, with focused tests for each metric before exposing them in the report formatter.
+
 ## File Structure
 
 - Create `apps/api/migrations/004_report_deliveries.sql`: delivery table, constraints, and indexes.
@@ -528,3 +542,11 @@ Release notes:
 - Added monthly reports for the previous closed month.
 - Reports now include planned payments, large expenses, and budget top-ups without double-counting.
 ```
+
+## Review Blockers Fixed
+
+- [x] Delivery race: if the idempotent `report_deliveries` insert returns `null`, Telegram send is skipped.
+- [x] Display rounding partition: report formatter renders paid planned and derived regular values from the rounded display partition.
+- [x] Backfill no-activity: empty monthly report snapshots are skipped with `skipReason = no_activity`; dry-run reports the skip without delivery side effects.
+- [x] Closed month guard: monthly backfill rejects current and future months.
+- [x] Scope clarification: forecast, safe daily, committed remaining, previous-week delta, and planned daily pace are documented follow-up analytics.

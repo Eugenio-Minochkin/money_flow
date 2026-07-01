@@ -35,6 +35,33 @@ test("formats EN weekly report and hides empty optional blocks", () => {
   assert.doesNotMatch(text, /\n\n\n/);
 });
 
+test("formats inside partition from display metrics when provided", () => {
+  const text = formatWeeklyReport({
+    ...reportFixture(),
+    currency: "USD",
+    metrics: {
+      ...reportFixture().metrics,
+      totalSpent: 100,
+      plannedPaidTotal: 33.335,
+      regularTotal: 66.665,
+      display: {
+        currency: "USD",
+        totalSpent: 100,
+        plannedPaidTotal: 33.34,
+        regularTotal: 66.66
+      }
+    },
+    largeExpenses: [],
+    budgetTopups: [],
+    plannedPayments: []
+  }, { language: "en" });
+
+  assert.match(text, /Spent: 100\.00 USD/);
+  assert.match(text, /Planned payments .* 33\.34 USD/);
+  assert.match(text, /Other expenses .* 66\.66 USD/);
+  assert.doesNotMatch(text, /66\.67 USD/);
+});
+
 test("formats RU monthly report with unpaid planned due date", () => {
   const text = formatMonthlyReport(reportFixture({ reportType: "monthly" }), { language: "ru" });
 
