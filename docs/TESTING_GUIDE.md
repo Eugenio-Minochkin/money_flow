@@ -17,6 +17,8 @@ Use this guide when changing business logic or UI around the main Money Flow sur
 - Currency rounding and display currencies.
 - Budget top-up confirm/undo idempotency, current-day snapshot invalidation, and reserve budget synchronization.
 - Budget top-up month boundaries: current-month confirmation is allowed, previous-month button confirmation is rejected, and no leftover/top-up rolls over automatically.
+- Weekly and monthly report period boundaries, delivery idempotency, dry-run backfill, and blocked-bot behavior.
+- Report accounting: paid planned actual linked amounts, budget top-ups as capacity, large one-offs inside total but outside daily projection, and hidden outside-budget block unless an existing model supplies it.
 
 ## Practical Test Pointers
 
@@ -25,6 +27,7 @@ Use this guide when changing business logic or UI around the main Money Flow sur
 - Planned payment behavior is spread across shared parsing, API repository logic, Telegram callbacks, Mini App planned UI, and related tests.
 - Timezone helpers live in `packages/shared/src/time.js` and are covered by `packages/shared/test/time.test.js`.
 - Daily reminder behavior is covered by `apps/api/test/dailyReminderService.test.js`, repository tests, and Telegram callback tests.
+- Report behavior is covered by `apps/api/test/reportPeriods.test.js`, `apps/api/test/reportService.test.js`, `apps/api/test/reportFormat.test.js`, `apps/api/test/reportKeyboards.test.js`, `apps/api/test/reportScheduler.test.js`, and repository delivery tests.
 - Dashboard presentation is covered by Mini App dashboard and smoke asset tests.
 - Settings behavior, including current-month budget display and timezone controls, is covered by Mini App settings tests.
 - Voice budget top-up coverage should use digit transcriptions for MVP behavior; amount-word parsing needs a dedicated parser or LLM fallback test before being claimed.

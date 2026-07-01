@@ -16,6 +16,7 @@ import {
 } from "../../../packages/shared/src/time.js";
 import { calculateReserveState, validateReserveCapacity } from "../../../packages/shared/src/reserve.js";
 import { createExchangeRateProvider } from "./exchangeRates.js";
+import { buildReportMetrics } from "./reportService.js";
 
 const INVALID_PLANNED_DUE_DATE_LOGGED = Symbol("invalidPlannedDueDateLogged");
 
@@ -951,6 +952,195 @@ export function createRepository(pool, options = {}) {
         ]
       );
       return result.rows[0] ?? null;
+    },
+
+    async getReportDelivery(userId, reportType, periodKey) {
+      const result = await pool.query(
+        `SELECT *
+         FROM report_deliveries
+         WHERE user_id = $1
+           AND report_type = $2
+           AND period_key = $3`,
+        [userId, reportType, periodKey]
+      );
+      return result.rows[0] ?? null;
+    },
+
+    async createReportDelivery(input) {
+      const result = await pool.query(
+        `INSERT INTO report_deliveries (
+           user_id, report_type, period_key, period_start_utc, period_end_utc,
+           timezone_used, status, generated_at, error_code, error_message,
+           skip_reason, metadata
+         )
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb)
+         ON CONFLICT (user_id, report_type, period_key) DO NOTHING
+         RETURNING *`,
+        [
+          input.userId,
+          input.reportType,
+          input.periodKey,
+          input.periodStartUtc,
+          input.periodEndUtc,
+          input.timezoneUsed,
+          input.status ?? "pending",
+          input.generatedAt ?? null,
+          input.errorCode ?? null,
+          input.errorMessage ?? null,
+          input.skipReason ?? null,
+          JSON.stringify(input.metadata ?? {})
+        ]
+      );
+      return result.rows[0] ?? null;
+    },
+
+    async markReportDeliverySent(input) {
+      const result = await pool.query(
+        `UPDATE report_deliveries
+         SET status = 'sent',
+             telegram_message_id = $4,
+             sent_at = $5,
+             error_code = NULL,
+             error_message = NULL,
+             skip_reason = NULL,
+             metadata = $6::jsonb,
+             updated_at = now()
+         WHERE user_id = $1
+           AND report_type = $2
+           AND period_key = $3
+         RETURNING *`,
+        [
+          input.userId,
+          input.reportType,
+          input.periodKey,
+          input.telegramMessageId ?? null,
+          input.sentAt ?? new Date(),
+          JSON.stringify(input.metadata ?? {})
+        ]
+      );
+      return result.rows[0] ?? null;
+    },
+
+    async markReportDeliveryFailed(input) {
+      const result = await pool.query(
+        `UPDATE report_deliveries
+         SET status = 'failed',
+             error_code = $4,
+             error_message = $5,
+             metadata = $6::jsonb,
+             updated_at = now()
+         WHERE user_id = $1
+           AND report_type = $2
+           AND period_key = $3
+         RETURNING *`,
+        [
+          input.userId,
+          input.reportType,
+          input.periodKey,
+          input.errorCode ?? null,
+          input.errorMessage ?? null,
+          JSON.stringify(input.metadata ?? {})
+        ]
+      );
+      return result.rows[0] ?? null;
+    },
+
+    async markReportDeliverySkipped(input) {
+      const result = await pool.query(
+        `UPDATE report_deliveries
+         SET status = 'skipped',
+             skip_reason = $4,
+             metadata = $5::jsonb,
+             updated_at = now()
+         WHERE user_id = $1
+           AND report_type = $2
+           AND period_key = $3
+         RETURNING *`,
+        [
+          input.userId,
+          input.reportType,
+          input.periodKey,
+          input.skipReason ?? null,
+          JSON.stringify(input.metadata ?? {})
+        ]
+      );
+      return result.rows[0] ?? null;
+    },
+
+    async listReportCandidates() {
+      const result = await pool.query(
+        `SELECT *
+         FROM users
+         WHERE telegram_user_id IS NOT NULL
+           AND onboarding_step = 'completed'
+           AND bot_blocked = false
+         ORDER BY id ASC`
+      );
+      return result.rows;
+    },
+
+    async buildReportDataForDelivery(user, reportType, period, now = new Date()) {
+      const timeZone = period.timezoneUsed ?? userTimezone(user);
+      const bounds = { start: period.periodStartUtc, end: period.periodEndUtc };
+      const [expenses, paidPlannedPayments, budgetTopups, topCategories] = await Promise.all([
+        reportExpensesForPeriod(pool, user, bounds, timeZone),
+        reportPaidPlannedPaymentsForPeriod(pool, user, bounds, timeZone),
+        reportBudgetTopupsForPeriod(pool, user, bounds, timeZone),
+        reportTopCategoriesForPeriod(pool, user, bounds)
+      ]);
+      const budgetDate = reportType === "monthly" ? new Date(period.periodStartUtc.getTime() + 12 * 60 * 60_000) : now;
+      const budget = await currentMonthBudget(pool, user, budgetDate, timeZone);
+      const monthBaseline = reportType === "monthly"
+        ? await monthBaselineTotal(pool, user.id, budgetDate, timeZone)
+        : 0;
+      const metrics = buildReportMetrics({
+        currency: user.base_currency ?? "THB",
+        displayCurrency: user.display_currency ?? "USD",
+        expenses,
+        paidPlannedPayments,
+        budgetTopups,
+        monthBaseline
+      });
+      const days = Math.max(Math.round((period.periodEndUtc.getTime() - period.periodStartUtc.getTime()) / 86_400_000), 1);
+      metrics.averagePerDay = roundMoney(metrics.totalSpent / days);
+      const remaining = roundMoney(budget.amount - metrics.totalSpent);
+
+      return {
+        reportType,
+        currency: user.base_currency ?? "THB",
+        period,
+        metrics,
+        budget: {
+          baseBudget: budget.baseBudget,
+          topupsTotal: budget.topupsTotal,
+          amount: budget.amount,
+          remaining
+        },
+        plannedPayments: paidPlannedPayments.map((payment) => ({
+          name: payment.name,
+          amount: Number(payment.amount_base ?? 0),
+          paid: true,
+          dueDate: payment.occurrence_date
+        })),
+        largeExpenses: expenses
+          .filter((expense) => expense.budget_impact === "large_oneoff")
+          .slice(0, reportType === "monthly" ? 5 : 3)
+          .map((expense) => ({
+            date: expense.local_date,
+            name: expense.description || expense.category_slug,
+            amount: Number(expense.amount_base ?? 0)
+          })),
+        budgetTopups: budgetTopups.map((topup) => ({
+          date: topup.local_date,
+          amount: Number(topup.amount_base ?? 0)
+        })),
+        topCategories: topCategories.map((category) => ({
+          name: category.category_slug,
+          amount: Number(category.total ?? 0)
+        })),
+        insight: deterministicReportInsight(metrics, topCategories, user.interface_language),
+        generatedAt: now
+      };
     },
 
     async createDraft(userId, sourceText, items) {
@@ -2176,6 +2366,89 @@ async function monthBaselineTotal(pool, userId, now, timeZone = "Asia/Bangkok") 
     [userId, monthKey(now, timeZone)]
   );
   return Number(result.rows[0]?.total ?? 0);
+}
+
+async function reportExpensesForPeriod(pool, user, bounds, timeZone) {
+  const result = await pool.query(
+    `SELECT id, amount_base::float AS amount_base, converted_amounts, description,
+            category_slug, budget_impact, spent_at,
+            (spent_at AT TIME ZONE $4)::date::text AS local_date
+     FROM expenses
+     WHERE user_id = $1
+       AND spent_at >= $2
+       AND spent_at < $3
+     ORDER BY spent_at ASC, id ASC`,
+    [user.id, bounds.start, bounds.end, timeZone]
+  );
+  return result.rows.map((row) => withDisplay(row, user));
+}
+
+async function reportPaidPlannedPaymentsForPeriod(pool, user, bounds, timeZone) {
+  const result = await pool.query(
+    `SELECT planned_expense_payments.expense_id,
+            planned_expenses.description AS name,
+            planned_expenses.amount_base::float AS planned_amount_base,
+            expenses.amount_base::float AS amount_base,
+            planned_expense_payments.occurrence_date::text AS occurrence_date,
+            (expenses.spent_at AT TIME ZONE $4)::date::text AS local_date
+     FROM planned_expense_payments
+     JOIN planned_expenses ON planned_expenses.id = planned_expense_payments.planned_expense_id
+     JOIN expenses ON expenses.id = planned_expense_payments.expense_id
+     WHERE expenses.user_id = $1
+       AND expenses.spent_at >= $2
+       AND expenses.spent_at < $3
+     ORDER BY planned_expense_payments.occurrence_date ASC, planned_expense_payments.id ASC`,
+    [user.id, bounds.start, bounds.end, timeZone]
+  );
+  return result.rows.map((row) => ({
+    ...row,
+    display: {
+      currency: user.display_currency ?? "USD",
+      amount: displayFromBase(row.amount_base, user)
+    }
+  }));
+}
+
+async function reportBudgetTopupsForPeriod(pool, user, bounds, timeZone) {
+  const result = await pool.query(
+    `SELECT *, (occurred_at AT TIME ZONE $4)::date::text AS local_date
+     FROM budget_topups
+     WHERE user_id = $1
+       AND occurred_at >= $2
+       AND occurred_at < $3
+       AND deleted_at IS NULL
+     ORDER BY occurred_at ASC, id ASC`,
+    [user.id, bounds.start, bounds.end, timeZone]
+  );
+  return result.rows.map((row) => withDisplay(row, user));
+}
+
+async function reportTopCategoriesForPeriod(pool, user, bounds) {
+  const result = await pool.query(
+    `SELECT category_slug,
+            COALESCE(SUM(amount_base), 0)::float AS total
+     FROM expenses
+     WHERE user_id = $1
+       AND spent_at >= $2
+       AND spent_at < $3
+     GROUP BY category_slug
+     ORDER BY total DESC
+     LIMIT 5`,
+    [user.id, bounds.start, bounds.end]
+  );
+  return result.rows;
+}
+
+function deterministicReportInsight(metrics, topCategories, language) {
+  const topCategory = topCategories?.[0]?.category_slug ?? (language === "en" ? "spending" : "расходы");
+  if (language === "en") {
+    if (!metrics.totalSpent) return "No expenses were found for this period.";
+    if (metrics.largeTotal > 0) return `The main spending area was ${topCategory}; large one-off expenses also mattered.`;
+    return `The main spending area was ${topCategory}.`;
+  }
+  if (!metrics.totalSpent) return "За период расходов не найдено.";
+  if (metrics.largeTotal > 0) return `Главная зона расходов — ${topCategory}; крупные разовые траты тоже повлияли на итог.`;
+  return `Главная зона расходов — ${topCategory}.`;
 }
 
 async function currentMonthBudget(pool, user, now, timeZone = userTimezone(user)) {

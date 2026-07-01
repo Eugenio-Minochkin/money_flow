@@ -1070,6 +1070,87 @@ test("lists reminder candidates excluding blocked and onboarding users", async (
   assert.equal(users[0].id, 1);
 });
 
+test("creates report deliveries idempotently with JSON metadata", async () => {
+  const generatedAt = new Date("2026-07-06T09:00:00Z");
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql: String(sql), params });
+    return { rows: [{ id: 10, status: params[6], metadata: JSON.parse(params[11]) }] };
+  }));
+
+  const delivery = await repo.createReportDelivery({
+    userId: 1,
+    reportType: "weekly",
+    periodKey: "2026-W27",
+    periodStartUtc: new Date("2026-06-29T00:00:00Z"),
+    periodEndUtc: new Date("2026-07-06T00:00:00Z"),
+    timezoneUsed: "UTC",
+    status: "pending",
+    generatedAt,
+    metadata: { total_spent: 100 }
+  });
+
+  assert.equal(delivery.status, "pending");
+  assert.deepEqual(delivery.metadata, { total_spent: 100 });
+  assert.match(queries[0].sql, /INSERT INTO report_deliveries/);
+  assert.match(queries[0].sql, /ON CONFLICT \(user_id, report_type, period_key\) DO NOTHING/);
+  assert.deepEqual(queries[0].params, [
+    1,
+    "weekly",
+    "2026-W27",
+    new Date("2026-06-29T00:00:00Z"),
+    new Date("2026-07-06T00:00:00Z"),
+    "UTC",
+    "pending",
+    generatedAt,
+    null,
+    null,
+    null,
+    JSON.stringify({ total_spent: 100 })
+  ]);
+});
+
+test("updates report deliveries as sent failed and skipped", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql: String(sql), params });
+    return { rows: [{ id: 10 }] };
+  }));
+
+  await repo.markReportDeliverySent({
+    userId: 1,
+    reportType: "weekly",
+    periodKey: "2026-W27",
+    telegramMessageId: 222,
+    sentAt: new Date("2026-07-06T09:01:00Z"),
+    metadata: { total_spent: 100 }
+  });
+  await repo.markReportDeliveryFailed({
+    userId: 1,
+    reportType: "weekly",
+    periodKey: "2026-W27",
+    errorCode: "403",
+    errorMessage: "Forbidden",
+    metadata: { blocked: true }
+  });
+  await repo.markReportDeliverySkipped({
+    userId: 1,
+    reportType: "monthly",
+    periodKey: "2026-06",
+    skipReason: "no_activity",
+    metadata: { checked: true }
+  });
+
+  assert.match(queries[0].sql, /UPDATE report_deliveries/);
+  assert.match(queries[0].sql, /status = 'sent'/);
+  assert.match(queries[0].sql, /telegram_message_id = \$4/);
+  assert.deepEqual(queries[0].params, [1, "weekly", "2026-W27", 222, new Date("2026-07-06T09:01:00Z"), JSON.stringify({ total_spent: 100 })]);
+  assert.match(queries[1].sql, /status = 'failed'/);
+  assert.deepEqual(queries[1].params, [1, "weekly", "2026-W27", "403", "Forbidden", JSON.stringify({ blocked: true })]);
+  assert.match(queries[2].sql, /status = 'skipped'/);
+  assert.deepEqual(queries[2].params, [1, "monthly", "2026-06", "no_activity", JSON.stringify({ checked: true })]);
+});
+
 test("checks confirmed financial activity using supplied local bounds", async () => {
   const bounds = { start: new Date("2026-06-24T17:00:00Z"), end: new Date("2026-06-25T17:00:00Z") };
   const repo = createRepository(fakePool((sql, params) => {
