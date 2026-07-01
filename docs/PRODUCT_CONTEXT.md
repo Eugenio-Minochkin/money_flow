@@ -10,6 +10,7 @@ The product should feel simple, fast, and light: a user records expenses in the 
 - Use confirmation before saving parsed expenses so the user stays in control.
 - Keep the Mini App dashboard focused on budget state, recent movement, and immediate next actions.
 - Allow simple one-off budget top-ups when extra money arrives during the month, without turning the product into income accounting.
+- Send lightweight weekly and monthly Telegram report snapshots so the user can notice money movement without opening the Mini App.
 
 ## What It Is Not
 
@@ -27,3 +28,4 @@ The product should feel simple, fast, and light: a user records expenses in the 
 - New work should usually improve the current MVP flows before adding a new major surface.
 - Evening empty-day reminders should feel gentle and easy to dismiss, with a clear opt-out.
 - Timezone settings should stay lightweight: show the current timezone, allow auto-detect, and offer a short common list.
+- Reports should feel calm and readable: meaningful sections, exact sums, no shame, and no double-counting.

@@ -44,3 +44,13 @@ test("budget top-up migration creates drafts, topups, idempotency index, and exp
   assert.match(sql, /exchange_rate_source TEXT NOT NULL[,)]/i);
   assert.doesNotMatch(sql, /exchange_rate_source TEXT NOT NULL DEFAULT/i);
 });
+
+test("report delivery migration creates universal delivery ledger", async () => {
+  const dir = resolve(dirname(fileURLToPath(import.meta.url)), "..", "migrations");
+  const sql = await readFile(resolve(dir, "004_report_deliveries.sql"), "utf8");
+
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS report_deliveries/i);
+  assert.match(sql, /report_type TEXT NOT NULL CHECK \(report_type IN \('weekly', 'monthly'\)\)/i);
+  assert.match(sql, /status TEXT NOT NULL CHECK \(status IN \('pending', 'sent', 'failed', 'skipped'\)\)/i);
+  assert.match(sql, /UNIQUE\(user_id, report_type, period_key\)/i);
+});

@@ -15,6 +15,8 @@ import { handleDevRoute } from "./devRoutes.js";
 import { createRateLimiter } from "./rateLimit.js";
 import { createReleaseDigestScheduler } from "./releaseDigestScheduler.js";
 import { createReleaseNotesService } from "./releaseNotesService.js";
+import { createReportScheduler } from "./reportScheduler.js";
+import { createReportService } from "./reportService.js";
 import { DraftCanceledError, CategoryRequiredError, createRepository } from "./repository.js";
 import { shouldRateLimitRequest } from "./routing.js";
 import {
@@ -22,8 +24,6 @@ import {
   draftCanceledMessageText,
   savedSummaryKeyboard,
   sendTelegramMessage,
-  sendWeeklyReports,
-  shouldSendWeeklyReport,
   updateDraftMessageToCanceled,
   updateDraftMessageToDraftState,
   updateDraftMessageToSaved,
@@ -95,6 +95,19 @@ const dailyReminderService = createDailyReminderService({
   globalEnabled: config.dailyReminderGlobalEnabled,
   rolloutPercent: config.dailyReminderRolloutPercent
 });
+const reportService = createReportService({
+  repository,
+  miniAppUrl: config.miniAppUrl,
+  sendMessage: (message) => sendTelegramMessage({
+    token: config.telegramBotToken,
+    ...message
+  })
+});
+const reportScheduler = createReportScheduler({
+  enabled: Boolean(config.telegramBotToken),
+  reportService,
+  logger: console
+});
 function createBot(telegramClient) {
   return createTelegramBot({
     repository,
@@ -119,7 +132,7 @@ const rateLimiter = createRateLimiter({
   limit: config.rateLimitMax,
   windowMs: config.rateLimitWindowMs
 });
-startWeeklyReportScheduler();
+reportScheduler.start();
 startDailyReminderScheduler();
 
 const server = createServer(async (req, res) => {
@@ -137,21 +150,6 @@ const server = createServer(async (req, res) => {
 server.listen(config.port, () => {
   console.log(`Money Flow API listening on http://localhost:${config.port}`);
 });
-
-function startWeeklyReportScheduler() {
-  if (!config.telegramBotToken) return;
-  const run = async () => {
-    const now = new Date();
-    if (!shouldSendWeeklyReport(now)) return;
-    try {
-      await sendWeeklyReports({ repository, token: config.telegramBotToken, miniAppUrl: config.miniAppUrl, now });
-    } catch (error) {
-      console.error("[weekly-report] failed", error);
-    }
-  };
-  setTimeout(run, 10_000);
-  setInterval(run, 60 * 60_000);
-}
 
 function startDailyReminderScheduler() {
   if (!config.telegramBotToken || !config.dailyReminderGlobalEnabled) return;

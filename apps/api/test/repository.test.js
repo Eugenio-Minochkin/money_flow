@@ -1070,6 +1070,341 @@ test("lists reminder candidates excluding blocked and onboarding users", async (
   assert.equal(users[0].id, 1);
 });
 
+test("creates report deliveries idempotently with JSON metadata", async () => {
+  const generatedAt = new Date("2026-07-06T09:00:00Z");
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql: String(sql), params });
+    return { rows: [{ id: 10, status: params[6], metadata: JSON.parse(params[11]) }] };
+  }));
+
+  const delivery = await repo.createReportDelivery({
+    userId: 1,
+    reportType: "weekly",
+    periodKey: "2026-W27",
+    periodStartUtc: new Date("2026-06-29T00:00:00Z"),
+    periodEndUtc: new Date("2026-07-06T00:00:00Z"),
+    timezoneUsed: "UTC",
+    status: "pending",
+    generatedAt,
+    metadata: { total_spent: 100 }
+  });
+
+  assert.equal(delivery.status, "pending");
+  assert.deepEqual(delivery.metadata, { total_spent: 100 });
+  assert.match(queries[0].sql, /INSERT INTO report_deliveries/);
+  assert.match(queries[0].sql, /ON CONFLICT \(user_id, report_type, period_key\) DO NOTHING/);
+  assert.deepEqual(queries[0].params, [
+    1,
+    "weekly",
+    "2026-W27",
+    new Date("2026-06-29T00:00:00Z"),
+    new Date("2026-07-06T00:00:00Z"),
+    "UTC",
+    "pending",
+    generatedAt,
+    null,
+    null,
+    null,
+    JSON.stringify({ total_spent: 100 })
+  ]);
+});
+
+test("claims report delivery by inserting or updating retryable rows to pending", async () => {
+  const generatedAt = new Date("2026-07-06T09:00:00Z");
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql: String(sql), params });
+    return { rows: [{ id: 10, status: "pending", metadata: JSON.parse(params[7]) }] };
+  }));
+
+  const delivery = await repo.claimReportDelivery({
+    userId: 1,
+    reportType: "weekly",
+    periodKey: "2026-W27",
+    periodStartUtc: new Date("2026-06-29T00:00:00Z"),
+    periodEndUtc: new Date("2026-07-06T00:00:00Z"),
+    timezoneUsed: "UTC",
+    generatedAt,
+    force: false,
+    metadata: { total_spent: 100 }
+  });
+
+  assert.equal(delivery.status, "pending");
+  assert.deepEqual(delivery.metadata, { total_spent: 100 });
+  assert.match(queries[0].sql, /INSERT INTO report_deliveries/);
+  assert.match(queries[0].sql, /ON CONFLICT \(user_id, report_type, period_key\) DO UPDATE/);
+  assert.match(queries[0].sql, /WHERE report_deliveries.status = 'failed' OR \$9 = true/);
+  assert.equal(queries[0].params[8], false);
+});
+
+test("force claim can update any existing report delivery to pending", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql: String(sql), params });
+    return { rows: [{ id: 11, status: "pending" }] };
+  }));
+
+  await repo.claimReportDelivery({
+    userId: 1,
+    reportType: "weekly",
+    periodKey: "2026-W27",
+    periodStartUtc: new Date("2026-06-29T00:00:00Z"),
+    periodEndUtc: new Date("2026-07-06T00:00:00Z"),
+    timezoneUsed: "UTC",
+    generatedAt: new Date("2026-07-06T09:00:00Z"),
+    force: true,
+    metadata: {}
+  });
+
+  assert.match(queries[0].sql, /WHERE report_deliveries.status = 'failed' OR \$9 = true/);
+  assert.equal(queries[0].params[8], true);
+});
+
+test("updates report deliveries as sent failed and skipped", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql: String(sql), params });
+    return { rows: [{ id: 10 }] };
+  }));
+
+  await repo.markReportDeliverySent({
+    userId: 1,
+    reportType: "weekly",
+    periodKey: "2026-W27",
+    telegramMessageId: 222,
+    sentAt: new Date("2026-07-06T09:01:00Z"),
+    metadata: { total_spent: 100 }
+  });
+  await repo.markReportDeliveryFailed({
+    userId: 1,
+    reportType: "weekly",
+    periodKey: "2026-W27",
+    errorCode: "403",
+    errorMessage: "Forbidden",
+    metadata: { blocked: true }
+  });
+  await repo.markReportDeliverySkipped({
+    userId: 1,
+    reportType: "monthly",
+    periodKey: "2026-06",
+    skipReason: "no_activity",
+    metadata: { checked: true }
+  });
+
+  assert.match(queries[0].sql, /UPDATE report_deliveries/);
+  assert.match(queries[0].sql, /status = 'sent'/);
+  assert.match(queries[0].sql, /telegram_message_id = \$4/);
+  assert.deepEqual(queries[0].params, [1, "weekly", "2026-W27", 222, new Date("2026-07-06T09:01:00Z"), JSON.stringify({ total_spent: 100 })]);
+  assert.match(queries[1].sql, /status = 'failed'/);
+  assert.deepEqual(queries[1].params, [1, "weekly", "2026-W27", "403", "Forbidden", JSON.stringify({ blocked: true })]);
+  assert.match(queries[2].sql, /status = 'skipped'/);
+  assert.deepEqual(queries[2].params, [1, "monthly", "2026-06", "no_activity", JSON.stringify({ checked: true })]);
+});
+
+test("builds report data with paid actual planned amount and unpaid planned occurrences", async () => {
+  const user = {
+    id: 1,
+    telegram_user_id: 100,
+    monthly_budget_amount: 50000,
+    base_currency: "THB",
+    display_currency: "THB",
+    timezone: "Asia/Bangkok",
+    interface_language: "en"
+  };
+  const repo = createRepository(fakePool((sql) => {
+    const query = String(sql);
+    if (query.includes("FROM expenses") && query.includes("ORDER BY spent_at ASC")) {
+      return {
+        rows: [
+          {
+            id: "10",
+            amount_base: 450,
+            converted_amounts: { THB: 450 },
+            description: "Internet actual",
+            category_slug: "utilities",
+            budget_impact: "planned",
+            spent_at: new Date("2026-06-05T05:00:00Z"),
+            local_date: "2026-06-05"
+          }
+        ]
+      };
+    }
+    if (query.includes("FROM planned_expenses") && query.includes("JOIN users")) {
+      return {
+        rows: [{
+          id: "7",
+          description: "Internet",
+          amount_base: 1200,
+          recurrence: "twice_monthly",
+          due_day: 5,
+          due_days: [5, 20],
+          timezone: "Asia/Bangkok",
+          paid_count: 1,
+          paid_occurrence_dates: ["2026-06-05"],
+          paid_occurrences: { "2026-06-05": { expense_id: "10" } }
+        }]
+      };
+    }
+    if (query.includes("FROM planned_expense_payments") && query.includes("JOIN planned_expenses")) {
+      return {
+        rows: [{
+          expense_id: "10",
+          name: "Internet",
+          planned_amount_base: 1200,
+          amount_base: 450,
+          occurrence_date: "2026-06-05",
+          local_date: "2026-06-05"
+        }]
+      };
+    }
+    if (query.includes("FROM budget_topups") && query.includes("occurred_at")) return { rows: [] };
+    if (query.includes("GROUP BY category_slug")) return { rows: [{ category_slug: "utilities", total: 450 }] };
+    if (query === "SELECT timezone FROM users WHERE telegram_user_id = $1") return { rows: [{ timezone: "Asia/Bangkok" }] };
+    if (query.includes("FROM monthly_budget_overrides")) return { rows: [] };
+    if (query.includes("COALESCE(SUM(amount_base)") && query.includes("month_key")) return { rows: [{ total: 0 }] };
+    if (query.includes("FROM budget_topups") && query.includes("month_key")) return { rows: [] };
+    if (query.includes("FROM month_baselines")) return { rows: [] };
+    return { rows: [] };
+  }));
+
+  const report = await repo.buildReportDataForDelivery(user, "monthly", {
+    periodKey: "2026-06",
+    periodStartUtc: new Date("2026-05-31T17:00:00Z"),
+    periodEndUtc: new Date("2026-06-30T17:00:00Z"),
+    timezoneUsed: "Asia/Bangkok",
+    localStartDate: "2026-06-01",
+    localEndDate: "2026-06-30"
+  }, new Date("2026-07-01T03:00:00Z"));
+
+  assert.equal(report.metrics.totalSpent, 450);
+  assert.equal(report.metrics.plannedPaidTotal, 450);
+  assert.deepEqual(report.plannedPayments.map((payment) => ({
+    name: payment.name,
+    amount: payment.amount,
+    paid: payment.paid,
+    dueDate: payment.dueDate
+  })), [
+    { name: "Internet", amount: 450, paid: true, dueDate: "2026-06-05" },
+    { name: "Internet", amount: 1200, paid: false, dueDate: "2026-06-20" }
+  ]);
+});
+
+test("report data includes display equivalents for budget amount and remaining", async () => {
+  const user = {
+    id: 1,
+    telegram_user_id: 100,
+    monthly_budget_amount: 50000,
+    base_currency: "THB",
+    display_currency: "USD",
+    usd_thb_rate: 40,
+    timezone: "Asia/Bangkok",
+    interface_language: "en"
+  };
+  const repo = createRepository(fakePool((sql) => {
+    const query = String(sql);
+    if (query.includes("FROM expenses") && query.includes("ORDER BY spent_at ASC")) {
+      return {
+        rows: [{
+          id: "10",
+          amount_base: 48000,
+          converted_amounts: { USD: 1200 },
+          description: "month spend",
+          category_slug: "other",
+          budget_impact: "regular",
+          spent_at: new Date("2026-06-15T05:00:00Z"),
+          local_date: "2026-06-15"
+        }]
+      };
+    }
+    if (query.includes("FROM planned_expenses") && query.includes("JOIN users")) return { rows: [] };
+    if (query.includes("FROM planned_expense_payments") && query.includes("JOIN planned_expenses")) return { rows: [] };
+    if (query.includes("FROM budget_topups") && query.includes("occurred_at")) return { rows: [] };
+    if (query.includes("GROUP BY category_slug")) return { rows: [] };
+    if (query === "SELECT timezone FROM users WHERE telegram_user_id = $1") return { rows: [{ timezone: "Asia/Bangkok" }] };
+    if (query.includes("FROM monthly_budget_overrides")) return { rows: [] };
+    if (query.includes("COALESCE(SUM(amount_base)") && query.includes("month_key")) return { rows: [{ total: 0 }] };
+    if (query.includes("FROM budget_topups") && query.includes("month_key")) return { rows: [] };
+    if (query.includes("FROM month_baselines")) return { rows: [] };
+    return { rows: [] };
+  }));
+
+  const report = await repo.buildReportDataForDelivery(user, "monthly", {
+    periodKey: "2026-06",
+    periodStartUtc: new Date("2026-05-31T17:00:00Z"),
+    periodEndUtc: new Date("2026-06-30T17:00:00Z"),
+    timezoneUsed: "Asia/Bangkok",
+    localStartDate: "2026-06-01",
+    localEndDate: "2026-06-30"
+  }, new Date("2026-07-01T03:00:00Z"));
+
+  assert.deepEqual(report.budget.display, {
+    currency: "USD",
+    amount: 1250,
+    baseBudget: 1250,
+    topupsTotal: 0,
+    remaining: 50
+  });
+});
+
+test("weekly report data includes unpaid planned occurrences from previous month when week crosses month boundary", async () => {
+  const user = {
+    id: 1,
+    telegram_user_id: 100,
+    monthly_budget_amount: 50000,
+    base_currency: "THB",
+    display_currency: "THB",
+    timezone: "Asia/Bangkok",
+    interface_language: "en"
+  };
+  const repo = createRepository(fakePool((sql) => {
+    const query = String(sql);
+    if (query.includes("FROM expenses") && query.includes("ORDER BY spent_at ASC")) return { rows: [] };
+    if (query.includes("FROM planned_expenses") && query.includes("JOIN users")) {
+      return {
+        rows: [{
+          id: "8",
+          description: "June insurance",
+          amount_base: 2200,
+          recurrence: "one_off",
+          due_date: "2026-06-30",
+          timezone: "Asia/Bangkok",
+          paid_count: 0,
+          paid_occurrence_dates: [],
+          paid_occurrences: {}
+        }]
+      };
+    }
+    if (query.includes("FROM planned_expense_payments") && query.includes("JOIN planned_expenses")) return { rows: [] };
+    if (query.includes("FROM budget_topups") && query.includes("occurred_at")) return { rows: [] };
+    if (query.includes("GROUP BY category_slug")) return { rows: [] };
+    if (query === "SELECT timezone FROM users WHERE telegram_user_id = $1") return { rows: [{ timezone: "Asia/Bangkok" }] };
+    if (query.includes("FROM monthly_budget_overrides")) return { rows: [] };
+    if (query.includes("COALESCE(SUM(amount_base)") && query.includes("month_key")) return { rows: [{ total: 0 }] };
+    if (query.includes("FROM budget_topups") && query.includes("month_key")) return { rows: [] };
+    if (query.includes("FROM month_baselines")) return { rows: [] };
+    return { rows: [] };
+  }));
+
+  const report = await repo.buildReportDataForDelivery(user, "weekly", {
+    periodKey: "2026-W27",
+    periodStartUtc: new Date("2026-06-28T17:00:00Z"),
+    periodEndUtc: new Date("2026-07-05T17:00:00Z"),
+    timezoneUsed: "Asia/Bangkok",
+    localStartDate: "2026-06-29",
+    localEndDate: "2026-07-05"
+  }, new Date("2026-07-06T03:00:00Z"));
+
+  assert.deepEqual(report.plannedPayments.map((payment) => ({
+    name: payment.name,
+    amount: payment.amount,
+    paid: payment.paid,
+    dueDate: payment.dueDate
+  })), [
+    { name: "June insurance", amount: 2200, paid: false, dueDate: "2026-06-30" }
+  ]);
+});
+
 test("checks confirmed financial activity using supplied local bounds", async () => {
   const bounds = { start: new Date("2026-06-24T17:00:00Z"), end: new Date("2026-06-25T17:00:00Z") };
   const repo = createRepository(fakePool((sql, params) => {

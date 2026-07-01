@@ -63,6 +63,21 @@ This file records stable product and business rules. Read it before changing bud
 - Out-of-budget expenses must not reduce the ordinary monthly budget.
 - Large one-off purchases must not distort analytics for regular spending pace.
 - Daily budget snapshot recalculation uses the current local day's opening baseline: exclude today's `regular` expenses from the snapshot's month total, but keep `planned` and `large_oneoff` in their non-daily monthly buckets.
+- Reports preserve the same semantics: `large_oneoff` is included in the reported total spent, but explicit large one-off spending is not extrapolated as daily pace.
+- Large expenses in reports are a display view inside the total, not a third accounting partition. The visual partition remains paid planned expenses plus derived other expenses.
+- Reports must not invent a new outside-budget model. If no separate existing outside-budget amount exists, the outside-budget block stays hidden.
+
+## Reports
+
+- Telegram weekly and monthly report messages are snapshots generated at send time.
+- The Mini App remains the live recalculation surface for historical weeks and months.
+- Report core accounting uses one report currency for all formula lines. In this PR the report currency is the user's base currency/current budget currency.
+- Display currency may appear only as a secondary equivalent line, not inside accounting partitions or category/payment item totals.
+- Weekly reports use the previous completed local week. Monthly reports use the previous completed local calendar month.
+- Report delivery idempotency is tracked by user, report type, and period key. Sending may only happen after a delivery row is successfully claimed as `pending`; failed rows may be retried, and force sends explicitly reclaim existing rows.
+- Report backfills may only send closed months. Current and future months are rejected.
+- Empty report snapshots with no spending, planned payments, budget top-ups, reserve, baseline, or category activity are marked `no_activity` and skipped instead of being sent.
+- Weekly reports that cross a month boundary include planned payment occurrences from every local month touched by the report period, not just the send-date month.
 
 ## Currencies And Rounding
 
