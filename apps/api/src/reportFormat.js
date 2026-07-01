@@ -67,8 +67,16 @@ export function formatReportMoney(value, currency = "THB", language = "ru") {
 }
 
 function displayPartition(metrics = {}, fallbackCurrency = "THB") {
+  const displayCurrency = metrics.display?.currency;
+  if (displayCurrency && String(displayCurrency).toUpperCase() !== String(fallbackCurrency).toUpperCase()) {
+    return {
+      currency: fallbackCurrency,
+      plannedPaidTotal: metrics.plannedPaidTotal ?? 0,
+      regularTotal: metrics.regularTotal ?? 0
+    };
+  }
   return {
-    currency: metrics.display?.currency ?? fallbackCurrency,
+    currency: displayCurrency ?? fallbackCurrency,
     plannedPaidTotal: metrics.display?.plannedPaidTotal ?? metrics.plannedPaidTotal ?? 0,
     regularTotal: metrics.display?.regularTotal ?? metrics.regularTotal ?? 0
   };
@@ -195,7 +203,7 @@ function formatPeriodLabel(period = {}, language) {
 
 function monthNameFromPeriod(periodKey, language) {
   const month = Number(String(periodKey ?? "").slice(5, 7));
-  return monthName(month || 1, language);
+  return language === "ru" ? nominativeMonthName(month || 1) : monthName(month || 1, language);
 }
 
 function formatDate(value, language) {
@@ -212,6 +220,11 @@ function monthName(month, language) {
   const value = names[Math.max(1, Math.min(12, Number(month))) - 1];
   if (language === "ru" && value === "июня") return "июня";
   return value;
+}
+
+function nominativeMonthName(month) {
+  const names = ["январь", "февраль", "март", "апрель", "май", "июнь", "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь"];
+  return names[Math.max(1, Math.min(12, Number(month))) - 1];
 }
 
 function dateParts(value) {
@@ -239,7 +252,7 @@ function normalizeLanguage(value) {
 
 const ruLabels = {
   weeklyTitle: "📊 Итоги недели",
-  monthlyTitle: (month) => `🧾 ${capitalize(month.replace(/я$/, "ь"))} закрыт`,
+  monthlyTitle: (month) => `🧾 ${capitalize(month)} закрыт`,
   spent: "💸 Потрачено",
   average: "В среднем",
   day: "день",

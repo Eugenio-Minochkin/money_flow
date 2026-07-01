@@ -994,6 +994,44 @@ export function createRepository(pool, options = {}) {
       return result.rows[0] ?? null;
     },
 
+    async claimReportDelivery(input) {
+      const result = await pool.query(
+        `INSERT INTO report_deliveries (
+           user_id, report_type, period_key, period_start_utc, period_end_utc,
+           timezone_used, status, generated_at, error_code, error_message,
+           skip_reason, metadata
+         )
+         VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, NULL, NULL, NULL, $8::jsonb)
+         ON CONFLICT (user_id, report_type, period_key) DO UPDATE
+         SET status = 'pending',
+             period_start_utc = EXCLUDED.period_start_utc,
+             period_end_utc = EXCLUDED.period_end_utc,
+             timezone_used = EXCLUDED.timezone_used,
+             generated_at = EXCLUDED.generated_at,
+             sent_at = NULL,
+             telegram_message_id = NULL,
+             error_code = NULL,
+             error_message = NULL,
+             skip_reason = NULL,
+             metadata = EXCLUDED.metadata,
+             updated_at = now()
+         WHERE report_deliveries.status = 'failed' OR $9 = true
+         RETURNING *`,
+        [
+          input.userId,
+          input.reportType,
+          input.periodKey,
+          input.periodStartUtc,
+          input.periodEndUtc,
+          input.timezoneUsed,
+          input.generatedAt ?? new Date(),
+          JSON.stringify(input.metadata ?? {}),
+          input.force === true
+        ]
+      );
+      return result.rows[0] ?? null;
+    },
+
     async markReportDeliverySent(input) {
       const result = await pool.query(
         `UPDATE report_deliveries
@@ -1083,12 +1121,13 @@ export function createRepository(pool, options = {}) {
       const timeZone = period.timezoneUsed ?? userTimezone(user);
       const bounds = { start: period.periodStartUtc, end: period.periodEndUtc };
       const reportDate = reportType === "monthly" ? new Date(period.periodStartUtc.getTime() + 12 * 60 * 60_000) : now;
+      const paidMonths = reportPeriodMonthKeys(period, timeZone);
       const [expenses, paidPlannedPayments, budgetTopups, topCategories, plannedExpenses] = await Promise.all([
         reportExpensesForPeriod(pool, user, bounds, timeZone),
         reportPaidPlannedPaymentsForPeriod(pool, user, bounds, timeZone),
         reportBudgetTopupsForPeriod(pool, user, bounds, timeZone),
         reportTopCategoriesForPeriod(pool, user, bounds),
-        listPlannedExpensesForTelegramUserAt(pool, user.telegram_user_id, reportDate)
+        listPlannedExpensesForTelegramUserAt(pool, user.telegram_user_id, reportDate, paidMonths)
       ]);
       const budgetDate = reportDate;
       const budget = await currentMonthBudget(pool, user, budgetDate, timeZone);
@@ -2544,9 +2583,10 @@ async function moveExpiredPendingDraftsToInbox(pool, telegramUserId, expireAfter
   );
 }
 
-async function listPlannedExpensesForTelegramUserAt(pool, telegramUserId, now) {
+async function listPlannedExpensesForTelegramUserAt(pool, telegramUserId, now, paidMonths = null) {
   const userResult = await pool.query("SELECT timezone FROM users WHERE telegram_user_id = $1", [telegramUserId]);
   const timeZone = userTimezone(userResult.rows[0] ?? {});
+  const months = Array.isArray(paidMonths) && paidMonths.length ? paidMonths : [monthKey(now, timeZone)];
   const result = await pool.query(
     `SELECT planned_expenses.*,
             users.timezone,
@@ -2568,12 +2608,12 @@ async function listPlannedExpensesForTelegramUserAt(pool, telegramUserId, now) {
        JOIN planned_expenses pe ON pe.id = pep.planned_expense_id
        JOIN expenses e ON e.id = pep.expense_id
                        AND e.user_id = pe.user_id
-      WHERE pep.paid_month = $2
+      WHERE pep.paid_month = ANY($2::text[])
         GROUP BY pep.planned_expense_id
      ) paid ON paid.planned_expense_id = planned_expenses.id
      WHERE users.telegram_user_id = $1 AND planned_expenses.active = true
      ORDER BY planned_expenses.id DESC`,
-    [telegramUserId, monthKey(now, timeZone)]
+    [telegramUserId, months]
   );
   return result.rows;
 }
@@ -3000,9 +3040,12 @@ function calculatePlannedThisWeek(plannedExpenses, now, timeZone = "Asia/Bangkok
 function reportUnpaidPlannedPayments(plannedExpenses, user, now, timeZone, period) {
   const periodStart = period.localStartDate ?? localDayKey(period.periodStartUtc, timeZone);
   const periodEnd = period.localEndDate ?? localDayKey(new Date(period.periodEndUtc.getTime() - 1), timeZone);
+  const monthDates = reportPeriodMonthReferenceDates(period, timeZone);
   return plannedExpenses.flatMap((planned) => {
-    return unpaidPlannedDueDatesThisMonth(planned, now, timeZone)
+    const dueDateKeys = monthDates.flatMap((monthDate) => unpaidPlannedDueDatesThisMonth(planned, monthDate, timeZone))
       .map((date) => localDayKey(date, timeZone))
+      .filter((dateKey, index, all) => all.indexOf(dateKey) === index);
+    return dueDateKeys
       .filter((dateKey) => dateKey >= periodStart && dateKey <= periodEnd)
       .map((dateKey) => ({
         name: planned.description,
@@ -3015,6 +3058,29 @@ function reportUnpaidPlannedPayments(plannedExpenses, user, now, timeZone, perio
         }
       }));
   });
+}
+
+function reportPeriodMonthKeys(period, timeZone) {
+  return reportPeriodMonthReferenceDates(period, timeZone).map((date) => monthKey(date, timeZone));
+}
+
+function reportPeriodMonthReferenceDates(period, timeZone) {
+  const startKey = period.localStartDate ?? localDayKey(period.periodStartUtc, timeZone);
+  const endKey = period.localEndDate ?? localDayKey(new Date(period.periodEndUtc.getTime() - 1), timeZone);
+  const [startYear, startMonth] = startKey.slice(0, 7).split("-").map(Number);
+  const [endYear, endMonth] = endKey.slice(0, 7).split("-").map(Number);
+  const dates = [];
+  let year = startYear;
+  let month = startMonth;
+  while (year < endYear || (year === endYear && month <= endMonth)) {
+    dates.push(plannedLocalDateForMonthDay(new Date(Date.UTC(year, month - 1, 15, 12)), 15, timeZone));
+    month += 1;
+    if (month > 12) {
+      month = 1;
+      year += 1;
+    }
+  }
+  return dates;
 }
 
 function localFullWeekBounds(now, timeZone = "Asia/Bangkok") {

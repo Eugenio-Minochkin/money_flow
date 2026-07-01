@@ -152,7 +152,7 @@ export function createReportService(options = {}) {
       return "skipped";
     }
     if (input.dryRun === true) return "willSend";
-    const delivery = await repository.createReportDelivery({
+    const delivery = await claimReportDelivery({
       userId: user.id,
       reportType,
       periodKey: period.periodKey,
@@ -161,6 +161,7 @@ export function createReportService(options = {}) {
       timezoneUsed: period.timezoneUsed,
       status: "pending",
       generatedAt: report.generatedAt ?? input.current,
+      force: input.force === true,
       metadata: deliveryMetadata(report)
     });
     if (!delivery) return "skipped";
@@ -202,6 +203,13 @@ export function createReportService(options = {}) {
       if (blocked) await repository.markUserBotBlocked(user.id);
       return "failed";
     }
+  }
+
+  async function claimReportDelivery(input) {
+    if (typeof repository.claimReportDelivery === "function") {
+      return repository.claimReportDelivery(input);
+    }
+    return repository.createReportDelivery(input);
   }
 
   async function buildReportForDelivery(user, reportType, period, current) {

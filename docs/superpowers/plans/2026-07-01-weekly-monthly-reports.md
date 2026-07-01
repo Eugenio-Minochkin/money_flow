@@ -550,3 +550,10 @@ Release notes:
 - [x] Backfill no-activity: empty monthly report snapshots are skipped with `skipReason = no_activity`; dry-run reports the skip without delivery side effects.
 - [x] Closed month guard: monthly backfill rejects current and future months.
 - [x] Scope clarification: forecast, safe daily, committed remaining, previous-week delta, and planned daily pace are documented follow-up analytics.
+
+## Second Review Blockers Fixed
+
+- [x] Currency consistency: the rendered partition uses the same currency as the report total line.
+- [x] Retry/force delivery claim: non-empty reports must claim a `pending` delivery row before sending; failed rows and forced rows are updated back to pending.
+- [x] RU monthly title: title month names use nominative Russian names instead of mutating genitive names.
+- [x] Cross-month weekly planned payments: unpaid planned occurrences are expanded across every month touched by the report period.

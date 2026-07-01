@@ -167,11 +167,11 @@ test("runDueReports skips duplicate sent deliveries", async () => {
   assert.equal(summary.sent, 0);
 });
 
-test("delivery race skips when createReportDelivery loses ON CONFLICT DO NOTHING", async () => {
+test("delivery race skips when claimReportDelivery loses the row", async () => {
   const sent = [];
   const repo = reportRepo({
     now: new Date("2026-07-06T02:30:00Z"),
-    createDeliveryResult: null
+    claimDeliveryResult: null
   });
   const service = createReportService({
     repository: repo,
@@ -188,7 +188,62 @@ test("delivery race skips when createReportDelivery loses ON CONFLICT DO NOTHING
   assert.equal(summary.skipped, 1);
   assert.equal(summary.sent, 0);
   assert.equal(sent.length, 0);
-  assert.equal(repo.created.length, 1);
+  assert.equal(repo.claimed.length, 1);
+});
+
+test("failed delivery is claimed back to pending and retried", async () => {
+  const sent = [];
+  const repo = reportRepo({
+    now: new Date("2026-07-06T02:30:00Z"),
+    existingDelivery: { status: "failed" },
+    claimDeliveryResult: { id: 9, status: "pending" }
+  });
+  const service = createReportService({
+    repository: repo,
+    miniAppUrl: "http://localhost:3000",
+    now: () => new Date("2026-07-06T02:30:00Z"),
+    sendMessage: async (message) => {
+      sent.push(message);
+      return { message_id: 77 };
+    }
+  });
+
+  const summary = await service.runDueReports();
+
+  assert.equal(summary.sent, 1);
+  assert.equal(sent.length, 1);
+  assert.equal(repo.claimed[0].force, false);
+  assert.equal(repo.sent[0].telegramMessageId, 77);
+});
+
+test("force delivery claims an existing sent row before sending", async () => {
+  const sent = [];
+  const repo = reportRepo({
+    existingDelivery: { status: "sent" },
+    claimDeliveryResult: { id: 10, status: "pending" }
+  });
+  const service = createReportService({
+    repository: repo,
+    miniAppUrl: "http://localhost:3000",
+    now: () => new Date("2026-07-06T02:30:00Z"),
+    sendMessage: async (message) => {
+      sent.push(message);
+      return { message_id: 78 };
+    }
+  });
+
+  const outcome = await service.sendReportForUser(repo.candidate, "weekly", {
+    periodKey: "2026-W27",
+    periodStartUtc: new Date("2026-06-29T00:00:00Z"),
+    periodEndUtc: new Date("2026-07-06T00:00:00Z"),
+    timezoneUsed: "UTC",
+    localStartDate: "2026-06-29",
+    localEndDate: "2026-07-05"
+  }, { force: true, current: new Date("2026-07-06T02:30:00Z") });
+
+  assert.equal(outcome, "sent");
+  assert.equal(sent.length, 1);
+  assert.equal(repo.claimed[0].force, true);
 });
 
 test("blocked Telegram errors mark delivery failed and user bot blocked", async () => {
@@ -314,20 +369,23 @@ function expense({ id, amount, impact, displayAmount = amount }) {
 
 function reportRepo(options = {}) {
   const now = options.now ?? new Date("2024-07-01T02:30:00Z");
+  const candidate = {
+    id: 1,
+    telegram_user_id: 100,
+    timezone: "Asia/Bangkok",
+    interface_language: "en"
+  };
   return {
+    candidate,
     created: [],
+    claimed: [],
     sent: [],
     failed: [],
     skipped: [],
     blockedUsers: [],
     events: [],
     async listReportCandidates() {
-      return [{
-        id: 1,
-        telegram_user_id: 100,
-        timezone: "Asia/Bangkok",
-        interface_language: "en"
-      }];
+      return [candidate];
     },
     async getReportDelivery() {
       return options.existingDelivery ?? null;
@@ -336,6 +394,11 @@ function reportRepo(options = {}) {
       this.created.push(input);
       if ("createDeliveryResult" in options) return options.createDeliveryResult;
       return { id: this.created.length, ...input };
+    },
+    async claimReportDelivery(input) {
+      this.claimed.push(input);
+      if ("claimDeliveryResult" in options) return options.claimDeliveryResult;
+      return { id: this.claimed.length, status: "pending", ...input };
     },
     async markReportDeliverySent(input) {
       this.sent.push(input);

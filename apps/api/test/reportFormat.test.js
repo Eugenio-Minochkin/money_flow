@@ -62,6 +62,30 @@ test("formats inside partition from display metrics when provided", () => {
   assert.doesNotMatch(text, /66\.67 USD/);
 });
 
+test("formats partition in the same currency as the spent total", () => {
+  const text = formatWeeklyReport({
+    ...reportFixture(),
+    currency: "THB",
+    metrics: {
+      ...reportFixture().metrics,
+      totalSpent: 1700,
+      plannedPaidTotal: 500,
+      regularTotal: 1200,
+      display: {
+        currency: "USD",
+        totalSpent: 52.15,
+        plannedPaidTotal: 15.33,
+        regularTotal: 36.82
+      }
+    }
+  }, { language: "en" });
+
+  assert.match(text, /Spent: 1,700 THB/);
+  assert.match(text, /Planned payments .* 500 THB/);
+  assert.match(text, /Other expenses .* 1,200 THB/);
+  assert.doesNotMatch(text, /USD/);
+});
+
 test("formats RU monthly report with unpaid planned due date", () => {
   const text = formatMonthlyReport(reportFixture({ reportType: "monthly" }), { language: "ru" });
 
@@ -85,14 +109,42 @@ test("formats EN monthly report", () => {
   assert.match(text, /internet — 700 THB, not marked, June 25/);
 });
 
+test("formats RU monthly report titles with nominative month names", () => {
+  const may = formatMonthlyReport(reportFixture({
+    reportType: "monthly",
+    periodKey: "2026-05",
+    localStartDate: "2026-05-01",
+    localEndDate: "2026-05-31"
+  }), { language: "ru" });
+  const march = formatMonthlyReport(reportFixture({
+    reportType: "monthly",
+    periodKey: "2026-03",
+    localStartDate: "2026-03-01",
+    localEndDate: "2026-03-31"
+  }), { language: "ru" });
+  const august = formatMonthlyReport(reportFixture({
+    reportType: "monthly",
+    periodKey: "2026-08",
+    localStartDate: "2026-08-01",
+    localEndDate: "2026-08-31"
+  }), { language: "ru" });
+
+  assert.match(may, /Май закрыт/);
+  assert.match(march, /Март закрыт/);
+  assert.match(august, /Август закрыт/);
+  assert.doesNotMatch(may, /Маь/);
+  assert.doesNotMatch(march, /Марта закрыт/);
+  assert.doesNotMatch(august, /Августа закрыт/);
+});
+
 function reportFixture(overrides = {}) {
   return {
     reportType: overrides.reportType ?? "weekly",
     currency: "THB",
     period: {
-      periodKey: overrides.reportType === "monthly" ? "2026-06" : "2026-W25",
-      localStartDate: "2026-06-15",
-      localEndDate: overrides.reportType === "monthly" ? "2026-06-30" : "2026-06-21"
+      periodKey: overrides.periodKey ?? (overrides.reportType === "monthly" ? "2026-06" : "2026-W25"),
+      localStartDate: overrides.localStartDate ?? "2026-06-15",
+      localEndDate: overrides.localEndDate ?? (overrides.reportType === "monthly" ? "2026-06-30" : "2026-06-21")
     },
     metrics: {
       totalSpent: 1700,
