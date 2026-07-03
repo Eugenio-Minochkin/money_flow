@@ -138,6 +138,7 @@ test("falls back to the local parser when OpenAI is not configured", async () =>
   assert.equal(parsed.expenses[0].amount, 70);
   assert.equal(parsed.expenses[0].description, "кофе");
   assert.equal(trace.parserEngine, "local-fallback");
+  assert.equal(trace.parserRoute, "local_no_api_key");
   assert.equal(trace.llmSkipped, true);
 });
 
@@ -300,12 +301,59 @@ test("enabled fast-path allowlist overrides zero percent rollout", async () => {
   assert.equal(trace.llmSkipped, true);
 });
 
+test("enabled fast-path allowlist uses Telegram user id", async () => {
+  let openAiCalls = 0;
+  let trace;
+  const parser = createExpenseParser({
+    apiKey: "test-key",
+    fastPathMode: "enabled",
+    localFirstRolloutPercent: 0,
+    localFirstUserIds: ["100001"],
+    parserTextHashSecret: "test-secret",
+    now: () => new Date("2026-06-01T10:00:00+07:00"),
+    fetchImpl: async () => {
+      openAiCalls += 1;
+      throw new Error("OpenAI should not be called");
+    }
+  });
+
+  const parsed = await parser.parse("coffee 80", {
+    userId: 100001,
+    onLlmTrace(metadata) {
+      trace = metadata;
+    }
+  });
+
+  assert.equal(openAiCalls, 0);
+  assert.equal(parsed.expenses[0].amount, 80);
+  assert.equal(trace.parserRoute, "local_primary");
+});
+
 test("rollout bucket is deterministic for the same user and secret", () => {
   const buckets = Array.from({ length: 1000 }, () => rolloutBucket("42", "test-secret"));
 
   assert.equal(new Set(buckets).size, 1);
   assert.equal(buckets[0] >= 0 && buckets[0] < 100, true);
   assert.notEqual(rolloutBucket("42", "other-secret"), buckets[0]);
+});
+
+test("fractional rollout percent is floored to an integer", async () => {
+  let openAiCalls = 0;
+  const parser = createExpenseParser({
+    apiKey: "test-key",
+    fastPathMode: "enabled",
+    localFirstRolloutPercent: 100.9,
+    parserTextHashSecret: "test-secret",
+    now: () => new Date("2026-06-01T10:00:00+07:00"),
+    fetchImpl: async () => {
+      openAiCalls += 1;
+      throw new Error("OpenAI should not be called");
+    }
+  });
+
+  await parser.parse("coffee 80", { userId: 42 });
+
+  assert.equal(openAiCalls, 0);
 });
 
 test("enabled fast-path keeps unknown category as review without OpenAI", async () => {
@@ -424,9 +472,10 @@ test("shadow mode calls OpenAI and applies LLM result while recording disagreeme
   assert.deepEqual(trace.shadowDisagreementFields, ["amount"]);
 });
 
-test("OpenAI errors keep the existing parser failure path instead of local fallback", async () => {
+test("OpenAI error returns accepted local result with explicit fallback route", async () => {
   const originalError = console.error;
   console.error = () => {};
+  let trace;
   const parser = createExpenseParser({
     apiKey: "test-key",
     fastPathMode: "enabled",
@@ -437,13 +486,89 @@ test("OpenAI errors keep the existing parser failure path instead of local fallb
   });
 
   try {
-    await assert.rejects(
-      () => parser.parse("coffee 70", { userId: 7 }),
-      /OpenAI Responses API failed/
-    );
+    const parsed = await parser.parse("coffee 70", {
+      userId: 7,
+      onLlmTrace(metadata) {
+        trace = metadata;
+      }
+    });
+
+    assert.equal(parsed.expenses[0].amount, 70);
+    assert.equal(trace.parserEngine, "local-fallback");
+    assert.equal(trace.parserRoute, "llm_error_local_accepted_fallback");
+    assert.equal(trace.fallbackReason, "llm_error");
   } finally {
     console.error = originalError;
   }
+});
+
+test("OpenAI error without accepted local result keeps parser failure path", async () => {
+  let trace;
+  const parser = createExpenseParser({
+    apiKey: "test-key",
+    fastPathMode: "enabled",
+    localFirstRolloutPercent: 0,
+    parserTextHashSecret: "test-secret",
+    now: () => new Date("2026-06-01T10:00:00+07:00"),
+    fetchImpl: async () => jsonResponse({ error: "bad" }, { ok: false, status: 500 })
+  });
+
+  await assert.rejects(
+    () => parser.parse("I paid half of the taxi 120", {
+      userId: 7,
+      onLlmTrace(metadata) {
+        trace = metadata;
+      }
+    }),
+    /OpenAI Responses API failed/
+  );
+
+  assert.equal(trace.parserRoute, "llm_error");
+  assert.equal(trace.fallbackReason, "llm_error");
+});
+
+test("local parser exception falls back to LLM with explicit route", async () => {
+  let trace;
+  const parser = createExpenseParser({
+    apiKey: "test-key",
+    fastPathMode: "enabled",
+    localFirstRolloutPercent: 100,
+    parserTextHashSecret: "test-secret",
+    localParser: () => {
+      throw new TypeError("synthetic local parser failure with raw text hidden");
+    },
+    now: () => new Date("2026-06-01T10:00:00+07:00"),
+    fetchImpl: async () => jsonResponse({
+      output_text: JSON.stringify({
+        expenses: [{
+          amount: 80,
+          currency: "THB",
+          description: "coffee",
+          category_slug: "food_cafe",
+          tags: [],
+          spent_at: "2026-06-01T10:00:00.000+07:00",
+          budget_impact: "regular",
+          confidence: 0.9,
+          needs_review: false
+        }],
+        notes: []
+      })
+    })
+  });
+
+  const parsed = await parser.parse("coffee 80", {
+    userId: 42,
+    onLlmTrace(metadata) {
+      trace = metadata;
+    }
+  });
+
+  assert.equal(parsed.expenses[0].amount, 80);
+  assert.equal(trace.parserEngine, "llm");
+  assert.equal(trace.parserRoute, "local_exception_fallback");
+  assert.equal(trace.localFastPathRejectReason, "local_exception");
+  assert.equal(trace.localParserErrorName, "TypeError");
+  assert.equal(trace.localParserErrorMessage, "synthetic local parser failure with raw text hidden");
 });
 
 test("parsed expenses carry category_source parser", async () => {

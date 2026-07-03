@@ -163,7 +163,7 @@ test("production runtime config requires strict Telegram init data auth", () => 
   );
 });
 
-test("production local-first diagnostics require parser text hash secret", () => {
+test("production shadow without rollout allows missing parser text hash secret", () => {
   const productionConfig = buildConfig({
     NODE_ENV: "production",
     DATABASE_URL: "postgres://localhost/money_flow",
@@ -173,10 +173,45 @@ test("production local-first diagnostics require parser text hash secret", () =>
     EXPENSE_FAST_PATH_MODE: "shadow"
   });
 
+  assert.doesNotThrow(() => requireRuntimeConfig(productionConfig));
+});
+
+test("production enabled rollout requires parser text hash secret", () => {
+  const productionConfig = buildConfig({
+    NODE_ENV: "production",
+    DATABASE_URL: "postgres://localhost/money_flow",
+    TELEGRAM_BOT_TOKEN: "123456:test-token",
+    TELEGRAM_WEBHOOK_SECRET: "webhook-secret",
+    REQUIRE_TELEGRAM_INIT_DATA: "true",
+    EXPENSE_FAST_PATH_MODE: "enabled"
+  });
+
   assert.throws(
     () => requireRuntimeConfig(productionConfig),
     /PARSER_TEXT_HASH_SECRET is required/
   );
+});
+
+test("production rollout percent and allowlist require parser text hash secret", () => {
+  for (const env of [
+    { EXPENSE_PARSER_LOCAL_FIRST_ROLLOUT_PERCENT: "1" },
+    { EXPENSE_PARSER_LOCAL_FIRST_USER_IDS: "100001" }
+  ]) {
+    const productionConfig = buildConfig({
+      NODE_ENV: "production",
+      DATABASE_URL: "postgres://localhost/money_flow",
+      TELEGRAM_BOT_TOKEN: "123456:test-token",
+      TELEGRAM_WEBHOOK_SECRET: "webhook-secret",
+      REQUIRE_TELEGRAM_INIT_DATA: "true",
+      EXPENSE_FAST_PATH_MODE: "off",
+      ...env
+    });
+
+    assert.throws(
+      () => requireRuntimeConfig(productionConfig),
+      /PARSER_TEXT_HASH_SECRET is required/
+    );
+  }
 });
 
 test("test runtime config uses deterministic parser text hash secret", () => {

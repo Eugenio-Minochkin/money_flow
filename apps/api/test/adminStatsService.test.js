@@ -61,7 +61,12 @@ test("aggregates admin stats from app events and users", async () => {
           avg_voice_db_save_ms: 350,
           p95_voice_db_save_ms: 650,
           local_fast_path_count: 3,
+          local_primary_count: 2,
+          local_rejected_fallback_count: 1,
+          local_exception_fallback_count: 1,
+          rollout_excluded_count: 4,
           llm_count: 2,
+          llm_primary_count: 1,
           llm_skipped_count: 3,
           category_needs_review_count: 1,
           shadow_disagreement_count: 1,
@@ -119,6 +124,11 @@ test("aggregates admin stats from app events and users", async () => {
     dbSave: 0.7
   });
   assert.equal(stats.today.localFastPathCount, 3);
+  assert.equal(stats.today.localPrimaryCount, 2);
+  assert.equal(stats.today.localRejectedFallbackCount, 1);
+  assert.equal(stats.today.localExceptionFallbackCount, 1);
+  assert.equal(stats.today.rolloutExcludedCount, 4);
+  assert.equal(stats.today.llmPrimaryCount, 1);
   assert.equal(stats.today.llmCount, 2);
   assert.equal(stats.today.llmSkippedCount, 3);
   assert.equal(stats.today.categoryNeedsReviewCount, 1);
@@ -266,7 +276,12 @@ test("formats admin stats as a compact Telegram message", () => {
       p95TextStageSeconds: { llmParse: 1.6, dbSave: 0.5 },
       p95VoiceStageSeconds: { telegramFileDownload: 1.8, transcription: 3.6, llmParse: 1.4, dbSave: 0.7 },
       localFastPathCount: 18,
+      localPrimaryCount: 12,
+      localRejectedFallbackCount: 3,
+      localExceptionFallbackCount: 1,
+      rolloutExcludedCount: 7,
       llmCount: 7,
+      llmPrimaryCount: 4,
       llmSkippedCount: 18,
       categoryNeedsReviewCount: 3,
       shadowDisagreementCount: 1,
@@ -293,6 +308,7 @@ test("formats admin stats as a compact Telegram message", () => {
   assert.match(text, /P95 stages text: llm 1.6s \/ db 0.5s/);
   assert.match(text, /P95 stages voice: dl 1.8s \/ asr 3.6s \/ llm 1.4s \/ db 0.7s/);
   assert.match(text, /Parser: local 90 \/ LLM 40 \/ skipped 90/);
+  assert.match(text, /Parser routing: local primary 12 \/ local->LLM 3 \/ LLM primary 4 \/ local exceptions 1 \/ excluded 7/);
   assert.match(text, /Parser avg: local 0.7s \/ LLM 8.4s/);
   assert.match(text, /Review: category 12/);
   assert.match(text, /Shadow: 0\/0 disagreements/);

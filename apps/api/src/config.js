@@ -1,3 +1,5 @@
+import { normalizeRolloutPercent } from "./parserRollout.js";
+
 const DEFAULT_RELEASE_DIGEST_SEND_HOUR = 21;
 const DEFAULT_RELEASE_DIGEST_CHECK_INTERVAL_MINUTES = 15;
 const DEFAULT_EXPENSE_PARSER_MAX_LOCAL_AMOUNT = 1_000_000;
@@ -31,7 +33,7 @@ export function buildConfig(env) {
     openAiApiKey: env.OPENAI_API_KEY,
     openAiModel: env.OPENAI_MODEL ?? "gpt-5-mini",
     expenseFastPathMode: env.EXPENSE_PARSER_FAST_PATH_MODE ?? env.EXPENSE_FAST_PATH_MODE ?? "off",
-    expenseParserLocalFirstRolloutPercent: parsePercent(env.EXPENSE_PARSER_LOCAL_FIRST_ROLLOUT_PERCENT),
+    expenseParserLocalFirstRolloutPercent: normalizeRolloutPercent(env.EXPENSE_PARSER_LOCAL_FIRST_ROLLOUT_PERCENT),
     expenseParserLocalFirstUserIds: parseCsv(env.EXPENSE_PARSER_LOCAL_FIRST_USER_IDS),
     expenseParserMaxLocalAmount: parsePositiveNumber(
       env.EXPENSE_PARSER_MAX_LOCAL_AMOUNT,
@@ -78,12 +80,6 @@ export function requireRuntimeConfig(runtimeConfig = config) {
   }
 }
 
-function parsePercent(value) {
-  const number = Number(value ?? 0);
-  if (!Number.isFinite(number)) return 0;
-  return Math.max(0, Math.min(100, number));
-}
-
 function parsePositiveNumber(value, fallback) {
   const number = Number(value ?? fallback);
   return Number.isFinite(number) && number > 0 ? number : fallback;
@@ -97,8 +93,7 @@ function parseCsv(value) {
 }
 
 function localFirstDiagnosticsEnabled(runtimeConfig) {
-  return runtimeConfig.expenseFastPathMode === "shadow"
-    || runtimeConfig.expenseFastPathMode === "enabled"
+  return runtimeConfig.expenseFastPathMode === "enabled"
     || Number(runtimeConfig.expenseParserLocalFirstRolloutPercent) > 0
     || runtimeConfig.expenseParserLocalFirstUserIds.length > 0;
 }

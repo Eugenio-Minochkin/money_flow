@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import { parseExpenseText } from "../../../packages/shared/src/parser.js";
 import { SUPPORTED_CURRENCY_CODES, normalizeCurrency } from "../../../packages/shared/src/currencies.js";
 import { CATEGORIES } from "../../../packages/shared/src/categories.js";
+import { normalizeRolloutPercent } from "./parserRollout.js";
 
 const DEFAULT_MODEL = "gpt-4.1-mini";
 const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
@@ -13,9 +14,10 @@ export function createExpenseParser(options = {}) {
   const apiKey = options.apiKey;
   const model = options.model ?? DEFAULT_MODEL;
   const fetchImpl = options.fetchImpl ?? globalThis.fetch;
+  const localParser = options.localParser ?? parseExpenseText;
   const now = options.now ?? (() => new Date());
   const fastPathMode = normalizeFastPathMode(options.fastPathMode);
-  const localFirstRolloutPercent = normalizePercent(options.localFirstRolloutPercent);
+  const localFirstRolloutPercent = normalizeRolloutPercent(options.localFirstRolloutPercent);
   const localFirstUserIds = new Set((options.localFirstUserIds ?? []).map((id) => String(id)));
   const parserTextHashSecret = options.parserTextHashSecret ?? "";
   const maxLocalAmount = options.maxLocalAmount;
@@ -35,21 +37,32 @@ export function createExpenseParser(options = {}) {
             secret: parserTextHashSecret
           })
         : false;
-      const localResult = shouldRunLocalFastPath || !apiKey || !fetchImpl
-        ? parseExpenseText(text, { now: now(), defaultCurrency, timeZone, maxLocalAmount })
-        : null;
-      const localFastPath = localResult
-        ? evaluateLocalFastPath({ text, localResult })
-        : {
+      let localResult = null;
+      let localFastPath = {
+        accepted: false,
+        rejectReason: null,
+        categoryResolution: null
+      };
+      let localParserError = null;
+      if (shouldRunLocalFastPath || !apiKey || !fetchImpl) {
+        try {
+          localResult = localParser(text, { now: now(), defaultCurrency, timeZone, maxLocalAmount });
+          localFastPath = evaluateLocalFastPath({ text, localResult });
+        } catch (error) {
+          localParserError = error;
+          localFastPath = {
             accepted: false,
-            rejectReason: null,
+            rejectReason: "local_exception",
             categoryResolution: null
           };
+        }
+      }
 
       if (!apiKey || !fetchImpl) {
+        if (localParserError) throw localParserError;
         parseOptions.onLlmTrace?.({
           parserEngine: "local-fallback",
-          parserRoute: "llm_primary",
+          parserRoute: "local_no_api_key",
           localFastPathAccepted: localFastPath.accepted,
           localFastPathRejectReason: localFastPath.rejectReason,
           categoryResolution: localFastPath.categoryResolution,
@@ -84,7 +97,7 @@ export function createExpenseParser(options = {}) {
 
       try {
         const parsed = await parseWithOpenAI({ text, apiKey, model, fetchImpl, now: now(), defaultCurrency, timeZone });
-        const parserRoute = resolveLlmParserRoute({ fastPathMode, inRollout, localFastPath });
+        const parserRoute = resolveLlmParserRoute({ fastPathMode, inRollout, localFastPath, localParserError });
         const shouldCompareShadow = (fastPathMode === "shadow" || parserRoute === "rollout_excluded") && localFastPath.accepted;
         const shadowFields = shouldCompareShadow
           ? compareParseResults(localResult, parsed.result)
@@ -93,20 +106,40 @@ export function createExpenseParser(options = {}) {
           ...parsed.metadata,
           parserEngine: "llm",
           parserRoute,
-          fallbackReason: parserRoute === "local_rejected_fallback" ? localFastPath.rejectReason : null,
+          fallbackReason: fallbackReasonForRoute(parserRoute, localFastPath),
           localFastPathAccepted: localFastPath.accepted,
           localFastPathRejectReason: localFastPath.rejectReason,
           categoryResolution: localFastPath.categoryResolution,
           llmSkipped: false,
           fastPathMode,
           shadowDisagreement: shouldCompareShadow ? shadowFields.length > 0 : null,
-          shadowDisagreementFields: shadowFields
+          shadowDisagreementFields: shadowFields,
+          ...localParserErrorMetadata(localParserError)
         });
         return parsed.result;
       } catch (error) {
+        if (localFastPath.accepted && localResult) {
+          parseOptions.onLlmTrace?.({
+            parserEngine: "local-fallback",
+            parserRoute: "llm_error_local_accepted_fallback",
+            fallbackReason: "llm_error",
+            localFastPathAccepted: true,
+            localFastPathRejectReason: null,
+            categoryResolution: localFastPath.categoryResolution,
+            llmSkipped: false,
+            fastPathMode,
+            shadowDisagreement: null,
+            shadowDisagreementFields: [],
+            model: "local-parser",
+            promptChars: String(text ?? "").length,
+            responseChars: JSON.stringify(localResult).length
+          });
+          return localResult;
+        }
         parseOptions.onLlmTrace?.({
           parserEngine: "llm",
-          parserRoute: "llm_primary",
+          parserRoute: "llm_error",
+          fallbackReason: "llm_error",
           localFastPathAccepted: localFastPath.accepted,
           localFastPathRejectReason: localFastPath.rejectReason,
           categoryResolution: localFastPath.categoryResolution,
@@ -127,7 +160,7 @@ export function createExpenseParser(options = {}) {
 export function isInLocalFirstRollout({ userId, percent = 0, allowlist = new Set(), secret = "" }) {
   const key = String(userId ?? "");
   if (key && allowlist.has(key)) return true;
-  const rolloutPercent = normalizePercent(percent);
+  const rolloutPercent = normalizeRolloutPercent(percent);
   if (rolloutPercent <= 0 || !key || !secret) return false;
   if (rolloutPercent >= 100) return true;
   return rolloutBucket(key, secret) < rolloutPercent;
@@ -353,17 +386,26 @@ function normalizeFastPathMode(value) {
   return ["off", "shadow", "enabled"].includes(value) ? value : "off";
 }
 
-function normalizePercent(value) {
-  const number = Number(value ?? 0);
-  if (!Number.isFinite(number)) return 0;
-  return Math.max(0, Math.min(100, number));
-}
-
-function resolveLlmParserRoute({ fastPathMode, inRollout, localFastPath }) {
+function resolveLlmParserRoute({ fastPathMode, inRollout, localFastPath, localParserError }) {
+  if (localParserError) return "local_exception_fallback";
   if (fastPathMode !== "enabled") return "llm_primary";
   if (!inRollout) return "rollout_excluded";
   if (!localFastPath.accepted) return "local_rejected_fallback";
   return "llm_primary";
+}
+
+function fallbackReasonForRoute(parserRoute, localFastPath) {
+  if (parserRoute === "local_rejected_fallback") return localFastPath.rejectReason;
+  if (parserRoute === "local_exception_fallback") return "local_exception";
+  return null;
+}
+
+function localParserErrorMetadata(error) {
+  if (!error) return {};
+  return {
+    localParserErrorName: String(error.name || "Error").slice(0, 80),
+    localParserErrorMessage: String(error.message || "local parser failed").slice(0, 200)
+  };
 }
 
 function detectStopPatternReason(text) {

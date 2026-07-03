@@ -532,7 +532,7 @@ test("enabled fast-path creates voice draft metadata without OpenAI call", async
       expenseParser: createExpenseParser({
         apiKey: "test-key",
         fastPathMode: "enabled",
-        localFirstUserIds: ["1"],
+        localFirstUserIds: ["100"],
         parserTextHashSecret: "test-secret",
         now: () => new Date("2026-06-02T10:00:00+07:00"),
         fetchImpl: async () => {

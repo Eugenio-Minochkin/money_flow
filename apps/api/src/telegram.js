@@ -356,7 +356,7 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
       let parsed;
       try {
         parsed = await expenseParser.parse(text, {
-          userId: user.id,
+          userId: from.id,
           defaultCurrency: user.base_currency ?? "THB",
           timeZone: user.timezone,
           onLlmTrace(metadata) {
