@@ -356,6 +356,7 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
       let parsed;
       try {
         parsed = await expenseParser.parse(text, {
+          userId: user.id,
           defaultCurrency: user.base_currency ?? "THB",
           timeZone: user.timezone,
           onLlmTrace(metadata) {
@@ -441,6 +442,8 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
         responseChars: traceMetadata.llmParse?.responseChars,
         fallback: traceMetadata.llmParse?.fallback,
         parserEngine: traceMetadata.llmParse?.parserEngine,
+        parserRoute: traceMetadata.llmParse?.parserRoute,
+        fallbackReason: traceMetadata.llmParse?.fallbackReason,
         localFastPathAccepted: traceMetadata.llmParse?.localFastPathAccepted,
         localFastPathRejectReason: traceMetadata.llmParse?.localFastPathRejectReason,
         categoryResolution: traceMetadata.llmParse?.categoryResolution,

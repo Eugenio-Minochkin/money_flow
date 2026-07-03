@@ -163,6 +163,43 @@ test("production runtime config requires strict Telegram init data auth", () => 
   );
 });
 
+test("production local-first diagnostics require parser text hash secret", () => {
+  const productionConfig = buildConfig({
+    NODE_ENV: "production",
+    DATABASE_URL: "postgres://localhost/money_flow",
+    TELEGRAM_BOT_TOKEN: "123456:test-token",
+    TELEGRAM_WEBHOOK_SECRET: "webhook-secret",
+    REQUIRE_TELEGRAM_INIT_DATA: "true",
+    EXPENSE_FAST_PATH_MODE: "shadow"
+  });
+
+  assert.throws(
+    () => requireRuntimeConfig(productionConfig),
+    /PARSER_TEXT_HASH_SECRET is required/
+  );
+});
+
+test("test runtime config uses deterministic parser text hash secret", () => {
+  const testConfig = buildConfig({
+    NODE_ENV: "test",
+    DATABASE_URL: "postgres://localhost/money_flow"
+  });
+
+  assert.equal(testConfig.parserTextHashSecret, "test-parser-text-hash-secret");
+  assert.doesNotThrow(() => requireRuntimeConfig(testConfig));
+});
+
+test("parser rollout config defaults to safe local amount and no rollout", () => {
+  const localConfig = buildConfig({
+    NODE_ENV: "development",
+    DATABASE_URL: "postgres://localhost/money_flow"
+  });
+
+  assert.equal(localConfig.expenseParserMaxLocalAmount, 1_000_000);
+  assert.equal(localConfig.expenseParserLocalFirstRolloutPercent, 0);
+  assert.deepEqual(localConfig.expenseParserLocalFirstUserIds, []);
+});
+
 test("non-production runtime config keeps local direct telegram user sandbox available", () => {
   const localConfig = buildConfig({
     NODE_ENV: "development",

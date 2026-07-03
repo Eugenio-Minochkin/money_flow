@@ -165,3 +165,19 @@ test("marks the category as parser-provided", () => {
 
   assert.equal(result.expenses[0].category_source, "parser");
 });
+
+test("uses one million as the default maximum local amount", () => {
+  const atLimit = parseExpenseText("laptop 1000000");
+  const aboveLimit = parseExpenseText("laptop 1000001");
+
+  assert.equal(atLimit.expenses.length, 1);
+  assert.equal(atLimit.expenses[0].amount, 1_000_000);
+  assert.equal(aboveLimit.expenses.length, 0);
+});
+
+test("allows caller to override the maximum local amount", () => {
+  const result = parseExpenseText("laptop 1000001", { maxLocalAmount: 2_000_000 });
+
+  assert.equal(result.expenses.length, 1);
+  assert.equal(result.expenses[0].amount, 1_000_001);
+});

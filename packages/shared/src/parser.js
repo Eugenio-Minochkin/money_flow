@@ -2,7 +2,7 @@ import { inferCategory, inferTags } from "./categories.js";
 import { normalizeCurrency } from "./currencies.js";
 import { toZonedIso } from "./time.js";
 
-const MAX_LOCAL_AMOUNT = 10_000_000;
+const DEFAULT_MAX_LOCAL_AMOUNT = 1_000_000;
 
 const CURRENCY_ALIASES = new Map([
   ["baht", "THB"],
@@ -59,6 +59,7 @@ export function parseExpenseText(text, options = {}) {
   const now = options.now ?? new Date();
   const defaultCurrency = normalizeCurrency(options.defaultCurrency, "THB");
   const timeZone = options.timeZone ?? "Asia/Bangkok";
+  const maxLocalAmount = normalizeMaxLocalAmount(options.maxLocalAmount);
   if (hasUnsafeAmountSyntax(text)) {
     return {
       expenses: [],
@@ -69,7 +70,7 @@ export function parseExpenseText(text, options = {}) {
 
   const expenses = [];
   for (const part of parts) {
-    const parsed = parsePart(part, now, defaultCurrency, timeZone);
+    const parsed = parsePart(part, now, defaultCurrency, timeZone, maxLocalAmount);
     if (!parsed) {
       return {
         expenses: [],
@@ -92,7 +93,7 @@ function splitExpenseParts(text) {
     .filter(Boolean);
 }
 
-function parsePart(part, now, defaultCurrency, timeZone) {
+function parsePart(part, now, defaultCurrency, timeZone, maxLocalAmount) {
   if (hasUnsafeAmountSyntax(part)) return null;
 
   const amountMatches = findAmountMatches(part);
@@ -101,7 +102,7 @@ function parsePart(part, now, defaultCurrency, timeZone) {
   const amountMatch = amountMatches[0];
   if (amountMatch.invalid) return null;
   const amount = normalizeAmount(amountMatch.rawAmount, amountMatch.multiplier);
-  if (!Number.isFinite(amount) || amount <= 0 || amount > MAX_LOCAL_AMOUNT) return null;
+  if (!Number.isFinite(amount) || amount <= 0 || amount > maxLocalAmount) return null;
 
   const currency = resolveCurrency(part, amountMatch, defaultCurrency);
   if (!currency) return null;
@@ -173,6 +174,11 @@ function normalizeAmount(value, multiplier) {
   }
   const numeric = Number(numericText);
   return multiplier ? numeric * 1000 : numeric;
+}
+
+function normalizeMaxLocalAmount(value) {
+  const number = Number(value ?? DEFAULT_MAX_LOCAL_AMOUNT);
+  return Number.isFinite(number) && number > 0 ? number : DEFAULT_MAX_LOCAL_AMOUNT;
 }
 
 function hasUnsafeAmountSyntax(part) {

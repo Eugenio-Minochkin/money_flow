@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { createExpenseParser } from "../src/expenseParser.js";
+import { createExpenseParser, rolloutBucket } from "../src/expenseParser.js";
 
 test("uses OpenAI structured output when API key is configured", async () => {
   const parser = createExpenseParser({
@@ -180,6 +180,7 @@ test("off mode calls OpenAI before local parser", async () => {
   });
 
   const parsed = await parser.parse("coffee 80", {
+    userId: 42,
     onLlmTrace(metadata) {
       trace = metadata;
     }
@@ -198,6 +199,8 @@ test("enabled fast-path skips OpenAI for simple English expense", async () => {
   const parser = createExpenseParser({
     apiKey: "test-key",
     fastPathMode: "enabled",
+    localFirstRolloutPercent: 100,
+    parserTextHashSecret: "test-secret",
     now: () => new Date("2026-06-01T10:00:00+07:00"),
     fetchImpl: async () => {
       openAiCalls += 1;
@@ -206,6 +209,7 @@ test("enabled fast-path skips OpenAI for simple English expense", async () => {
   });
 
   const parsed = await parser.parse("coffee 80", {
+    userId: 42,
     onLlmTrace(metadata) {
       trace = metadata;
     }
@@ -220,12 +224,98 @@ test("enabled fast-path skips OpenAI for simple English expense", async () => {
   assert.equal(trace.fastPathMode, "enabled");
 });
 
+test("enabled fast-path outside rollout behaves as shadow", async () => {
+  let openAiCalls = 0;
+  let trace;
+  const parser = createExpenseParser({
+    apiKey: "test-key",
+    fastPathMode: "enabled",
+    localFirstRolloutPercent: 0,
+    localFirstUserIds: ["42"],
+    parserTextHashSecret: "test-secret",
+    now: () => new Date("2026-06-01T10:00:00+07:00"),
+    fetchImpl: async () => {
+      openAiCalls += 1;
+      return jsonResponse({
+        output_text: JSON.stringify({
+          expenses: [{
+            amount: 90,
+            currency: "THB",
+            description: "coffee",
+            category_slug: "food_cafe",
+            tags: [],
+            spent_at: "2026-06-01T10:00:00.000+07:00",
+            budget_impact: "regular",
+            confidence: 0.9,
+            needs_review: false
+          }],
+          notes: []
+        })
+      });
+    }
+  });
+
+  const parsed = await parser.parse("coffee 80", {
+    userId: 7,
+    onLlmTrace(metadata) {
+      trace = metadata;
+    }
+  });
+
+  assert.equal(openAiCalls, 1);
+  assert.equal(parsed.expenses[0].amount, 90);
+  assert.equal(trace.parserEngine, "llm");
+  assert.equal(trace.parserRoute, "rollout_excluded");
+  assert.equal(trace.localFastPathAccepted, true);
+  assert.equal(trace.shadowDisagreement, true);
+  assert.deepEqual(trace.shadowDisagreementFields, ["amount"]);
+});
+
+test("enabled fast-path allowlist overrides zero percent rollout", async () => {
+  let openAiCalls = 0;
+  let trace;
+  const parser = createExpenseParser({
+    apiKey: "test-key",
+    fastPathMode: "enabled",
+    localFirstRolloutPercent: 0,
+    localFirstUserIds: ["42"],
+    parserTextHashSecret: "test-secret",
+    now: () => new Date("2026-06-01T10:00:00+07:00"),
+    fetchImpl: async () => {
+      openAiCalls += 1;
+      throw new Error("OpenAI should not be called");
+    }
+  });
+
+  const parsed = await parser.parse("coffee 80", {
+    userId: 42,
+    onLlmTrace(metadata) {
+      trace = metadata;
+    }
+  });
+
+  assert.equal(openAiCalls, 0);
+  assert.equal(parsed.expenses[0].amount, 80);
+  assert.equal(trace.parserRoute, "local_primary");
+  assert.equal(trace.llmSkipped, true);
+});
+
+test("rollout bucket is deterministic for the same user and secret", () => {
+  const buckets = Array.from({ length: 1000 }, () => rolloutBucket("42", "test-secret"));
+
+  assert.equal(new Set(buckets).size, 1);
+  assert.equal(buckets[0] >= 0 && buckets[0] < 100, true);
+  assert.notEqual(rolloutBucket("42", "other-secret"), buckets[0]);
+});
+
 test("enabled fast-path keeps unknown category as review without OpenAI", async () => {
   let openAiCalls = 0;
   let trace;
   const parser = createExpenseParser({
     apiKey: "test-key",
     fastPathMode: "enabled",
+    localFirstRolloutPercent: 100,
+    parserTextHashSecret: "test-secret",
     now: () => new Date("2026-06-01T10:00:00+07:00"),
     fetchImpl: async () => {
       openAiCalls += 1;
@@ -234,6 +324,7 @@ test("enabled fast-path keeps unknown category as review without OpenAI", async 
   });
 
   const parsed = await parser.parse("notebook 120", {
+    userId: 42,
     onLlmTrace(metadata) {
       trace = metadata;
     }
@@ -251,6 +342,8 @@ test("stop-patterns reject local fast-path and call OpenAI", async () => {
   const parser = createExpenseParser({
     apiKey: "test-key",
     fastPathMode: "enabled",
+    localFirstRolloutPercent: 100,
+    parserTextHashSecret: "test-secret",
     now: () => new Date("2026-06-01T10:00:00+07:00"),
     fetchImpl: async () => {
       openAiCalls += 1;
@@ -274,6 +367,7 @@ test("stop-patterns reject local fast-path and call OpenAI", async () => {
   });
 
   const parsed = await parser.parse("I paid half of the taxi 120", {
+    userId: 42,
     onLlmTrace(metadata) {
       trace = metadata;
     }
@@ -330,21 +424,23 @@ test("shadow mode calls OpenAI and applies LLM result while recording disagreeme
   assert.deepEqual(trace.shadowDisagreementFields, ["amount"]);
 });
 
-test("falls back to the local parser when OpenAI fails", async () => {
+test("OpenAI errors keep the existing parser failure path instead of local fallback", async () => {
   const originalError = console.error;
   console.error = () => {};
   const parser = createExpenseParser({
     apiKey: "test-key",
+    fastPathMode: "enabled",
+    localFirstRolloutPercent: 0,
+    parserTextHashSecret: "test-secret",
     now: () => new Date("2026-06-01T10:00:00+07:00"),
     fetchImpl: async () => jsonResponse({ error: "bad" }, { ok: false, status: 500 })
   });
 
   try {
-    const parsed = await parser.parse("кофе 70 бат");
-
-    assert.equal(parsed.expenses.length, 1);
-    assert.equal(parsed.expenses[0].amount, 70);
-    assert.equal(parsed.notes.at(-1), "AI parser unavailable, used local parser.");
+    await assert.rejects(
+      () => parser.parse("coffee 70", { userId: 7 }),
+      /OpenAI Responses API failed/
+    );
   } finally {
     console.error = originalError;
   }
