@@ -429,6 +429,154 @@ test("stop-patterns reject local fast-path and call OpenAI", async () => {
   assert.equal(trace.llmSkipped, false);
 });
 
+test("unsupported transfer topup and planned intents reject local fast-path", async () => {
+  const examples = [
+    "переведи 1000",
+    "пополнение бюджета 500",
+    "запланируй оплату 1000",
+    "положил в бюджет 500"
+  ];
+
+  for (const text of examples) {
+    let openAiCalls = 0;
+    let trace;
+    const parser = createExpenseParser({
+      apiKey: "test-key",
+      fastPathMode: "enabled",
+      localFirstRolloutPercent: 100,
+      parserTextHashSecret: "test-secret",
+      now: () => new Date("2026-06-01T10:00:00+07:00"),
+      fetchImpl: async () => {
+        openAiCalls += 1;
+        return jsonResponse({
+          output_text: JSON.stringify({
+            expenses: [],
+            notes: ["unsupported local intent"]
+          })
+        });
+      }
+    });
+
+    await parser.parse(text, {
+      userId: 42,
+      onLlmTrace(metadata) {
+        trace = metadata;
+      }
+    });
+
+    assert.equal(openAiCalls, 1, text);
+    assert.equal(trace.parserRoute, "local_rejected_fallback", text);
+    assert.equal(trace.localFastPathAccepted, false, text);
+    assert.equal(trace.localFastPathRejectReason, "unsupported_intent", text);
+  }
+});
+
+test("unsupported-intent stop patterns avoid broad false positives", async () => {
+  const examples = [
+    "оплатил интернет 600",
+    "пополнение телефона 100"
+  ];
+
+  for (const text of examples) {
+    let openAiCalls = 0;
+    let trace;
+    const parser = createExpenseParser({
+      apiKey: "test-key",
+      fastPathMode: "enabled",
+      localFirstRolloutPercent: 100,
+      parserTextHashSecret: "test-secret",
+      now: () => new Date("2026-06-01T10:00:00+07:00"),
+      fetchImpl: async () => {
+        openAiCalls += 1;
+        throw new Error("OpenAI should not be called");
+      }
+    });
+
+    const parsed = await parser.parse(text, {
+      userId: 42,
+      onLlmTrace(metadata) {
+        trace = metadata;
+      }
+    });
+
+    assert.equal(openAiCalls, 0, text);
+    assert.equal(parsed.expenses.length, 1, text);
+    assert.equal(trace.parserRoute, "local_primary", text);
+  }
+});
+
+test("enabled allowlist accepts safe Russian amount words locally", async () => {
+  let openAiCalls = 0;
+  let trace;
+  const parser = createExpenseParser({
+    apiKey: "test-key",
+    fastPathMode: "enabled",
+    localFirstRolloutPercent: 0,
+    localFirstUserIds: ["42"],
+    parserTextHashSecret: "test-secret",
+    now: () => new Date("2026-06-01T10:00:00+07:00"),
+    fetchImpl: async () => {
+      openAiCalls += 1;
+      throw new Error("OpenAI should not be called");
+    }
+  });
+
+  const parsed = await parser.parse("молоко сто бат", {
+    userId: 42,
+    onLlmTrace(metadata) {
+      trace = metadata;
+    }
+  });
+
+  assert.equal(openAiCalls, 0);
+  assert.equal(parsed.expenses[0].amount, 100);
+  assert.equal(trace.parserEngine, "local-fast-path");
+  assert.equal(trace.parserRoute, "local_primary");
+  assert.equal(trace.llmSkipped, true);
+});
+
+test("Russian amount words still respect split semantics safety", async () => {
+  let openAiCalls = 0;
+  let trace;
+  const parser = createExpenseParser({
+    apiKey: "test-key",
+    fastPathMode: "enabled",
+    localFirstRolloutPercent: 100,
+    parserTextHashSecret: "test-secret",
+    now: () => new Date("2026-06-01T10:00:00+07:00"),
+    fetchImpl: async () => {
+      openAiCalls += 1;
+      return jsonResponse({
+        output_text: JSON.stringify({
+          expenses: [{
+            amount: 120,
+            currency: "THB",
+            description: "такси",
+            category_slug: "transport",
+            tags: [],
+            spent_at: "2026-06-01T10:00:00.000+07:00",
+            budget_impact: "regular",
+            confidence: 0.9,
+            needs_review: false
+          }],
+          notes: []
+        })
+      });
+    }
+  });
+
+  await parser.parse("такси сто двадцать пополам с другом", {
+    userId: 42,
+    onLlmTrace(metadata) {
+      trace = metadata;
+    }
+  });
+
+  assert.equal(openAiCalls, 1);
+  assert.equal(trace.parserRoute, "local_rejected_fallback");
+  assert.equal(trace.localFastPathRejectReason, "split_semantics");
+});
+
 test("shadow mode calls OpenAI and applies LLM result while recording disagreement", async () => {
   let openAiCalls = 0;
   let trace;

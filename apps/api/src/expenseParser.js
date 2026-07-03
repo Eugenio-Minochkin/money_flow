@@ -411,6 +411,18 @@ function localParserErrorMetadata(error) {
 function detectStopPatternReason(text) {
   const normalized = normalizeText(text);
   if (matchesAny(normalized, [
+    "переведи", "перевел", "перевела", "перевести",
+    "перевод денег",
+    "пополнение бюджета", "пополни бюджет", "пополнил бюджет", "пополнила бюджет",
+    "положил в бюджет", "положила в бюджет", "в бюджет",
+    "запланируй", "запланировал", "запланировала",
+    "отложи", "отложил", "отложила", "резерв",
+    "transfer", "top up the budget", "plan a payment", "planned payment", "set aside"
+  ])) {
+    return "unsupported_intent";
+  }
+
+  if (matchesAny(normalized, [
     "половину", "пополам", "на двоих", "на троих", "за девушку", "за друга",
     "за меня", "отдельно", "каждый по", "скинулись", "в долг", "вернул",
     "должен", "занял", "одолжил", "half", "split", "shared", "separately",

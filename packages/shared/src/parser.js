@@ -9,6 +9,7 @@ const CURRENCY_ALIASES = new Map([
   ["бат", "THB"],
   ["бата", "THB"],
   ["батов", "THB"],
+  ["бахт", "THB"],
   ["บาท", "THB"],
   ["thb", "THB"],
   ["฿", "THB"],
@@ -17,11 +18,13 @@ const CURRENCY_ALIASES = new Map([
   ["dollar", "USD"],
   ["dollars", "USD"],
   ["доллар", "USD"],
+  ["доллара", "USD"],
   ["долларов", "USD"],
   ["бакс", "USD"],
   ["rub", "RUB"],
   ["руб", "RUB"],
   ["рубль", "RUB"],
+  ["рубля", "RUB"],
   ["рублей", "RUB"],
   ["₽", "RUB"],
   ["eur", "EUR"],
@@ -60,17 +63,18 @@ export function parseExpenseText(text, options = {}) {
   const defaultCurrency = normalizeCurrency(options.defaultCurrency, "THB");
   const timeZone = options.timeZone ?? "Asia/Bangkok";
   const maxLocalAmount = normalizeMaxLocalAmount(options.maxLocalAmount);
-  if (hasUnsafeAmountSyntax(text)) {
-    return {
-      expenses: [],
-      notes: ["Не удалось безопасно разобрать сумму расхода."]
-    };
-  }
-  const parts = splitExpenseParts(text);
+  const parts = splitExpenseParts(trimTrailingPunctuation(text));
 
   const expenses = [];
   for (const part of parts) {
-    const parsed = parsePart(part, now, defaultCurrency, timeZone, maxLocalAmount);
+    const normalizedPart = normalizePartAmountWords(part);
+    if (hasUnsafeAmountSyntax(normalizedPart)) {
+      return {
+        expenses: [],
+        notes: ["Не удалось безопасно разобрать сумму расхода."]
+      };
+    }
+    const parsed = parsePart(normalizedPart, now, defaultCurrency, timeZone, maxLocalAmount);
     if (!parsed) {
       return {
         expenses: [],
@@ -87,10 +91,41 @@ export function parseExpenseText(text, options = {}) {
 }
 
 function splitExpenseParts(text) {
-  return String(text ?? "")
-    .split(/[,;\n]+|\s+и\s+|\s+and\s+/iu)
-    .map((part) => part.trim())
-    .filter(Boolean);
+  return splitExpensePartsForVoice(text);
+}
+
+function splitExpensePartsForVoice(text) {
+  const source = String(text ?? "");
+  const rawParts = [];
+  const pattern = /((?<!\d)[,;]+|[,;]+(?!\d)|\n+|\s+Ð¸\s+|\s+и\s+|\s+and\s+)/giu;
+  let lastIndex = 0;
+  for (const match of source.matchAll(pattern)) {
+    rawParts.push({
+      text: trimTrailingPunctuation(source.slice(lastIndex, match.index).trim()),
+      separator: match[0]
+    });
+    lastIndex = match.index + match[0].length;
+  }
+  rawParts.push({
+    text: trimTrailingPunctuation(source.slice(lastIndex).trim()),
+    separator: ""
+  });
+
+  const merged = [];
+  for (const part of rawParts.filter((item) => item.text)) {
+    const previous = merged.at(-1);
+    if (previous
+      && /[,;]/u.test(previous.separator)
+      && !hasNumericAmountCandidate(previous.text)
+      && startsWithAmountLike(part.text)) {
+      previous.text = `${previous.text} ${part.text}`.trim();
+      previous.separator = part.separator;
+    } else {
+      merged.push({ ...part });
+    }
+  }
+
+  return merged.map((part) => trimTrailingPunctuation(part.text.trim())).filter(Boolean);
 }
 
 function parsePart(part, now, defaultCurrency, timeZone, maxLocalAmount) {
@@ -181,6 +216,141 @@ function normalizeMaxLocalAmount(value) {
   return Number.isFinite(number) && number > 0 ? number : DEFAULT_MAX_LOCAL_AMOUNT;
 }
 
+function trimTrailingPunctuation(value) {
+  return String(value ?? "").trim().replace(/[.!?…]+$/u, "").trim();
+}
+
+function hasNumericAmountCandidate(part) {
+  return findAmountMatches(part).some((match) => !match.invalid);
+}
+
+function startsWithAmountLike(part) {
+  const text = String(part ?? "").trim();
+  if (/^\d/u.test(text)) return true;
+  const tokens = tokenizeWords(text);
+  const parsed = parseRussianNumberSequence(tokens, 0);
+  return Boolean(parsed && isCurrencyAlias(tokens[parsed.nextIndex]));
+}
+
+function normalizePartAmountWords(part) {
+  if (hasNumericAmountCandidate(part)) return part;
+  const tokens = tokenizeWords(part);
+  const output = [];
+  for (let index = 0; index < tokens.length;) {
+    if (!isRussianNumberWord(tokens[index])) {
+      output.push(tokens[index]);
+      index += 1;
+      continue;
+    }
+
+    const end = contiguousRussianNumberEnd(tokens, index);
+    const parsed = parseRussianNumberSequence(tokens, index, end);
+    if (parsed && russianNumberSpanLooksLikeAmount(tokens, index, parsed.nextIndex)) {
+      output.push(String(parsed.value));
+      index = parsed.nextIndex;
+    } else {
+      output.push(...tokens.slice(index, end));
+      index = end;
+    }
+  }
+  return output.join(" ");
+}
+
+function tokenizeWords(value) {
+  return String(value ?? "")
+    .replace(/[.,;:!?…]+$/u, "")
+    .trim()
+    .split(/\s+/u)
+    .filter(Boolean);
+}
+
+const RU_UNITS = new Map([
+  ["один", 1], ["одна", 1], ["одно", 1],
+  ["два", 2], ["две", 2],
+  ["три", 3], ["четыре", 4], ["пять", 5], ["шесть", 6], ["семь", 7], ["восемь", 8], ["девять", 9]
+]);
+const RU_TEENS = new Map([
+  ["десять", 10], ["одиннадцать", 11], ["двенадцать", 12], ["тринадцать", 13], ["четырнадцать", 14],
+  ["пятнадцать", 15], ["шестнадцать", 16], ["семнадцать", 17], ["восемнадцать", 18], ["девятнадцать", 19]
+]);
+const RU_TENS = new Map([
+  ["двадцать", 20], ["тридцать", 30], ["сорок", 40], ["пятьдесят", 50], ["шестьдесят", 60],
+  ["семьдесят", 70], ["восемьдесят", 80], ["девяносто", 90]
+]);
+const RU_HUNDREDS = new Map([
+  ["сто", 100], ["двести", 200], ["триста", 300], ["четыреста", 400], ["пятьсот", 500],
+  ["шестьсот", 600], ["семьсот", 700], ["восемьсот", 800], ["девятьсот", 900]
+]);
+const RU_THOUSANDS = new Set(["тысяча", "тысячи", "тысяч"]);
+
+function isRussianNumberWord(token) {
+  const normalized = normalizeWordToken(token);
+  return RU_UNITS.has(normalized)
+    || RU_TEENS.has(normalized)
+    || RU_TENS.has(normalized)
+    || RU_HUNDREDS.has(normalized)
+    || RU_THOUSANDS.has(normalized);
+}
+
+function contiguousRussianNumberEnd(tokens, start) {
+  let index = start;
+  while (index < tokens.length && isRussianNumberWord(tokens[index])) index += 1;
+  return index;
+}
+
+function parseRussianNumberSequence(tokens, start, forcedEnd = null) {
+  const end = forcedEnd ?? contiguousRussianNumberEnd(tokens, start);
+  let index = start;
+  let total = 0;
+
+  if (index < end && RU_THOUSANDS.has(normalizeWordToken(tokens[index]))) {
+    total += 1000;
+    index += 1;
+  } else if (index + 1 < end
+    && RU_UNITS.has(normalizeWordToken(tokens[index]))
+    && RU_THOUSANDS.has(normalizeWordToken(tokens[index + 1]))) {
+    total += RU_UNITS.get(normalizeWordToken(tokens[index])) * 1000;
+    index += 2;
+  }
+
+  if (index < end && RU_HUNDREDS.has(normalizeWordToken(tokens[index]))) {
+    total += RU_HUNDREDS.get(normalizeWordToken(tokens[index]));
+    index += 1;
+  }
+
+  if (index < end && RU_TEENS.has(normalizeWordToken(tokens[index]))) {
+    total += RU_TEENS.get(normalizeWordToken(tokens[index]));
+    index += 1;
+  } else {
+    if (index < end && RU_TENS.has(normalizeWordToken(tokens[index]))) {
+      total += RU_TENS.get(normalizeWordToken(tokens[index]));
+      index += 1;
+    }
+    if (index < end && RU_UNITS.has(normalizeWordToken(tokens[index]))) {
+      total += RU_UNITS.get(normalizeWordToken(tokens[index]));
+      index += 1;
+    }
+  }
+
+  if (index !== end || total <= 0 || total > 9999) return null;
+  return { value: total, nextIndex: end };
+}
+
+function russianNumberSpanLooksLikeAmount(tokens, start, end) {
+  if (isCurrencyAlias(tokens[end])) return true;
+  if (end === tokens.length && start > 0 && !isRussianNumberWord(tokens[start - 1])) return true;
+  if (["за", "for"].includes(normalizeWordToken(tokens[end]))) return true;
+  return false;
+}
+
+function isCurrencyAlias(token) {
+  return CURRENCY_ALIASES.has(normalizeCurrencyToken(token));
+}
+
+function normalizeWordToken(token) {
+  return String(token ?? "").toLowerCase().replaceAll("ё", "е").replaceAll("Ñ‘", "Ðµ").replace(/[.,;:!?…]+$/u, "");
+}
+
 function hasUnsafeAmountSyntax(part) {
   return /\d+\s*[+xх]\s*\d+/iu.test(part)
     || /\d+\s+(?:за|for)\s+\d+/iu.test(part)
@@ -234,6 +404,9 @@ function cleanDescription(value) {
     .replace(/\b(large|big)\s+one[-\s]?off\s+(purchase|expense)?\b/giu, " ")
     .replace(/\b(крупн(?:ая|ую|ое|ый)|больш(?:ая|ую|ое|ой))\s+разов(?:ая|ую|ое|ой)?\s+(покупк[аиу]?|трат[ау])?\b/giu, " ")
     .replace(/\bразов(?:ая|ую|ое|ой)\s+(крупн(?:ая|ую|ое|ый)|больш(?:ая|ую|ое|ой))\s+(покупк[аиу]?|трат[ау])?\b/giu, " ")
+    .replace(/^(?:купил|купила|взял|взяла|потратил|потратила|потратился|потратилась|оплатил|оплатила|запиши|добавь|записать|потратить)\s+/iu, "")
+    .replace(/^(?:за|на|по)\s+/iu, "")
+    .replace(/\s+(?:за|на|по)\s*$/iu, "")
     .replaceAll(/\s+/g, " ")
     .trim();
 }
