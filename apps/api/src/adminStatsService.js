@@ -92,7 +92,12 @@ async function periodStats(pool, period, usersCreatedAtAvailable) {
       dbSave: secondsOrNull(events.p95VoiceDbSaveMs)
     },
     localFastPathCount: Number(events.localFastPathCount),
+    localPrimaryCount: Number(events.localPrimaryCount),
+    localRejectedFallbackCount: Number(events.localRejectedFallbackCount),
+    localExceptionFallbackCount: Number(events.localExceptionFallbackCount),
+    rolloutExcludedCount: Number(events.rolloutExcludedCount),
     llmCount: Number(events.llmCount),
+    llmPrimaryCount: Number(events.llmPrimaryCount),
     llmSkippedCount: Number(events.llmSkippedCount),
     categoryNeedsReviewCount: Number(events.categoryNeedsReviewCount),
     shadowDisagreementCount: Number(events.shadowDisagreementCount),
@@ -270,8 +275,29 @@ async function aggregateEvents(pool, period) {
        )::int AS local_fast_path_count,
        COUNT(*) FILTER (
          WHERE event_name = 'message_processing_completed'
+           AND metadata->>'parserRoute' = 'local_primary'
+       )::int AS local_primary_count,
+       COUNT(*) FILTER (
+         WHERE event_name = 'message_processing_completed'
+           AND metadata->>'parserRoute' = 'local_rejected_fallback'
+       )::int AS local_rejected_fallback_count,
+       COUNT(*) FILTER (
+         WHERE event_name = 'message_processing_completed'
+           AND metadata->>'parserRoute' = 'local_exception_fallback'
+       )::int AS local_exception_fallback_count,
+       COUNT(*) FILTER (
+         WHERE event_name = 'message_processing_completed'
+           AND metadata->>'parserRoute' = 'rollout_excluded'
+       )::int AS rollout_excluded_count,
+       COUNT(*) FILTER (
+         WHERE event_name = 'message_processing_completed'
            AND metadata->>'parserEngine' = 'llm'
        )::int AS llm_count,
+       COUNT(*) FILTER (
+         WHERE event_name = 'message_processing_completed'
+           AND COALESCE(metadata->>'parserRoute', 'llm_primary') = 'llm_primary'
+           AND metadata->>'parserEngine' = 'llm'
+       )::int AS llm_primary_count,
        COUNT(*) FILTER (
          WHERE event_name = 'message_processing_completed'
            AND metadata->>'llmSkipped' = 'true'
@@ -373,7 +399,12 @@ async function aggregateEvents(pool, period) {
     avgVoiceDbSaveMs: nullableNumeric(row.avg_voice_db_save_ms),
     p95VoiceDbSaveMs: nullableNumeric(row.p95_voice_db_save_ms),
     localFastPathCount: numeric(row.local_fast_path_count),
+    localPrimaryCount: numeric(row.local_primary_count),
+    localRejectedFallbackCount: numeric(row.local_rejected_fallback_count),
+    localExceptionFallbackCount: numeric(row.local_exception_fallback_count),
+    rolloutExcludedCount: numeric(row.rollout_excluded_count),
     llmCount: numeric(row.llm_count),
+    llmPrimaryCount: numeric(row.llm_primary_count),
     llmSkippedCount: numeric(row.llm_skipped_count),
     categoryNeedsReviewCount: numeric(row.category_needs_review_count),
     shadowDisagreementCount: numeric(row.shadow_disagreement_count),
@@ -440,6 +471,7 @@ function formatPeriod(label, period, options) {
     formatTextP95Stages(period.p95TextStageSeconds),
     formatVoiceP95Stages(period.p95VoiceStageSeconds),
     `Parser: local ${period.localFastPathCount} / LLM ${period.llmCount} / skipped ${period.llmSkippedCount}`,
+    `Parser routing: local primary ${period.localPrimaryCount ?? 0} / local->LLM ${period.localRejectedFallbackCount ?? 0} / LLM primary ${period.llmPrimaryCount ?? 0} / local exceptions ${period.localExceptionFallbackCount ?? 0} / excluded ${period.rolloutExcludedCount ?? 0}`,
     `Parser avg: local ${formatSeconds(period.avgLocalFastPathProcessingSeconds)} / LLM ${formatSeconds(period.avgLlmProcessingSeconds)}`,
     `Review: category ${period.categoryNeedsReviewCount}`,
     `Shadow: ${period.shadowDisagreementCount}/${period.shadowComparedCount} disagreements`,

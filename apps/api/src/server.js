@@ -53,7 +53,11 @@ const adminStatsService = createAdminStatsService({ pool });
 const expenseParser = createExpenseParser({
   apiKey: config.openAiApiKey,
   model: config.openAiModel,
-  fastPathMode: config.expenseFastPathMode
+  fastPathMode: config.expenseFastPathMode,
+  localFirstRolloutPercent: config.expenseParserLocalFirstRolloutPercent,
+  localFirstUserIds: config.expenseParserLocalFirstUserIds,
+  maxLocalAmount: config.expenseParserMaxLocalAmount,
+  parserTextHashSecret: config.parserTextHashSecret
 });
 const voiceTranscriber = createVoiceTranscriber({
   telegramBotToken: config.telegramBotToken,
