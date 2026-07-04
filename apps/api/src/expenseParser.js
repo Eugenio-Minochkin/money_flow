@@ -414,11 +414,13 @@ function detectStopPatternReason(text) {
     "переведи", "перевел", "перевела", "перевести",
     "перевод денег",
     "пополнение бюджета", "пополни бюджет", "пополнил бюджет", "пополнила бюджет",
-    "положил в бюджет", "положила в бюджет", "в бюджет",
+    "положил в бюджет", "положила в бюджет", "положить в бюджет",
     "запланируй", "запланировал", "запланировала",
     "отложи", "отложил", "отложила", "резерв",
-    "transfer", "top up the budget", "plan a payment", "planned payment", "set aside"
-  ])) {
+    "transfer", "top up the budget", "budget top up", "plan a payment", "planned payment", "set aside", "reserve"
+  ])
+    || /(?<![\p{L}\p{N}])send(?:\s+money)?\s+\d+(?![\p{L}\p{N}])/iu.test(normalized)
+    || /(?<![\p{L}\p{N}])put\s+\d+(?:[\d\s.,]*)(?:\s+\w+)?\s+into\s+(?:the\s+)?budget(?![\p{L}\p{N}])/iu.test(normalized)) {
     return "unsupported_intent";
   }
 

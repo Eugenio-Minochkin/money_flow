@@ -97,7 +97,7 @@ function splitExpenseParts(text) {
 function splitExpensePartsForVoice(text) {
   const source = String(text ?? "");
   const rawParts = [];
-  const pattern = /((?<!\d)[,;]+|[,;]+(?!\d)|\n+|\s+Ð¸\s+|\s+и\s+|\s+and\s+)/giu;
+  const pattern = /((?<!\d)[,;]+|[,;]+(?!\d)|\n+|\s+и\s+|\s+and\s+)/giu;
   let lastIndex = 0;
   for (const match of source.matchAll(pattern)) {
     rawParts.push({
@@ -348,7 +348,7 @@ function isCurrencyAlias(token) {
 }
 
 function normalizeWordToken(token) {
-  return String(token ?? "").toLowerCase().replaceAll("ё", "е").replaceAll("Ñ‘", "Ðµ").replace(/[.,;:!?…]+$/u, "");
+  return String(token ?? "").toLowerCase().replaceAll("ё", "е").replace(/[.,;:!?…]+$/u, "");
 }
 
 function hasUnsafeAmountSyntax(part) {
@@ -404,6 +404,9 @@ function cleanDescription(value) {
     .replace(/\b(large|big)\s+one[-\s]?off\s+(purchase|expense)?\b/giu, " ")
     .replace(/\b(крупн(?:ая|ую|ое|ый)|больш(?:ая|ую|ое|ой))\s+разов(?:ая|ую|ое|ой)?\s+(покупк[аиу]?|трат[ау])?\b/giu, " ")
     .replace(/\bразов(?:ая|ую|ое|ой)\s+(крупн(?:ая|ую|ое|ый)|больш(?:ая|ую|ое|ой))\s+(покупк[аиу]?|трат[ау])?\b/giu, " ")
+    .replace(/^(?:bought|buy|spent|spend|add|paid|pay)\s+/iu, "")
+    .replace(/^(?:for|on)\s+/iu, "")
+    .replace(/\s+(?:for|on)\s*$/iu, "")
     .replace(/^(?:купил|купила|взял|взяла|потратил|потратила|потратился|потратилась|оплатил|оплатила|запиши|добавь|записать|потратить)\s+/iu, "")
     .replace(/^(?:за|на|по)\s+/iu, "")
     .replace(/\s+(?:за|на|по)\s*$/iu, "")

@@ -28,9 +28,6 @@ export function categoryName(slug) {
 
 export function inferCategory(description) {
   const normalized = normalizeText(description);
-  const actualCyrillicCategory = inferActualCyrillicCategory(normalized);
-  if (actualCyrillicCategory) return actualCyrillicCategory;
-
   const exactCategory = CATEGORIES.find((category) =>
     category.keywords.some((keyword) => keywordMatches(normalized, keyword))
   );
@@ -39,18 +36,6 @@ export function inferCategory(description) {
   return CYRILLIC_STEM_CATEGORIES.find((category) =>
     category.stems.some((stem) => safeCyrillicStemMatches(normalized, stem))
   )?.slug ?? "other";
-}
-
-function inferActualCyrillicCategory(text) {
-  const groups = [
-    { slug: "food_cafe", words: ["кофе", "обед", "еда"] },
-    { slug: "groceries", words: ["молоко", "продукты"] },
-    { slug: "transport", words: ["такси", "билет", "самолет", "стоянка"] },
-    { slug: "subscriptions", words: ["интернет", "телефон", "телефона"] }
-  ];
-  return groups.find((group) =>
-    group.words.some((word) => keywordMatches(text, word))
-  )?.slug ?? null;
 }
 
 export function inferTags(description) {

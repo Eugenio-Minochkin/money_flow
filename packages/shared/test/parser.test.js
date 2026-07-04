@@ -256,11 +256,52 @@ test("cleans Russian filler words dangling prepositions and added currency alias
   const usd = parseExpenseText("обед 10 доллара");
 
   assert.equal(coffee.expenses[0].description, "кофе");
-  assert.equal(coffee.expenses[0].category_slug, "food_cafe");
   assert.equal(spentCoffee.expenses[0].description, "кофе");
   assert.equal(ticket.expenses[0].description, "билет на самолет");
   assert.equal(bahtTypo.expenses[0].currency, "THB");
   assert.equal(bahtTypo.expenses[0].description, "кофе");
   assert.equal(rub.expenses[0].currency, "RUB");
   assert.equal(usd.expenses[0].currency, "USD");
+});
+
+test("does not add a Cyrillic category bypass outside the category model", () => {
+  const phone = parseExpenseText("купил телефон 10000");
+  const movieTicket = parseExpenseText("билет в кино 300");
+
+  assert.notEqual(phone.expenses[0].category_slug, "subscriptions");
+  assert.equal(movieTicket.expenses[0].category_slug, "travel");
+});
+
+test("preserves English parser regressions and ASR punctuation", () => {
+  const examples = [
+    ["coffee 80", 80, "coffee"],
+    ["coffee 80 baht", 80, "coffee"],
+    ["coffee for 80 baht", 80, "coffee"],
+    ["spent 80 baht on coffee", 80, "coffee"],
+    ["add coffee 80", 80, "coffee"],
+    ["milk 120 baht", 120, "milk"],
+    ["lunch 250 baht", 250, "lunch"],
+    ["taxi 300 baht", 300, "taxi"],
+    ["coffee, 80 baht", 80, "coffee"],
+    ["Add coffee, 80 baht.", 80, "coffee"],
+    ["milk, 120 baht", 120, "milk"],
+    ["bought coffee for 80 baht", 80, "coffee"],
+    ["paid for internet 600", 600, "internet"]
+  ];
+
+  for (const [text, amount, description] of examples) {
+    const result = parseExpenseText(text);
+    assert.equal(result.expenses.length, 1, text);
+    assert.equal(result.expenses[0].amount, amount, text);
+    assert.equal(result.expenses[0].description, description, text);
+  }
+
+  const multi = parseExpenseText("coffee 80, milk 100");
+  assert.deepEqual(multi.expenses.map((expense) => expense.amount), [80, 100]);
+});
+
+test("English description cleanup keeps meaningful internal prepositions", () => {
+  const result = parseExpenseText("ticket to Bangkok 500");
+
+  assert.equal(result.expenses[0].description, "ticket to bangkok");
 });

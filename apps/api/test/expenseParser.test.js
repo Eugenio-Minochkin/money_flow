@@ -505,6 +505,116 @@ test("unsupported-intent stop patterns avoid broad false positives", async () =>
   }
 });
 
+test("bare budget phrase does not reject ordinary expense wording", async () => {
+  let openAiCalls = 0;
+  let trace;
+  const parser = createExpenseParser({
+    apiKey: "test-key",
+    fastPathMode: "enabled",
+    localFirstRolloutPercent: 100,
+    parserTextHashSecret: "test-secret",
+    now: () => new Date("2026-06-01T10:00:00+07:00"),
+    fetchImpl: async () => {
+      openAiCalls += 1;
+      throw new Error("OpenAI should not be called");
+    }
+  });
+
+  const parsed = await parser.parse("уложился в бюджет обед 300", {
+    userId: 42,
+    onLlmTrace(metadata) {
+      trace = metadata;
+    }
+  });
+
+  assert.equal(openAiCalls, 0);
+  assert.equal(parsed.expenses[0].amount, 300);
+  assert.equal(trace.parserRoute, "local_primary");
+});
+
+test("English unsupported intents reject local fast-path", async () => {
+  const examples = [
+    "transfer 1000",
+    "send 1000",
+    "send money 1000",
+    "top up the budget 500",
+    "budget top up 500",
+    "put 500 into budget",
+    "set aside 500",
+    "reserve 500",
+    "plan a payment 1000",
+    "planned payment 1000",
+    "airport transfer 500 baht"
+  ];
+
+  for (const text of examples) {
+    let openAiCalls = 0;
+    let trace;
+    const parser = createExpenseParser({
+      apiKey: "test-key",
+      fastPathMode: "enabled",
+      localFirstRolloutPercent: 100,
+      parserTextHashSecret: "test-secret",
+      now: () => new Date("2026-06-01T10:00:00+07:00"),
+      fetchImpl: async () => {
+        openAiCalls += 1;
+        return jsonResponse({
+          output_text: JSON.stringify({
+            expenses: [],
+            notes: ["unsupported local intent"]
+          })
+        });
+      }
+    });
+
+    await parser.parse(text, {
+      userId: 42,
+      onLlmTrace(metadata) {
+        trace = metadata;
+      }
+    });
+
+    assert.equal(openAiCalls, 1, text);
+    assert.equal(trace.parserRoute, "local_rejected_fallback", text);
+    assert.equal(trace.localFastPathRejectReason, "unsupported_intent", text);
+  }
+});
+
+test("English unsupported-intent stop patterns avoid broad false positives", async () => {
+  const examples = [
+    "paid internet 600",
+    "paid for internet 600",
+    "phone top up 100"
+  ];
+
+  for (const text of examples) {
+    let openAiCalls = 0;
+    let trace;
+    const parser = createExpenseParser({
+      apiKey: "test-key",
+      fastPathMode: "enabled",
+      localFirstRolloutPercent: 100,
+      parserTextHashSecret: "test-secret",
+      now: () => new Date("2026-06-01T10:00:00+07:00"),
+      fetchImpl: async () => {
+        openAiCalls += 1;
+        throw new Error("OpenAI should not be called");
+      }
+    });
+
+    const parsed = await parser.parse(text, {
+      userId: 42,
+      onLlmTrace(metadata) {
+        trace = metadata;
+      }
+    });
+
+    assert.equal(openAiCalls, 0, text);
+    assert.equal(parsed.expenses.length, 1, text);
+    assert.equal(trace.parserRoute, "local_primary", text);
+  }
+});
+
 test("enabled allowlist accepts safe Russian amount words locally", async () => {
   let openAiCalls = 0;
   let trace;
