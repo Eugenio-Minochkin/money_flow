@@ -65,6 +65,7 @@ test("aggregates admin stats from app events and users", async () => {
           local_rejected_fallback_count: 1,
           local_exception_fallback_count: 1,
           rollout_excluded_count: 4,
+          non_expense_guard_count: 6,
           llm_count: 2,
           llm_primary_count: 1,
           llm_skipped_count: 3,
@@ -128,6 +129,7 @@ test("aggregates admin stats from app events and users", async () => {
   assert.equal(stats.today.localRejectedFallbackCount, 1);
   assert.equal(stats.today.localExceptionFallbackCount, 1);
   assert.equal(stats.today.rolloutExcludedCount, 4);
+  assert.equal(stats.today.nonExpenseGuardCount, 6);
   assert.equal(stats.today.llmPrimaryCount, 1);
   assert.equal(stats.today.llmCount, 2);
   assert.equal(stats.today.llmSkippedCount, 3);
@@ -280,6 +282,7 @@ test("formats admin stats as a compact Telegram message", () => {
       localRejectedFallbackCount: 3,
       localExceptionFallbackCount: 1,
       rolloutExcludedCount: 7,
+      nonExpenseGuardCount: 6,
       llmCount: 7,
       llmPrimaryCount: 4,
       llmSkippedCount: 18,
@@ -308,7 +311,7 @@ test("formats admin stats as a compact Telegram message", () => {
   assert.match(text, /P95 stages text: llm 1.6s \/ db 0.5s/);
   assert.match(text, /P95 stages voice: dl 1.8s \/ asr 3.6s \/ llm 1.4s \/ db 0.7s/);
   assert.match(text, /Parser: local 90 \/ LLM 40 \/ skipped 90/);
-  assert.match(text, /Parser routing: local primary 12 \/ local->LLM 3 \/ LLM primary 4 \/ local exceptions 1 \/ excluded 7/);
+  assert.match(text, /Parser routing: local primary 12 \/ local->LLM 3 \/ LLM primary 4 \/ local exceptions 1 \/ excluded 7 \/ guard 6/);
   assert.match(text, /Parser avg: local 0.7s \/ LLM 8.4s/);
   assert.match(text, /Review: category 12/);
   assert.match(text, /Shadow: 0\/0 disagreements/);
@@ -343,6 +346,7 @@ function emptyPeriod(overrides = {}) {
     p95TextStageSeconds: {},
     p95VoiceStageSeconds: {},
     localFastPathCount: 0,
+    nonExpenseGuardCount: 0,
     llmCount: 0,
     llmSkippedCount: 0,
     categoryNeedsReviewCount: 0,

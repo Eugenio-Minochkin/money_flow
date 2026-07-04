@@ -2950,6 +2950,152 @@ test("processQueuedMessage creates budget top-up draft before expense parser", a
   assert.ok(sent.some((message) => String(message.text).includes("Budget top-up")));
 });
 
+test("processQueuedMessage routes new budget top-up phrasing before expense parser", async () => {
+  const topupTexts = ["пополнение бюджета 500", "положил в бюджет 500", "put 500 into budget"];
+
+  for (const rawText of topupTexts) {
+    let topupDraft = null;
+    let expenseParserCalled = false;
+    const repository = {
+      async createBudgetTopupDraft(userId, sourceText, item) {
+        topupDraft = { userId, sourceText, item };
+        return { id: 42, status: "pending", item };
+      },
+      async previewBudgetTopup() {
+        return { amountBase: 500, baseBudget: 48000, large: false, monthKey: "2026-06" };
+      },
+      async recordAppEvent() {}
+    };
+
+    await processQueuedMessage({
+      message: { chat: { id: 5 } },
+      from: { id: 100 },
+      user: { id: 1, interface_language: "ru", base_currency: "THB", onboarding_step: "completed", timezone: "Asia/Bangkok" },
+      rawText,
+      inputType: "text",
+      repository,
+      token: null,
+      miniAppUrl: "http://x",
+      expenseParser: {
+        async parse() {
+          expenseParserCalled = true;
+          return { expenses: [] };
+        }
+      },
+      telegramClient: {
+        async sendMessage() { return { ok: true, result: { message_id: 777 } }; },
+        async editMessageText() { return { ok: true, result: { message_id: 777 } }; }
+      },
+      now: () => new Date("2026-06-30T10:00:00Z"),
+      trace: stubTrace()
+    });
+
+    assert.equal(expenseParserCalled, false, rawText);
+    assert.equal(topupDraft.sourceText, rawText);
+    assert.equal(topupDraft.item.amount, 500);
+  }
+});
+
+test("processQueuedMessage sends non-expense guard message before expense parser", async () => {
+  let createDraftCalled = false;
+  let expenseParserCalled = false;
+  const events = [];
+  const sent = [];
+  const repository = {
+    async recordAppEvent(userId, eventName, metadata = {}) {
+      events.push({ userId, eventName, metadata });
+    },
+    async createDraft() {
+      createDraftCalled = true;
+      return { id: 42 };
+    }
+  };
+
+  await processQueuedMessage({
+    message: { chat: { id: 5 } },
+    from: { id: 100 },
+    user: { id: 1, interface_language: "ru", base_currency: "THB", onboarding_step: "completed", timezone: "Asia/Bangkok" },
+    rawText: "переведи 1000",
+    inputType: "text",
+    repository,
+    token: null,
+    miniAppUrl: "http://x",
+    expenseParser: {
+      async parse() {
+        expenseParserCalled = true;
+        return { expenses: [{ amount: 1000, currency: "THB", description: "transfer", category_slug: "other" }] };
+      }
+    },
+    telegramClient: {
+      async sendMessage(message) {
+        sent.push(message);
+        return { ok: true, result: { message_id: 777 } };
+      },
+      async editMessageText(message) {
+        sent.push(message);
+        return { ok: true, result: { message_id: 777 } };
+      }
+    },
+    now: () => new Date("2026-06-30T10:00:00Z"),
+    trace: stubTrace()
+  });
+
+  assert.equal(expenseParserCalled, false);
+  assert.equal(createDraftCalled, false);
+  assert.ok(sent.some((message) => String(message.text).includes("не обычный расход")));
+  assert.ok(events.some((event) => event.eventName === "message_processing_completed"
+    && event.metadata.result === "unsupported_intent_message"
+    && event.metadata.parserRoute === "non_expense_guard"));
+  assert.equal(events.some((event) => event.eventName === "expense_draft_created"), false);
+});
+
+test("processQueuedMessage guard covers English transfer and cash withdrawal intents", async () => {
+  for (const rawText of ["transfer 1000", "снял со счета 1000"]) {
+    let expenseParserCalled = false;
+    let createDraftCalled = false;
+    const sent = [];
+    await processQueuedMessage({
+      message: { chat: { id: 5 } },
+      from: { id: 100 },
+      user: { id: 1, interface_language: "en", base_currency: "THB", onboarding_step: "completed", timezone: "Asia/Bangkok" },
+      rawText,
+      inputType: "text",
+      repository: {
+        async recordAppEvent() {},
+        async createDraft() {
+          createDraftCalled = true;
+          return { id: 42 };
+        }
+      },
+      token: null,
+      miniAppUrl: "http://x",
+      expenseParser: {
+        async parse() {
+          expenseParserCalled = true;
+          return { expenses: [] };
+        }
+      },
+      telegramClient: {
+        async sendMessage(message) {
+          sent.push(message);
+          return { ok: true, result: { message_id: 777 } };
+        },
+        async editMessageText(message) {
+          sent.push(message);
+          return { ok: true, result: { message_id: 777 } };
+        }
+      },
+      now: () => new Date("2026-06-30T10:00:00Z"),
+      trace: stubTrace()
+    });
+
+    assert.equal(expenseParserCalled, false, rawText);
+    assert.equal(createDraftCalled, false, rawText);
+    const expectedText = /[а-яё]/iu.test(rawText) ? "не обычный расход" : "does not look like a regular expense";
+    assert.ok(sent.some((message) => String(message.text).includes(expectedText)), rawText);
+  }
+});
+
 test("processQueuedMessage uses base-currency preview for large budget top-up warning", async () => {
   const repository = {
     async createBudgetTopupDraft(userId, sourceText, item) {
@@ -3269,7 +3415,7 @@ test("draftCanceledMessageText and savedSummaryKeyboard are localized", async ()
 });
 
 function stubTrace() {
-  return { start() {}, end() {}, event() {}, failActive() {} };
+  return { start() {}, end() {}, event() {}, failActive() {}, getDurations() { return {}; }, getMetadata() { return {}; } };
 }
 
 test("legacy confirm:42 callback still confirms via the shared handler", async () => {

@@ -5,13 +5,20 @@ const TOPUP_INTENT_PATTERNS = [
   /\b(add|increase)\b[\s\S]*\bbudget\b/iu,
   /\btop\s*up\b[\s\S]*\bbudget\b/iu,
   /\bbudget\b[\s\S]*\btop\s*up\b/iu,
-  /\b(i\s+got|got|received|got\s+paid|bonus|salary|refund|returned)\b/iu,
+  /\bput\b[\s\S]*\binto\s+(?:the\s+)?budget\b/iu,
+  /\b(got\s+paid|bonus|salary|refund|returned)\b/iu,
   /(?<![\p{L}\p{N}])\u0437\u0430\u0440\u043f\u043b\u0430\u0442\p{L}*(?![\p{L}\p{N}])/iu,
   /(?<![\p{L}\p{N}])добав(?:ь|ить|ил|ила|или)?(?![\p{L}\p{N}])[\s\S]*бюджет/iu,
   /(?<![\p{L}\p{N}])пополни(?:ть|л|ла|ли)?(?![\p{L}\p{N}])[\s\S]*бюджет/iu,
-  /(?<![\p{L}\p{N}])пришл[аои]?(?![\p{L}\p{N}])/iu,
+  /(?<![\p{L}\p{N}])пополнени\p{L}*(?![\p{L}\p{N}])[\s\S]*бюджет/iu,
+  /(?<![\p{L}\p{N}])полож(?:ил|ила|ить|и)(?![\p{L}\p{N}])[\s\S]*бюджет/iu,
   /(?<![\p{L}\p{N}])преми[яю](?![\p{L}\p{N}])/iu,
-  /(?<![\p{L}\p{N}])вернул[аи]?(?![\p{L}\p{N}])/iu,
+  /(?<![\p{L}\p{N}])вернули(?![\p{L}\p{N}])/iu
+];
+
+const GENERIC_INCOME_PATTERNS = [
+  /\b(i\s+got|got|received)\b/iu,
+  /(?<![\p{L}\p{N}])пришл[аои]?(?![\p{L}\p{N}])/iu,
   /(?<![\p{L}\p{N}])получил[аи]?(?![\p{L}\p{N}])/iu
 ];
 
@@ -31,6 +38,8 @@ const TOPUP_WORDS_TO_REMOVE = [
   "this month",
   "to",
   "by",
+  "put",
+  "into",
   "i got",
   "got",
   "received",
@@ -48,6 +57,12 @@ const TOPUP_WORDS_TO_REMOVE = [
   "бюджет",
   "пополни",
   "пополнить",
+  "пополнение",
+  "пополнения",
+  "положил",
+  "положила",
+  "положи",
+  "положить",
   "на",
   "пришло",
   "пришла",
@@ -63,7 +78,7 @@ const TOPUP_WORDS_TO_REMOVE = [
 export function parseBudgetTopupText(text, options = {}) {
   const source = String(text ?? "").trim();
   if (!source) return { state: "not_recognized" };
-  if (looksLikeTransferOrAccount(source)) return { state: "not_recognized" };
+  if (looksLikeTransferOrAccount(source) && !hasBudgetTarget(source)) return { state: "not_recognized" };
   if (!looksLikeBudgetTopup(source)) return { state: "not_recognized" };
 
   const timeZone = normalizeTimeZone(options.timeZone).timeZone;
@@ -97,16 +112,41 @@ export function parseBudgetTopupText(text, options = {}) {
 }
 
 function looksLikeBudgetTopup(text) {
-  return TOPUP_INTENT_PATTERNS.some((pattern) => pattern.test(text));
+  return TOPUP_INTENT_PATTERNS.some((pattern) => pattern.test(text))
+    || (GENERIC_INCOME_PATTERNS.some((pattern) => pattern.test(text)) && genericIncomePhraseIsSafe(text));
 }
 
 function looksLikeTransferOrAccount(text) {
   return TRANSFER_OR_ACCOUNT_PATTERNS.some((pattern) => pattern.test(text));
 }
 
+function hasBudgetTarget(text) {
+  return /\bbudget\b|(?<![\p{L}\p{N}])бюджет\p{L}*(?![\p{L}\p{N}])/iu.test(text);
+}
+
+function genericIncomePhraseIsSafe(text) {
+  if (/(?<![\p{L}\p{N}])(?:деньги|денег|зарплат\p{L}*|перевод)(?![\p{L}\p{N}])|\bmoney\b/iu.test(text)) {
+    return true;
+  }
+  return incomeContextTokens(text).length <= 2;
+}
+
+function incomeContextTokens(text) {
+  return String(text ?? "")
+    .toLowerCase()
+    .replaceAll("ё", "е")
+    .replace(/[$฿₽€₾]?\s*\d[\d\s\u00a0.,]*[kк]?\s*[$฿₽€₾]?/giu, " ")
+    .replace(/\b(baht|thb|usd|dollar|dollars|бат|бата|батов|доллар|долларов)\b/giu, " ")
+    .replace(/\b(today|yesterday|day before yesterday)\b/giu, " ")
+    .replace(/(?<![\p{L}\p{N}])(?:сегодня|вчера|позавчера)(?![\p{L}\p{N}])/giu, " ")
+    .trim()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter(Boolean);
+}
+
 function topupKind(text) {
   if (/\b(bonus|salary|got\s+paid)\b|(?<![\p{L}\p{N}])преми[яю](?![\p{L}\p{N}])|(?<![\p{L}\p{N}])зарплат/iu.test(text)) return "income";
-  if (/\b(refund|returned)\b|(?<![\p{L}\p{N}])вернул[аи]?(?![\p{L}\p{N}])/iu.test(text)) return "refund";
+  if (/\b(refund|returned)\b|(?<![\p{L}\p{N}])вернули(?![\p{L}\p{N}])/iu.test(text)) return "refund";
   return "other";
 }
 
@@ -114,6 +154,7 @@ function sanitizeForMoneyParse(text) {
   return String(text ?? "")
     .replace(/\s+к\s+бюджет[ау]?(?![\p{L}\p{N}])/giu, " ")
     .replace(/\s+в\s+бюджет(?![\p{L}\p{N}])/giu, " ")
+    .replace(/\s+into\s+(?:the\s+)?budget\b/giu, " ")
     .replace(/\s+to\s+(?:my\s+|the\s+)?budget\b/giu, " ")
     .replace(/\s+to\s+this\s+month'?s\s+budget\b/giu, " ");
 }
@@ -124,6 +165,7 @@ function topupNote(text) {
     note = note.replace(new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(word)}(?![\\p{L}\\p{N}])`, "giu"), " ");
   }
   note = note
+    .replace(/(?<![\p{L}\p{N}])бюджет\p{L}*(?![\p{L}\p{N}])/giu, " ")
     .replace(/[$฿₽€₾]?\s*\d[\d\s\u00a0.,]*[kк]?\s*[$฿₽€₾]?/giu, " ")
     .replace(/\b(baht|thb|usd|dollar|dollars|бат|бата|батов|доллар|долларов)\b/giu, " ")
     .replace(/\s+/gu, " ")
