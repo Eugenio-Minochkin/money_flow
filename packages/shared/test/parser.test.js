@@ -181,3 +181,127 @@ test("allows caller to override the maximum local amount", () => {
   assert.equal(result.expenses.length, 1);
   assert.equal(result.expenses[0].amount, 1_000_001);
 });
+
+test("preserves accepted Russian parser regressions", () => {
+  const examples = [
+    ["купил кофе за 80 бат", [80]],
+    ["потратил на кофе 80", [80]],
+    ["кофе на 80 бат", [80]],
+    ["запиши кофе 80", [80]],
+    ["купил два кофе за 80", [80]],
+    ["два кофе 160", [160]],
+    ["кофе 80 и молоко 100", [80, 100]]
+  ];
+
+  for (const [text, amounts] of examples) {
+    const result = parseExpenseText(text);
+    assert.deepEqual(result.expenses.map((expense) => expense.amount), amounts, text);
+    assert.deepEqual(result.notes, [], text);
+  }
+});
+
+test("merges ASR punctuation when the next part starts with an amount", () => {
+  const digit = parseExpenseText("кофе, 80 бат");
+  const command = parseExpenseText("Запиши кофе, 80 бат.");
+  const multi = parseExpenseText("кофе 80, молоко 100");
+
+  assert.equal(digit.expenses.length, 1);
+  assert.equal(digit.expenses[0].amount, 80);
+  assert.equal(digit.expenses[0].currency, "THB");
+  assert.equal(command.expenses.length, 1);
+  assert.equal(command.expenses[0].amount, 80);
+  assert.deepEqual(multi.expenses.map((expense) => expense.amount), [80, 100]);
+});
+
+test("parses Russian amount words only when they look like an amount", () => {
+  const examples = [
+    ["молоко сто бат", 100, "THB"],
+    ["кофе восемьдесят бат", 80, "THB"],
+    ["обед двести пятьдесят бат", 250, "THB"],
+    ["такси триста бат", 300, "THB"],
+    ["продукты одна тысяча двести бат", 1200, "THB"],
+    ["еда две тысячи триста пятьдесят бат", 2350, "THB"],
+    ["купил кофе за восемьдесят бат", 80, "THB"],
+    ["Молоко, сто бат", 100, "THB"]
+  ];
+
+  for (const [text, amount, currency] of examples) {
+    const result = parseExpenseText(text);
+    assert.equal(result.expenses.length, 1, text);
+    assert.equal(result.expenses[0].amount, amount, text);
+    assert.equal(result.expenses[0].currency, currency, text);
+  }
+});
+
+test("does not turn Russian quantity words or invalid number grammar into amounts", () => {
+  const quantity = parseExpenseText("два кофе");
+  const invalidRepeated = parseExpenseText("сто сто бат");
+  const outOfRange = parseExpenseText("десять тысяч бат");
+  const embeddedWord = parseExpenseText("стоянка 200");
+
+  assert.equal(quantity.expenses.length, 0);
+  assert.equal(invalidRepeated.expenses.length, 0);
+  assert.equal(outOfRange.expenses.length, 0);
+  assert.equal(embeddedWord.expenses.length, 1);
+  assert.equal(embeddedWord.expenses[0].amount, 200);
+  assert.equal(embeddedWord.expenses[0].description, "стоянка");
+});
+
+test("cleans Russian filler words dangling prepositions and added currency aliases", () => {
+  const coffee = parseExpenseText("купил кофе за 80 бат");
+  const spentCoffee = parseExpenseText("потратил на кофе 80");
+  const ticket = parseExpenseText("билет на самолет 3000");
+  const bahtTypo = parseExpenseText("кофе 80 бахт");
+  const rub = parseExpenseText("такси 200 рубля");
+  const usd = parseExpenseText("обед 10 доллара");
+
+  assert.equal(coffee.expenses[0].description, "кофе");
+  assert.equal(spentCoffee.expenses[0].description, "кофе");
+  assert.equal(ticket.expenses[0].description, "билет на самолет");
+  assert.equal(bahtTypo.expenses[0].currency, "THB");
+  assert.equal(bahtTypo.expenses[0].description, "кофе");
+  assert.equal(rub.expenses[0].currency, "RUB");
+  assert.equal(usd.expenses[0].currency, "USD");
+});
+
+test("does not add a Cyrillic category bypass outside the category model", () => {
+  const phone = parseExpenseText("купил телефон 10000");
+  const movieTicket = parseExpenseText("билет в кино 300");
+
+  assert.notEqual(phone.expenses[0].category_slug, "subscriptions");
+  assert.equal(movieTicket.expenses[0].category_slug, "travel");
+});
+
+test("preserves English parser regressions and ASR punctuation", () => {
+  const examples = [
+    ["coffee 80", 80, "coffee"],
+    ["coffee 80 baht", 80, "coffee"],
+    ["coffee for 80 baht", 80, "coffee"],
+    ["spent 80 baht on coffee", 80, "coffee"],
+    ["add coffee 80", 80, "coffee"],
+    ["milk 120 baht", 120, "milk"],
+    ["lunch 250 baht", 250, "lunch"],
+    ["taxi 300 baht", 300, "taxi"],
+    ["coffee, 80 baht", 80, "coffee"],
+    ["Add coffee, 80 baht.", 80, "coffee"],
+    ["milk, 120 baht", 120, "milk"],
+    ["bought coffee for 80 baht", 80, "coffee"],
+    ["paid for internet 600", 600, "internet"]
+  ];
+
+  for (const [text, amount, description] of examples) {
+    const result = parseExpenseText(text);
+    assert.equal(result.expenses.length, 1, text);
+    assert.equal(result.expenses[0].amount, amount, text);
+    assert.equal(result.expenses[0].description, description, text);
+  }
+
+  const multi = parseExpenseText("coffee 80, milk 100");
+  assert.deepEqual(multi.expenses.map((expense) => expense.amount), [80, 100]);
+});
+
+test("English description cleanup keeps meaningful internal prepositions", () => {
+  const result = parseExpenseText("ticket to Bangkok 500");
+
+  assert.equal(result.expenses[0].description, "ticket to bangkok");
+});
