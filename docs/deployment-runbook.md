@@ -183,6 +183,144 @@ The production database remains in the Docker volume. Application secrets remain
 The release-note sync step is intentionally non-blocking after health checks:
 it should not roll back or fail a healthy application deploy.
 
+## Postgres backup and restore
+
+The production database lives in the Docker volume and holds user financial
+data. These committed scripts create and verify `pg_restore`-compatible backups
+without any host `pg_dump`/`pg_restore` client — all Postgres tooling runs
+inside the `postgres` container via `docker compose`.
+
+| Script | Purpose |
+| --- | --- |
+| `scripts/backup-postgres.sh` | Manual/custom-format backup + retention + optional S3 copy |
+| `scripts/restore-postgres.sh` | Restore a `.dump` into an empty target DB (production-gated) |
+| `scripts/test-postgres-restore.sh` | Automated backup→restore→verify drill (non-destructive) |
+
+### Where backups are stored
+
+- Default location: `backups/postgres/` (repo-relative). On the server that is
+  `/opt/money-flow/backups/postgres`. Override with `BACKUP_DIR`.
+- Filename: `moneyflow-postgres-YYYY-MM-DD_HH-MM-SS.dump` (local server time).
+- Format: `pg_dump -Fc` custom format, restorable with `pg_restore`.
+- `/backups/` is gitignored — dumps are never committed.
+
+### Environment variables
+
+Read from `${ENV_FILE}` (`./scripts/*.sh` source it with `set -a` / `set +a`):
+
+| Variable | Default | Notes |
+| --- | --- | --- |
+| `ENV_FILE` | `.env` | Set to `.env.production` on the server. |
+| `COMPOSE_FILE` | `docker-compose.yml` | Set to `compose.prod.yml` on the server. |
+| `POSTGRES_DB` / `POSTGRES_USER` | `money_flow` | From env file; never printed. |
+| `POSTGRES_SERVICE` | `postgres` | Compose service name. |
+| `BACKUP_DIR` | `backups/postgres` | Backup output directory. |
+| `BACKUP_RETENTION_DAYS` | `14` | Deletes only `moneyflow-postgres-*.dump` older than N days. |
+| `BACKUP_REMOTE_ENABLED` | `false` | Set to `true` to enable S3 upload. |
+| `BACKUP_S3_BUCKET` | _(empty)_ | Required when remote is enabled. |
+| `BACKUP_S3_PREFIX` | `money-flow/postgres` | S3 key prefix. |
+| `BACKUP_S3_STORAGE_CLASS` | _(empty)_ | Optional, e.g. `STANDARD_IA`. |
+| `RESTORE_TARGET_DB` | _(required)_ | Target DB for `restore-postgres.sh`. |
+| `RESTORE_CONFIRM_PRODUCTION` | _(unset)_ | Set to `yes` to allow restoring into the app/maintenance DB. |
+
+`aws s3 cp` uses `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`,
+`AWS_DEFAULT_REGION` from the environment; never put these values in docs.
+
+### Run a backup manually
+
+Dev (uses `docker-compose.yml` + `.env`):
+
+```bash
+./scripts/backup-postgres.sh
+```
+
+Production (sources `.env.production`, targets `compose.prod.yml`):
+
+```bash
+cd /opt/money-flow
+ENV_FILE=.env.production COMPOSE_FILE=compose.prod.yml ./scripts/backup-postgres.sh
+```
+
+Expected log lines: backup destination, created filename, byte size, retention
+summary, and either `External upload complete.` or
+`External backup upload is not configured, skipping.`
+
+### Verify a backup was created
+
+```bash
+ls -lh backups/postgres/moneyflow-postgres-*.dump
+test -s "$(ls -t backups/postgres/moneyflow-postgres-*.dump | head -1)" && echo "non-empty"
+```
+
+Validate the archive is a real `pg_restore` dump (see `docs/security-runbook.md`
+→ Backup for the integrity-check commands). The production security check
+(`scripts/prod-security-check.sh`) already enforces a fresh, valid `.dump` on
+every deploy.
+
+### How retention works
+
+`BACKUP_RETENTION_DAYS` (default `14`) deletes only files matching
+`moneyflow-postgres-*.dump` inside `BACKUP_DIR` that are older than the window.
+Other files and subdirectories are never touched. Set to `0` to disable
+automatic cleanup.
+
+### Optional external copy (S3-compatible)
+
+The backup script uploads to S3-compatible storage (S3, R2, B2, MinIO) **only**
+when both `BACKUP_REMOTE_ENABLED=true` and `BACKUP_S3_BUCKET` are set, otherwise
+it skips and logs the message above. To enable on the server, add to
+`.env.production`:
+
+```env
+BACKUP_REMOTE_ENABLED=true
+BACKUP_S3_BUCKET=your-bucket
+BACKUP_S3_PREFIX=money-flow/postgres
+# AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_DEFAULT_REGION are read by the aws CLI.
+```
+
+The `aws` CLI must be installed on the host running the backup.
+
+### Restore into an empty local/test database
+
+```bash
+# Dev: restore the latest backup into a throwaway database
+RESTORE_TARGET_DB=money_flow_restore_check \
+  ./scripts/restore-postgres.sh "$(ls -t backups/postgres/moneyflow-postgres-*.dump | head -1)"
+```
+
+The script drops/recreates `RESTORE_TARGET_DB`, runs `pg_restore
+--no-owner --no-privileges`, and prints per-table row counts. For a one-shot
+automated drill:
+
+```bash
+./scripts/test-postgres-restore.sh
+```
+
+### Commands that must NOT run against production without explicit confirmation
+
+- Restoring into the application database (`POSTGRES_DB`), the `postgres`
+  maintenance database, or any `template*` database. The restore script refuses
+  these unless `RESTORE_CONFIRM_PRODUCTION=yes` is set.
+- `DROP DATABASE`, `pg_restore` against a live production database, manual
+  `DELETE`/`TRUNCATE`, or pointing seed/migration scripts at production.
+- Anything destructive against the production volume or `.env.production`.
+
+Restore drills always target a separate `*_restore_check` database and leave the
+application database untouched.
+
+### Recommended schedule (do not enable automatically from the repo)
+
+Back up at least once per day. On the server, schedule the committed script via
+cron (this is a server-side change; the repo does not install it for you):
+
+```cron
+15 2 * * * cd /opt/money-flow && ENV_FILE=.env.production COMPOSE_FILE=compose.prod.yml ./scripts/backup-postgres.sh >> /opt/money-flow/logs/postgres-backup.log 2>&1
+```
+
+Keep the existing `/etc/cron.d/money-flow-backup` pointing at
+`scripts/backup-postgres.sh`. A weekly restore drill
+(`scripts/test-postgres-restore.sh`) is recommended to catch silent corruption.
+
 ## Rollback
 
 Find the previous good commit:

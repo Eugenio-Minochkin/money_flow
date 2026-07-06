@@ -51,8 +51,29 @@ if ss -lntp | grep -E '0\.0\.0\.0:5432|\[::\]:5432' >/dev/null; then
   exit 1
 fi
 
-latest_backup="$(find /opt/money-flow/backups -name 'money-flow-*.sql.gz' -type f -mtime -2 -print -quit)"
-test -n "$latest_backup"
-gzip -t "$latest_backup"
+backup_root="${BACKUP_DIR:-/opt/money-flow/backups/postgres}"
+latest_backup="$(find "$backup_root" -maxdepth 1 -name 'moneyflow-postgres-*.dump' -type f -mtime -2 -print -quit)"
+if [ -z "$latest_backup" ]; then
+  echo "No Postgres backup newer than 2 days in $backup_root" >&2
+  exit 1
+fi
+
+# Validate the dump is a readable pg_restore custom-format archive. The file
+# lives on the host, so copy it into the postgres container (custom format
+# requires a seekable file) and list its contents with pg_restore.
+seccheck_tmp="/tmp/money-flow-seccheck-backup.dump"
+docker compose --env-file .env.production -f compose.prod.yml cp "$latest_backup" "postgres:${seccheck_tmp}"
+seccheck_ok=0
+# MSYS_NO_PATHCONV stops Git Bash on Windows from rewriting the container path.
+if MSYS_NO_PATHCONV=1 docker compose --env-file .env.production -f compose.prod.yml exec -T postgres \
+  pg_restore --list "$seccheck_tmp" >/dev/null 2>&1; then
+  seccheck_ok=1
+fi
+MSYS_NO_PATHCONV=1 docker compose --env-file .env.production -f compose.prod.yml exec -T postgres \
+  rm -f "$seccheck_tmp" >/dev/null 2>&1 || true
+if [ "$seccheck_ok" -ne 1 ]; then
+  echo "Latest backup is not a valid pg_restore archive: $latest_backup" >&2
+  exit 1
+fi
 
 echo "security-check ok"

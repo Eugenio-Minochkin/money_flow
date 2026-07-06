@@ -1,0 +1,133 @@
+#!/usr/bin/env bash
+#
+# scripts/backup-postgres.sh
+#
+# Manual Postgres backup for Money Flow.
+#
+# Creates a custom-format (pg_restore-compatible) dump of the configured
+# database, applies local retention, and optionally uploads the dump to
+# S3-compatible storage. All pg tooling runs inside the postgres container via
+# `docker compose exec`, so no host pg_dump/pg_restore client is required.
+#
+# Usage:
+#   ./scripts/backup-postgres.sh                      # dev (docker-compose.yml + .env)
+#   ENV_FILE=.env.production COMPOSE_FILE=compose.prod.yml ./scripts/backup-postgres.sh
+#
+# Never prints secrets (POSTGRES_PASSWORD, AWS credentials).
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$ROOT_DIR"
+
+log() { echo "[backup-postgres] $*"; }
+err() { echo "[backup-postgres] ERROR: $*" >&2; }
+
+# --- Configuration ----------------------------------------------------------
+
+# Source connection settings only when an env file is explicitly provided.
+# Dev needs none (docker-compose.yml has hardcoded credentials + defaults below);
+# prod sets ENV_FILE=.env.production.
+ENV_FILE="${ENV_FILE:-}"
+if [ -n "$ENV_FILE" ] && [ -f "$ENV_FILE" ]; then
+  set -a
+  # shellcheck disable=SC1090
+  . "$ENV_FILE"
+  set +a
+fi
+
+POSTGRES_DB="${POSTGRES_DB:-money_flow}"
+POSTGRES_USER="${POSTGRES_USER:-money_flow}"
+POSTGRES_SERVICE="${POSTGRES_SERVICE:-postgres}"
+COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml}"
+BACKUP_DIR="${BACKUP_DIR:-backups/postgres}"
+BACKUP_RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-14}"
+
+# Compose base command. Pass --env-file only when an explicit env file is given,
+# so prod variable substitution (POSTGRES_DB/USER/PASSWORD) resolves correctly.
+COMPOSE=(docker compose)
+if [ -n "$ENV_FILE" ] && [ -f "$ENV_FILE" ]; then
+  COMPOSE+=(--env-file "$ENV_FILE")
+fi
+COMPOSE+=(-f "$COMPOSE_FILE")
+
+# --- Validate retention input ----------------------------------------------
+
+case "$BACKUP_RETENTION_DAYS" in
+  ''|*[!0-9]*)
+    err "BACKUP_RETENTION_DAYS must be a non-negative integer, got: '$BACKUP_RETENTION_DAYS'"
+    exit 2
+    ;;
+esac
+
+# --- Create backup ----------------------------------------------------------
+
+mkdir -p "$BACKUP_DIR"
+
+stamp="$(date +%Y-%m-%d_%H-%M-%S)"
+outfile="$BACKUP_DIR/moneyflow-postgres-${stamp}.dump"
+
+log "Database:   $POSTGRES_DB (user: $POSTGRES_USER)"
+log "Service:    $POSTGRES_SERVICE (compose: $COMPOSE_FILE)"
+log "Backing up to: $outfile"
+
+# pg_dump -Fc writes a custom-format archive to stdout; redirect to host file.
+dump_rc=0
+if ! "${COMPOSE[@]}" exec -T "$POSTGRES_SERVICE" \
+      pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc > "$outfile"; then
+  dump_rc=$?
+  rm -f "$outfile"
+  err "pg_dump failed (exit $dump_rc). Is the '$POSTGRES_SERVICE' container running?"
+  exit "$dump_rc"
+fi
+
+if [ ! -s "$outfile" ]; then
+  err "Backup file is empty: $outfile"
+  exit 1
+fi
+
+size_bytes="$(wc -c < "$outfile")"
+log "Created:    $outfile"
+log "Size:       ${size_bytes} bytes"
+
+# --- Retention --------------------------------------------------------------
+
+# Delete ONLY moneyflow-postgres-*.dump files older than the retention window,
+# inside BACKUP_DIR only. mtime +N = modified more than N*24h ago.
+if [ "$BACKUP_RETENTION_DAYS" -gt 0 ]; then
+  removed="$(find "$BACKUP_DIR" -maxdepth 1 -type f -name 'moneyflow-postgres-*.dump' -mtime +"$BACKUP_RETENTION_DAYS" -print -delete || true)"
+else
+  removed=""
+fi
+if [ -n "$removed" ]; then
+  log "Retention:  removed backups older than ${BACKUP_RETENTION_DAYS} day(s):"
+  echo "$removed" | sed 's/^/  - /'
+else
+  log "Retention:  nothing to remove (window: ${BACKUP_RETENTION_DAYS} day(s))."
+fi
+
+# --- Optional external copy -------------------------------------------------
+
+if [ "${BACKUP_REMOTE_ENABLED:-false}" = "true" ]; then
+  if [ -z "${BACKUP_S3_BUCKET:-}" ]; then
+    err "BACKUP_REMOTE_ENABLED=true but BACKUP_S3_BUCKET is empty; skipping external upload."
+  else
+    prefix="${BACKUP_S3_PREFIX:-money-flow/postgres}"
+    target="s3://${BACKUP_S3_BUCKET}/${prefix}/$(basename "$outfile")"
+    log "Uploading to: $target"
+    # aws reads AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_DEFAULT_REGION from env.
+    if aws s3 cp "$outfile" "$target" \
+        ${BACKUP_S3_STORAGE_CLASS:+--storage-class "$BACKUP_S3_STORAGE_CLASS"}; then
+      log "External upload complete."
+    else
+      upload_rc=$?
+      err "External upload failed (aws exit $upload_rc). Local backup is still preserved."
+      exit "$upload_rc"
+    fi
+  fi
+else
+  log "External backup upload is not configured, skipping."
+fi
+
+log "Done."

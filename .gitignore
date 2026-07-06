@@ -6,3 +6,4 @@ npm-debug.log*
 *.log
 .superpowers/
 apps/miniapp/src/mock*.html
+/backups/

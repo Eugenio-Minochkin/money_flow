@@ -4,8 +4,9 @@
 
 - App directory: `/opt/money-flow`
 - Runtime env: `/opt/money-flow/.env.production`
-- Postgres backups: `/opt/money-flow/backups`
-- Backup script: `/opt/money-flow/backup-postgres.sh`
+- Postgres backups: `/opt/money-flow/backups/postgres` (custom-format `.dump`)
+- Backup script: `/opt/money-flow/scripts/backup-postgres.sh` (committed in repo)
+- Restore script: `/opt/money-flow/scripts/restore-postgres.sh` (committed in repo)
 - Backup cron: `/etc/cron.d/money-flow-backup`
 - SSH hardening: `/etc/ssh/sshd_config.d/99-money-flow-hardening.conf`
 
@@ -54,14 +55,57 @@ curl -fsS http://127.0.0.1:3000/health
 
 ## Backup
 
-Backups run daily at `02:15` server time and keep files for 14 days.
+Backups run daily at `02:15` server time and keep files for 14 days. Dumps are
+custom-format (`pg_dump -Fc`), restorable with `pg_restore`, named
+`moneyflow-postgres-YYYY-MM-DD_HH-MM-SS.dump` under `/opt/money-flow/backups/postgres`.
 
-Create a manual backup:
+Create a manual backup (sources `.env.production` + uses `compose.prod.yml`):
 
 ```bash
-/opt/money-flow/backup-postgres.sh
-ls -lh /opt/money-flow/backups | tail
+cd /opt/money-flow
+ENV_FILE=.env.production COMPOSE_FILE=compose.prod.yml ./scripts/backup-postgres.sh
+ls -lh /opt/money-flow/backups/postgres | tail
 ```
+
+Check backup archive integrity (`pg_restore --list` exits non-zero on a corrupt
+archive). The `.dump` is on the host, so copy it into the postgres container
+first (custom format requires a seekable file):
+
+```bash
+cd /opt/money-flow
+set -a; . ./.env.production; set +a
+f=/opt/money-flow/backups/postgres/moneyflow-postgres-YYYY-MM-DD_HH-MM-SS.dump
+docker compose --env-file .env.production -f compose.prod.yml cp "$f" postgres:/tmp/check.dump
+docker compose --env-file .env.production -f compose.prod.yml exec -T postgres pg_restore --list /tmp/check.dump | head
+docker compose --env-file .env.production -f compose.prod.yml exec -T postgres rm -f /tmp/check.dump
+```
+
+## Restore Drill
+
+Use this to verify a backup without touching the production database. The
+committed restore script refuses the application database unless you set
+`RESTORE_CONFIRM_PRODUCTION=yes`.
+
+```bash
+cd /opt/money-flow
+f=/opt/money-flow/backups/postgres/moneyflow-postgres-YYYY-MM-DD_HH-MM-SS.dump
+ENV_FILE=.env.production COMPOSE_FILE=compose.prod.yml \
+RESTORE_TARGET_DB=money_flow_restore_check \
+  ./scripts/restore-postgres.sh "$f"
+```
+
+The script drops/recreates `money_flow_restore_check`, runs `pg_restore`, and
+prints per-table row counts. Clean up afterwards:
+
+```bash
+cd /opt/money-flow
+set -a; . ./.env.production; set +a
+docker compose --env-file .env.production -f compose.prod.yml exec -T postgres \
+  psql -U "$POSTGRES_USER" -d postgres -c 'DROP DATABASE IF EXISTS money_flow_restore_check;'
+```
+
+For a fully automated backup→restore→verify drill, run
+`scripts/test-postgres-restore.sh` (see `docs/deployment-runbook.md`).
 
 Check backup archive integrity:
 
