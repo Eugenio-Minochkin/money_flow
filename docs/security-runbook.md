@@ -134,3 +134,4 @@ Expected:
 - direct dashboard without Telegram `initData` returns `400` when `REQUIRE_TELEGRAM_INIT_DATA=true`
 - webhook without Telegram secret returns `401`
 - port `3000` is bound to `127.0.0.1`; Postgres is not exposed on the host
+- the Docker compose network gateway that the `api` container sees is listed in `TRUSTED_PROXY_IPS` (so the rate limiter trusts `X-Forwarded-For`); the check fails with the discovered gateway if it is missing

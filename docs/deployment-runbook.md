@@ -69,6 +69,15 @@ different gateway, or traffic reaches the API from a different proxy address,
 set `TRUSTED_PROXY_IPS` in `.env.production` to the exact proxy IPs. Do not
 use broad private subnets unless the entire subnet is intentionally trusted.
 
+`scripts/prod-security-check.sh` asserts this on every deploy. It resolves the
+Docker network the `api` container is connected to, reads that network's
+gateway (the `remoteAddress` the API sees for proxied requests), and fails the
+security check with a clear message if the gateway is not present in
+`TRUSTED_PROXY_IPS`. This catches a drifted bridge subnet before it silently
+collapses unauthenticated requests into one shared rate-limit bucket. The check
+is read-only (it inspects containers and networks; it never mutates production
+state) and runs after `docker compose ... up -d` in the deploy workflow.
+
 `RATE_LIMIT_MAX_REQUESTS` is the preferred limit variable. The production
 compose file still falls back to legacy `RATE_LIMIT_MAX` when the new variable
 is absent, so existing production env files keep their configured limit.

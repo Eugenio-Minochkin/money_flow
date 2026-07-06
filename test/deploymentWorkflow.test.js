@@ -134,6 +134,34 @@ test('deployment runbook documents rate limit proxy compatibility settings', () 
   assert.match(runbook, /172\.18\.0\.1/);
   assert.match(runbook, /RATE_LIMIT_MAX_REQUESTS/);
   assert.match(runbook, /legacy `RATE_LIMIT_MAX`/);
+  assert.match(runbook, /prod-security-check\.sh/);
+  assert.match(runbook, /asserts this on every deploy/);
+  assert.match(runbook, /gateway[\s\S]*TRUSTED_PROXY_IPS/);
+});
+
+test('prod-security-check verifies the Docker compose gateway is trusted by the rate limiter', () => {
+  const script = readText('scripts/prod-security-check.sh');
+
+  // resolves the running api container
+  assert.match(script, /docker compose --env-file \.env\.production -f compose\.prod\.yml ps -q api/);
+  // resolves the api container's Docker network via read-only inspect
+  assert.match(script, /docker inspect[\s\S]*NetworkSettings\.Networks/);
+  // resolves the compose network gateway via read-only network inspect
+  assert.match(script, /docker network inspect[\s\S]*IPAM/);
+  assert.match(script, /\.Gateway/);
+  // reads the trusted proxy list sourced from .env.production
+  assert.match(script, /TRUSTED_PROXY_IPS/);
+  // fails with a clear, actionable message when the gateway is not trusted
+  assert.match(script, /does not include the Docker compose gateway/);
+  assert.match(script, /add it to TRUSTED_PROXY_IPS in \.env\.production/);
+  assert.match(script, /exit 1/);
+});
+
+test('prod-security-check fails when the compose gateway cannot be determined', () => {
+  const script = readText('scripts/prod-security-check.sh');
+
+  assert.match(script, /Could not determine the gateway[\s\S]*exit 1/);
+  assert.match(script, /Could not resolve the api container[\s\S]*exit 1/);
 });
 
 test('deployment runbook documents start-of-task git sync preflight', () => {
