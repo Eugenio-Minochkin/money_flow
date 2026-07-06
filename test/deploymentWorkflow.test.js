@@ -96,6 +96,16 @@ test('production compose passes automatic release digest settings to the API', (
   assert.match(compose, /GITHUB_REPOSITORY:\s*\$\{GITHUB_REPOSITORY:-\}/);
 });
 
+test('production compose passes rate limiter and trusted proxy settings to the API', () => {
+  const compose = readText('compose.prod.yml');
+
+  assert.match(compose, /RATE_LIMIT_WINDOW_MS:\s*\$\{RATE_LIMIT_WINDOW_MS:-60000\}/);
+  assert.match(compose, /RATE_LIMIT_MAX_REQUESTS:\s*"\$\{RATE_LIMIT_MAX_REQUESTS:-\$\{RATE_LIMIT_MAX:-120\}\}"/);
+  assert.match(compose, /RATE_LIMIT_BUCKET_TTL_MS:\s*\$\{RATE_LIMIT_BUCKET_TTL_MS:-120000\}/);
+  assert.match(compose, /RATE_LIMIT_CLEANUP_INTERVAL_MS:\s*\$\{RATE_LIMIT_CLEANUP_INTERVAL_MS:-60000\}/);
+  assert.match(compose, /TRUSTED_PROXY_IPS:\s*\$\{TRUSTED_PROXY_IPS:-127\.0\.0\.1,::1,172\.18\.0\.1\}/);
+});
+
 test('deployment runbook documents secrets, local flow, deploy, and rollback', () => {
   const runbook = readText('docs/deployment-runbook.md');
 
@@ -115,6 +125,15 @@ test('deployment runbook documents secrets, local flow, deploy, and rollback', (
   assert.match(runbook, /## User Release Notes/);
   assert.match(runbook, /RELEASE_DIGEST_AUTO_SEND_ENABLED/);
   assert.match(runbook, /GITHUB_REPOSITORY/);
+});
+
+test('deployment runbook documents rate limit proxy compatibility settings', () => {
+  const runbook = readText('docs/deployment-runbook.md');
+
+  assert.match(runbook, /TRUSTED_PROXY_IPS/);
+  assert.match(runbook, /172\.18\.0\.1/);
+  assert.match(runbook, /RATE_LIMIT_MAX_REQUESTS/);
+  assert.match(runbook, /legacy `RATE_LIMIT_MAX`/);
 });
 
 test('deployment runbook documents start-of-task git sync preflight', () => {

@@ -4,7 +4,7 @@ import crypto from "node:crypto";
 
 import { createApiSecurity } from "../src/apiSecurity.js";
 import { buildConfig, requireRuntimeConfig } from "../src/config.js";
-import { createRateLimiter } from "../src/rateLimit.js";
+import { createRateLimiter, getRateLimitKey } from "../src/rateLimit.js";
 import { shouldRateLimitRequest } from "../src/routing.js";
 import { verifyTelegramInitData } from "../src/telegramAuth.js";
 
@@ -41,6 +41,60 @@ test("rate limiter allows requests until the limit and then blocks", () => {
   assert.equal(blocked.allowed, false);
   assert.equal(blocked.retryAfterSeconds, 1);
   assert.equal(limiter.check("user:1", 1200).allowed, true);
+});
+
+test("rate limiter keeps different Telegram users in separate buckets", () => {
+  const limiter = createRateLimiter({ limit: 2, windowMs: 1000 });
+
+  assert.equal(limiter.check("tg:111", 0).allowed, true);
+  assert.equal(limiter.check("tg:111", 100).allowed, true);
+
+  assert.equal(limiter.check("tg:222", 200).allowed, true);
+});
+
+test("rate limiter removes buckets that have not been seen within the TTL", () => {
+  const limiter = createRateLimiter({ limit: 2, windowMs: 1000, bucketTtlMs: 5000 });
+
+  limiter.check("tg:111", 0);
+  limiter.check("tg:222", 4500);
+  const removed = limiter.cleanupStaleBuckets(6000);
+
+  assert.equal(removed, 1);
+  assert.equal(limiter.bucketCount(), 1);
+  assert.equal(limiter.check("tg:111", 6100).allowed, true);
+});
+
+test("rate limit key prefers Telegram user id over client IP", () => {
+  const req = { socket: { remoteAddress: "10.0.0.5" }, headers: {} };
+
+  assert.equal(
+    getRateLimitKey(req, { telegramUserId: 111, trustedProxyIps: [] }),
+    "tg:111"
+  );
+});
+
+test("rate limit key ignores X-Forwarded-For from untrusted clients", () => {
+  const req = {
+    socket: { remoteAddress: "10.0.0.5" },
+    headers: { "x-forwarded-for": "1.2.3.4" }
+  };
+
+  assert.equal(
+    getRateLimitKey(req, { trustedProxyIps: ["127.0.0.1"] }),
+    "ip:10.0.0.5"
+  );
+});
+
+test("rate limit key uses first X-Forwarded-For IP from trusted proxies", () => {
+  const req = {
+    socket: { remoteAddress: "127.0.0.1" },
+    headers: { "x-forwarded-for": "203.0.113.10, 10.0.0.1" }
+  };
+
+  assert.equal(
+    getRateLimitKey(req, { trustedProxyIps: ["127.0.0.1"] }),
+    "ip:203.0.113.10"
+  );
 });
 
 test("rate limiter applies to API and webhook but not Mini App static files", () => {

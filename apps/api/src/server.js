@@ -12,7 +12,7 @@ import { createExchangeRateProvider } from "./exchangeRates.js";
 import { createExpenseParser } from "./expenseParser.js";
 import { createJsonReader, createStaticHandler, sendJson } from "./http.js";
 import { handleDevRoute } from "./devRoutes.js";
-import { createRateLimiter } from "./rateLimit.js";
+import { createRateLimiter, getRateLimitKey } from "./rateLimit.js";
 import { createReleaseDigestScheduler } from "./releaseDigestScheduler.js";
 import { createReleaseNotesService } from "./releaseNotesService.js";
 import { createReportScheduler } from "./reportScheduler.js";
@@ -134,7 +134,9 @@ function createBot(telegramClient) {
 const bot = createBot();
 const rateLimiter = createRateLimiter({
   limit: config.rateLimitMax,
-  windowMs: config.rateLimitWindowMs
+  windowMs: config.rateLimitWindowMs,
+  bucketTtlMs: config.rateLimitBucketTtlMs,
+  cleanupIntervalMs: config.rateLimitCleanupIntervalMs
 });
 reportScheduler.start();
 startDailyReminderScheduler();
@@ -175,7 +177,11 @@ async function route(req, res) {
   }
 
   if (shouldRateLimitRequest(req, url)) {
-    const rate = rateLimiter.check(req.socket.remoteAddress ?? "unknown");
+    const rateLimitIdentity = apiSecurity.resolveTelegramUserId(req, url);
+    const rate = rateLimiter.check(getRateLimitKey(req, {
+      telegramUserId: rateLimitIdentity.telegramUserId,
+      trustedProxyIps: config.trustedProxyIps
+    }));
     if (!rate.allowed) {
       res.setHeader("retry-after", String(rate.retryAfterSeconds));
       return sendJson(res, 429, { error: "rate_limited", retryAfterSeconds: rate.retryAfterSeconds });
