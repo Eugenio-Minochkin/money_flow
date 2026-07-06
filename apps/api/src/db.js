@@ -17,13 +17,72 @@ export async function listMigrationFiles(migrationsDir) {
   return entries.filter((file) => file.endsWith(".sql")).sort();
 }
 
-export async function migrate() {
-  const migrationsDir = resolve(__dirname, "../migrations");
+export async function migrate(options = {}) {
+  const migrationsDir = options.migrationsDir ?? resolve(__dirname, "../migrations");
+  const dbPool = options.pool ?? pool;
+  const logger = options.logger ?? console;
+
+  await runWithRetry(() => dbPool.query(`
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      filename text PRIMARY KEY,
+      applied_at timestamptz NOT NULL DEFAULT now()
+    )
+  `));
+
   const files = await listMigrationFiles(migrationsDir);
   for (const file of files) {
     const sql = await readFile(resolve(migrationsDir, file), "utf8");
-    await runWithRetry(() => pool.query(sql));
+    await runWithRetry(() => applyMigration({ dbPool, filename: file, sql, logger }));
   }
+}
+
+async function applyMigration({ dbPool, filename, sql, logger }) {
+  const client = await dbPool.connect();
+  let transactionStarted = false;
+
+  try {
+    await client.query("BEGIN");
+    transactionStarted = true;
+    await client.query("LOCK TABLE schema_migrations IN SHARE ROW EXCLUSIVE MODE");
+
+    const existing = await client.query(
+      "SELECT 1 FROM schema_migrations WHERE filename = $1",
+      [filename]
+    );
+    if (existing.rows.length > 0) {
+      await client.query("COMMIT");
+      transactionStarted = false;
+      logger.info?.({ filename }, "migration skipped");
+      return;
+    }
+
+    await client.query(sql);
+    await client.query(
+      "INSERT INTO schema_migrations (filename) VALUES ($1)",
+      [filename]
+    );
+    await client.query("COMMIT");
+    transactionStarted = false;
+    logger.info?.({ filename }, "migration applied");
+  } catch (error) {
+    if (transactionStarted) {
+      await rollbackMigration(client, filename, error, logger);
+    } else {
+      logger.error?.({ filename, error }, "migration failed");
+    }
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function rollbackMigration(client, filename, error, logger) {
+  try {
+    await client.query("ROLLBACK");
+  } catch (rollbackError) {
+    logger.error?.({ filename, error: rollbackError }, "migration rollback failed");
+  }
+  logger.error?.({ filename, error }, "migration failed");
 }
 
 export async function closeDb() {
