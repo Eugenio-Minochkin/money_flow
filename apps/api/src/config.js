@@ -3,6 +3,11 @@ import { normalizeRolloutPercent } from "./parserRollout.js";
 const DEFAULT_RELEASE_DIGEST_SEND_HOUR = 21;
 const DEFAULT_RELEASE_DIGEST_CHECK_INTERVAL_MINUTES = 15;
 const DEFAULT_EXPENSE_PARSER_MAX_LOCAL_AMOUNT = 1_000_000;
+const DEFAULT_RATE_LIMIT_WINDOW_MS = 60_000;
+const DEFAULT_RATE_LIMIT_MAX = 120;
+const DEFAULT_RATE_LIMIT_BUCKET_TTL_MS = 120_000;
+const DEFAULT_RATE_LIMIT_CLEANUP_INTERVAL_MS = 60_000;
+const DEFAULT_TRUSTED_PROXY_IPS = ["127.0.0.1", "::1"];
 
 export function parseReleaseDigestSendHour(value) {
   const parsed = Number(value ?? DEFAULT_RELEASE_DIGEST_SEND_HOUR);
@@ -43,8 +48,14 @@ export function buildConfig(env) {
     deepgramApiKey: env.DEEPGRAM_API_KEY,
     telegramWebhookSecret: env.TELEGRAM_WEBHOOK_SECRET,
     requireTelegramInitData: env.REQUIRE_TELEGRAM_INIT_DATA === "true",
-    rateLimitWindowMs: Number(env.RATE_LIMIT_WINDOW_MS ?? 60_000),
-    rateLimitMax: Number(env.RATE_LIMIT_MAX ?? 120),
+    rateLimitWindowMs: parsePositiveInteger(env.RATE_LIMIT_WINDOW_MS, DEFAULT_RATE_LIMIT_WINDOW_MS),
+    rateLimitMax: parsePositiveInteger(env.RATE_LIMIT_MAX_REQUESTS ?? env.RATE_LIMIT_MAX, DEFAULT_RATE_LIMIT_MAX),
+    rateLimitBucketTtlMs: parsePositiveInteger(env.RATE_LIMIT_BUCKET_TTL_MS, DEFAULT_RATE_LIMIT_BUCKET_TTL_MS),
+    rateLimitCleanupIntervalMs: parsePositiveInteger(
+      env.RATE_LIMIT_CLEANUP_INTERVAL_MS,
+      DEFAULT_RATE_LIMIT_CLEANUP_INTERVAL_MS
+    ),
+    trustedProxyIps: parseCsv(env.TRUSTED_PROXY_IPS, DEFAULT_TRUSTED_PROXY_IPS),
     maxJsonBytes: Number(env.MAX_JSON_BYTES ?? 256_000),
     telegramJobGlobalConcurrency: Number(env.TELEGRAM_JOB_GLOBAL_CONCURRENCY ?? 3),
     telegramJobUserQueueLimit: Number(env.TELEGRAM_JOB_USER_QUEUE_LIMIT ?? 2),
@@ -85,11 +96,17 @@ function parsePositiveNumber(value, fallback) {
   return Number.isFinite(number) && number > 0 ? number : fallback;
 }
 
-function parseCsv(value) {
-  return String(value ?? "")
+function parsePositiveInteger(value, fallback) {
+  const number = Number(value ?? fallback);
+  return Number.isInteger(number) && number > 0 ? number : fallback;
+}
+
+function parseCsv(value, fallback = []) {
+  const items = String(value ?? "")
     .split(",")
     .map((item) => item.trim())
     .filter(Boolean);
+  return items.length > 0 ? items : fallback;
 }
 
 function localFirstDiagnosticsEnabled(runtimeConfig) {
