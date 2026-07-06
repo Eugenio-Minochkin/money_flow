@@ -22,7 +22,7 @@
 - Create: `scripts/backup-postgres.sh`
 
 - [ ] **Step 1:** Create `scripts/backup-postgres.sh` that:
-  - sources `${ENV_FILE:-.env}` when present (dev `.env`, prod `.env.production`);
+  - sources `${ENV_FILE}` only when explicitly set (dev needs none; prod sets `ENV_FILE=.env.production`);
   - resolves `POSTGRES_DB`/`POSTGRES_USER` (dev defaults `money_flow`), `COMPOSE_FILE` (default `docker-compose.yml`), `POSTGRES_SERVICE` (default `postgres`), `BACKUP_DIR` (default `backups/postgres`);
   - creates `BACKUP_DIR`;
   - runs `docker compose ... exec -T "$POSTGRES_SERVICE" pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc` redirected to `moneyflow-postgres-YYYY-MM-DD_HH-MM-SS.dump`;

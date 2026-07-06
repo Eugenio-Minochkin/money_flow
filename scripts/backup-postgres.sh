@@ -73,9 +73,13 @@ log "Service:    $POSTGRES_SERVICE (compose: $COMPOSE_FILE)"
 log "Backing up to: $outfile"
 
 # pg_dump -Fc writes a custom-format archive to stdout; redirect to host file.
-dump_rc=0
-if ! "${COMPOSE[@]}" exec -T "$POSTGRES_SERVICE" \
+# Do NOT use `if ! pg_dump ...; then rc=$?` — inside that block $? is the
+# negated status (0), so a failure would exit 0. Capture the real code in the
+# else-branch instead.
+if "${COMPOSE[@]}" exec -T "$POSTGRES_SERVICE" \
       pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc > "$outfile"; then
+  :
+else
   dump_rc=$?
   rm -f "$outfile"
   err "pg_dump failed (exit $dump_rc). Is the '$POSTGRES_SERVICE' container running?"

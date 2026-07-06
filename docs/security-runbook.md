@@ -107,36 +107,6 @@ docker compose --env-file .env.production -f compose.prod.yml exec -T postgres \
 For a fully automated backup→restore→verify drill, run
 `scripts/test-postgres-restore.sh` (see `docs/deployment-runbook.md`).
 
-Check backup archive integrity:
-
-```bash
-gzip -t /opt/money-flow/backups/money-flow-YYYYMMDDTHHMMSSZ.sql.gz
-```
-
-## Restore Drill
-
-Use this to verify a backup without touching the production database.
-
-```bash
-cd /opt/money-flow
-set -a
-. ./.env.production
-set +a
-backup=/opt/money-flow/backups/money-flow-YYYYMMDDTHHMMSSZ.sql.gz
-restore_db="money_flow_restore_check"
-
-printf 'DROP DATABASE IF EXISTS %s;\n' "$restore_db" | docker compose --env-file .env.production -f compose.prod.yml exec -T postgres \
-  psql -U "$POSTGRES_USER" -d postgres
-printf 'CREATE DATABASE %s;\n' "$restore_db" | docker compose --env-file .env.production -f compose.prod.yml exec -T postgres \
-  psql -U "$POSTGRES_USER" -d postgres
-gzip -dc "$backup" | docker compose --env-file .env.production -f compose.prod.yml exec -T postgres \
-  psql -U "$POSTGRES_USER" -d "$restore_db" >/tmp/money-flow-restore-check.log
-printf 'SELECT COUNT(*) AS users FROM users;\n' | docker compose --env-file .env.production -f compose.prod.yml exec -T postgres \
-  psql -U "$POSTGRES_USER" -d "$restore_db"
-printf 'DROP DATABASE %s;\n' "$restore_db" | docker compose --env-file .env.production -f compose.prod.yml exec -T postgres \
-  psql -U "$POSTGRES_USER" -d postgres
-```
-
 ## Security Checks
 
 ```bash

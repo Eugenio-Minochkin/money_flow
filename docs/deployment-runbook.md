@@ -206,13 +206,16 @@ inside the `postgres` container via `docker compose`.
 
 ### Environment variables
 
-Read from `${ENV_FILE}` (`./scripts/*.sh` source it with `set -a` / `set +a`):
+The scripts only source `${ENV_FILE}` (with `set -a` / `set +a`) when it is
+explicitly set; otherwise they rely on compose defaults. **On the server you
+MUST set `ENV_FILE=.env.production` (and `COMPOSE_FILE=compose.prod.yml`).** Dev
+needs neither — `docker-compose.yml` already defines the credentials.
 
 | Variable | Default | Notes |
 | --- | --- | --- |
-| `ENV_FILE` | `.env` | Set to `.env.production` on the server. |
+| `ENV_FILE` | _(unset)_ | Required on the server: `.env.production`. Dev needs none. |
 | `COMPOSE_FILE` | `docker-compose.yml` | Set to `compose.prod.yml` on the server. |
-| `POSTGRES_DB` / `POSTGRES_USER` | `money_flow` | From env file; never printed. |
+| `POSTGRES_DB` / `POSTGRES_USER` | `money_flow` | From `${ENV_FILE}` when set, else default. Never printed. |
 | `POSTGRES_SERVICE` | `postgres` | Compose service name. |
 | `BACKUP_DIR` | `backups/postgres` | Backup output directory. |
 | `BACKUP_RETENTION_DAYS` | `14` | Deletes only `moneyflow-postgres-*.dump` older than N days. |
@@ -228,7 +231,7 @@ Read from `${ENV_FILE}` (`./scripts/*.sh` source it with `set -a` / `set +a`):
 
 ### Run a backup manually
 
-Dev (uses `docker-compose.yml` + `.env`):
+Dev (uses `docker-compose.yml`; no env file needed — credentials come from compose):
 
 ```bash
 ./scripts/backup-postgres.sh

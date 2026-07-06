@@ -88,7 +88,9 @@ if [ -z "${RESTORE_TARGET_DB:-}" ]; then
 fi
 
 # Prevent SQL identifier injection; RESTORE_TARGET_DB must be a plain identifier.
-if ! printf '%s' "$RESTORE_TARGET_DB" | grep -Eq '^[A-Za-z_][A-Za-z0-9_]*$'; then
+if printf '%s' "$RESTORE_TARGET_DB" | grep -Eq '^[A-Za-z_][A-Za-z0-9_]*$'; then
+  :
+else
   err "RESTORE_TARGET_DB must match [A-Za-z_][A-Za-z0-9_]* (got: '$RESTORE_TARGET_DB')."
   exit 2
 fi
@@ -118,7 +120,9 @@ tmp_remote="/tmp/moneyflow-restore-$$.dump"
 
 log "Validating archive..."
 "${COMPOSE[@]}" cp "$backup_file" "$POSTGRES_SERVICE:$tmp_remote"
-if ! compose_exec pg_restore --list "$tmp_remote" >/dev/null; then
+if compose_exec pg_restore --list "$tmp_remote" >/dev/null; then
+  :
+else
   compose_exec rm -f "$tmp_remote" >/dev/null 2>&1 || true
   err "Backup archive is not a valid pg_restore custom-format dump: $backup_file"
   exit 1
@@ -137,8 +141,11 @@ psql_exec -c "CREATE DATABASE \"$RESTORE_TARGET_DB\";"
 # --- Restore ----------------------------------------------------------------
 
 log "Restoring (pg_restore)..."
-if ! compose_exec pg_restore -U "$POSTGRES_USER" -d "$RESTORE_TARGET_DB" \
+# else-branch (not `if !`) so $? keeps the real pg_restore exit code.
+if compose_exec pg_restore -U "$POSTGRES_USER" -d "$RESTORE_TARGET_DB" \
       --no-owner --no-privileges "$tmp_remote"; then
+  :
+else
   rc=$?
   compose_exec rm -f "$tmp_remote" >/dev/null 2>&1 || true
   err "pg_restore failed (exit $rc). The target database '$RESTORE_TARGET_DB' may be partial."
