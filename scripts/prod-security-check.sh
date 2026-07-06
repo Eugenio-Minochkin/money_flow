@@ -51,6 +51,57 @@ if ss -lntp | grep -E '0\.0\.0\.0:5432|\[::\]:5432' >/dev/null; then
   exit 1
 fi
 
+# Verify the Docker compose bridge gateway (the remoteAddress the API sees for
+# proxied requests) is listed in TRUSTED_PROXY_IPS. If the gateway is not
+# trusted, the rate limiter safely ignores X-Forwarded-For and falls back to the
+# proxy IP, collapsing unauthenticated requests into one shared bucket. This is
+# read-only: it inspects containers/networks and never mutates production state.
+api_container_id="$(docker compose --env-file .env.production -f compose.prod.yml ps -q api 2>/dev/null || true)"
+if [ -z "$api_container_id" ]; then
+  echo "Could not resolve the api container from docker compose" >&2
+  exit 1
+fi
+
+api_network=""
+for candidate_network in $(docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' "$api_container_id" 2>/dev/null || true); do
+  if [ -n "$candidate_network" ]; then
+    api_network="$candidate_network"
+    break
+  fi
+done
+if [ -z "$api_network" ]; then
+  echo "Could not determine the Docker network for the api container ($api_container_id)" >&2
+  exit 1
+fi
+
+api_gateway=""
+for candidate_gateway in $(docker network inspect -f '{{range .IPAM.Config}}{{.Gateway}} {{end}}' "$api_network" 2>/dev/null || true); do
+  if [ -n "$candidate_gateway" ]; then
+    api_gateway="$candidate_gateway"
+    break
+  fi
+done
+if [ -z "$api_gateway" ]; then
+  echo "Could not determine the gateway for Docker network '$api_network'" >&2
+  exit 1
+fi
+
+gateway_trusted=0
+IFS=',' read -r -a trusted_proxy_entries <<< "${TRUSTED_PROXY_IPS:-}"
+for entry in "${trusted_proxy_entries[@]}"; do
+  trimmed="${entry#"${entry%%[![:space:]]*}"}"
+  trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
+  if [ "$trimmed" = "$api_gateway" ]; then
+    gateway_trusted=1
+    break
+  fi
+done
+if [ "$gateway_trusted" -ne 1 ]; then
+  echo "TRUSTED_PROXY_IPS does not include the Docker compose gateway '$api_gateway'." >&2
+  echo "The API sees proxied requests from $api_gateway; add it to TRUSTED_PROXY_IPS in .env.production." >&2
+  exit 1
+fi
+
 backup_root="${BACKUP_DIR:-/opt/money-flow/backups/postgres}"
 latest_backup="$(find "$backup_root" -maxdepth 1 -name 'moneyflow-postgres-*.dump' -type f -mtime -2 -print -quit)"
 if [ -z "$latest_backup" ]; then
