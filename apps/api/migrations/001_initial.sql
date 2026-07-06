@@ -33,9 +33,6 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS bot_blocked BOOLEAN NOT NULL DEFAULT 
 ALTER TABLE users ADD COLUMN IF NOT EXISTS onboarding_data JSONB NOT NULL DEFAULT '{}'::jsonb;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS timezone TEXT NOT NULL DEFAULT 'UTC';
 ALTER TABLE users ALTER COLUMN usd_thb_rate SET DEFAULT 32.65;
-UPDATE users SET usd_thb_rate = 32.65 WHERE usd_thb_rate = 36;
-UPDATE users SET interface_language = 'ru' WHERE telegram_user_id = 428925787;
-UPDATE users SET timezone = 'Asia/Bangkok' WHERE telegram_user_id = 428925787;
 
 CREATE TABLE IF NOT EXISTS drafts (
   id BIGSERIAL PRIMARY KEY,
