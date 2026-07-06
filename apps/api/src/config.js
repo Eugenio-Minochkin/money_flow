@@ -7,7 +7,7 @@ const DEFAULT_RATE_LIMIT_WINDOW_MS = 60_000;
 const DEFAULT_RATE_LIMIT_MAX = 120;
 const DEFAULT_RATE_LIMIT_BUCKET_TTL_MS = 120_000;
 const DEFAULT_RATE_LIMIT_CLEANUP_INTERVAL_MS = 60_000;
-const DEFAULT_TRUSTED_PROXY_IPS = ["127.0.0.1", "::1"];
+const DEFAULT_TRUSTED_PROXY_IPS = ["127.0.0.1", "::1", "172.18.0.1"];
 
 export function parseReleaseDigestSendHour(value) {
   const parsed = Number(value ?? DEFAULT_RELEASE_DIGEST_SEND_HOUR);

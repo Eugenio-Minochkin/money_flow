@@ -55,6 +55,24 @@ Optional:
 
 Do not put Telegram, database, OpenAI, or Deepgram secrets in GitHub Actions. They stay on the server in `.env.production`.
 
+## Rate Limit Proxy Settings
+
+The API rate limiter trusts `X-Forwarded-For` only from `TRUSTED_PROXY_IPS`.
+Current production publishes the API as `127.0.0.1:3000->3000/tcp` and the
+host proxy forwards to `http://127.0.0.1:3000`. Inside the API container,
+Docker bridge forwarding can appear as the compose network gateway, currently
+`172.18.0.1`, so the default trusted proxy list includes `127.0.0.1`, `::1`,
+and `172.18.0.1`.
+
+If the host proxy moves into Docker, the compose network is recreated with a
+different gateway, or traffic reaches the API from a different proxy address,
+set `TRUSTED_PROXY_IPS` in `.env.production` to the exact proxy IPs. Do not
+use broad private subnets unless the entire subnet is intentionally trusted.
+
+`RATE_LIMIT_MAX_REQUESTS` is the preferred limit variable. The production
+compose file still falls back to legacy `RATE_LIMIT_MAX` when the new variable
+is absent, so existing production env files keep their configured limit.
+
 ## Automatic Release Digest
 
 Every PR with user-visible changes includes this block:

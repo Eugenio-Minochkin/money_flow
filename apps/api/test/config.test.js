@@ -57,7 +57,7 @@ test("rate limiter config falls back from invalid values", () => {
   assert.equal(config.rateLimitMax, 120);
   assert.equal(config.rateLimitBucketTtlMs, 120000);
   assert.equal(config.rateLimitCleanupIntervalMs, 60000);
-  assert.deepEqual(config.trustedProxyIps, ["127.0.0.1", "::1"]);
+  assert.deepEqual(config.trustedProxyIps, ["127.0.0.1", "::1", "172.18.0.1"]);
 });
 
 test("server wires the release digest scheduler with Telegram token gating", async () => {
