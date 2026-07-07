@@ -104,6 +104,8 @@ test("server wires admin alerts into runtime error paths", async () => {
   assert.match(source, /adminTelegramIds/);
   assert.match(source, /throttleMs:\s*config\.adminAlertThrottleMs/);
   assert.match(source, /maxMessageLength:\s*config\.adminAlertMaxMessageLength/);
-  assert.match(source, /notifyAdminError\(error,\s*\{\s*source:\s*"api"/);
+  assert.match(source, /safeNotifyAdminError\(adminAlertService,\s*error,\s*\{\s*source:\s*"api"/);
+  assert.match(source, /if\s*\(error\?\.adminAlertSent\)\s*return/);
+  assert.match(source, /\.catch\(\(alertError\)\s*=>/);
   assert.match(source, /adminAlertService/);
 });

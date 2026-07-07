@@ -104,6 +104,10 @@ test("sanitizeAlertContext removes sensitive fields recursively and keeps safe s
     headers: { authorization: "Bearer secret" },
     body: { amount: 100 },
     extra: {
+      chatId: 999,
+      statusCode: 502,
+      provider: "openai",
+      attempt: 2,
       safeFlag: true,
       initData: "query_id=secret",
       signature: "abc",
@@ -121,10 +125,37 @@ test("sanitizeAlertContext removes sensitive fields recursively and keeps safe s
     userId: "456",
     operation: "create_expense",
     extra: {
-      safeFlag: true,
-      count: 2
+      chatId: 999,
+      statusCode: 502,
+      provider: "openai",
+      attempt: 2
     }
   });
+});
+
+test("notifyAdminError redacts secrets from the final alert text", async () => {
+  const sent = [];
+  const service = createAdminAlertService({
+    enabled: true,
+    adminTelegramIds: new Set([100]),
+    now: () => new Date("2026-07-07T14:30:00.000Z"),
+    sendMessage: async (message) => sent.push(message)
+  });
+
+  await service.notifyAdminError(
+    new Error("OpenAI failed with token=secret and authorization Bearer abc and initData=query_id_secret and TELEGRAM_BOT_TOKEN=123456:ABCdefGHIjklMNOpqrSTUvwx and OPENAI_API_KEY=sk-secret123 and cookie=sessionid"),
+    { source: "parser", operation: "expense_parse" }
+  );
+
+  assert.equal(sent.length, 1);
+  assert.match(sent[0].text, /message: OpenAI failed/);
+  assert.doesNotMatch(sent[0].text, /token=secret/);
+  assert.doesNotMatch(sent[0].text, /Bearer abc/);
+  assert.doesNotMatch(sent[0].text, /query_id_secret/);
+  assert.doesNotMatch(sent[0].text, /123456:ABCdefGHIjklMNOpqrSTUvwx/);
+  assert.doesNotMatch(sent[0].text, /sk-secret123/);
+  assert.doesNotMatch(sent[0].text, /sessionid/);
+  assert.match(sent[0].text, /\[redacted\]/);
 });
 
 test("formatAdminAlertMessage truncates long output without exposing stack traces", () => {
@@ -181,4 +212,55 @@ test("notifyAdminError logs and absorbs Telegram send failures without recursion
   assert.match(errors[0].message, /admin alert send failed/);
   assert.equal(errors[0].metadata.chatId, 100);
   assert.equal(errors[0].metadata.errorName, "Error");
+});
+
+test("notifyAdminError logs concurrent alert skips while another alert is sending", async () => {
+  const warnings = [];
+  let releaseSend;
+  const firstSendStarted = new Promise((resolve) => {
+    releaseSend = resolve;
+  });
+  const service = createAdminAlertService({
+    enabled: true,
+    adminTelegramIds: new Set([100]),
+    logger: {
+      warn(message, metadata) {
+        warnings.push({ message, metadata });
+      }
+    },
+    sendMessage: async () => {
+      await firstSendStarted;
+    }
+  });
+
+  const firstAlert = service.notifyAdminError(new Error("first"), { source: "api" });
+  const secondResult = await service.notifyAdminError(new Error("second"), { source: "api" });
+  releaseSend();
+  await firstAlert;
+
+  assert.equal(secondResult.reason, "recursive_alert");
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0].message, /skipped/);
+  assert.equal(warnings[0].metadata.reason, "recursive_alert");
+});
+
+test("notifyAdminError does not throttle a repeated alert after zero successful deliveries", async () => {
+  const sent = [];
+  let fail = true;
+  const service = createAdminAlertService({
+    enabled: true,
+    adminTelegramIds: new Set([100]),
+    throttleMs: 600_000,
+    sendMessage: async (message) => {
+      if (fail) throw new Error("telegram down");
+      sent.push(message);
+    }
+  });
+
+  await service.notifyAdminError(new Error("same failure"), { source: "api" });
+  fail = false;
+  const result = await service.notifyAdminError(new Error("same failure"), { source: "api" });
+
+  assert.equal(result.sent, true);
+  assert.equal(sent.length, 1);
 });

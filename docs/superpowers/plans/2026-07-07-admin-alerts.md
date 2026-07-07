@@ -160,11 +160,10 @@ Expected: PASS.
 **Files:**
 - Modify: `apps/api/src/server.js`
 - Modify: `apps/api/src/telegram.js`
-- Modify: `apps/api/src/releaseDigestScheduler.js`
 - Modify: `apps/api/src/reportScheduler.js`
 - Modify: `apps/api/src/exchangeRates.js`
 - Modify: `apps/api/test/telegram.test.js`
-- Modify: `apps/api/test/releaseDigestScheduler.test.js`
+- Modify: `apps/api/test/config.test.js`
 - Modify: `apps/api/test/reportScheduler.test.js`
 - Modify: `apps/api/test/exchangeRates.test.js`
 
@@ -173,7 +172,7 @@ Expected: PASS.
 Add focused tests proving:
 - queued Telegram processing failures call `notifyAdminError` with `source: "telegram"` and `operation: "queued_job"`;
 - parser/LLM failures call `notifyAdminError` with `source: "parser"` and `operation: "expense_parse"`;
-- scheduler failures call `notifyAdminError` through scheduler `onError` hooks while still absorbing failures;
+- scheduler failures call `notifyAdminError` through scheduler `onError` hooks while still absorbing failures, with release digest wired through the existing `server.js` `onError` adapter;
 - exchange rate provider failures call `notifyAdminError` with `source: "rates"` while still falling back to manual rates;
 - API 500 handling calls `notifyAdminError` with `source: "api"`, route and method.
 
@@ -215,7 +214,7 @@ Rules:
 Run:
 
 ```powershell
-node --test apps/api/test/adminAlerts.test.js apps/api/test/telegram.test.js apps/api/test/releaseDigestScheduler.test.js apps/api/test/reportScheduler.test.js apps/api/test/exchangeRates.test.js apps/api/test/config.test.js test/deploymentWorkflow.test.js
+node --test apps/api/test/adminAlerts.test.js apps/api/test/telegram.test.js apps/api/test/reportScheduler.test.js apps/api/test/exchangeRates.test.js apps/api/test/config.test.js test/deploymentWorkflow.test.js
 ```
 
 Expected: PASS.
@@ -249,3 +248,37 @@ The PR body must explicitly say:
 - [x] **Step 3: Open draft PR**
 
 Push `codex/admin-error-alerts` and open a draft PR into `master`. Do not merge or deploy.
+
+### Task 5: Review Fixes Before Ready
+
+**Files:**
+- Modify: `apps/api/src/adminAlerts.js`
+- Modify: `apps/api/src/server.js`
+- Modify: `apps/api/src/telegram.js`
+- Modify: `scripts/backup-postgres.sh`
+- Modify: `docs/deployment-runbook.md`
+- Modify: focused tests and deployment contract tests
+
+- [x] **Step 1: Redact sensitive values from final alert text**
+
+Add redaction for secret-like values in `error.message`, including token/key
+assignments, bearer tokens, OpenAI `sk-...` keys, and Telegram bot-token
+patterns. Verify against the final Telegram alert text.
+
+- [x] **Step 2: Harden backup alerts for env-file and process-list safety**
+
+Keep `ENV_FILE` sourcing before alert checks and send backup failure alerts via
+a temporary `0600` curl config file so the Telegram bot token is not exposed in
+curl process arguments.
+
+- [x] **Step 3: Prevent duplicate admin alerts and unsafe fire-and-forget calls**
+
+Mark errors after Telegram alert hooks run, skip already-alerted errors in API
+fallback paths, and route `void` alert calls through a safe helper with an
+explicit catch.
+
+- [x] **Step 4: Narrow `extra` and document release digest wiring**
+
+Restrict `extra` to a small allowlist of safe scalar keys and clarify that
+release digest alerting is wired through the existing `server.js` scheduler
+adapter rather than by changing `releaseDigestScheduler.js`.

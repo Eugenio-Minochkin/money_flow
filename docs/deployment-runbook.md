@@ -102,6 +102,14 @@ limits repeated alerts with the same fingerprint so one failure loop does not
 spam admins. The max message length keeps Telegram alerts compact; full stack
 traces stay in Docker logs.
 
+`scripts/backup-postgres.sh` also uses these alert settings for best-effort
+backup failure alerts. When cron or a systemd timer passes `ENV_FILE`, the
+script sources that file before checking alert settings, so
+`ADMIN_ALERTS_ENABLED`, `TELEGRAM_BOT_TOKEN`, and `ADMIN_TELEGRAM_IDS` do not
+need to be exported separately. The script must not print secrets; its Telegram
+curl call keeps the bot-token URL in a temporary `0600` curl config file rather
+than in the process command line.
+
 To verify a change locally or in tests, trigger a controlled test error and put
 the resulting sample alert in the PR description. Confirm that the sample is
 short and does not include tokens, env values, `initData`, cookies,

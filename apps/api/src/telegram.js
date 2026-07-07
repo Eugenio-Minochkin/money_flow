@@ -214,12 +214,14 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
 async function sendQueuedJobFailure({ error, token, chatId, language, telegramClient, adminAlertService, telegramUserId, userId, trace }) {
   trace.failActive(["telegram_file_download", "transcription", "llm_parse", "db_save"], error);
   console.error("[telegram] queued job failed", error.message);
-  await safeNotifyAdminError(adminAlertService, error, {
-    source: "telegram",
-    operation: "queued_job",
-    telegramUserId,
-    userId
-  });
+  if (!error?.adminAlertSent) {
+    await safeNotifyAdminError(adminAlertService, error, {
+      source: "telegram",
+      operation: "queued_job",
+      telegramUserId,
+      userId
+    });
+  }
   try {
     await sendTelegramResponse(trace, () => sendMessage(token, chatId, botText(language, "jobProcessingFailed"), null, telegramClient));
   } catch (sendError) {
@@ -492,10 +494,24 @@ async function safeRecordAppEvent(repository, userId, eventName, metadata = {}) 
 }
 
 async function safeNotifyAdminError(adminAlertService, error, context) {
+  if (typeof adminAlertService?.notifyAdminError !== "function") return;
   try {
-    await adminAlertService?.notifyAdminError?.(error, context);
+    await adminAlertService.notifyAdminError(error, context);
+    markAdminAlertSent(error);
   } catch (alertError) {
     console.error("[telegram] admin alert failed", alertError.message);
+  }
+}
+
+function markAdminAlertSent(error) {
+  if (error == null || (typeof error !== "object" && typeof error !== "function")) return;
+  try {
+    Object.defineProperty(error, "adminAlertSent", {
+      value: true,
+      configurable: true
+    });
+  } catch {
+    error.adminAlertSent = true;
   }
 }
 

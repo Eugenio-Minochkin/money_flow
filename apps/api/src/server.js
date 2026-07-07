@@ -100,7 +100,7 @@ const releaseDigestScheduler = createReleaseDigestScheduler({
   logger: console,
   onError(error) {
     console.error("[release-digest] scheduler failed", error);
-    return adminAlertService.notifyAdminError(error, {
+    return safeNotifyAdminError(adminAlertService, error, {
       source: "scheduler",
       jobName: "release-digest",
       operation: "send_release_digest"
@@ -169,7 +169,7 @@ const server = createServer(async (req, res) => {
       return sendJson(res, error.statusCode, { error: error.message });
     }
     console.error(error);
-    void adminAlertService.notifyAdminError(error, {
+    void safeNotifyAdminError(adminAlertService, error, {
       source: "api",
       method: req.method,
       route: routePath(req)
@@ -189,7 +189,7 @@ function startDailyReminderScheduler() {
       await dailyReminderService.runOnce();
     } catch (error) {
       console.error("[daily-reminder] failed", error);
-      void adminAlertService.notifyAdminError(error, {
+      void safeNotifyAdminError(adminAlertService, error, {
         source: "scheduler",
         jobName: "daily-reminder",
         operation: "run_once"
@@ -198,6 +198,13 @@ function startDailyReminderScheduler() {
   };
   setTimeout(run, 15_000);
   setInterval(run, Math.max(config.dailyReminderIntervalMs, 60_000));
+}
+
+async function safeNotifyAdminError(adminAlertService, error, context) {
+  if (error?.adminAlertSent) return;
+  await adminAlertService.notifyAdminError(error, context).catch((alertError) => {
+    console.error("[admin-alerts] notify failed", alertError.message);
+  });
 }
 
 function routePath(req) {

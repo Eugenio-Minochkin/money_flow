@@ -66,10 +66,13 @@ alert_admin_backup_failure() {
     if [ -z "$chat_id" ]; then
       continue
     fi
-    curl -fsS --max-time 5 \
+    curl_config="$(mktemp "${TMPDIR:-/tmp}/money-flow-backup-alert.XXXXXX")"
+    chmod 600 "$curl_config"
+    printf 'url = "https://api.telegram.org/bot%s/sendMessage"\n' "$TELEGRAM_BOT_TOKEN" > "$curl_config"
+    curl -fsS --max-time 5 --config "$curl_config" \
       --data-urlencode "chat_id=${chat_id}" \
-      --data-urlencode "text=${alert_text}" \
-      "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" >/dev/null 2>&1 || true
+      --data-urlencode "text=${alert_text}" >/dev/null 2>&1 || true
+    rm -f "$curl_config"
   done
 }
 

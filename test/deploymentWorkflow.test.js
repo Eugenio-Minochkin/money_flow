@@ -175,18 +175,27 @@ test('deployment runbook documents admin alert configuration and safety checks',
   assert.match(runbook, /ADMIN_TELEGRAM_IDS/);
   assert.match(runbook, /TELEGRAM_BOT_TOKEN/);
   assert.match(runbook, /tokens[\s\S]*initData[\s\S]*authorization headers[\s\S]*raw request bodies/);
+  assert.match(runbook, /backup failure alerts/);
+  assert.match(runbook, /sources that file before checking alert settings/);
+  assert.match(runbook, /temporary `0600` curl config file/);
 });
 
 test('backup script sends safe admin alerts on failure only when enabled', () => {
   const script = readText('scripts/backup-postgres.sh');
   const alertText = script.match(/alert_text="\$\(printf '([\s\S]*?)' /)?.[1] ?? '';
+  const envSourceIndex = script.indexOf('. "$ENV_FILE"');
+  const alertFunctionIndex = script.indexOf('alert_admin_backup_failure()');
 
+  assert.ok(envSourceIndex >= 0);
+  assert.ok(alertFunctionIndex > envSourceIndex);
   assert.match(script, /trap on_backup_exit EXIT/);
   assert.match(script, /ADMIN_ALERTS_ENABLED:-false/);
   assert.match(script, /ADMIN_TELEGRAM_IDS/);
   assert.match(script, /TELEGRAM_BOT_TOKEN/);
   assert.match(script, /source: backup\\njobName: postgres-backup\\noperation: backup-postgres/);
   assert.match(script, /curl -fsS --max-time 5/);
+  assert.match(script, /curl_config/);
+  assert.doesNotMatch(script, /https:\/\/api\.telegram\.org\/bot\$\{TELEGRAM_BOT_TOKEN\}\/sendMessage/);
   assert.doesNotMatch(alertText, /TOKEN|PASSWORD|SECRET|DATABASE_URL|AWS_|POSTGRES_/);
 });
 

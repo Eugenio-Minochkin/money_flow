@@ -2,6 +2,7 @@ const DEFAULT_THROTTLE_MS = 10 * 60_000;
 const DEFAULT_MAX_MESSAGE_LENGTH = 900;
 const THROTTLE_CLEANUP_MULTIPLIER = 2;
 const SENSITIVE_KEY_PATTERN = /token|secret|password|authorization|cookie|initdata|hash|signature|env|headers|body/i;
+const EXTRA_SAFE_KEYS = new Set(["chatId", "statusCode", "provider", "attempt"]);
 const SAFE_CONTEXT_KEYS = new Set([
   "source",
   "route",
@@ -32,6 +33,9 @@ export function createAdminAlertService({
       return { sent: false, skipped: true, reason: "disabled" };
     }
     if (sendingAlert) {
+      logger.warn?.("[admin-alerts] admin alert skipped", {
+        reason: "recursive_alert"
+      });
       return { sent: false, skipped: true, reason: "recursive_alert" };
     }
 
@@ -45,7 +49,6 @@ export function createAdminAlertService({
       return { sent: false, skipped: true, reason: "throttled", fingerprint };
     }
 
-    throttle.set(fingerprint, current);
     const text = formatAdminAlertMessage(serialized, safeContext, {
       now: current,
       maxMessageLength: messageMaxLength
@@ -58,6 +61,7 @@ export function createAdminAlertService({
         try {
           await sendMessage({ chatId, text, replyMarkup: null });
           delivered += 1;
+          throttle.set(fingerprint, current);
         } catch (sendError) {
           logger.error?.("[admin-alerts] admin alert send failed", {
             chatId,
@@ -91,12 +95,12 @@ export function serializeAlertError(error) {
   if (error instanceof Error) {
     return {
       name: safeText(error.name || "Error", 80),
-      message: safeText(error.message || "(no message)", 300)
+      message: safeText(redactSensitiveText(error.message || "(no message)"), 300)
     };
   }
   return {
     name: "NonError",
-    message: safeText(String(error), 300)
+    message: safeText(redactSensitiveText(String(error)), 300)
   };
 }
 
@@ -140,10 +144,20 @@ function sanitizeExtra(value) {
   if (!isPlainObject(value)) return {};
   const sanitized = {};
   for (const [key, item] of Object.entries(value)) {
+    if (!EXTRA_SAFE_KEYS.has(key)) continue;
     if (isSensitiveKey(key)) continue;
     if (isSafeScalar(item)) sanitized[key] = item;
   }
   return sanitized;
+}
+
+function redactSensitiveText(value) {
+  return String(value ?? "")
+    .replace(/\b(token|secret|password|initData|cookie|TELEGRAM_BOT_TOKEN|OPENAI_API_KEY)\s*=\s*("[^"]*"|'[^']*'|[^\s,;&]+)/gi, "$1=[redacted]")
+    .replace(/\bauthorization\s*[:=]?\s*Bearer\s+("[^"]*"|'[^']*'|[^\s,;&]+)/gi, "authorization: Bearer [redacted]")
+    .replace(/\bBearer\s+("[^"]*"|'[^']*'|[^\s,;&]+)/g, "Bearer [redacted]")
+    .replace(/\bsk-[A-Za-z0-9_-]{6,}\b/g, "sk-[redacted]")
+    .replace(/\b\d{5,}:[A-Za-z0-9_-]{12,}\b/g, "[telegram-bot-token-redacted]");
 }
 
 function alertFingerprint(error, context) {

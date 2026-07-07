@@ -1069,6 +1069,45 @@ test("parser failures notify admins without changing the user-facing response", 
   assert.ok(messages.some((message) => /couldn.t parse the expense/i.test(message.text)));
 });
 
+test("async parser failures produce exactly one admin alert", async () => {
+  const repo = fakeRepository();
+  repo.user = { ...repo.user, interface_language: "en" };
+  const messages = [];
+  const alerts = [];
+  const originalError = console.error;
+  console.error = () => {};
+  try {
+    const bot = createTelegramBot({
+      token: "test-token",
+      miniAppUrl: "http://localhost:3000",
+      repository: repo,
+      telegramClient: captureTelegramClient(messages),
+      expenseParser: {
+        model: "gpt-test",
+        async parse() {
+          throw new Error("OpenAI failed with token=secret");
+        }
+      },
+      adminAlertService: {
+        async notifyAdminError(error, context) {
+          alerts.push({ error, context });
+        }
+      },
+      awaitQueuedJobs: false
+    });
+
+    await bot.handleUpdate(textUpdate("coffee 70", 100));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  } finally {
+    console.error = originalError;
+  }
+
+  assert.equal(alerts.length, 1);
+  assert.equal(alerts[0].context.source, "parser");
+  assert.equal(alerts[0].context.operation, "expense_parse");
+  assert.ok(messages.some((message) => /couldn.t parse the expense/i.test(message.text)));
+});
+
 test("unhandled Telegram update failures notify admins and still reject", async () => {
   const alerts = [];
   const repo = fakeRepository();
