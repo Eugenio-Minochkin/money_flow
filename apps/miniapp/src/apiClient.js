@@ -1,23 +1,20 @@
 export function createApiClient({
   getInitData = () => window.Telegram?.WebApp?.initData,
-  getTimeZone = () => Intl.DateTimeFormat().resolvedOptions().timeZone,
   fetchImpl = fetch
 } = {}) {
   return async function api(path, options = {}) {
     const initData = getInitData();
-    const timeZone = getTimeZone();
     const response = await fetchImpl(path, {
       method: options.method ?? "GET",
       headers: {
         ...(options.body ? { "content-type": "application/json" } : {}),
-        ...(initData ? { "x-telegram-init-data": initData } : {}),
-        ...(timeZone ? { "x-user-timezone": timeZone } : {})
+        ...(initData ? { "x-telegram-init-data": initData } : {})
       },
       body: options.body ? JSON.stringify(options.body) : undefined
     });
     if (!response.ok) {
       const body = await response.json().catch(() => ({}));
-      const error = new Error(body.error ?? "Не удалось выполнить запрос.");
+      const error = new Error(body.error ?? "Request failed.");
       error.status = response.status;
       error.body = body;
       throw error;
