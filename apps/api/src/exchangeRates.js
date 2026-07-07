@@ -8,6 +8,7 @@ const RATE_CODES = ["THB", ...NON_THB_CODES];
 
 export function createExchangeRateProvider(options = {}) {
   const fetchImpl = options.fetchImpl ?? globalThis.fetch;
+  const adminAlertService = options.adminAlertService ?? null;
 
   return {
     async ratesFor(date) {
@@ -20,7 +21,8 @@ export function createExchangeRateProvider(options = {}) {
             const rates = ratesFromUsdMap(data.rates ?? {});
             if (rates) return buildRates(`open-er-api:${toDateString(data.time_last_update_utc ?? date)}`, rates);
           }
-        } catch {
+        } catch (error) {
+          await notifyRatesError(adminAlertService, error, "open-er-api");
           // Try Frankfurter below before falling back to manual values.
         }
 
@@ -31,13 +33,25 @@ export function createExchangeRateProvider(options = {}) {
             const rates = ratesFromUsdMap(data.rates ?? {});
             if (rates) return buildRates(`frankfurter:${data.date ?? rateDate}`, rates);
           }
-        } catch {
+        } catch (error) {
+          await notifyRatesError(adminAlertService, error, "frankfurter");
           // Fallback below keeps expense entry available when the rate API is down.
         }
       }
       return fallbackRates(rateDate);
     }
   };
+}
+
+async function notifyRatesError(adminAlertService, error, operation) {
+  try {
+    await adminAlertService?.notifyAdminError?.(error, {
+      source: "rates",
+      operation
+    });
+  } catch {
+    // Rate lookup must still fall back to manual rates if alerting itself fails.
+  }
 }
 
 export function fallbackRates(date = new Date()) {

@@ -44,6 +44,44 @@ COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml}"
 BACKUP_DIR="${BACKUP_DIR:-backups/postgres}"
 BACKUP_RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-14}"
 
+alert_admin_backup_failure() {
+  rc="$1"
+
+  if [ "${ADMIN_ALERTS_ENABLED:-false}" != "true" ]; then
+    return 0
+  fi
+  if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${ADMIN_TELEGRAM_IDS:-}" ]; then
+    return 0
+  fi
+  if ! command -v curl >/dev/null 2>&1; then
+    return 0
+  fi
+
+  alert_time="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  alert_text="$(printf 'Money Flow error\nsource: backup\njobName: postgres-backup\noperation: backup-postgres\nerror: BackupFailed\nmessage: backup-postgres exited with code %s\ntime: %s' "$rc" "$alert_time")"
+
+  IFS=',' read -r -a alert_chat_ids <<< "$ADMIN_TELEGRAM_IDS"
+  for raw_chat_id in "${alert_chat_ids[@]}"; do
+    chat_id="$(printf '%s' "$raw_chat_id" | tr -d '[:space:]')"
+    if [ -z "$chat_id" ]; then
+      continue
+    fi
+    curl -fsS --max-time 5 \
+      --data-urlencode "chat_id=${chat_id}" \
+      --data-urlencode "text=${alert_text}" \
+      "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" >/dev/null 2>&1 || true
+  done
+}
+
+on_backup_exit() {
+  rc="$?"
+  if [ "$rc" -ne 0 ]; then
+    alert_admin_backup_failure "$rc"
+  fi
+}
+
+trap on_backup_exit EXIT
+
 # Compose base command. Pass --env-file only when an explicit env file is given,
 # so prod variable substitution (POSTGRES_DB/USER/PASSWORD) resolves correctly.
 COMPOSE=(docker compose)

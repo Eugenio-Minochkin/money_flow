@@ -94,3 +94,16 @@ test("server wires the release digest scheduler with Telegram token gating", asy
   assert.match(source, /releaseDigestScheduler\.start\(\)/);
   assert.match(source, /\[release-digest\] scheduler failed/);
 });
+
+test("server wires admin alerts into runtime error paths", async () => {
+  const source = await readFile(new URL("../src/server.js", import.meta.url), "utf8");
+
+  assert.match(source, /import \{ createAdminAlertService \} from "\.\/adminAlerts\.js";/);
+  assert.match(source, /const adminAlertService = createAdminAlertService\(/);
+  assert.match(source, /enabled:\s*config\.adminAlertsEnabled\s*&&\s*Boolean\(config\.telegramBotToken\)/);
+  assert.match(source, /adminTelegramIds/);
+  assert.match(source, /throttleMs:\s*config\.adminAlertThrottleMs/);
+  assert.match(source, /maxMessageLength:\s*config\.adminAlertMaxMessageLength/);
+  assert.match(source, /notifyAdminError\(error,\s*\{\s*source:\s*"api"/);
+  assert.match(source, /adminAlertService/);
+});

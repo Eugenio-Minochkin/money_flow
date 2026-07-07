@@ -177,6 +177,19 @@ test('deployment runbook documents admin alert configuration and safety checks',
   assert.match(runbook, /tokens[\s\S]*initData[\s\S]*authorization headers[\s\S]*raw request bodies/);
 });
 
+test('backup script sends safe admin alerts on failure only when enabled', () => {
+  const script = readText('scripts/backup-postgres.sh');
+  const alertText = script.match(/alert_text="\$\(printf '([\s\S]*?)' /)?.[1] ?? '';
+
+  assert.match(script, /trap on_backup_exit EXIT/);
+  assert.match(script, /ADMIN_ALERTS_ENABLED:-false/);
+  assert.match(script, /ADMIN_TELEGRAM_IDS/);
+  assert.match(script, /TELEGRAM_BOT_TOKEN/);
+  assert.match(script, /source: backup\\njobName: postgres-backup\\noperation: backup-postgres/);
+  assert.match(script, /curl -fsS --max-time 5/);
+  assert.doesNotMatch(alertText, /TOKEN|PASSWORD|SECRET|DATABASE_URL|AWS_|POSTGRES_/);
+});
+
 test('prod-security-check verifies the Docker compose gateway is trusted by the rate limiter', () => {
   const script = readText('scripts/prod-security-check.sh');
 

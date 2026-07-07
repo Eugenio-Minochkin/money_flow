@@ -168,7 +168,7 @@ Expected: PASS.
 - Modify: `apps/api/test/reportScheduler.test.js`
 - Modify: `apps/api/test/exchangeRates.test.js`
 
-- [ ] **Step 1: Write failing integration tests**
+- [x] **Step 1: Write failing integration tests**
 
 Add focused tests proving:
 - queued Telegram processing failures call `notifyAdminError` with `source: "telegram"` and `operation: "queued_job"`;
@@ -181,7 +181,7 @@ Run focused tests for the touched files.
 
 Expected: FAIL because `notifyAdminError` is not wired.
 
-- [ ] **Step 2: Wire admin alert service in `server.js`**
+- [x] **Step 2: Wire admin alert service in `server.js`**
 
 Create `adminAlertService` after `adminTelegramIds` is parsed:
 
@@ -201,7 +201,7 @@ const adminAlertService = createAdminAlertService({
 
 Pass `adminAlertService` to Telegram bot, schedulers, and exchange rate provider. In the top-level API catch, call `void adminAlertService.notifyAdminError(error, { source: "api", method: req.method, route: routeKeyFromRequest(req) })` before sending `500`.
 
-- [ ] **Step 3: Wire existing catch blocks without changing behavior**
+- [x] **Step 3: Wire existing catch blocks without changing behavior**
 
 Rules:
 - keep existing `console.error` calls;
@@ -210,7 +210,7 @@ Rules:
 - do not swallow errors that currently rethrow;
 - do not alert for expected 4xx domain responses.
 
-- [ ] **Step 4: Verify integration tests pass**
+- [x] **Step 4: Verify integration tests pass**
 
 Run:
 
@@ -225,7 +225,7 @@ Expected: PASS.
 **Files:**
 - Modify: PR body only after push
 
-- [ ] **Step 1: Run final verification**
+- [x] **Step 1: Run final verification**
 
 Run:
 
@@ -237,7 +237,7 @@ git status -sb
 
 Expected: full suite passes, no whitespace errors, only intended files changed.
 
-- [ ] **Step 2: Include safe alert sample in PR description**
+- [x] **Step 2: Include safe alert sample in PR description**
 
 Use the actual sample from `adminAlertService.formatExample(new Error("Invalid expense payload"), { source: "api", method: "POST", route: "/api/expenses", userId: "redacted-user" })` or from the formatter test output.
 

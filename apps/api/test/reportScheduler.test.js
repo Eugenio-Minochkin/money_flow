@@ -63,3 +63,32 @@ test("disabled scheduler tick is skipped", async () => {
 
   assert.deepEqual(await scheduler.tick(), { skipped: true, reason: "disabled" });
 });
+
+test("scheduler failures notify admins and keep the existing skipped result", async () => {
+  const alerts = [];
+  const scheduler = createReportScheduler({
+    enabled: true,
+    logger: { error() {} },
+    adminAlertService: {
+      async notifyAdminError(error, context) {
+        alerts.push({ error, context });
+      }
+    },
+    reportService: {
+      async runDueReports() {
+        throw new Error("report delivery failed");
+      }
+    }
+  });
+
+  const result = await scheduler.tick(new Date("2026-07-07T14:30:00Z"));
+
+  assert.deepEqual(result, { skipped: true, reason: "error" });
+  assert.equal(alerts.length, 1);
+  assert.equal(alerts[0].error.message, "report delivery failed");
+  assert.deepEqual(alerts[0].context, {
+    source: "scheduler",
+    jobName: "report-scheduler",
+    operation: "run_due_reports"
+  });
+});

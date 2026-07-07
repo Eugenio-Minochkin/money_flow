@@ -67,3 +67,31 @@ test("falls back to Frankfurter when Open ER API is unavailable", async () => {
   assert.equal(Math.round(rates.EUR.THB * 10000) / 10000, 36.9943);
   assert.equal(Math.round(rates.IDR.THB * 1000000) / 1000000, 0.002035);
 });
+
+test("rate provider failures notify admins while falling back to manual rates", async () => {
+  const alerts = [];
+  const provider = createExchangeRateProvider({
+    async fetchImpl() {
+      throw new Error("rates provider unavailable");
+    },
+    adminAlertService: {
+      async notifyAdminError(error, context) {
+        alerts.push({ error, context });
+      }
+    }
+  });
+
+  const rates = await provider.ratesFor(new Date("2026-06-02T10:00:00+07:00"));
+
+  assert.match(rates.source, /^manual-fallback:/);
+  assert.equal(alerts.length, 2);
+  assert.equal(alerts[0].error.message, "rates provider unavailable");
+  assert.deepEqual(alerts[0].context, {
+    source: "rates",
+    operation: "open-er-api"
+  });
+  assert.deepEqual(alerts[1].context, {
+    source: "rates",
+    operation: "frankfurter"
+  });
+});
