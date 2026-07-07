@@ -24,6 +24,23 @@ test('GitHub Actions deploy workflow runs CI, SSH deploy, and production checks'
   assert.match(workflow, /\.\/scripts\/prod-security-check\.sh/);
 });
 
+test('GitHub Actions runs Postgres smoke integration tests against a disposable database', () => {
+  const workflow = readText('.github/workflows/deploy.yml');
+
+  assert.match(workflow, /postgres-integration:/);
+  assert.match(workflow, /name:\s*Postgres integration smoke/);
+  assert.match(workflow, /services:\s+postgres:/);
+  assert.match(workflow, /image:\s*postgres:17/);
+  assert.match(workflow, /POSTGRES_DB:\s*money_flow_test/);
+  assert.match(workflow, /POSTGRES_USER:\s*postgres/);
+  assert.match(workflow, /POSTGRES_PASSWORD:\s*postgres/);
+  assert.match(workflow, /pg_isready -U postgres -d money_flow_test/);
+  assert.match(workflow, /DATABASE_URL:\s*postgres:\/\/postgres:postgres@localhost:5432\/money_flow_test/);
+  assert.match(workflow, /npm run test:integration:postgres/);
+  assert.match(workflow, /needs:\s*\[\s*ci,\s*postgres-integration\s*\]/);
+  assert.doesNotMatch(workflow, /secrets\.[A-Z_]*DATABASE/);
+});
+
 test('production compose passes configured admin Telegram ids to the API', () => {
   const compose = readText('compose.prod.yml');
 

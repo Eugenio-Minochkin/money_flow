@@ -40,10 +40,48 @@ jobs:
       - name: Run tests
         run: npm test
 
+  postgres-integration:
+    name: Postgres integration smoke
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: money_flow_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d money_flow_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/money_flow_test
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run Postgres smoke integration tests
+        run: npm run test:integration:postgres
+
   deploy:
     name: Deploy production
     runs-on: ubuntu-latest
-    needs: ci
+    needs: [ci, postgres-integration]
     if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/master'
     environment: production
 
