@@ -109,7 +109,7 @@ Expected: PASS.
 - Modify: `docs/deployment-runbook.md`
 - Modify: `test/deploymentWorkflow.test.js`
 
-- [ ] **Step 1: Write failing config and deployment contract tests**
+- [x] **Step 1: Write failing config and deployment contract tests**
 
 Update config tests to assert:
 - `ADMIN_ALERTS_ENABLED=true` enables alerts;
@@ -128,7 +128,7 @@ node --test apps/api/test/config.test.js test/deploymentWorkflow.test.js
 
 Expected: FAIL because config and docs do not define the new keys.
 
-- [ ] **Step 2: Implement config and docs**
+- [x] **Step 2: Implement config and docs**
 
 Add config fields:
 - `adminAlertsEnabled`
@@ -145,7 +145,7 @@ ADMIN_ALERT_MAX_MESSAGE_LENGTH=900
 
 Document that admin alerts reuse `ADMIN_TELEGRAM_IDS` and `TELEGRAM_BOT_TOKEN`; no new bot token is required.
 
-- [ ] **Step 3: Verify config and deployment tests pass**
+- [x] **Step 3: Verify config and deployment tests pass**
 
 Run:
 

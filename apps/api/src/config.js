@@ -8,6 +8,8 @@ const DEFAULT_RATE_LIMIT_MAX = 120;
 const DEFAULT_RATE_LIMIT_BUCKET_TTL_MS = 120_000;
 const DEFAULT_RATE_LIMIT_CLEANUP_INTERVAL_MS = 60_000;
 const DEFAULT_TRUSTED_PROXY_IPS = ["127.0.0.1", "::1", "172.18.0.1"];
+const DEFAULT_ADMIN_ALERT_THROTTLE_MS = 10 * 60_000;
+const DEFAULT_ADMIN_ALERT_MAX_MESSAGE_LENGTH = 900;
 
 export function parseReleaseDigestSendHour(value) {
   const parsed = Number(value ?? DEFAULT_RELEASE_DIGEST_SEND_HOUR);
@@ -48,6 +50,12 @@ export function buildConfig(env) {
     deepgramApiKey: env.DEEPGRAM_API_KEY,
     telegramWebhookSecret: env.TELEGRAM_WEBHOOK_SECRET,
     requireTelegramInitData: env.REQUIRE_TELEGRAM_INIT_DATA === "true",
+    adminAlertsEnabled: env.ADMIN_ALERTS_ENABLED === "true",
+    adminAlertThrottleMs: parsePositiveInteger(env.ADMIN_ALERT_THROTTLE_MS, DEFAULT_ADMIN_ALERT_THROTTLE_MS),
+    adminAlertMaxMessageLength: parsePositiveInteger(
+      env.ADMIN_ALERT_MAX_MESSAGE_LENGTH,
+      DEFAULT_ADMIN_ALERT_MAX_MESSAGE_LENGTH
+    ),
     rateLimitWindowMs: parsePositiveInteger(env.RATE_LIMIT_WINDOW_MS, DEFAULT_RATE_LIMIT_WINDOW_MS),
     rateLimitMax: parsePositiveInteger(env.RATE_LIMIT_MAX_REQUESTS ?? env.RATE_LIMIT_MAX, DEFAULT_RATE_LIMIT_MAX),
     rateLimitBucketTtlMs: parsePositiveInteger(env.RATE_LIMIT_BUCKET_TTL_MS, DEFAULT_RATE_LIMIT_BUCKET_TTL_MS),

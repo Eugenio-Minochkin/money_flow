@@ -60,6 +60,29 @@ test("rate limiter config falls back from invalid values", () => {
   assert.deepEqual(config.trustedProxyIps, ["127.0.0.1", "::1", "172.18.0.1"]);
 });
 
+test("admin alert config parses explicit safe values", () => {
+  const config = buildConfig({
+    ADMIN_ALERTS_ENABLED: "true",
+    ADMIN_ALERT_THROTTLE_MS: "300000",
+    ADMIN_ALERT_MAX_MESSAGE_LENGTH: "700"
+  });
+
+  assert.equal(config.adminAlertsEnabled, true);
+  assert.equal(config.adminAlertThrottleMs, 300000);
+  assert.equal(config.adminAlertMaxMessageLength, 700);
+});
+
+test("admin alert config defaults and rejects invalid values", () => {
+  const config = buildConfig({
+    ADMIN_ALERT_THROTTLE_MS: "0",
+    ADMIN_ALERT_MAX_MESSAGE_LENGTH: "not-a-number"
+  });
+
+  assert.equal(config.adminAlertsEnabled, false);
+  assert.equal(config.adminAlertThrottleMs, 600000);
+  assert.equal(config.adminAlertMaxMessageLength, 900);
+});
+
 test("server wires the release digest scheduler with Telegram token gating", async () => {
   const source = await readFile(new URL("../src/server.js", import.meta.url), "utf8");
 
