@@ -14,7 +14,7 @@ export function createApiClient({
     });
     if (!response.ok) {
       const body = await response.json().catch(() => ({}));
-      const error = new Error(body.error ?? "Request failed.");
+      const error = new Error(body.error ?? "Не удалось выполнить запрос.");
       error.status = response.status;
       error.body = body;
       throw error;
