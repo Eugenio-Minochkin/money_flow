@@ -246,6 +246,6 @@ The PR body must explicitly say:
 - no token/env/initData/cookies/authorization/header/body/financial detail is included;
 - admin alerts reuse `ADMIN_TELEGRAM_IDS`.
 
-- [ ] **Step 3: Open draft PR**
+- [x] **Step 3: Open draft PR**
 
 Push `codex/admin-error-alerts` and open a draft PR into `master`. Do not merge or deploy.
