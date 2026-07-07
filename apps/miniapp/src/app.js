@@ -277,17 +277,15 @@ function renderMonthlyForecast(snapshot, analytics) {
   const diffRow = document.querySelector("#forecastDiffRow");
   diffRow.classList.remove("good", "bad", "neutral");
   const roundedDifference = Math.round(difference * 100) / 100;
-  if (roundedDifference > 0) {
+  const isOverBudget = roundedDifference > 0;
+  if (isOverBudget) {
     diffRow.classList.add("bad");
     setText("#forecastDiff", t("monthlyForecast.aboveBudget", { amount: moneyBase(difference) }));
-  } else if (roundedDifference < 0) {
-    diffRow.classList.add("good");
-    setText("#forecastDiff", t("monthlyForecast.withinBudgetWithLeft", { amount: moneyBase(Math.abs(difference)) }));
+    setText("#forecastDiffDisplay", displayText(Math.abs(displayForecast - displayBudget)));
   } else {
-    diffRow.classList.add("neutral");
-    setText("#forecastDiff", t("monthlyForecast.withinBudget"));
+    setText("#forecastDiff", "");
+    setText("#forecastDiffDisplay", "");
   }
-  setText("#forecastDiffDisplay", displayText(Math.abs(displayForecast - displayBudget)));
 
   setText("#forecastAvgPace", `${moneyBase(averageDailySpending)}${perDay}`);
   setText("#forecastAvgPaceDisplay", showDisplay ? `${moneyDisplay(displayAverageDaily, displayCurrency)}${perDay}` : "");
@@ -310,7 +308,7 @@ function renderMonthlyForecast(snapshot, analytics) {
 
   const hasBudget = Number.isFinite(monthlyBudget) && monthlyBudget > 0;
   document.querySelector("#forecastBudgetRow").classList.toggle("hidden", !hasBudget);
-  document.querySelector("#forecastDiffRow").classList.toggle("hidden", !hasBudget);
+  document.querySelector("#forecastDiffRow").classList.toggle("hidden", !(hasBudget && isOverBudget));
 }
 
 async function loadHistory() {
