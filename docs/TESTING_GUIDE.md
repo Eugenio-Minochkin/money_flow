@@ -32,6 +32,46 @@ Use this guide when changing business logic or UI around the main Money Flow sur
 - Settings behavior, including current-month budget display and timezone controls, is covered by Mini App settings tests.
 - Voice budget top-up coverage should use digit transcriptions for MVP behavior; amount-word parsing needs a dedicated parser or LLM fallback test before being claimed.
 
+## Postgres Integration Smoke Tests
+
+Postgres integration tests are smoke tests for real SQL and migrations. They intentionally cover only critical repository flows, not every repository method.
+
+Run them separately from the unit suite:
+
+```powershell
+docker run --rm --name money-flow-postgres-smoke `
+  -e POSTGRES_DB=money_flow_test `
+  -e POSTGRES_USER=postgres `
+  -e POSTGRES_PASSWORD=postgres `
+  -p 5432:5432 `
+  postgres:17
+```
+
+In another shell:
+
+```powershell
+$env:DATABASE_URL = "postgres://postgres:postgres@localhost:5432/money_flow_test"
+npm.cmd run test:integration:postgres
+```
+
+The runner lives at `apps/api/integration/postgres-smoke.js` so `npm.cmd test` does not discover it by accident.
+
+The suite refuses to run unless `DATABASE_URL` points at localhost/127.0.0.1 and the database name contains `test`. It resets the disposable database schema, applies the real migration runner, checks that a second migration pass is safe with the migration ledger, and then runs smoke coverage for:
+
+- new Telegram user persistence and defaults;
+- confirmed draft expense save/read;
+- dashboard budget summary over real rows;
+- planned payment create/list/pay/deactivate;
+- reserve create/read through dashboard state;
+- expense edit/delete and recalculated totals;
+- timezone day/month boundaries with fixed dates.
+
+GitHub Actions runs the same command in the `Postgres integration smoke` job with a disposable `postgres` service and this test-only URL:
+
+```text
+DATABASE_URL=postgres://postgres:postgres@localhost:5432/money_flow_test
+```
+
 ## Before Marking Business Logic Ready
 
 Run the relevant focused tests first, then run the full test suite:
