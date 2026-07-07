@@ -333,6 +333,60 @@ Keep the existing `/etc/cron.d/money-flow-backup` pointing at
 `scripts/backup-postgres.sh`. A weekly restore drill
 (`scripts/test-postgres-restore.sh`) is recommended to catch silent corruption.
 
+## Docker Health and Hardening
+
+The production API container runs as a non-root user and both containers expose
+healthchecks, so `docker compose ps` reports real health instead of only
+"running". Run these from the server checkout (`/opt/money-flow`):
+
+```bash
+# Show health status for api and postgres (look for "healthy" in the STATUS column)
+docker compose --env-file .env.production -f compose.prod.yml ps
+
+# Tail recent API logs
+docker compose --env-file .env.production -f compose.prod.yml logs api --tail=100
+
+# Confirm the API runs as a non-root user (must NOT print uid=0(root))
+docker compose --env-file .env.production -f compose.prod.yml exec api id
+
+# Check Postgres health directly inside the container
+docker compose --env-file .env.production -f compose.prod.yml exec postgres pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"
+```
+
+The API healthcheck hits the existing `GET /health` endpoint (a lightweight
+`SELECT 1` against Postgres) and is marked healthy only when it returns
+`200 { "ok": true, "db": true }`. The Postgres healthcheck uses `pg_isready`
+with the user and database read from the container environment — no credentials
+are hardcoded.
+
+Startup order: the API service declares
+`depends_on.postgres.condition: service_healthy`, so compose starts the API only
+after Postgres passes its `pg_isready` healthcheck. This requires Docker Compose
+v2 (the `docker compose` plugin already used by the deploy); it reduces, but does
+not remove, the risk of the API starting before the database is reachable.
+
+The application-level `runWithRetry` in `apps/api/src/db.js` (used by `migrate()`
+at startup) stays in place as an additional fallback: if Postgres reports healthy
+but the API still cannot open a connection for a moment, the retry loop handles it.
+The Docker healthcheck/`depends_on` does not replace this retry logic.
+
+### If the API is unhealthy
+
+- `docker compose ... logs api --tail=100` — look for migration errors, missing
+  env (`TELEGRAM_WEBHOOK_SECRET is required in production`), or DB connection
+  failures.
+- Confirm Postgres is healthy first (see below); the API cannot be healthy while
+  Postgres is not.
+- Restart the API: `docker compose ... restart api`, then re-check `ps`.
+
+### If Postgres is unhealthy
+
+- `docker compose ... logs postgres --tail=100` — look for data directory or
+  configuration errors.
+- Verify the volume is intact: `docker compose ... exec postgres pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"`.
+- Do not delete the `postgres_data` volume — it holds user financial data.
+  Restart the service: `docker compose ... restart postgres`, then re-check.
+
 ## Rollback
 
 Find the previous good commit:

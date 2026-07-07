@@ -201,3 +201,28 @@ test('production env example does not contain duplicate keys', () => {
 
   assert.deepEqual(duplicates, []);
 });
+
+test('api Dockerfile runs as a non-root user and exposes a healthcheck', () => {
+  const dockerfile = readText('Dockerfile');
+
+  assert.match(dockerfile, /^USER\s+\S+/m);
+  assert.doesNotMatch(dockerfile, /^USER\s+root\b/m);
+  assert.doesNotMatch(dockerfile, /^USER\s+0\b/m);
+  assert.match(dockerfile, /HEALTHCHECK[\s\S]*\/health/);
+});
+
+test('production api waits for a healthy postgres before starting', () => {
+  const compose = readText('compose.prod.yml');
+
+  assert.match(compose, /depends_on:\s+postgres:\s+condition:\s*service_healthy/);
+});
+
+test('production postgres healthcheck uses pg_isready without hardcoded credentials', () => {
+  const compose = readText('compose.prod.yml');
+
+  assert.match(compose, /\bpg_isready\b/);
+  const pgIsreadyLine = compose.match(/pg_isready[^\n]*/)[0];
+  assert.match(pgIsreadyLine, /\$\$\{POSTGRES_USER\}/);
+  assert.match(pgIsreadyLine, /\$\$\{POSTGRES_DB\}/);
+  assert.doesNotMatch(pgIsreadyLine, /POSTGRES_PASSWORD|password/i);
+});
