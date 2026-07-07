@@ -50,6 +50,7 @@ Keep changes focused on helping one user understand day-to-day money movement wi
 - Review `git diff` before committing and remove accidental unrelated changes.
 - Every PR should include: summary, changed areas, docs checked/updated, tests run, DB/prod impact, release notes impact, screenshots for UI changes, and any open questions or assumptions.
 - Every PR with user-visible changes must include the `## User Release Notes` block described in `docs/deployment-runbook.md`.
+- Every PR that adds or changes admin alerts / Telegram observability must show an example alert from a test or local run in the PR description, with sensitive values redacted and message length reviewed.
 
 ## Secret Hygiene
 

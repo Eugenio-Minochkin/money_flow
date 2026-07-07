@@ -157,6 +157,16 @@ test('deployment runbook documents rate limit proxy compatibility settings', () 
   assert.match(runbook, /gateway[\s\S]*TRUSTED_PROXY_IPS/);
 });
 
+test('deployment runbook requires PRs for admin alerts to show a safe sample message', () => {
+  const runbook = readText('docs/deployment-runbook.md');
+
+  assert.match(runbook, /admin alerts/i);
+  assert.match(runbook, /PR description[\s\S]*example alert/i);
+  assert.match(runbook, /test or local run/i);
+  assert.match(runbook, /too long/i);
+  assert.match(runbook, /sensitive data/i);
+});
+
 test('prod-security-check verifies the Docker compose gateway is trusted by the rate limiter', () => {
   const script = readText('scripts/prod-security-check.sh');
 

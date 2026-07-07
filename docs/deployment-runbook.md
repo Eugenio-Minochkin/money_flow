@@ -39,6 +39,14 @@ git status
 git diff
 ```
 
+PR description checks:
+
+- For admin alerts / Telegram observability PRs, include an example alert from
+  a test or local run. Redact placeholder IDs and any secret-like values, then
+  check that the message is not too long and does not expose sensitive data
+  such as tokens, env values, `initData`, cookies, authorization headers, raw
+  request bodies, or personal financial details.
+
 ## GitHub Secrets
 
 Create these repository secrets in GitHub:
