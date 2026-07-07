@@ -35,6 +35,7 @@ test('GitHub Actions runs Postgres smoke integration tests against a disposable 
   assert.match(workflow, /POSTGRES_USER:\s*postgres/);
   assert.match(workflow, /POSTGRES_PASSWORD:\s*postgres/);
   assert.match(workflow, /pg_isready -U postgres -d money_flow_test/);
+  assert.match(workflow, /NODE_ENV:\s*test/);
   assert.match(workflow, /DATABASE_URL:\s*postgres:\/\/postgres:postgres@localhost:5432\/money_flow_test/);
   assert.match(workflow, /npm run test:integration:postgres/);
   assert.match(workflow, /needs:\s*\[\s*ci,\s*postgres-integration\s*\]/);
