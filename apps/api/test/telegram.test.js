@@ -3407,6 +3407,52 @@ test("/feedback saves next text, notifies admins, bypasses parser, then resumes 
   assert.match(adminMessage.text, /Category editing is confusing/);
 });
 
+test("/feedback saves next text while user is in onboarding", async () => {
+  const savedFeedback = [];
+  let onboardingDataUpdated = false;
+  let expenseParserCalls = 0;
+  const repo = {
+    ...fakeRepository(),
+    user: { id: 7, telegram_user_id: 100, interface_language: "en", onboarding_step: "budget_setup", base_currency: "THB" },
+    async updateOnboardingData() {
+      onboardingDataUpdated = true;
+      throw new Error("feedback text must not enter onboarding");
+    },
+    async createFeedback(input) {
+      savedFeedback.push(input);
+      return { id: 56, ...input, status: "new", source: input.source ?? "bot" };
+    }
+  };
+  const messages = [];
+  const bot = createTelegramBot({
+    token: null,
+    miniAppUrl: "http://x",
+    repository: repo,
+    expenseParser: {
+      async parse() {
+        expenseParserCalls += 1;
+        return { expenses: [] };
+      }
+    },
+    telegramClient: captureTelegramClient(messages)
+  });
+
+  await bot.handleUpdate(textUpdate("/feedback", 100));
+  await bot.handleUpdate(textUpdate("Onboarding budget copy is unclear", 100));
+
+  assert.equal(savedFeedback.length, 1);
+  assert.deepEqual(savedFeedback[0], {
+    userId: 7,
+    telegramUserId: 100,
+    message: "Onboarding budget copy is unclear",
+    source: "bot",
+    status: "new"
+  });
+  assert.equal(onboardingDataUpdated, false);
+  assert.equal(expenseParserCalls, 0);
+  assert.ok(messages.some((message) => /received your feedback/i.test(message.text)));
+});
+
 test("/feedback keeps pending state for too-short text", async () => {
   const savedFeedback = [];
   let expenseParserCalls = 0;

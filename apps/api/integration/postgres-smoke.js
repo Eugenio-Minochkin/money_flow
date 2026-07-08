@@ -25,7 +25,7 @@ test.before(async () => {
   const applied = await pool.query("SELECT filename FROM schema_migrations ORDER BY filename");
   assert.deepEqual(
     applied.rows.map((row) => row.filename),
-    ["001_initial.sql", "002_draft_confirm_flow.sql", "003_budget_topups.sql", "004_report_deliveries.sql", "005_exchange_rates.sql"]
+    ["001_initial.sql", "002_draft_confirm_flow.sql", "003_budget_topups.sql", "004_report_deliveries.sql", "005_exchange_rates.sql", "006_feedback.sql"]
   );
 });
 
@@ -84,6 +84,28 @@ test("saves a confirmed draft expense and reads it back", async () => {
   assert.equal(expenses.length, 1);
   assert.equal(expenses[0].description, "coffee");
   assert.deepEqual(expenses[0].tags, ["latte"]);
+});
+
+test("saves feedback with source metadata", async () => {
+  const user = await createSmokeUser(990008);
+
+  const feedback = await repo.createFeedback({
+    userId: user.id,
+    telegramUserId: 990008,
+    message: "Please make category editing clearer",
+    source: "bot"
+  });
+
+  assert.equal(feedback.user_id, user.id.toString());
+  assert.equal(feedback.telegram_user_id, "990008");
+  assert.equal(feedback.message, "Please make category editing clearer");
+  assert.equal(feedback.status, "new");
+  assert.equal(feedback.source, "bot");
+
+  const stored = await pool.query("SELECT * FROM feedback WHERE id = $1", [feedback.id]);
+  assert.equal(stored.rowCount, 1);
+  assert.equal(stored.rows[0].source, "bot");
+  assert.equal(stored.rows[0].status, "new");
 });
 
 test("recalculates dashboard budget summary from real expense rows", async () => {

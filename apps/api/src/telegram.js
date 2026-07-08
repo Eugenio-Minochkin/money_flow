@@ -238,8 +238,10 @@ async function sendQueuedJobFailure({ error, token, chatId, language, telegramCl
 }
 
 function setPendingFeedback(telegramUserId, now = new Date()) {
+  const currentTime = new Date(now).getTime();
+  pruneExpiredPendingFeedback(currentTime);
   pendingFeedbackByTelegramUser.set(Number(telegramUserId), {
-    expiresAt: new Date(now).getTime() + FEEDBACK_PENDING_TTL_MS
+    expiresAt: currentTime + FEEDBACK_PENDING_TTL_MS
   });
 }
 
@@ -258,6 +260,12 @@ function isFeedbackPending(telegramUserId, now = new Date()) {
   return true;
 }
 
+function pruneExpiredPendingFeedback(currentTime) {
+  for (const [telegramUserId, pending] of pendingFeedbackByTelegramUser) {
+    if (pending.expiresAt <= currentTime) pendingFeedbackByTelegramUser.delete(telegramUserId);
+  }
+}
+
 export async function processQueuedMessage({ message, from, user, rawText, hasVoice, inputType, repository, token, miniAppUrl, expenseParser, voiceTranscriber, telegramClient, adminTelegramIds = new Set(), adminAlertService, now = () => new Date(), trace }) {
   const processingStartedAt = performance.now();
   const language = user.interface_language ?? "en";
@@ -268,23 +276,6 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
   let transcriptChars = null;
 
   try {
-    if (isOnboardingActive(user)) {
-      let onboardingTextInput = rawText;
-      if (!onboardingTextInput && hasVoice) {
-        try {
-          onboardingTextInput = await transcribeVoice(message, voiceTranscriber, trace);
-        } catch (error) {
-          trace.failActive(["telegram_file_download", "transcription"], error);
-          console.error("[telegram] voice transcription failed during onboarding", error.message);
-          onboardingTextInput = null;
-        }
-      }
-      if (!onboardingTextInput) {
-        return sendTelegramResponse(trace, () => sendMessage(token, chatId, botText(language, "unsupported"), null, telegramClient));
-      }
-      return handleOnboardingMessage({ text: onboardingTextInput, user, repository, token, chatId, miniAppUrl, telegramUserId: from.id, telegramClient, now, trace });
-    }
-
     if (rawText && isFeedbackPending(from.id, now())) {
       const feedbackText = rawText.trim();
       if (feedbackText.length < MIN_FEEDBACK_MESSAGE_LENGTH) {
@@ -317,6 +308,23 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
         }
       });
       return { ok: true };
+    }
+
+    if (isOnboardingActive(user)) {
+      let onboardingTextInput = rawText;
+      if (!onboardingTextInput && hasVoice) {
+        try {
+          onboardingTextInput = await transcribeVoice(message, voiceTranscriber, trace);
+        } catch (error) {
+          trace.failActive(["telegram_file_download", "transcription"], error);
+          console.error("[telegram] voice transcription failed during onboarding", error.message);
+          onboardingTextInput = null;
+        }
+      }
+      if (!onboardingTextInput) {
+        return sendTelegramResponse(trace, () => sendMessage(token, chatId, botText(language, "unsupported"), null, telegramClient));
+      }
+      return handleOnboardingMessage({ text: onboardingTextInput, user, repository, token, chatId, miniAppUrl, telegramUserId: from.id, telegramClient, now, trace });
     }
 
     const loader = await sendExpenseProcessingMessage(token, chatId, language, telegramClient, trace);
