@@ -4,6 +4,10 @@ Money Flow помогает пользователю управлять дост
 
 ## Language
 
+**Feedback**:
+A short user-authored message sent to Money Flow to report a problem, complaint, idea, or missing MVP capability. Feedback is not an expense, draft, support ticket, or accounting record.
+_Avoid_: Expense, ticket, task, admin note
+
 **Пополнение бюджета (Budget Top-up)**:
 Разовое увеличение доступного бюджета конкретного месяца за счёт полученных пользователем дополнительных денег. Пополнение прибавляется к текущему месячному бюджету поверх обычного бюджета или месячного override, не меняет регулярный месячный бюджет, не считается расходом и не превращает Money Flow в учёт доходов.
 _Avoid_: Доход, зарплатный календарь, cashflow, перевод между своими счетами

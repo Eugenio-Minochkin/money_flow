@@ -19,6 +19,9 @@ import { DraftCanceledError, CategoryRequiredError } from "./repository.js";
 
 // budget_setup is the primary onboarding path; base_currency/monthly_budget/month_opening_spend are legacy fallback states.
 const ONBOARDING_STEPS = ["language", "budget_setup", "base_currency", "monthly_budget", "current_month_budget", "month_opening_spend"];
+const FEEDBACK_PENDING_TTL_MS = 30 * 60_000;
+const MIN_FEEDBACK_MESSAGE_LENGTH = 3;
+const pendingFeedbackByTelegramUser = new Map();
 
 export function createTelegramBot({
   repository,
@@ -146,6 +149,11 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
       return sendTelegramResponse(trace, () => sendMessage(token, chatId, botText(language, "start"), appKeyboard(miniAppUrl, from.id, language), telegramClient));
     }
 
+    if (commandText === "/feedback") {
+      setPendingFeedback(from.id, now());
+      return sendTelegramResponse(trace, () => sendMessage(token, chatId, feedbackPromptText(language), null, telegramClient));
+    }
+
     if (commandText === "/today" || commandText === "/week" || commandText === "/month" || commandText === "/budget") {
       const dashboard = await repository.dashboard(from.id);
       const event = await repository.latestPendingTelegramReserveEvent?.(from.id);
@@ -170,7 +178,7 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
 
   const queued = telegramJobQueue.enqueue({
     userId: from.id,
-    run: () => processQueuedMessage({ message, from, user, rawText, hasVoice, inputType: trackExpenseMessage ? inputType : null, repository, token, miniAppUrl, expenseParser, voiceTranscriber, telegramClient, adminAlertService, now, trace }),
+    run: () => processQueuedMessage({ message, from, user, rawText, hasVoice, inputType: trackExpenseMessage ? inputType : null, repository, token, miniAppUrl, expenseParser, voiceTranscriber, telegramClient, adminTelegramIds, adminAlertService, now, trace }),
     onStart: (metadata) => trace.event("queue_job_start", metadata),
     onFinish: (metadata) => trace.event("queue_job_done", metadata)
   });
@@ -229,7 +237,28 @@ async function sendQueuedJobFailure({ error, token, chatId, language, telegramCl
   }
 }
 
-export async function processQueuedMessage({ message, from, user, rawText, hasVoice, inputType, repository, token, miniAppUrl, expenseParser, voiceTranscriber, telegramClient, adminAlertService, now, trace }) {
+function setPendingFeedback(telegramUserId, now = new Date()) {
+  pendingFeedbackByTelegramUser.set(Number(telegramUserId), {
+    expiresAt: new Date(now).getTime() + FEEDBACK_PENDING_TTL_MS
+  });
+}
+
+function clearPendingFeedback(telegramUserId) {
+  pendingFeedbackByTelegramUser.delete(Number(telegramUserId));
+}
+
+function isFeedbackPending(telegramUserId, now = new Date()) {
+  const key = Number(telegramUserId);
+  const pending = pendingFeedbackByTelegramUser.get(key);
+  if (!pending) return false;
+  if (pending.expiresAt <= new Date(now).getTime()) {
+    pendingFeedbackByTelegramUser.delete(key);
+    return false;
+  }
+  return true;
+}
+
+export async function processQueuedMessage({ message, from, user, rawText, hasVoice, inputType, repository, token, miniAppUrl, expenseParser, voiceTranscriber, telegramClient, adminTelegramIds = new Set(), adminAlertService, now = () => new Date(), trace }) {
   const processingStartedAt = performance.now();
   const language = user.interface_language ?? "en";
   const chatId = message.chat.id;
@@ -254,6 +283,40 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
         return sendTelegramResponse(trace, () => sendMessage(token, chatId, botText(language, "unsupported"), null, telegramClient));
       }
       return handleOnboardingMessage({ text: onboardingTextInput, user, repository, token, chatId, miniAppUrl, telegramUserId: from.id, telegramClient, now, trace });
+    }
+
+    if (rawText && isFeedbackPending(from.id, now())) {
+      const feedbackText = rawText.trim();
+      if (feedbackText.length < MIN_FEEDBACK_MESSAGE_LENGTH) {
+        processingResult = "feedback_too_short";
+        return sendTelegramResponse(trace, () => sendMessage(token, chatId, feedbackTooShortText(language), null, telegramClient));
+      }
+
+      trace.start("db_save");
+      const feedback = await repository.createFeedback({
+        userId: user.id,
+        telegramUserId: from.id,
+        message: feedbackText,
+        source: "bot",
+        status: "new"
+      });
+      trace.end("db_save");
+      clearPendingFeedback(from.id);
+      processingResult = "feedback_saved";
+      await sendTelegramResponse(trace, () => sendMessage(token, chatId, feedbackAcceptedText(language), null, telegramClient));
+      await notifyAdminFeedback({
+        token,
+        adminTelegramIds,
+        telegramClient,
+        feedback,
+        fallback: {
+          userId: user.id,
+          telegramUserId: from.id,
+          message: feedbackText,
+          source: "bot"
+        }
+      });
+      return { ok: true };
     }
 
     const loader = await sendExpenseProcessingMessage(token, chatId, language, telegramClient, trace);
@@ -494,6 +557,64 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
       });
     }
   }
+}
+
+async function notifyAdminFeedback({ token, adminTelegramIds, telegramClient, feedback, fallback }) {
+  if (!(adminTelegramIds instanceof Set) || adminTelegramIds.size === 0) return;
+  const text = formatAdminFeedbackMessage(feedback, fallback);
+  for (const chatId of adminTelegramIds) {
+    try {
+      await sendMessage(token, chatId, text, null, telegramClient);
+    } catch (error) {
+      console.error("[telegram] admin feedback notification failed", {
+        chatId,
+        message: error.message
+      });
+    }
+  }
+}
+
+function formatAdminFeedbackMessage(feedback = {}, fallback = {}) {
+  const userId = feedback.user_id ?? feedback.userId ?? fallback.userId ?? "unknown";
+  const telegramUserId = feedback.telegram_user_id ?? feedback.telegramUserId ?? fallback.telegramUserId ?? "unknown";
+  const source = feedback.source ?? fallback.source ?? "bot";
+  const message = safeFeedbackMessage(feedback.message ?? fallback.message ?? "");
+  return [
+    "New feedback",
+    "",
+    `userId: ${userId}`,
+    `telegramUserId: ${telegramUserId}`,
+    `source: ${source}`,
+    "",
+    "Message:",
+    message
+  ].join("\n");
+}
+
+function safeFeedbackMessage(message) {
+  const text = String(message ?? "").trim();
+  return text.length <= 700 ? text : `${text.slice(0, 697).trimEnd()}...`;
+}
+
+function feedbackPromptText(language) {
+  if (language === "ru") {
+    return "Напиши одним сообщением, что не работает, что неудобно или чего не хватает. Я передам это разработчику.";
+  }
+  return "Write one message with what does not work, what is inconvenient, or what is missing. I will pass it to the developer.";
+}
+
+function feedbackAcceptedText(language) {
+  if (language === "ru") {
+    return "Спасибо! Я получил feedback и передал его разработчику.";
+  }
+  return "Thank you! I received your feedback and passed it to the developer.";
+}
+
+function feedbackTooShortText(language) {
+  if (language === "ru") {
+    return "Напиши, пожалуйста, чуть подробнее одним сообщением.";
+  }
+  return "Please write a little more detail in one message.";
 }
 
 async function safeRecordAppEvent(repository, userId, eventName, metadata = {}) {

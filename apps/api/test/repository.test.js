@@ -19,6 +19,40 @@ test("records app events with JSON metadata", async () => {
   assert.deepEqual(queries[0].params, [7, "message_received", JSON.stringify({ inputType: "text" })]);
 });
 
+test("creates feedback with durable user and source metadata", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql: String(sql), params });
+    return {
+      rows: [{
+        id: 9,
+        user_id: params[0],
+        telegram_user_id: params[1],
+        message: params[2],
+        status: params[3],
+        source: params[4]
+      }]
+    };
+  }));
+
+  const feedback = await repo.createFeedback({
+    userId: 7,
+    telegramUserId: 100,
+    message: "  Please make category editing easier  ",
+    source: "bot"
+  });
+
+  assert.equal(feedback.id, 9);
+  assert.equal(feedback.user_id, 7);
+  assert.equal(feedback.telegram_user_id, 100);
+  assert.equal(feedback.message, "Please make category editing easier");
+  assert.equal(feedback.status, "new");
+  assert.equal(feedback.source, "bot");
+  assert.match(queries[0].sql, /INSERT INTO feedback/);
+  assert.match(queries[0].sql, /RETURNING \*/);
+  assert.deepEqual(queries[0].params, [7, 100, "Please make category editing easier", "new", "bot"]);
+});
+
 test("app event logging failures do not reject user operations", async () => {
   const warnings = [];
   const originalWarn = console.warn;
