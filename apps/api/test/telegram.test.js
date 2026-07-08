@@ -3096,6 +3096,64 @@ test("processQueuedMessage guard covers English transfer and cash withdrawal int
   }
 });
 
+test("processQueuedMessage keeps airport transfer as a regular expense candidate", async () => {
+  let expenseParserCalled = false;
+  let draft = null;
+  const sent = [];
+  await processQueuedMessage({
+    message: { chat: { id: 5 } },
+    from: { id: 100 },
+    user: { id: 1, interface_language: "en", base_currency: "THB", onboarding_step: "completed", timezone: "Asia/Bangkok" },
+    rawText: "airport transfer 500 baht",
+    inputType: "text",
+    repository: {
+      async recordAppEvent() {},
+      async createDraft(userId, sourceText, expenses) {
+        draft = { userId, sourceText, expenses };
+        return { id: 42 };
+      },
+      async setDraftMessageRef() {}
+    },
+    token: null,
+    miniAppUrl: "http://x",
+    expenseParser: {
+      async parse() {
+        expenseParserCalled = true;
+        return {
+          expenses: [{
+            amount: 500,
+            currency: "THB",
+            description: "airport transfer",
+            category_slug: "transport",
+            tags: [],
+            spent_at: "2026-06-30T10:00:00.000Z",
+            budget_impact: "regular",
+            confidence: 0.8,
+            needs_review: false
+          }]
+        };
+      }
+    },
+    telegramClient: {
+      async sendMessage(message) {
+        sent.push(message);
+        return { ok: true, result: { message_id: 777 } };
+      },
+      async editMessageText(message) {
+        sent.push(message);
+        return { ok: true, result: { message_id: 777 } };
+      }
+    },
+    now: () => new Date("2026-06-30T10:00:00Z"),
+    trace: stubTrace()
+  });
+
+  assert.equal(expenseParserCalled, true);
+  assert.equal(draft.sourceText, "airport transfer 500 baht");
+  assert.equal(draft.expenses[0].category_slug, "transport");
+  assert.equal(sent.some((message) => String(message.text).includes("does not look like a regular expense")), false);
+});
+
 test("processQueuedMessage uses base-currency preview for large budget top-up warning", async () => {
   const repository = {
     async createBudgetTopupDraft(userId, sourceText, item) {

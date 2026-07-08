@@ -1531,7 +1531,7 @@ function looksLikeNonExpenseIntent(text) {
     /(?<![\p{L}\p{N}])запланируй(?![\p{L}\p{N}])[\s\S]*\d/iu,
     /(?<![\p{L}\p{N}])отлож(?:и|ил|ила)(?![\p{L}\p{N}])[\s\S]*\d/iu,
     /(?<![\p{L}\p{N}])снял(?![\p{L}\p{N}])[\s\S]*(?<![\p{L}\p{N}])(?:со\s+сч[её]та|с\s+карты)(?![\p{L}\p{N}])[\s\S]*\d/iu,
-    /\btransfer\b[\s\S]*\d/iu,
+    /^(?:please\s+)?transfer(?:\s+money)?\s+\d/iu,
     /\bsend(?:\s+money)?\b[\s\S]*\d/iu,
     /\bplanned\s+payment\b[\s\S]*\d/iu,
     /\breserve\b[\s\S]*\d/iu
