@@ -3532,6 +3532,47 @@ test("/feedback keeps pending state for too-short text", async () => {
   assert.ok(messages.some((message) => /a little more detail/i.test(message.text)));
 });
 
+test("/feedback inline too-short text keeps pending state for the next message", async () => {
+  const savedFeedback = [];
+  let expenseParserCalls = 0;
+  const draftSources = [];
+  const repo = {
+    ...fakeRepository(),
+    user: { id: 7, telegram_user_id: 100, interface_language: "en", onboarding_step: "completed", base_currency: "THB" },
+    async createFeedback(input) {
+      savedFeedback.push(input);
+      return { id: 55, ...input };
+    },
+    async createDraft(userId, sourceText, items) {
+      draftSources.push({ userId, sourceText, items });
+      return { id: 42 };
+    }
+  };
+  const messages = [];
+  const bot = createTelegramBot({
+    token: null,
+    miniAppUrl: "http://x",
+    repository: repo,
+    expenseParser: {
+      async parse() {
+        expenseParserCalls += 1;
+        return { expenses: [] };
+      }
+    },
+    telegramClient: captureTelegramClient(messages)
+  });
+
+  await bot.handleUpdate(textUpdate("/feedback ok", 100));
+  await bot.handleUpdate(textUpdate("Please make category editing clearer", 100));
+
+  assert.equal(savedFeedback.length, 1);
+  assert.equal(savedFeedback[0].message, "Please make category editing clearer");
+  assert.equal(expenseParserCalls, 0);
+  assert.equal(draftSources.length, 0);
+  assert.ok(messages.some((message) => /a little more detail/i.test(message.text)));
+  assert.ok(messages.some((message) => /received your feedback/i.test(message.text)));
+});
+
 test("/feedback still saves when admin notification fails", async () => {
   const savedFeedback = [];
   const repo = {

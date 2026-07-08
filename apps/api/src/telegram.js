@@ -152,7 +152,7 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
 
     if (feedbackCommand) {
       if (feedbackCommand.feedbackText) {
-        return saveFeedbackMessage({
+        const result = await saveFeedbackMessage({
           feedbackText: feedbackCommand.feedbackText,
           repository,
           user,
@@ -164,6 +164,8 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
           trace,
           language
         });
+        if (!result.saved) setPendingFeedback(from.id, now());
+        return result.response;
       }
       setPendingFeedback(from.id, now());
       return sendTelegramResponse(trace, () => sendMessage(token, chatId, feedbackPromptText(language), null, telegramClient));
