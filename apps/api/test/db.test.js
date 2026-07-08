@@ -56,6 +56,20 @@ test("report delivery migration creates universal delivery ledger", async () => 
   assert.match(sql, /UNIQUE\(user_id, report_type, period_key\)/i);
 });
 
+test("exchange rate migration creates persistent pair-date cache", async () => {
+  const dir = resolve(dirname(fileURLToPath(import.meta.url)), "..", "migrations");
+  const sql = await readFile(resolve(dir, "005_exchange_rates.sql"), "utf8");
+
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS exchange_rates/i);
+  assert.match(sql, /rate_date DATE NOT NULL/i);
+  assert.match(sql, /base_currency TEXT NOT NULL/i);
+  assert.match(sql, /quote_currency TEXT NOT NULL/i);
+  assert.match(sql, /rate NUMERIC\(18,\s*8\) NOT NULL/i);
+  assert.match(sql, /provider TEXT NOT NULL/i);
+  assert.match(sql, /UNIQUE\(rate_date, base_currency, quote_currency\)/i);
+  assert.match(sql, /CREATE INDEX IF NOT EXISTS exchange_rates_pair_date_idx/i);
+});
+
 test("migrate records applied files and skips them on the second run", async () => {
   const dir = await createTempMigrations({
     "001_create_sample.sql": "CREATE TABLE sample_migration_probe (id integer PRIMARY KEY);",
