@@ -235,6 +235,7 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
   const chatId = message.chat.id;
   let processingResult = inputType ? "processing_failed" : undefined;
   let processingDraftType;
+  let processingParserRoute;
   let transcriptChars = null;
 
   try {
@@ -365,6 +366,20 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
         });
       }
 
+      if (looksLikeNonExpenseIntent(text)) {
+        processingResult = "unsupported_intent_message";
+        processingParserRoute = "non_expense_guard";
+        return deliverResultMessage({
+          token,
+          chatId,
+          loaderMessageId: loader.messageId,
+          text: nonExpenseGuardText(text),
+          replyMarkup: null,
+          telegramClient,
+          trace
+        });
+      }
+
       let llmMetadata = {
         model: expenseParser.model,
         promptChars: String(text ?? "").length
@@ -465,7 +480,7 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
         responseChars: traceMetadata.llmParse?.responseChars,
         fallback: traceMetadata.llmParse?.fallback,
         parserEngine: traceMetadata.llmParse?.parserEngine,
-        parserRoute: traceMetadata.llmParse?.parserRoute,
+        parserRoute: processingParserRoute ?? traceMetadata.llmParse?.parserRoute,
         fallbackReason: traceMetadata.llmParse?.fallbackReason,
         localFastPathAccepted: traceMetadata.llmParse?.localFastPathAccepted,
         localFastPathRejectReason: traceMetadata.llmParse?.localFastPathRejectReason,
@@ -1564,6 +1579,32 @@ function stripTelegramHtml(text) {
 
 function cleanTelegramBody(body) {
   return Object.fromEntries(Object.entries(body).filter(([, value]) => value != null));
+}
+
+function looksLikeNonExpenseIntent(text) {
+  const source = String(text ?? "").trim();
+  if (!source || !hasAmountToken(source)) return false;
+  return [
+    /(?<![\p{L}\p{N}])перев(?:еди|ел|ела|ести)(?![\p{L}\p{N}])[\s\S]*\d/iu,
+    /(?<![\p{L}\p{N}])запланируй(?![\p{L}\p{N}])[\s\S]*\d/iu,
+    /(?<![\p{L}\p{N}])отлож(?:и|ил|ила)(?![\p{L}\p{N}])[\s\S]*\d/iu,
+    /(?<![\p{L}\p{N}])снял(?![\p{L}\p{N}])[\s\S]*(?<![\p{L}\p{N}])(?:со\s+сч[её]та|с\s+карты)(?![\p{L}\p{N}])[\s\S]*\d/iu,
+    /^(?:please\s+)?transfer(?:\s+money)?\s+\d/iu,
+    /\bsend(?:\s+money)?\b[\s\S]*\d/iu,
+    /\bplanned\s+payment\b[\s\S]*\d/iu,
+    /\breserve\b[\s\S]*\d/iu
+  ].some((pattern) => pattern.test(source));
+}
+
+function hasAmountToken(text) {
+  return /[$฿₽€₾]?\s*\d/u.test(text);
+}
+
+function nonExpenseGuardText(text) {
+  if (!/[а-яё]/iu.test(String(text ?? ""))) {
+    return "This does not look like a regular expense. Try: \"top up the budget 500\" or \"add 500 to budget\".";
+  }
+  return "Похоже, это не обычный расход — возможно, пополнение бюджета, плановая оплата или перевод. Попробуй: «пополни бюджет 500» или «добавь 500 к бюджету».";
 }
 
 function createPerfTrace({ update, logger }) {
