@@ -3340,6 +3340,50 @@ test("/feedback prompts for one feedback message without creating an expense dra
   assert.match(messages[0].text, /developer/i);
 });
 
+test("/feedback with inline text saves immediately without creating an expense draft", async () => {
+  const savedFeedback = [];
+  let expenseParserCalled = false;
+  const repo = {
+    ...fakeRepository(),
+    user: { id: 7, telegram_user_id: 100, interface_language: "en", onboarding_step: "completed", base_currency: "THB" },
+    createDraftCalled: false,
+    async createFeedback(input) {
+      savedFeedback.push(input);
+      return { id: 57, ...input, status: "new", source: input.source ?? "bot" };
+    },
+    async createDraft() {
+      this.createDraftCalled = true;
+      return { id: 42 };
+    }
+  };
+  const messages = [];
+  const bot = createTelegramBot({
+    token: null,
+    miniAppUrl: "http://x",
+    repository: repo,
+    expenseParser: {
+      async parse() {
+        expenseParserCalled = true;
+        return { expenses: [] };
+      }
+    },
+    telegramClient: captureTelegramClient(messages)
+  });
+
+  await bot.handleUpdate(textUpdate("/feedback test text", 100));
+
+  assert.deepEqual(savedFeedback, [{
+    userId: 7,
+    telegramUserId: 100,
+    message: "test text",
+    source: "bot",
+    status: "new"
+  }]);
+  assert.equal(expenseParserCalled, false);
+  assert.equal(repo.createDraftCalled, false);
+  assert.ok(messages.some((message) => /received your feedback/i.test(message.text)));
+});
+
 test("/feedback saves next text, notifies admins, bypasses parser, then resumes normal expenses", async () => {
   const savedFeedback = [];
   const draftSources = [];
