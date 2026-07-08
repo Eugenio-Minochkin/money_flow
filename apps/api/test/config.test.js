@@ -60,6 +60,29 @@ test("rate limiter config falls back from invalid values", () => {
   assert.deepEqual(config.trustedProxyIps, ["127.0.0.1", "::1", "172.18.0.1"]);
 });
 
+test("admin alert config parses explicit safe values", () => {
+  const config = buildConfig({
+    ADMIN_ALERTS_ENABLED: "true",
+    ADMIN_ALERT_THROTTLE_MS: "300000",
+    ADMIN_ALERT_MAX_MESSAGE_LENGTH: "700"
+  });
+
+  assert.equal(config.adminAlertsEnabled, true);
+  assert.equal(config.adminAlertThrottleMs, 300000);
+  assert.equal(config.adminAlertMaxMessageLength, 700);
+});
+
+test("admin alert config defaults and rejects invalid values", () => {
+  const config = buildConfig({
+    ADMIN_ALERT_THROTTLE_MS: "0",
+    ADMIN_ALERT_MAX_MESSAGE_LENGTH: "not-a-number"
+  });
+
+  assert.equal(config.adminAlertsEnabled, false);
+  assert.equal(config.adminAlertThrottleMs, 600000);
+  assert.equal(config.adminAlertMaxMessageLength, 900);
+});
+
 test("server wires the release digest scheduler with Telegram token gating", async () => {
   const source = await readFile(new URL("../src/server.js", import.meta.url), "utf8");
 
@@ -70,4 +93,19 @@ test("server wires the release digest scheduler with Telegram token gating", asy
   );
   assert.match(source, /releaseDigestScheduler\.start\(\)/);
   assert.match(source, /\[release-digest\] scheduler failed/);
+});
+
+test("server wires admin alerts into runtime error paths", async () => {
+  const source = await readFile(new URL("../src/server.js", import.meta.url), "utf8");
+
+  assert.match(source, /import \{ createAdminAlertService \} from "\.\/adminAlerts\.js";/);
+  assert.match(source, /const adminAlertService = createAdminAlertService\(/);
+  assert.match(source, /enabled:\s*config\.adminAlertsEnabled\s*&&\s*Boolean\(config\.telegramBotToken\)/);
+  assert.match(source, /adminTelegramIds/);
+  assert.match(source, /throttleMs:\s*config\.adminAlertThrottleMs/);
+  assert.match(source, /maxMessageLength:\s*config\.adminAlertMaxMessageLength/);
+  assert.match(source, /safeNotifyAdminError\(adminAlertService,\s*error,\s*\{\s*source:\s*"api"/);
+  assert.match(source, /if\s*\(error\?\.adminAlertSent\)\s*return/);
+  assert.match(source, /\.catch\(\(alertError\)\s*=>/);
+  assert.match(source, /adminAlertService/);
 });

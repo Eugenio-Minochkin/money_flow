@@ -31,6 +31,7 @@ export function createTelegramBot({
   adminTelegramIds = new Set(),
   adminStatsService,
   releaseNotesService,
+  adminAlertService,
   now = () => new Date(),
   telegramJobQueueOptions = {},
   telegramJobQueue = createTelegramJobQueue(telegramJobQueueOptions),
@@ -42,10 +43,11 @@ export function createTelegramBot({
       let success = false;
       if (update.message) {
         try {
-          const result = await handleMessage({ update, repository, token, miniAppUrl, expenseParser, voiceTranscriber, telegramClient, adminTelegramIds, adminStatsService, releaseNotesService, now, trace, telegramJobQueue, awaitQueuedJobs });
+          const result = await handleMessage({ update, repository, token, miniAppUrl, expenseParser, voiceTranscriber, telegramClient, adminTelegramIds, adminStatsService, releaseNotesService, adminAlertService, now, trace, telegramJobQueue, awaitQueuedJobs });
           success = !result?.queued;
           return result;
         } catch (error) {
+          await safeNotifyAdminError(adminAlertService, error, telegramAlertContext(update, "handle_update"));
           trace.finish(false, error);
           throw error;
         } finally {
@@ -58,6 +60,7 @@ export function createTelegramBot({
           success = true;
           return result;
         } catch (error) {
+          await safeNotifyAdminError(adminAlertService, error, telegramAlertContext(update, "handle_callback"));
           trace.finish(false, error);
           throw error;
         } finally {
@@ -70,7 +73,7 @@ export function createTelegramBot({
   };
 }
 
-async function handleMessage({ update, repository, token, miniAppUrl, expenseParser, voiceTranscriber, telegramClient, adminTelegramIds, adminStatsService, releaseNotesService, now, trace, telegramJobQueue, awaitQueuedJobs }) {
+async function handleMessage({ update, repository, token, miniAppUrl, expenseParser, voiceTranscriber, telegramClient, adminTelegramIds, adminStatsService, releaseNotesService, adminAlertService, now, trace, telegramJobQueue, awaitQueuedJobs }) {
   const message = update.message;
   const from = message.from;
   if (!from) return { ok: true };
@@ -167,7 +170,7 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
 
   const queued = telegramJobQueue.enqueue({
     userId: from.id,
-    run: () => processQueuedMessage({ message, from, user, rawText, hasVoice, inputType: trackExpenseMessage ? inputType : null, repository, token, miniAppUrl, expenseParser, voiceTranscriber, telegramClient, now, trace }),
+    run: () => processQueuedMessage({ message, from, user, rawText, hasVoice, inputType: trackExpenseMessage ? inputType : null, repository, token, miniAppUrl, expenseParser, voiceTranscriber, telegramClient, adminAlertService, now, trace }),
     onStart: (metadata) => trace.event("queue_job_start", metadata),
     onFinish: (metadata) => trace.event("queue_job_done", metadata)
   });
@@ -194,7 +197,7 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
     try {
       await queued.promise;
     } catch (error) {
-      await sendQueuedJobFailure({ error, token, chatId, language, telegramClient, trace });
+      await sendQueuedJobFailure({ error, token, chatId, language, telegramClient, adminAlertService, telegramUserId: from.id, userId: user.id, trace });
     }
     return { ok: true };
   }
@@ -202,15 +205,23 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
   queued.promise
     .then(() => trace.finish(true))
     .catch(async (error) => {
-      await sendQueuedJobFailure({ error, token, chatId, language, telegramClient, trace });
+      await sendQueuedJobFailure({ error, token, chatId, language, telegramClient, adminAlertService, telegramUserId: from.id, userId: user.id, trace });
       trace.finish(false, error);
     });
   return { ok: true, queued: true };
 }
 
-async function sendQueuedJobFailure({ error, token, chatId, language, telegramClient, trace }) {
+async function sendQueuedJobFailure({ error, token, chatId, language, telegramClient, adminAlertService, telegramUserId, userId, trace }) {
   trace.failActive(["telegram_file_download", "transcription", "llm_parse", "db_save"], error);
   console.error("[telegram] queued job failed", error.message);
+  if (!error?.adminAlertSent) {
+    await safeNotifyAdminError(adminAlertService, error, {
+      source: "telegram",
+      operation: "queued_job",
+      telegramUserId,
+      userId
+    });
+  }
   try {
     await sendTelegramResponse(trace, () => sendMessage(token, chatId, botText(language, "jobProcessingFailed"), null, telegramClient));
   } catch (sendError) {
@@ -218,7 +229,7 @@ async function sendQueuedJobFailure({ error, token, chatId, language, telegramCl
   }
 }
 
-export async function processQueuedMessage({ message, from, user, rawText, hasVoice, inputType, repository, token, miniAppUrl, expenseParser, voiceTranscriber, telegramClient, now, trace }) {
+export async function processQueuedMessage({ message, from, user, rawText, hasVoice, inputType, repository, token, miniAppUrl, expenseParser, voiceTranscriber, telegramClient, adminAlertService, now, trace }) {
   const processingStartedAt = performance.now();
   const language = user.interface_language ?? "en";
   const chatId = message.chat.id;
@@ -328,6 +339,12 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
       } catch (error) {
         processingResult = "parser_failed";
         await safeRecordAppEvent(repository, user.id, "expense_parse_failed", { inputType });
+        await safeNotifyAdminError(adminAlertService, error, {
+          source: "parser",
+          operation: "planned_parse",
+          telegramUserId: from.id,
+          userId: user.id
+        });
         throw error;
       }
       if (planned) {
@@ -366,6 +383,12 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
       } catch (error) {
         processingResult = "parser_failed";
         await safeRecordAppEvent(repository, user.id, "expense_parse_failed", { inputType });
+        await safeNotifyAdminError(adminAlertService, error, {
+          source: "parser",
+          operation: "expense_parse",
+          telegramUserId: from.id,
+          userId: user.id
+        });
         throw error;
       }
       trace.end("llm_parse", llmMetadata);
@@ -468,6 +491,41 @@ async function safeRecordAppEvent(repository, userId, eventName, metadata = {}) 
       message: error.message
     });
   }
+}
+
+async function safeNotifyAdminError(adminAlertService, error, context) {
+  if (typeof adminAlertService?.notifyAdminError !== "function") return;
+  try {
+    await adminAlertService.notifyAdminError(error, context);
+    markAdminAlertSent(error);
+  } catch (alertError) {
+    console.error("[telegram] admin alert failed", alertError.message);
+  }
+}
+
+function markAdminAlertSent(error) {
+  if (error == null || (typeof error !== "object" && typeof error !== "function")) return;
+  try {
+    Object.defineProperty(error, "adminAlertSent", {
+      value: true,
+      configurable: true
+    });
+  } catch {
+    error.adminAlertSent = true;
+  }
+}
+
+function telegramAlertContext(update, operation) {
+  const message = update?.message ?? update?.callback_query?.message ?? {};
+  const from = update?.message?.from ?? update?.callback_query?.from ?? {};
+  return {
+    source: "telegram",
+    operation,
+    telegramUserId: from.id,
+    extra: {
+      chatId: message.chat?.id ?? null
+    }
+  };
 }
 
 function isAdminReleaseCommand(text) {

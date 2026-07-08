@@ -82,6 +82,40 @@ state) and runs after `docker compose ... up -d` in the deploy workflow.
 compose file still falls back to legacy `RATE_LIMIT_MAX` when the new variable
 is absent, so existing production env files keep their configured limit.
 
+## Admin Alerts
+
+Admin alerts are a cheap MVP observability channel for critical runtime errors.
+They reuse the existing `TELEGRAM_BOT_TOKEN` sender and the existing
+`ADMIN_TELEGRAM_IDS` allowlist. Do not create a second bot token for alerts.
+
+Production alerts are off unless explicitly enabled:
+
+```env
+ADMIN_ALERTS_ENABLED=false
+ADMIN_ALERT_THROTTLE_MS=600000
+ADMIN_ALERT_MAX_MESSAGE_LENGTH=900
+```
+
+When enabling alerts, set `ADMIN_ALERTS_ENABLED=true` and keep
+`ADMIN_TELEGRAM_IDS` limited to trusted admin Telegram IDs. The throttle value
+limits repeated alerts with the same fingerprint so one failure loop does not
+spam admins. The max message length keeps Telegram alerts compact; full stack
+traces stay in Docker logs.
+
+`scripts/backup-postgres.sh` also uses these alert settings for best-effort
+backup failure alerts. When cron or a systemd timer passes `ENV_FILE`, the
+script sources that file before checking alert settings, so
+`ADMIN_ALERTS_ENABLED`, `TELEGRAM_BOT_TOKEN`, and `ADMIN_TELEGRAM_IDS` do not
+need to be exported separately. The script must not print secrets; its Telegram
+curl call keeps the bot-token URL in a temporary `0600` curl config file rather
+than in the process command line.
+
+To verify a change locally or in tests, trigger a controlled test error and put
+the resulting sample alert in the PR description. Confirm that the sample is
+short and does not include tokens, env values, `initData`, cookies,
+authorization headers, raw request bodies, full stack traces, or personal
+financial details.
+
 ## Automatic Release Digest
 
 Every PR with user-visible changes includes this block:

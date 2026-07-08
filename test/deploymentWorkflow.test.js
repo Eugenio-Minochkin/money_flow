@@ -48,6 +48,14 @@ test('production compose passes configured admin Telegram ids to the API', () =>
   assert.match(compose, /ADMIN_TELEGRAM_IDS:\s*\$\{ADMIN_TELEGRAM_IDS:-\}/);
 });
 
+test('production compose passes admin alert settings to the API', () => {
+  const compose = readText('compose.prod.yml');
+
+  assert.match(compose, /ADMIN_ALERTS_ENABLED:\s*\$\{ADMIN_ALERTS_ENABLED:-false\}/);
+  assert.match(compose, /ADMIN_ALERT_THROTTLE_MS:\s*\$\{ADMIN_ALERT_THROTTLE_MS:-600000\}/);
+  assert.match(compose, /ADMIN_ALERT_MAX_MESSAGE_LENGTH:\s*\$\{ADMIN_ALERT_MAX_MESSAGE_LENGTH:-900\}/);
+});
+
 test('production deploy resolves a PR and syncs release notes after security checks', () => {
   const workflow = readText('.github/workflows/deploy.yml');
   const restoreTrapIndex = workflow.indexOf('trap restore_release_digest_scheduler EXIT');
@@ -157,6 +165,40 @@ test('deployment runbook documents rate limit proxy compatibility settings', () 
   assert.match(runbook, /gateway[\s\S]*TRUSTED_PROXY_IPS/);
 });
 
+test('deployment runbook documents admin alert configuration and safety checks', () => {
+  const runbook = readText('docs/deployment-runbook.md');
+
+  assert.match(runbook, /Admin Alerts/);
+  assert.match(runbook, /ADMIN_ALERTS_ENABLED/);
+  assert.match(runbook, /ADMIN_ALERT_THROTTLE_MS/);
+  assert.match(runbook, /ADMIN_ALERT_MAX_MESSAGE_LENGTH/);
+  assert.match(runbook, /ADMIN_TELEGRAM_IDS/);
+  assert.match(runbook, /TELEGRAM_BOT_TOKEN/);
+  assert.match(runbook, /tokens[\s\S]*initData[\s\S]*authorization headers[\s\S]*raw request bodies/);
+  assert.match(runbook, /backup failure alerts/);
+  assert.match(runbook, /sources that file before checking alert settings/);
+  assert.match(runbook, /temporary `0600` curl config file/);
+});
+
+test('backup script sends safe admin alerts on failure only when enabled', () => {
+  const script = readText('scripts/backup-postgres.sh');
+  const alertText = script.match(/alert_text="\$\(printf '([\s\S]*?)' /)?.[1] ?? '';
+  const envSourceIndex = script.indexOf('. "$ENV_FILE"');
+  const alertFunctionIndex = script.indexOf('alert_admin_backup_failure()');
+
+  assert.ok(envSourceIndex >= 0);
+  assert.ok(alertFunctionIndex > envSourceIndex);
+  assert.match(script, /trap on_backup_exit EXIT/);
+  assert.match(script, /ADMIN_ALERTS_ENABLED:-false/);
+  assert.match(script, /ADMIN_TELEGRAM_IDS/);
+  assert.match(script, /TELEGRAM_BOT_TOKEN/);
+  assert.match(script, /source: backup\\njobName: postgres-backup\\noperation: backup-postgres/);
+  assert.match(script, /curl -fsS --max-time 5/);
+  assert.match(script, /curl_config/);
+  assert.doesNotMatch(script, /https:\/\/api\.telegram\.org\/bot\$\{TELEGRAM_BOT_TOKEN\}\/sendMessage/);
+  assert.doesNotMatch(alertText, /TOKEN|PASSWORD|SECRET|DATABASE_URL|AWS_|POSTGRES_/);
+});
+
 test('prod-security-check verifies the Docker compose gateway is trusted by the rate limiter', () => {
   const script = readText('scripts/prod-security-check.sh');
 
@@ -206,6 +248,14 @@ test('production env example documents required Telegram security settings', () 
 
   assert.match(envExample, /TELEGRAM_WEBHOOK_SECRET=replace_with_long_random_secret/);
   assert.match(envExample, /REQUIRE_TELEGRAM_INIT_DATA=true/);
+});
+
+test('production env example documents admin alert settings', () => {
+  const envExample = readText('.env.production.example');
+
+  assert.match(envExample, /ADMIN_ALERTS_ENABLED=false/);
+  assert.match(envExample, /ADMIN_ALERT_THROTTLE_MS=600000/);
+  assert.match(envExample, /ADMIN_ALERT_MAX_MESSAGE_LENGTH=900/);
 });
 
 test('production env example does not contain duplicate keys', () => {
