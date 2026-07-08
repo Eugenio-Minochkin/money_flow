@@ -3,6 +3,7 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { parseAdminTelegramIds } from "./adminAccess.js";
+import { createAdminAlertService } from "./adminAlerts.js";
 import { config, requireRuntimeConfig } from "./config.js";
 import { createAdminStatsService } from "./adminStatsService.js";
 import { createApiSecurity } from "./apiSecurity.js";
@@ -43,11 +44,27 @@ const apiSecurity = createApiSecurity({
 });
 
 requireRuntimeConfig();
+const adminTelegramIds = parseAdminTelegramIds(config.adminTelegramIds);
+if (adminTelegramIds.size === 0) {
+  console.warn("[admin] ADMIN_TELEGRAM_IDS is empty; admin commands are disabled");
+}
+const adminAlertService = createAdminAlertService({
+  enabled: config.adminAlertsEnabled && Boolean(config.telegramBotToken),
+  adminTelegramIds,
+  sendMessage: (message) => sendTelegramMessage({
+    token: config.telegramBotToken,
+    ...message
+  }),
+  logger: console,
+  throttleMs: config.adminAlertThrottleMs,
+  maxMessageLength: config.adminAlertMaxMessageLength
+});
+
 await migrate();
 
 const repository = createRepository(pool, {
   defaultMonthlyBudget: config.defaultMonthlyBudget,
-  exchangeRates: createExchangeRateProvider()
+  exchangeRates: createExchangeRateProvider({ adminAlertService })
 });
 const adminStatsService = createAdminStatsService({ pool });
 const expenseParser = createExpenseParser({
@@ -63,10 +80,6 @@ const voiceTranscriber = createVoiceTranscriber({
   telegramBotToken: config.telegramBotToken,
   deepgramApiKey: config.deepgramApiKey
 });
-const adminTelegramIds = parseAdminTelegramIds(config.adminTelegramIds);
-if (adminTelegramIds.size === 0) {
-  console.warn("[admin] ADMIN_TELEGRAM_IDS is empty; admin commands are disabled");
-}
 const releaseNotesService = createReleaseNotesService({
   repository,
   sendMessage: (message) => sendTelegramMessage({
@@ -87,6 +100,11 @@ const releaseDigestScheduler = createReleaseDigestScheduler({
   logger: console,
   onError(error) {
     console.error("[release-digest] scheduler failed", error);
+    return safeNotifyAdminError(adminAlertService, error, {
+      source: "scheduler",
+      jobName: "release-digest",
+      operation: "send_release_digest"
+    });
   }
 });
 releaseDigestScheduler.start();
@@ -110,7 +128,8 @@ const reportService = createReportService({
 const reportScheduler = createReportScheduler({
   enabled: Boolean(config.telegramBotToken),
   reportService,
-  logger: console
+  logger: console,
+  adminAlertService
 });
 function createBot(telegramClient) {
   return createTelegramBot({
@@ -122,6 +141,7 @@ function createBot(telegramClient) {
     adminTelegramIds,
     adminStatsService,
     releaseNotesService,
+    adminAlertService,
     telegramClient,
     awaitQueuedJobs: false,
     telegramJobQueueOptions: {
@@ -149,6 +169,11 @@ const server = createServer(async (req, res) => {
       return sendJson(res, error.statusCode, { error: error.message });
     }
     console.error(error);
+    void safeNotifyAdminError(adminAlertService, error, {
+      source: "api",
+      method: req.method,
+      route: routePath(req)
+    });
     sendJson(res, 500, { error: "internal_error" });
   }
 });
@@ -164,10 +189,30 @@ function startDailyReminderScheduler() {
       await dailyReminderService.runOnce();
     } catch (error) {
       console.error("[daily-reminder] failed", error);
+      void safeNotifyAdminError(adminAlertService, error, {
+        source: "scheduler",
+        jobName: "daily-reminder",
+        operation: "run_once"
+      });
     }
   };
   setTimeout(run, 15_000);
   setInterval(run, Math.max(config.dailyReminderIntervalMs, 60_000));
+}
+
+async function safeNotifyAdminError(adminAlertService, error, context) {
+  if (error?.adminAlertSent) return;
+  await adminAlertService.notifyAdminError(error, context).catch((alertError) => {
+    console.error("[admin-alerts] notify failed", alertError.message);
+  });
+}
+
+function routePath(req) {
+  try {
+    return new URL(req.url, `http://${req.headers.host}`).pathname;
+  } catch {
+    return req.url ?? "unknown";
+  }
 }
 
 async function route(req, res) {
