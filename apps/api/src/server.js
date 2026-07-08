@@ -64,7 +64,7 @@ await migrate();
 
 const repository = createRepository(pool, {
   defaultMonthlyBudget: config.defaultMonthlyBudget,
-  exchangeRates: createExchangeRateProvider({ adminAlertService })
+  exchangeRates: createExchangeRateProvider({ pool, adminAlertService })
 });
 const adminStatsService = createAdminStatsService({ pool });
 const expenseParser = createExpenseParser({

@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
+import { createExchangeRateProvider } from "../src/exchangeRates.js";
 import { createRepository } from "../src/repository.js";
 import { formatSavedSummary } from "../src/telegramFormat.js";
 
@@ -4289,4 +4290,95 @@ test("two saveDraftAsExpense calls on the same draft produce one expense set", a
   assert.equal(first.alreadySaved, false);
   assert.equal(second.alreadySaved, true);
   assert.equal(second.expenses.length, 1);
+});
+
+test("saveDraftAsExpense reuses DB exchange-rate cache for same date and currency pair", async () => {
+  let fetches = 0;
+  const exchangeRateRows = [];
+  const insertedExpenses = [];
+  const draftRow = {
+    id: 7,
+    user_id: 1,
+    status: "pending",
+    base_currency: "THB",
+    items: [
+      { amount: 10, currency: "USD", description: "coffee", category_slug: "food_cafe", budget_impact: "regular", needs_review: false, category_source: "parser", tags: [], spent_at: "2026-06-25T10:00:00Z" },
+      { amount: 20, currency: "USD", description: "lunch", category_slug: "food_cafe", budget_impact: "regular", needs_review: false, category_source: "parser", tags: [], spent_at: "2026-06-25T12:00:00Z" }
+    ]
+  };
+  const client = {
+    async query(sql, params = []) {
+      const query = String(sql);
+      if (query === "BEGIN" || query === "COMMIT" || query === "ROLLBACK") return { rows: [] };
+      if (query.includes("FOR UPDATE")) return { rows: [draftRow] };
+      if (query.includes("INSERT INTO expenses")) {
+        const row = { id: insertedExpenses.length + 1, draft_id: params[1], amount_base: params[4], exchange_rate_source: params[8] };
+        insertedExpenses.push(row);
+        return { rows: [row] };
+      }
+      if (query.includes("status = 'confirmed'")) return { rows: [] };
+      return { rows: [] };
+    },
+    release() {}
+  };
+  const pool = {
+    async connect() { return client; },
+    async query(sql, params = []) {
+      const query = String(sql);
+      if (query.includes("FROM exchange_rates") && query.includes("rate_date = $1")) {
+        return { rows: exchangeRateRows.filter((row) => row.rate_date === params[0] && row.base_currency === params[1] && row.quote_currency === params[2]) };
+      }
+      if (query.includes("FROM exchange_rates") && query.includes("rate_date <= $3")) return { rows: [] };
+      if (query.includes("FROM exchange_rates") && query.includes("ORDER BY rate_date DESC")) return { rows: [] };
+      if (query.includes("INSERT INTO exchange_rates")) {
+        const row = {
+          rate_date: params[0],
+          base_currency: params[1],
+          quote_currency: params[2],
+          rate: String(params[3]),
+          provider: params[4]
+        };
+        const existingIndex = exchangeRateRows.findIndex((existing) => (
+          existing.rate_date === row.rate_date
+            && existing.base_currency === row.base_currency
+            && existing.quote_currency === row.quote_currency
+        ));
+        if (existingIndex >= 0) exchangeRateRows[existingIndex] = row;
+        else exchangeRateRows.push(row);
+        return { rows: [row] };
+      }
+      return { rows: [] };
+    }
+  };
+  const exchangeRates = createExchangeRateProvider({
+    pool,
+    async fetchImpl() {
+      fetches += 1;
+      return {
+        ok: true,
+        async json() {
+          return {
+            time_last_update_utc: "Thu, 25 Jun 2026 00:02:32 +0000",
+            rates: {
+              BYN: 3.25,
+              EUR: 0.88,
+              GEL: 2.7,
+              IDR: 16200,
+              RUB: 71.8,
+              THB: 32.65
+            }
+          };
+        }
+      };
+    }
+  });
+  const repo = createRepository(pool, { exchangeRates });
+  repo.dashboard = async () => ({ snapshot: { baseCurrency: "THB" } });
+
+  const result = await repo.saveDraftAsExpense(7, 100);
+
+  assert.equal(result.expenses.length, 2);
+  assert.equal(fetches, 1);
+  assert.deepEqual(insertedExpenses.map((expense) => Number(expense.amount_base)), [326.5, 653]);
+  assert.equal(exchangeRateRows.filter((row) => row.rate_date === "2026-06-25" && row.base_currency === "USD" && row.quote_currency === "THB").length, 1);
 });
