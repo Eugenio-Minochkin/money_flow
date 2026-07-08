@@ -93,6 +93,7 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
 
   const rawText = message.text?.trim() || null;
   const commandText = normalizeBotCommand(rawText);
+  const feedbackCommand = parseFeedbackCommand(rawText);
   const hasVoice = Boolean(message.voice || message.audio);
   const hasPhoto = Boolean(message.photo?.length);
 
@@ -149,7 +150,21 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
       return sendTelegramResponse(trace, () => sendMessage(token, chatId, botText(language, "start"), appKeyboard(miniAppUrl, from.id, language), telegramClient));
     }
 
-    if (commandText === "/feedback") {
+    if (feedbackCommand) {
+      if (feedbackCommand.feedbackText) {
+        return saveFeedbackMessage({
+          feedbackText: feedbackCommand.feedbackText,
+          repository,
+          user,
+          telegramUserId: from.id,
+          chatId,
+          token,
+          telegramClient,
+          adminTelegramIds,
+          trace,
+          language
+        });
+      }
       setPendingFeedback(from.id, now());
       return sendTelegramResponse(trace, () => sendMessage(token, chatId, feedbackPromptText(language), null, telegramClient));
     }
@@ -260,6 +275,13 @@ function isFeedbackPending(telegramUserId, now = new Date()) {
   return true;
 }
 
+function parseFeedbackCommand(rawText) {
+  if (!rawText) return null;
+  const match = String(rawText).trim().match(/^\/feedback(?:@[a-z0-9_]+)?(?:\s+([\s\S]+))?$/i);
+  if (!match) return null;
+  return { feedbackText: String(match[1] ?? "").trim() };
+}
+
 function pruneExpiredPendingFeedback(currentTime) {
   for (const [telegramUserId, pending] of pendingFeedbackByTelegramUser) {
     if (pending.expiresAt <= currentTime) pendingFeedbackByTelegramUser.delete(telegramUserId);
@@ -278,36 +300,10 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
   try {
     if (rawText && isFeedbackPending(from.id, now())) {
       const feedbackText = rawText.trim();
-      if (feedbackText.length < MIN_FEEDBACK_MESSAGE_LENGTH) {
-        processingResult = "feedback_too_short";
-        return sendTelegramResponse(trace, () => sendMessage(token, chatId, feedbackTooShortText(language), null, telegramClient));
-      }
-
-      trace.start("db_save");
-      const feedback = await repository.createFeedback({
-        userId: user.id,
-        telegramUserId: from.id,
-        message: feedbackText,
-        source: "bot",
-        status: "new"
-      });
-      trace.end("db_save");
-      clearPendingFeedback(from.id);
-      processingResult = "feedback_saved";
-      await sendTelegramResponse(trace, () => sendMessage(token, chatId, feedbackAcceptedText(language), null, telegramClient));
-      await notifyAdminFeedback({
-        token,
-        adminTelegramIds,
-        telegramClient,
-        feedback,
-        fallback: {
-          userId: user.id,
-          telegramUserId: from.id,
-          message: feedbackText,
-          source: "bot"
-        }
-      });
-      return { ok: true };
+      const result = await saveFeedbackMessage({ feedbackText, repository, user, telegramUserId: from.id, chatId, token, telegramClient, adminTelegramIds, trace, language });
+      processingResult = result.processingResult;
+      if (result.saved) clearPendingFeedback(from.id);
+      return result.response;
     }
 
     if (isOnboardingActive(user)) {
@@ -565,6 +561,40 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
       });
     }
   }
+}
+
+async function saveFeedbackMessage({ feedbackText, repository, user, telegramUserId, chatId, token, telegramClient, adminTelegramIds, trace, language }) {
+  if (feedbackText.length < MIN_FEEDBACK_MESSAGE_LENGTH) {
+    return {
+      saved: false,
+      processingResult: "feedback_too_short",
+      response: await sendTelegramResponse(trace, () => sendMessage(token, chatId, feedbackTooShortText(language), null, telegramClient))
+    };
+  }
+
+  trace.start("db_save");
+  const feedback = await repository.createFeedback({
+    userId: user.id,
+    telegramUserId,
+    message: feedbackText,
+    source: "bot",
+    status: "new"
+  });
+  trace.end("db_save");
+  await sendTelegramResponse(trace, () => sendMessage(token, chatId, feedbackAcceptedText(language), null, telegramClient));
+  await notifyAdminFeedback({
+    token,
+    adminTelegramIds,
+    telegramClient,
+    feedback,
+    fallback: {
+      userId: user.id,
+      telegramUserId,
+      message: feedbackText,
+      source: "bot"
+    }
+  });
+  return { saved: true, processingResult: "feedback_saved", response: { ok: true } };
 }
 
 async function notifyAdminFeedback({ token, adminTelegramIds, telegramClient, feedback, fallback }) {
