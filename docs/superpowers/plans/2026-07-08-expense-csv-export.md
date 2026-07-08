@@ -174,6 +174,6 @@ Run: `git diff --check`
 
 Expected: no whitespace errors.
 
-- [ ] **Step 4: Prepare draft PR**
+- [x] **Step 4: Prepare draft PR**
 
 PR body must include summary, changed areas, docs checked/updated, tests run, DB/prod impact, release notes block, manual testing steps, and open assumptions. Stop after opening the draft PR.
