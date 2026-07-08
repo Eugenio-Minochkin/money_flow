@@ -70,6 +70,25 @@ test("exchange rate migration creates persistent pair-date cache", async () => {
   assert.match(sql, /CREATE INDEX IF NOT EXISTS exchange_rates_pair_date_idx/i);
 });
 
+test("feedback migration creates feedback capture table", async () => {
+  const dir = resolve(dirname(fileURLToPath(import.meta.url)), "..", "migrations");
+  const sql = await readFile(resolve(dir, "006_feedback.sql"), "utf8");
+
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS feedback/i);
+  assert.match(sql, /id BIGSERIAL PRIMARY KEY/i);
+  assert.match(sql, /user_id BIGINT REFERENCES users\(id\) ON DELETE SET NULL/i);
+  assert.match(sql, /telegram_user_id BIGINT NOT NULL/i);
+  assert.match(sql, /message TEXT NOT NULL/i);
+  assert.match(sql, /created_at TIMESTAMPTZ NOT NULL DEFAULT now\(\)/i);
+  assert.match(sql, /status TEXT NOT NULL DEFAULT 'new'/i);
+  assert.match(sql, /source TEXT NOT NULL DEFAULT 'bot'/i);
+  assert.match(sql, /CHECK \(status IN \('new', 'reviewed', 'archived'\)\)/i);
+  assert.match(sql, /CHECK \(source IN \('bot', 'miniapp'\)\)/i);
+  assert.match(sql, /CHECK \(length\(btrim\(message\)\) >= 3\)/i);
+  assert.match(sql, /CREATE INDEX IF NOT EXISTS feedback_status_created_at_idx/i);
+  assert.match(sql, /CREATE INDEX IF NOT EXISTS feedback_telegram_user_created_at_idx/i);
+});
+
 test("migrate records applied files and skips them on the second run", async () => {
   const dir = await createTempMigrations({
     "001_create_sample.sql": "CREATE TABLE sample_migration_probe (id integer PRIMARY KEY);",

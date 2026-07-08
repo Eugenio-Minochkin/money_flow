@@ -59,6 +59,23 @@ export function createRepository(pool, options = {}) {
       }
     },
 
+    async createFeedback(input) {
+      const message = String(input.message ?? "").trim();
+      const result = await pool.query(
+        `INSERT INTO feedback (user_id, telegram_user_id, message, status, source)
+         VALUES ($1, $2, $3, $4, $5)
+         RETURNING *`,
+        [
+          input.userId ?? null,
+          input.telegramUserId,
+          message,
+          input.status ?? "new",
+          input.source ?? "bot"
+        ]
+      );
+      return result.rows[0];
+    },
+
     async upsertTelegramUser(profile) {
       const result = await pool.query(
         `INSERT INTO users (telegram_user_id, first_name, username, monthly_budget_amount, onboarding_step)

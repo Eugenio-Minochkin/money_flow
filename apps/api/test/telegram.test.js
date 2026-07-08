@@ -3306,6 +3306,224 @@ test("processQueuedMessage uses base-currency preview for large budget top-up wa
   assert.ok(sent.some((message) => String(message.text).includes("Very large top-up")));
 });
 
+test("/feedback prompts for one feedback message without creating an expense draft", async () => {
+  const repo = {
+    ...fakeRepository(),
+    user: { id: 7, telegram_user_id: 100, interface_language: "en", onboarding_step: "completed", base_currency: "THB" },
+    createDraftCalled: false,
+    async createDraft() {
+      this.createDraftCalled = true;
+      return { id: 42 };
+    }
+  };
+  let expenseParserCalled = false;
+  const messages = [];
+  const bot = createTelegramBot({
+    token: null,
+    miniAppUrl: "http://x",
+    repository: repo,
+    expenseParser: {
+      async parse() {
+        expenseParserCalled = true;
+        return { expenses: [] };
+      }
+    },
+    telegramClient: captureTelegramClient(messages)
+  });
+
+  await bot.handleUpdate(textUpdate("/feedback", 100));
+
+  assert.equal(expenseParserCalled, false);
+  assert.equal(repo.createDraftCalled, false);
+  assert.equal(messages.length, 1);
+  assert.match(messages[0].text, /one message/i);
+  assert.match(messages[0].text, /developer/i);
+});
+
+test("/feedback saves next text, notifies admins, bypasses parser, then resumes normal expenses", async () => {
+  const savedFeedback = [];
+  const draftSources = [];
+  let expenseParserCalls = 0;
+  const repo = {
+    ...fakeRepository(),
+    user: { id: 7, telegram_user_id: 100, interface_language: "en", onboarding_step: "completed", base_currency: "THB", timezone: "Asia/Bangkok" },
+    async createFeedback(input) {
+      savedFeedback.push(input);
+      return { id: 55, ...input, status: "new", source: input.source ?? "bot" };
+    },
+    async createDraft(userId, sourceText, items) {
+      draftSources.push({ userId, sourceText, items });
+      return { id: 42 };
+    }
+  };
+  const messages = [];
+  const bot = createTelegramBot({
+    token: null,
+    miniAppUrl: "http://x",
+    repository: repo,
+    adminTelegramIds: new Set([9001]),
+    expenseParser: {
+      async parse(text) {
+        expenseParserCalls += 1;
+        return {
+          expenses: [{
+            amount: 70,
+            currency: "THB",
+            description: text,
+            category_slug: "food_cafe",
+            tags: [],
+            spent_at: "2026-06-30T10:00:00.000Z",
+            budget_impact: "regular",
+            confidence: 0.8,
+            needs_review: false
+          }]
+        };
+      }
+    },
+    telegramClient: captureTelegramClient(messages)
+  });
+
+  await bot.handleUpdate(textUpdate("/feedback", 100));
+  await bot.handleUpdate(textUpdate("Category editing is confusing", 100));
+  await bot.handleUpdate(textUpdate("coffee 70", 100));
+
+  assert.equal(savedFeedback.length, 1);
+  assert.deepEqual(savedFeedback[0], {
+    userId: 7,
+    telegramUserId: 100,
+    message: "Category editing is confusing",
+    source: "bot",
+    status: "new"
+  });
+  assert.equal(expenseParserCalls, 1);
+  assert.equal(draftSources.length, 1);
+  assert.equal(draftSources[0].sourceText, "coffee 70");
+  assert.ok(messages.some((message) => message.chatId === 10 && /received your feedback/i.test(message.text)));
+  const adminMessage = messages.find((message) => message.chatId === 9001);
+  assert.ok(adminMessage);
+  assert.match(adminMessage.text, /New feedback/);
+  assert.match(adminMessage.text, /userId: 7/);
+  assert.match(adminMessage.text, /telegramUserId: 100/);
+  assert.match(adminMessage.text, /Category editing is confusing/);
+});
+
+test("/feedback saves next text while user is in onboarding", async () => {
+  const savedFeedback = [];
+  let onboardingDataUpdated = false;
+  let expenseParserCalls = 0;
+  const repo = {
+    ...fakeRepository(),
+    user: { id: 7, telegram_user_id: 100, interface_language: "en", onboarding_step: "budget_setup", base_currency: "THB" },
+    async updateOnboardingData() {
+      onboardingDataUpdated = true;
+      throw new Error("feedback text must not enter onboarding");
+    },
+    async createFeedback(input) {
+      savedFeedback.push(input);
+      return { id: 56, ...input, status: "new", source: input.source ?? "bot" };
+    }
+  };
+  const messages = [];
+  const bot = createTelegramBot({
+    token: null,
+    miniAppUrl: "http://x",
+    repository: repo,
+    expenseParser: {
+      async parse() {
+        expenseParserCalls += 1;
+        return { expenses: [] };
+      }
+    },
+    telegramClient: captureTelegramClient(messages)
+  });
+
+  await bot.handleUpdate(textUpdate("/feedback", 100));
+  await bot.handleUpdate(textUpdate("Onboarding budget copy is unclear", 100));
+
+  assert.equal(savedFeedback.length, 1);
+  assert.deepEqual(savedFeedback[0], {
+    userId: 7,
+    telegramUserId: 100,
+    message: "Onboarding budget copy is unclear",
+    source: "bot",
+    status: "new"
+  });
+  assert.equal(onboardingDataUpdated, false);
+  assert.equal(expenseParserCalls, 0);
+  assert.ok(messages.some((message) => /received your feedback/i.test(message.text)));
+});
+
+test("/feedback keeps pending state for too-short text", async () => {
+  const savedFeedback = [];
+  let expenseParserCalls = 0;
+  const repo = {
+    ...fakeRepository(),
+    user: { id: 7, telegram_user_id: 100, interface_language: "en", onboarding_step: "completed", base_currency: "THB" },
+    async createFeedback(input) {
+      savedFeedback.push(input);
+      return { id: 55, ...input };
+    }
+  };
+  const messages = [];
+  const bot = createTelegramBot({
+    token: null,
+    miniAppUrl: "http://x",
+    repository: repo,
+    expenseParser: {
+      async parse() {
+        expenseParserCalls += 1;
+        return { expenses: [] };
+      }
+    },
+    telegramClient: captureTelegramClient(messages)
+  });
+
+  await bot.handleUpdate(textUpdate("/feedback", 100));
+  await bot.handleUpdate(textUpdate("ok", 100));
+  await bot.handleUpdate(textUpdate("Please add a clearer category edit button", 100));
+
+  assert.equal(savedFeedback.length, 1);
+  assert.equal(savedFeedback[0].message, "Please add a clearer category edit button");
+  assert.equal(expenseParserCalls, 0);
+  assert.ok(messages.some((message) => /a little more detail/i.test(message.text)));
+});
+
+test("/feedback still saves when admin notification fails", async () => {
+  const savedFeedback = [];
+  const repo = {
+    ...fakeRepository(),
+    user: { id: 7, telegram_user_id: 100, interface_language: "en", onboarding_step: "completed", base_currency: "THB" },
+    async createFeedback(input) {
+      savedFeedback.push(input);
+      return { id: 55, ...input };
+    }
+  };
+  const messages = [];
+  const bot = createTelegramBot({
+    token: null,
+    miniAppUrl: "http://x",
+    repository: repo,
+    adminTelegramIds: new Set([9001]),
+    telegramClient: {
+      async sendMessage(message) {
+        if (message.chatId === 9001) throw new Error("telegram down");
+        messages.push(message);
+        return { ok: true, result: { message_id: 777 } };
+      },
+      async editMessageText(message) {
+        messages.push(message);
+        return { ok: true, result: { message_id: 777 } };
+      }
+    }
+  });
+
+  await bot.handleUpdate(textUpdate("/feedback", 100));
+  await assert.doesNotReject(() => bot.handleUpdate(textUpdate("The dashboard is hard to scan", 100)));
+
+  assert.equal(savedFeedback.length, 1);
+  assert.ok(messages.some((message) => /received your feedback/i.test(message.text)));
+});
+
 test("budget top-up confirm explains previous-month top-ups are not supported", async () => {
   const { handleCallback } = await import("../src/telegram.js");
   const calls = [];
