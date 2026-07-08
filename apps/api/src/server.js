@@ -30,6 +30,7 @@ import {
   updateDraftMessageToSaved,
   updateTelegramMessageAfterExpenseDelete
 } from "./telegram.js";
+import { syncTelegramCommandMenu } from "./telegramCommands.js";
 import { formatSavedSummary } from "./telegramFormat.js";
 import { createVoiceTranscriber } from "./voiceTranscriber.js";
 
@@ -152,6 +153,10 @@ function createBot(telegramClient) {
   });
 }
 const bot = createBot();
+if (config.telegramBotToken) {
+  void syncTelegramCommandMenu({ token: config.telegramBotToken })
+    .catch((error) => console.error("[telegram] command menu sync failed", error.message));
+}
 const rateLimiter = createRateLimiter({
   limit: config.rateLimitMax,
   windowMs: config.rateLimitWindowMs,
