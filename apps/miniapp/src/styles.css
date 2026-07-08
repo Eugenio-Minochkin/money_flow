@@ -1453,6 +1453,13 @@ select {
   padding: 0;
 }
 
+.settings-export {
+  display: grid;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
 .timezone-control {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

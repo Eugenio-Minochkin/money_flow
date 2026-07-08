@@ -1758,6 +1758,79 @@ test("listing expenses never reads from drafts", async () => {
   assert.doesNotMatch(listSql, /drafts/);
 });
 
+test("listExpenseExportRowsForTelegramUser scopes exports by internal user id and orders oldest first", async () => {
+  const calls = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    const query = String(sql);
+    calls.push({ sql: query, params });
+    if (query.startsWith("SELECT * FROM users")) {
+      return {
+        rows: [{
+          id: "7",
+          telegram_user_id: "100",
+          timezone: "Europe/Moscow",
+          base_currency: "THB",
+          display_currency: "USD",
+          usd_thb_rate: "32.5"
+        }]
+      };
+    }
+    return {
+      rows: [{
+        id: "10",
+        amount_original: "250",
+        currency_original: "THB",
+        amount_base: "250",
+        converted_amounts: { USD: 7.69, THB: 250 },
+        description: "кофе",
+        category_slug: "food_cafe",
+        spent_at: "2026-07-07T21:30:00Z",
+        created_at: "2026-07-07T21:31:00Z"
+      }]
+    };
+  }));
+
+  const rows = await repo.listExpenseExportRowsForTelegramUser(100, {
+    period: "month",
+    now: new Date("2026-07-08T10:00:00Z"),
+    limit: 50,
+    offset: 100
+  });
+
+  const listCall = calls.at(-1);
+  assert.match(listCall.sql, /FROM expenses/);
+  assert.doesNotMatch(listCall.sql, /FROM drafts/);
+  assert.match(listCall.sql, /WHERE user_id = \$1/);
+  assert.match(listCall.sql, /ORDER BY spent_at ASC, id ASC/);
+  assert.match(listCall.sql, /LIMIT \$4 OFFSET \$5/);
+  assert.equal(listCall.params[0], "7");
+  assert.equal(listCall.params[1].toISOString(), "2026-06-30T21:00:00.000Z");
+  assert.equal(listCall.params[2].toISOString(), "2026-07-31T21:00:00.000Z");
+  assert.equal(listCall.params[3], 50);
+  assert.equal(listCall.params[4], 100);
+  assert.equal(rows[0].description, "кофе");
+  assert.equal(rows[0].display.amount, 7.69);
+  assert.equal(rows[0].display.currency, "USD");
+});
+
+test("listExpenseExportRowsForTelegramUser all-time export has no period bounds", async () => {
+  const calls = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    const query = String(sql);
+    calls.push({ sql: query, params });
+    if (query.startsWith("SELECT * FROM users")) {
+      return { rows: [{ id: "7", telegram_user_id: "100", base_currency: "THB", display_currency: "USD" }] };
+    }
+    return { rows: [] };
+  }));
+
+  await repo.listExpenseExportRowsForTelegramUser(100, { period: "all", limit: 25, offset: 0 });
+
+  const listCall = calls.at(-1);
+  assert.doesNotMatch(listCall.sql, /spent_at >=/);
+  assert.deepEqual(listCall.params, ["7", 25, 0]);
+});
+
 test("updates an expense owned by a Telegram user", async () => {
   const queries = [];
   const repo = createRepository(fakePool((sql, params) => {

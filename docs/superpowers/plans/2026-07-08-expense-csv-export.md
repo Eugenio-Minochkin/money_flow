@@ -30,7 +30,7 @@
 - Create: `apps/api/src/csvWriter.js`
 - Create: `apps/api/test/csvWriter.test.js`
 
-- [ ] **Step 1: Write failing CSV writer tests**
+- [x] **Step 1: Write failing CSV writer tests**
 
 Test BOM, header order, quote/comma/newline escaping, empty values, and Russian text.
 
@@ -38,11 +38,11 @@ Run: `npm.cmd test -- apps/api/test/csvWriter.test.js`
 
 Expected: FAIL because `apps/api/src/csvWriter.js` does not exist.
 
-- [ ] **Step 2: Implement minimal CSV writer**
+- [x] **Step 2: Implement minimal CSV writer**
 
 Export `writeCsv(rows, headers)` that returns a UTF-8 BOM-prefixed string. Quote fields only when needed and escape quotes by doubling them.
 
-- [ ] **Step 3: Verify green**
+- [x] **Step 3: Verify green**
 
 Run: `npm.cmd test -- apps/api/test/csvWriter.test.js`
 
@@ -54,7 +54,7 @@ Expected: PASS.
 - Modify: `apps/api/src/repository.js`
 - Modify: `apps/api/test/repository.test.js`
 
-- [ ] **Step 1: Write failing repository tests**
+- [x] **Step 1: Write failing repository tests**
 
 Cover current-month timezone bounds, all-time no period bounds, internal `users.id` scoping, oldest-to-newest order, selected columns only, and page options.
 
@@ -62,11 +62,11 @@ Run: `npm.cmd test -- apps/api/test/repository.test.js`
 
 Expected: FAIL because export query method is missing.
 
-- [ ] **Step 2: Implement repository method**
+- [x] **Step 2: Implement repository method**
 
 Add `listExpenseExportRowsForTelegramUser(telegramUserId, { period, cursor, limit, now })`. Resolve the user once, build bounds for `period === "month"` using `users.timezone`, query `expenses` by `user.id`, order by `spent_at ASC, id ASC`, and return rows with display amounts.
 
-- [ ] **Step 3: Verify green**
+- [x] **Step 3: Verify green**
 
 Run: `npm.cmd test -- apps/api/test/repository.test.js`
 
@@ -78,7 +78,7 @@ Expected: PASS.
 - Create: `apps/api/src/expenseExportService.js`
 - Create: `apps/api/test/expenseExportService.test.js`
 
-- [ ] **Step 1: Write failing service tests**
+- [x] **Step 1: Write failing service tests**
 
 Cover required columns, `type=expense`, filename for month/all time, empty result returns no document payload, pagination combines pages, throttling is per user, and no forbidden fields appear in CSV.
 
@@ -86,11 +86,11 @@ Run: `npm.cmd test -- apps/api/test/expenseExportService.test.js`
 
 Expected: FAIL because service module is missing.
 
-- [ ] **Step 2: Implement service**
+- [x] **Step 2: Implement service**
 
 Add `createExpenseExportService({ repository, sendDocument, now, cooldownMs })`. Expose `requestExport({ telegramUserId, chatId, period, language })`, validate period as `month` or `all`, fetch pages, build CSV through `csvWriter`, and call `sendDocument`.
 
-- [ ] **Step 3: Verify green**
+- [x] **Step 3: Verify green**
 
 Run: `npm.cmd test -- apps/api/test/expenseExportService.test.js`
 
@@ -104,7 +104,7 @@ Expected: PASS.
 - Modify: `apps/api/src/telegramCommands.js`
 - Modify: `apps/api/test/telegramCommands.test.js`
 
-- [ ] **Step 1: Write failing Telegram tests**
+- [x] **Step 1: Write failing Telegram tests**
 
 Cover `/export` period picker, current-month callback sends document, all-time callback sends document, empty state sends message and no document, throttled callback sends message and no document, and normal expense parser text still works.
 
@@ -112,11 +112,11 @@ Run: `npm.cmd test -- apps/api/test/telegram.test.js apps/api/test/telegramComma
 
 Expected: FAIL because `/export` is unsupported.
 
-- [ ] **Step 2: Implement Telegram flow**
+- [x] **Step 2: Implement Telegram flow**
 
 Add localized export copy, keyboard callbacks such as `export:month` and `export:all`, `sendDocument` helper, and inject/use the shared export service in `createTelegramBot`.
 
-- [ ] **Step 3: Verify green**
+- [x] **Step 3: Verify green**
 
 Run: `npm.cmd test -- apps/api/test/telegram.test.js apps/api/test/telegramCommands.test.js`
 
@@ -133,19 +133,19 @@ Expected: PASS.
 - Modify: `apps/miniapp/src/styles.css`
 - Modify: Mini App settings/export tests
 
-- [ ] **Step 1: Write failing API and Mini App tests**
+- [x] **Step 1: Write failing API and Mini App tests**
 
-Cover `POST /api/export` accepting only `period`, resolving the Telegram user from initData auth, ignoring body/query user identifiers, returning success/error JSON, and Settings rendering export controls.
+Cover `POST /api/exports/expenses` accepting only `period`, resolving the Telegram user from initData auth, ignoring body/query user identifiers, returning success/error JSON, and Settings rendering export controls.
 
 Run: `npm.cmd test -- apps/api/test/security.test.js apps/miniapp/test/settings.test.js`
 
 Expected: FAIL because endpoint/UI do not exist.
 
-- [ ] **Step 2: Implement endpoint and Settings UI**
+- [x] **Step 2: Implement endpoint and Settings UI**
 
-Add `POST /api/export` with existing API auth, but pass only the authenticated Telegram user and `body.period` into the export service. Add compact Settings controls and localized copy explaining that the CSV arrives in Telegram.
+Add `POST /api/exports/expenses` with verified Mini App auth, but pass only the authenticated Telegram user and `body.period` into the export service. Add compact Settings controls and localized copy explaining that the CSV arrives in Telegram.
 
-- [ ] **Step 3: Verify green**
+- [x] **Step 3: Verify green**
 
 Run: `npm.cmd test -- apps/api/test/security.test.js apps/miniapp/test/settings.test.js`
 
@@ -156,19 +156,19 @@ Expected: PASS.
 **Files:**
 - Review all touched files.
 
-- [ ] **Step 1: Run focused export tests**
+- [x] **Step 1: Run focused export tests**
 
 Run: `npm.cmd test -- apps/api/test/csvWriter.test.js apps/api/test/expenseExportService.test.js apps/api/test/repository.test.js apps/api/test/telegram.test.js apps/api/test/telegramCommands.test.js apps/miniapp/test/settings.test.js`
 
 Expected: PASS.
 
-- [ ] **Step 2: Run full suite**
+- [x] **Step 2: Run full suite**
 
 Run: `npm.cmd test`
 
 Expected: PASS.
 
-- [ ] **Step 3: Check diff hygiene**
+- [x] **Step 3: Check diff hygiene**
 
 Run: `git diff --check`
 

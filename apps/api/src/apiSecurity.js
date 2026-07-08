@@ -21,6 +21,14 @@ export function createApiSecurity({ telegramBotToken, requireTelegramInitData = 
       if (requireTelegramInitData) return { error: "telegram_init_data_required" };
       if (!declaredId) return { error: "telegramUserId_required" };
       return { telegramUserId: declaredId };
+    },
+
+    resolveVerifiedTelegramUserId(req) {
+      const initData = req.headers["x-telegram-init-data"];
+      if (!initData) return { error: "telegram_init_data_required" };
+      const auth = verifyTelegramInitData(initData, telegramBotToken);
+      if (!auth.ok) return { error: auth.reason };
+      return { telegramUserId: auth.telegramUserId };
     }
   };
 }

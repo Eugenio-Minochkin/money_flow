@@ -329,3 +329,16 @@ test("currency selectors use stable markers and language selector has no flag", 
   assert.doesNotMatch(css, /data-currency/);
   assert.doesNotMatch(css, /data-language/);
 });
+
+test("settings exposes expense export actions that send only period", async () => {
+  const html = await readFile(join(miniAppRoot, "index.html"), "utf8");
+  const app = await readFile(join(miniAppRoot, "app.js"), "utf8");
+
+  assert.match(html, /id="expenseExportBlock"/);
+  assert.match(html, /data-export-period="month"/);
+  assert.match(html, /data-export-period="all"/);
+  assert.match(app, /requestExpenseExport/);
+  assert.match(app, /\/api\/exports\/expenses/);
+  assert.match(app, /body:\s*\{\s*period\s*\}/);
+  assert.doesNotMatch(app, /body:\s*\{\s*telegramUserId,\s*period\s*\}/);
+});

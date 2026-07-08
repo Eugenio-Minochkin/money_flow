@@ -3,10 +3,11 @@ import assert from "node:assert/strict";
 
 import { buildTelegramCommandMenu, syncTelegramCommandMenu } from "../src/telegramCommands.js";
 
-test("command menu includes feedback", () => {
+test("command menu includes feedback and export", () => {
   const commands = buildTelegramCommandMenu();
 
   assert.ok(commands.some((command) => command.command === "feedback"));
+  assert.ok(commands.some((command) => command.command === "export"));
 });
 
 test("default command descriptions are English", () => {

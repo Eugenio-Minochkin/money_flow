@@ -1818,6 +1818,34 @@ export function createRepository(pool, options = {}) {
       return result.rows.map((row) => withDisplay(row, user));
     },
 
+    async listExpenseExportRowsForTelegramUser(telegramUserId, options = {}) {
+      const user = await this.getUserByTelegramId(telegramUserId);
+      if (!user) return [];
+      const period = options.period === "all" ? "all" : "month";
+      const limit = Math.max(1, Math.min(Number(options.limit) || 500, 1000));
+      const offset = Math.max(0, Number(options.offset) || 0);
+      const baseSelect = `SELECT id, amount_original, currency_original, amount_base,
+                converted_amounts, description, category_slug, spent_at, created_at
+         FROM expenses
+         WHERE user_id = $1`;
+      let sql;
+      let params;
+      if (period === "month") {
+        const bounds = localPeriodBounds(options.now ?? new Date(), "month", userTimezone(user));
+        sql = `${baseSelect} AND spent_at >= $2 AND spent_at < $3
+         ORDER BY spent_at ASC, id ASC
+         LIMIT $4 OFFSET $5`;
+        params = [user.id, bounds.start, bounds.end, limit, offset];
+      } else {
+        sql = `${baseSelect}
+         ORDER BY spent_at ASC, id ASC
+         LIMIT $2 OFFSET $3`;
+        params = [user.id, limit, offset];
+      }
+      const result = await pool.query(sql, params);
+      return result.rows.map((row) => withDisplay(row, user));
+    },
+
     async topCategories(userId, now = new Date()) {
       const userResult = await pool.query("SELECT * FROM users WHERE id = $1", [userId]);
       const user = userResult.rows[0] ?? {};

@@ -108,6 +108,9 @@ document.querySelector("#interfaceLanguageInput").addEventListener("change", (ev
 document.querySelector("#interfaceThemeInput").addEventListener("change", (event) => applyTheme(event.target.value));
 document.querySelector("#detectTimezoneButton")?.addEventListener("click", detectTimezone);
 document.querySelector("#openHistoryInboxButton")?.addEventListener("click", () => switchTab("history"));
+document.querySelectorAll("[data-export-period]").forEach((button) => {
+  button.addEventListener("click", () => requestExpenseExport(button.dataset.exportPeriod));
+});
 document.querySelectorAll("[data-history-period]").forEach((chip) => {
   chip.addEventListener("click", () => selectHistoryPeriod(chip.dataset.historyPeriod));
 });
@@ -1345,6 +1348,18 @@ async function saveSettings(event) {
   await loadDashboard();
   setSettingsDirtyBaseline();
   showToast(t("toast.settingsSaved"));
+}
+
+async function requestExpenseExport(period) {
+  try {
+    const result = await api("/api/exports/expenses", {
+      method: "POST",
+      body: { period }
+    });
+    showToast(result.message ?? t("toast.exportRequested"));
+  } catch (error) {
+    showToast(error.body?.message ?? error.message);
+  }
 }
 
 function detectTimezone() {

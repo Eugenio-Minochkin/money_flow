@@ -10,6 +10,7 @@ import { createApiSecurity } from "./apiSecurity.js";
 import { migrate, pool } from "./db.js";
 import { createDailyReminderService } from "./dailyReminderService.js";
 import { createExchangeRateProvider } from "./exchangeRates.js";
+import { createExpenseExportService } from "./expenseExportService.js";
 import { createExpenseParser } from "./expenseParser.js";
 import { createJsonReader, createStaticHandler, sendJson } from "./http.js";
 import { handleDevRoute } from "./devRoutes.js";
@@ -24,6 +25,7 @@ import {
   createTelegramBot,
   draftCanceledMessageText,
   savedSummaryKeyboard,
+  sendTelegramDocument,
   sendTelegramMessage,
   updateDraftMessageToCanceled,
   updateDraftMessageToDraftState,
@@ -80,6 +82,13 @@ const expenseParser = createExpenseParser({
 const voiceTranscriber = createVoiceTranscriber({
   telegramBotToken: config.telegramBotToken,
   deepgramApiKey: config.deepgramApiKey
+});
+const expenseExportService = createExpenseExportService({
+  repository,
+  sendDocument: (document) => sendTelegramDocument({
+    token: config.telegramBotToken,
+    ...document
+  })
 });
 const releaseNotesService = createReleaseNotesService({
   repository,
@@ -143,6 +152,7 @@ function createBot(telegramClient) {
     adminStatsService,
     releaseNotesService,
     adminAlertService,
+    expenseExportService,
     telegramClient,
     awaitQueuedJobs: false,
     telegramJobQueueOptions: {
@@ -430,6 +440,25 @@ async function route(req, res) {
     }
     if (!user) return sendJson(res, 404, { error: "user_not_found" });
     return sendJson(res, 200, { user });
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/exports/expenses") {
+    const body = await readJson(req);
+    const auth = apiSecurity.resolveVerifiedTelegramUserId(req, url, body);
+    if (auth.error) return sendJson(res, 400, { error: auth.error });
+    const user = await repository.getUserByTelegramId(auth.telegramUserId);
+    if (!user) return sendJson(res, 404, { error: "user_not_found" });
+    const result = await expenseExportService.requestExport({
+      telegramUserId: auth.telegramUserId,
+      chatId: auth.telegramUserId,
+      period: body.period === "all" ? "all" : "month",
+      language: user.interface_language ?? "en"
+    });
+    return sendJson(res, result.status === "throttled" ? 429 : 200, {
+      status: result.status,
+      message: result.message,
+      filename: result.filename
+    });
   }
 
   const plannedPayMatch = url.pathname.match(/^\/api\/planned-expenses\/(\d+)\/pay$/);
