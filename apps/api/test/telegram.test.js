@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { parseAdminTelegramIds } from "../src/adminAccess.js";
 import { createExpenseParser } from "../src/expenseParser.js";
 import { createTelegramBot, processQueuedMessage, sendTelegramMessage, sendWeeklyReports } from "../src/telegram.js";
+import { buildTelegramCommandMenu } from "../src/telegramCommands.js";
 
 test("exports the Telegram message sender used by the production server", async () => {
   const calls = [];
@@ -2749,6 +2750,199 @@ test("admin release send reports a duplicate automatic run without a success sum
   assert.doesNotMatch(messages[0].text, /отправлен/);
 });
 
+test("command menus include delete_me in English and Russian", () => {
+  const enCommands = buildTelegramCommandMenu();
+  const ruCommands = buildTelegramCommandMenu("ru");
+
+  assert.ok(enCommands.some((command) => command.command === "delete_me"));
+  assert.ok(ruCommands.some((command) => command.command === "delete_me"));
+});
+
+test("/delete_me starts Telegram account deletion request with warning buttons", async () => {
+  const messages = [];
+  const repo = fakeRepository();
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: repo,
+    telegramClient: captureTelegramClient(messages)
+  });
+
+  await bot.handleUpdate(textUpdate("/delete_me", 100));
+
+  assert.deepEqual(repo.accountDeletionRequests, [{ telegramUserId: 100, options: { source: "telegram" } }]);
+  assert.equal(repo.accountDeletionAdvances.length, 0);
+  assert.equal(repo.accountDeletionConfirms.length, 0);
+  assert.match(messages[0].text, /permanently deletes/i);
+  assert.deepEqual(messages[0].replyMarkup.inline_keyboard[0].map((button) => button.callback_data), [
+    "delete_me:advance",
+    "delete_me:cancel"
+  ]);
+});
+
+test("delete_me advance asks for exact DELETE and keeps cancel button", async () => {
+  const messages = [];
+  const repo = fakeRepository();
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: repo,
+    telegramClient: captureTelegramClient(messages)
+  });
+
+  await bot.handleUpdate(callbackUpdate("delete_me:advance", 100));
+
+  assert.deepEqual(repo.accountDeletionAdvances, [{ telegramUserId: 100, options: { source: "telegram" } }]);
+  assert.equal(repo.accountDeletionConfirms.length, 0);
+  assert.match(messages[0].text, /DELETE/);
+  assert.deepEqual(messages[0].replyMarkup.inline_keyboard, [[
+    { text: "Cancel", callback_data: "delete_me:cancel" }
+  ]]);
+});
+
+test("delete_me cancel cancels Telegram account deletion without deleting data", async () => {
+  const messages = [];
+  const repo = fakeRepository();
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: repo,
+    telegramClient: captureTelegramClient(messages)
+  });
+
+  await bot.handleUpdate(callbackUpdate("delete_me:cancel", 100));
+
+  assert.deepEqual(repo.accountDeletionCancels, [{ telegramUserId: 100, options: { source: "telegram" } }]);
+  assert.equal(repo.accountDeletionConfirms.length, 0);
+  assert.match(messages[0].text, /nothing was deleted/i);
+});
+
+test("pending DELETE confirms before parser queue and final message has no app keyboard", async () => {
+  const messages = [];
+  const repo = fakeRepository();
+  const queueCalls = [];
+  const parserCalls = [];
+  repo.pendingAccountDeletion = { status: "pending", stage: "awaiting_text", source: "telegram" };
+  const now = new Date("2026-07-09T10:00:00.000Z");
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: repo,
+    telegramClient: captureTelegramClient(messages),
+    now: () => now,
+    telegramJobQueue: {
+      enqueue(job) {
+        queueCalls.push(job);
+        return { accepted: true, status: "started", stats: {}, promise: Promise.resolve() };
+      }
+    },
+    expenseParser: {
+      async parse() {
+        parserCalls.push("parse");
+        return { expenses: [], notes: [] };
+      }
+    }
+  });
+
+  await bot.handleUpdate(textUpdate("DELETE", 100));
+
+  assert.deepEqual(repo.accountDeletionPendingLookups, [{ telegramUserId: 100, options: { source: "telegram", now } }]);
+  assert.deepEqual(repo.accountDeletionConfirms, [{
+    telegramUserId: 100,
+    source: "telegram",
+    confirmationText: "DELETE",
+    now
+  }]);
+  assert.equal(queueCalls.length, 0);
+  assert.equal(parserCalls.length, 0);
+  assert.equal(repo.events.some((event) => event.eventName === "message_received"), false);
+  assert.match(messages[0].text, /data has been deleted/i);
+  assert.equal(messages[0].replyMarkup?.keyboard, undefined);
+  assert.equal(messages[0].replyMarkup?.inline_keyboard, undefined);
+});
+
+test("expired pending DELETE confirmation is handled without parser or queue", async () => {
+  const messages = [];
+  const repo = fakeRepository();
+  const queueCalls = [];
+  repo.pendingAccountDeletion = { status: "pending", stage: "awaiting_text", source: "telegram" };
+  repo.confirmAccountDeletion = async (args) => {
+    repo.accountDeletionConfirms.push(args);
+    const error = new Error("expired");
+    error.code = "account_deletion_expired";
+    throw error;
+  };
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: repo,
+    telegramClient: captureTelegramClient(messages),
+    telegramJobQueue: {
+      enqueue(job) {
+        queueCalls.push(job);
+        return { accepted: true, status: "started", stats: {}, promise: Promise.resolve() };
+      }
+    }
+  });
+
+  await assert.doesNotReject(() => bot.handleUpdate(textUpdate("DELETE", 100)));
+
+  assert.equal(repo.accountDeletionConfirms.length, 1);
+  assert.equal(queueCalls.length, 0);
+  assert.equal(repo.events.some((event) => event.eventName === "message_received"), false);
+  assert.match(messages[0].text, /expired or is no longer pending/i);
+});
+
+test("wrong text during pending deletion does not reach parser or queue", async () => {
+  const messages = [];
+  const repo = fakeRepository();
+  const queueCalls = [];
+  const parserCalls = [];
+  repo.pendingAccountDeletion = { status: "pending", stage: "awaiting_text", source: "telegram" };
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: repo,
+    telegramClient: captureTelegramClient(messages),
+    telegramJobQueue: {
+      enqueue(job) {
+        queueCalls.push(job);
+        return { accepted: true, status: "started", stats: {}, promise: Promise.resolve() };
+      }
+    },
+    expenseParser: {
+      async parse() {
+        parserCalls.push("parse");
+        return { expenses: [], notes: [] };
+      }
+    }
+  });
+
+  await bot.handleUpdate(textUpdate("delete", 100));
+
+  assert.equal(repo.accountDeletionConfirms.length, 0);
+  assert.equal(queueCalls.length, 0);
+  assert.equal(parserCalls.length, 0);
+  assert.equal(repo.events.some((event) => event.eventName === "message_received"), false);
+  assert.match(messages[0].text, /Type DELETE to confirm or \/delete_me to start again\./);
+});
+
+test("DELETE without pending deletion does not confirm and flows normally", async () => {
+  const messages = [];
+  const repo = fakeRepository();
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: repo,
+    telegramClient: captureTelegramClient(messages)
+  });
+
+  await bot.handleUpdate(textUpdate("DELETE", 100));
+
+  assert.equal(repo.accountDeletionConfirms.length, 0);
+  assert.ok(repo.events.some((event) => event.eventName === "message_received"));
+});
+
 function fakeRepository() {
   return {
     user: { id: 1, interface_language: "ru", onboarding_step: "completed" },
@@ -2764,6 +2958,12 @@ function fakeRepository() {
     dailyEntryReminderEnabled: true,
     setCurrentMonthBudgetCalls: 0,
     plannedDraft: null,
+    accountDeletionRequests: [],
+    accountDeletionAdvances: [],
+    accountDeletionCancels: [],
+    accountDeletionConfirms: [],
+    accountDeletionPendingLookups: [],
+    pendingAccountDeletion: null,
     async upsertTelegramUser() {
       return this.user;
     },
@@ -2889,6 +3089,26 @@ function fakeRepository() {
     },
     async recordAppEvent(userId, eventName, metadata) {
       this.events.push({ userId, eventName, metadata });
+    },
+    async requestAccountDeletion(telegramUserId, options) {
+      this.accountDeletionRequests.push({ telegramUserId, options });
+      return { status: "pending", stage: "requested", source: options.source };
+    },
+    async advanceAccountDeletion(telegramUserId, options) {
+      this.accountDeletionAdvances.push({ telegramUserId, options });
+      return { status: "pending", stage: "awaiting_text", source: options.source };
+    },
+    async cancelAccountDeletion(telegramUserId, options) {
+      this.accountDeletionCancels.push({ telegramUserId, options });
+      return { status: "cancelled" };
+    },
+    async getPendingAccountDeletion(telegramUserId, options) {
+      this.accountDeletionPendingLookups.push({ telegramUserId, options });
+      return this.pendingAccountDeletion;
+    },
+    async confirmAccountDeletion(args) {
+      this.accountDeletionConfirms.push(args);
+      return { status: "deleted" };
     },
     async dashboard() {
       return {
