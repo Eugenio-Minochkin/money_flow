@@ -314,6 +314,14 @@
                   </span>
                   <input id="dailyReminderInput" name="dailyEntryReminderEnabled" type="checkbox" />
                 </label>
+                <div class="settings-export" id="expenseExportBlock">
+                  <strong data-i18n="settings.sectionExport">Export data</strong>
+                  <p class="settings-hint" data-i18n="settings.exportHint">CSV will be sent to you in Telegram.</p>
+                  <div class="button-row">
+                    <button type="button" class="ghost-button" data-export-period="month" data-i18n="settings.exportMonth">Current month</button>
+                    <button type="button" class="ghost-button" data-export-period="all" data-i18n="settings.exportAll">All time</button>
+                  </div>
+                </div>
               </div>
             </section>
             <section class="settings-section">

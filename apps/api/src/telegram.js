@@ -12,6 +12,7 @@ import {
   normalizeTimeZone
 } from "../../../packages/shared/src/time.js";
 import { formatAdminStats } from "./adminStatsService.js";
+import { createExpenseExportService } from "./expenseExportService.js";
 import { createTelegramJobQueue } from "./telegramJobQueue.js";
 import { formatBudgetTopupDraft, formatBudgetTopupSuccess, formatBudgetTopupUndoSuccess, formatDraft, formatPlannedDraft, formatReserveClosedEvent, formatSavedSummary, formatTotals, formatWeeklyReport } from "./telegramFormat.js";
 import { appKeyboard, budgetTopupDraftKeyboard, budgetTopupMiniAppKeyboard, budgetTopupSuccessKeyboard, draftKeyboard, inboxDraftKeyboard, plannedDraftKeyboard, parseBudgetTopupCallback, parseDraftCallback, categorySlugFromCode } from "./telegramKeyboards.js";
@@ -35,18 +36,25 @@ export function createTelegramBot({
   adminStatsService,
   releaseNotesService,
   adminAlertService,
+  expenseExportService,
   now = () => new Date(),
   telegramJobQueueOptions = {},
   telegramJobQueue = createTelegramJobQueue(telegramJobQueueOptions),
   awaitQueuedJobs = true
 }) {
+  const sharedExpenseExportService = expenseExportService ?? createExpenseExportService({
+    repository,
+    now,
+    sendDocument: (document) => sendTelegramDocument({ token, telegramClient, ...document })
+  });
+
   return {
     async handleUpdate(update) {
       const trace = createPerfTrace({ update, logger: perfLogger });
       let success = false;
       if (update.message) {
         try {
-          const result = await handleMessage({ update, repository, token, miniAppUrl, expenseParser, voiceTranscriber, telegramClient, adminTelegramIds, adminStatsService, releaseNotesService, adminAlertService, now, trace, telegramJobQueue, awaitQueuedJobs });
+          const result = await handleMessage({ update, repository, token, miniAppUrl, expenseParser, voiceTranscriber, telegramClient, adminTelegramIds, adminStatsService, releaseNotesService, adminAlertService, expenseExportService: sharedExpenseExportService, now, trace, telegramJobQueue, awaitQueuedJobs });
           success = !result?.queued;
           return result;
         } catch (error) {
@@ -59,7 +67,7 @@ export function createTelegramBot({
       }
       if (update.callback_query) {
         try {
-          const result = await handleCallback({ update, repository, token, miniAppUrl, telegramClient, trace, now });
+          const result = await handleCallback({ update, repository, token, miniAppUrl, telegramClient, expenseExportService: sharedExpenseExportService, trace, now });
           success = true;
           return result;
         } catch (error) {
@@ -76,7 +84,7 @@ export function createTelegramBot({
   };
 }
 
-async function handleMessage({ update, repository, token, miniAppUrl, expenseParser, voiceTranscriber, telegramClient, adminTelegramIds, adminStatsService, releaseNotesService, adminAlertService, now, trace, telegramJobQueue, awaitQueuedJobs }) {
+async function handleMessage({ update, repository, token, miniAppUrl, expenseParser, voiceTranscriber, telegramClient, adminTelegramIds, adminStatsService, releaseNotesService, adminAlertService, expenseExportService, now, trace, telegramJobQueue, awaitQueuedJobs }) {
   const message = update.message;
   const from = message.from;
   if (!from) return { ok: true };
@@ -169,6 +177,10 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
       }
       setPendingFeedback(from.id, now());
       return sendTelegramResponse(trace, () => sendMessage(token, chatId, feedbackPromptText(language), null, telegramClient));
+    }
+
+    if (commandText === "/export") {
+      return sendTelegramResponse(trace, () => sendMessage(token, chatId, botText(language, "exportChoosePeriod"), exportPeriodKeyboard(language), telegramClient));
     }
 
     if (commandText === "/today" || commandText === "/week" || commandText === "/month" || commandText === "/budget") {
@@ -989,6 +1001,18 @@ function languageKeyboard() {
   };
 }
 
+function exportPeriodKeyboard(language) {
+  const text = language === "ru"
+    ? { month: "Текущий месяц", all: "Все время" }
+    : { month: "Current month", all: "All time" };
+  return {
+    inline_keyboard: [
+      [{ text: text.month, callback_data: "export:month" }],
+      [{ text: text.all, callback_data: "export:all" }]
+    ]
+  };
+}
+
 function parseLanguage(text) {
   const value = String(text ?? "").trim().toLowerCase();
   if (["en", "eng", "english"].includes(value)) return "en";
@@ -1049,7 +1073,7 @@ function localMonthDay(now) {
   return timezoneLocalMonthDay(now);
 }
 
-export async function handleCallback({ update, repository, token, miniAppUrl, telegramClient, trace, now = () => new Date() }) {
+export async function handleCallback({ update, repository, token, miniAppUrl, telegramClient, expenseExportService, trace, now = () => new Date() }) {
   const callback = update.callback_query;
   const [action, draftId, itemIndex, value] = callback.data.split(":");
   const telegramUserId = callback.from.id;
@@ -1066,6 +1090,21 @@ export async function handleCallback({ update, repository, token, miniAppUrl, te
   const draftCallback = parseDraftCallback(callback.data);
   if (draftCallback) {
     return handleDraftCallback({ callback, parsed: draftCallback, repository, token, miniAppUrl, telegramClient, language, user, trace });
+  }
+
+  if (action === "export") {
+    const period = draftId === "all" ? "all" : "month";
+    return sendTelegramResponse(trace, async () => {
+      await answerCallback(token, callback.id, botText(language, "exportPreparingCallback"), telegramClient);
+      const result = await expenseExportService.requestExport({
+        telegramUserId,
+        chatId: callback.message.chat.id,
+        period,
+        language
+      });
+      if (result.status === "sent") return { ok: true };
+      return sendMessage(token, callback.message.chat.id, result.message, null, telegramClient);
+    });
   }
 
   if (action === "daily_reminder") {
@@ -1562,6 +1601,28 @@ export async function sendTelegramMessage({ token, chatId, text, replyMarkup = n
   return sendMessage(token, chatId, text, replyMarkup, telegramClient);
 }
 
+export async function sendTelegramDocument({ token, telegramClient = null, chatId, filename, content, contentType, caption = null }) {
+  if (telegramClient?.sendDocument) {
+    return telegramClient.sendDocument({ chatId, filename, content, contentType, caption });
+  }
+  if (!token) {
+    console.log("[telegram:sendDocument]", {
+      chatId,
+      filename,
+      contentType,
+      caption,
+      bytes: Buffer.isBuffer(content) ? content.length : Buffer.byteLength(String(content ?? ""))
+    });
+    return { ok: true };
+  }
+  const form = new FormData();
+  form.set("chat_id", String(chatId));
+  if (caption) form.set("caption", caption);
+  const fileContent = Buffer.isBuffer(content) ? content : Buffer.from(String(content ?? ""), "utf8");
+  form.set("document", new Blob([fileContent], { type: contentType ?? "text/csv; charset=utf-8" }), filename);
+  return telegramRequest(token, "sendDocument", form);
+}
+
 export async function updateDraftMessageToSaved({ token, draft, text, replyMarkup, telegramClient }) {
   const chatId = draft?.tg_chat_id;
   const messageId = draft?.tg_message_id;
@@ -1705,10 +1766,11 @@ async function answerCallback(token, callbackQueryId, text, telegramClient) {
 }
 
 async function telegramRequest(token, method, body) {
+  const isFormData = typeof FormData !== "undefined" && body instanceof FormData;
   const response = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(cleanTelegramBody(body))
+    headers: isFormData ? undefined : { "content-type": "application/json" },
+    body: isFormData ? body : JSON.stringify(cleanTelegramBody(body))
   });
   if (!response.ok) {
     const responseBody = await response.text();
@@ -2063,6 +2125,8 @@ function botText(language, key, values = {}) {
       draftCanceledAlert: "Этот черновик уже отменён.",
       alreadySavedCallback: "Уже сохранено",
       editInMiniApp: "Редактирование доступно в Mini App.",
+      exportChoosePeriod: "Экспорт расходов в CSV. Выбери период:",
+      exportPreparingCallback: "Готовлю экспорт",
       expenseProcessing: "⏳ Заношу расход…",
       movedCallback: "Перенесено",
       movedToInbox: "Перенес в Inbox. Можно разобрать позже в Mini App.",
@@ -2111,6 +2175,8 @@ function botText(language, key, values = {}) {
       draftCanceledAlert: "This draft was canceled.",
       alreadySavedCallback: "Already saved",
       editInMiniApp: "Editing is available in Mini App.",
+      exportChoosePeriod: "Export expenses to CSV. Choose a period:",
+      exportPreparingCallback: "Preparing export",
       expenseProcessing: "⏳ Adding expense…",
       movedCallback: "Moved",
       movedToInbox: "Moved to Inbox. You can review it later in Mini App.",

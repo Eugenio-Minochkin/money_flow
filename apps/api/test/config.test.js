@@ -109,3 +109,14 @@ test("server wires admin alerts into runtime error paths", async () => {
   assert.match(source, /\.catch\(\(alertError\)\s*=>/);
   assert.match(source, /adminAlertService/);
 });
+
+test("server wires expense export through verified Mini App auth and shared service", async () => {
+  const source = await readFile(new URL("../src/server.js", import.meta.url), "utf8");
+
+  assert.match(source, /import \{ createExpenseExportService \} from "\.\/expenseExportService\.js";/);
+  assert.match(source, /sendTelegramDocument/);
+  assert.match(source, /const expenseExportService = createExpenseExportService\(/);
+  assert.match(source, /url\.pathname === "\/api\/exports\/expenses"/);
+  assert.match(source, /apiSecurity\.resolveVerifiedTelegramUserId\(req,\s*url,\s*body\)/);
+  assert.match(source, /expenseExportService\.requestExport\(/);
+});

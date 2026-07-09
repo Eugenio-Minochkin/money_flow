@@ -120,6 +120,39 @@ test("API security accepts valid Telegram init data", () => {
   );
 });
 
+test("API security can resolve verified Telegram user id while ignoring request ids", () => {
+  const botToken = "123456:test-token";
+  const authDate = String(Math.floor(Date.now() / 1000));
+  const initData = signInitData({ auth_date: authDate, user: JSON.stringify({ id: 100 }) }, botToken);
+  const security = createApiSecurity({
+    telegramBotToken: botToken,
+    requireTelegramInitData: true
+  });
+  const req = { headers: { "x-telegram-init-data": initData } };
+  const url = new URL("http://localhost/api/exports/expenses?telegramUserId=999&user_id=888&telegram_user_id=777");
+
+  assert.deepEqual(
+    security.resolveVerifiedTelegramUserId(req, url, { telegramUserId: 999, user_id: 888, telegram_user_id: 777 }),
+    { telegramUserId: 100 }
+  );
+});
+
+test("verified-only API security rejects missing Telegram init data", () => {
+  const security = createApiSecurity({
+    telegramBotToken: "123456:test-token",
+    requireTelegramInitData: false
+  });
+
+  assert.deepEqual(
+    security.resolveVerifiedTelegramUserId(
+      { headers: {} },
+      new URL("http://localhost/api/exports/expenses?telegramUserId=100"),
+      { telegramUserId: 100 }
+    ),
+    { error: "telegram_init_data_required" }
+  );
+});
+
 test("API security rejects invalid Telegram init data hash", () => {
   const botToken = "123456:test-token";
   const authDate = String(Math.floor(Date.now() / 1000));

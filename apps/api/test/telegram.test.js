@@ -222,6 +222,106 @@ test("admin stats command is excluded from regular message events", async () => 
   assert.deepEqual(repo.events, []);
 });
 
+test("/export shows expense export period choices", async () => {
+  const calls = [];
+  const repo = fakeRepository();
+  repo.user = { ...repo.user, interface_language: "en" };
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: repo,
+    telegramClient: capturingClient(calls)
+  });
+
+  await bot.handleUpdate({
+    message: {
+      chat: { id: 10 },
+      from: { id: 100, first_name: "M" },
+      text: "/export"
+    }
+  });
+
+  const message = calls.find((call) => call.method === "sendMessage");
+  assert.ok(message);
+  assert.match(message.text, /Export expenses/i);
+  assert.deepEqual(message.replyMarkup, {
+    inline_keyboard: [
+      [{ text: "Current month", callback_data: "export:month" }],
+      [{ text: "All time", callback_data: "export:all" }]
+    ]
+  });
+});
+
+test("export callback sends CSV document through Telegram", async () => {
+  const calls = [];
+  const repo = fakeRepository();
+  repo.user = { ...repo.user, interface_language: "en" };
+  repo.listExpenseExportRowsForTelegramUser = async (_telegramUserId, options = {}) => {
+    if (options.offset > 0) return [];
+    return [{
+      spent_at: new Date("2026-07-02T08:00:00Z"),
+      amount_original: "70.50",
+      currency_original: "THB",
+      display: { amount: 70.5, currency: "THB" },
+      category_slug: "food_cafe",
+      description: "coffee, milk",
+      created_at: new Date("2026-07-02T08:01:00Z")
+    }];
+  };
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: repo,
+    telegramClient: capturingClient(calls),
+    now: () => new Date("2026-07-08T10:00:00Z")
+  });
+
+  await bot.handleUpdate({
+    callback_query: {
+      id: "callback-export-month",
+      data: "export:month",
+      from: { id: 100 },
+      message: { chat: { id: 10 }, message_id: 55 }
+    }
+  });
+
+  const document = calls.find((call) => call.method === "sendDocument");
+  assert.ok(document);
+  assert.equal(document.chatId, 10);
+  assert.equal(document.filename, "money-flow-export-2026-07.csv");
+  assert.equal(document.contentType, "text/csv; charset=utf-8");
+  assert.match(document.content.toString("utf8"), /^﻿date,amount,currency,amount_display,display_currency,category,note,type,created_at/);
+  assert.match(document.content.toString("utf8"), /"coffee, milk",expense/);
+  assert.ok(calls.some((call) => call.method === "answerCallbackQuery" && /Preparing export/i.test(call.text)));
+});
+
+test("empty export callback sends message without creating CSV document", async () => {
+  const calls = [];
+  const repo = fakeRepository();
+  repo.user = { ...repo.user, interface_language: "en" };
+  repo.listExpenseExportRowsForTelegramUser = async () => [];
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: repo,
+    telegramClient: capturingClient(calls)
+  });
+
+  await bot.handleUpdate({
+    callback_query: {
+      id: "callback-export-empty",
+      data: "export:all",
+      from: { id: 100 },
+      message: { chat: { id: 10 }, message_id: 55 }
+    }
+  });
+
+  assert.equal(calls.some((call) => call.method === "sendDocument"), false);
+  const message = calls.find((call) => call.method === "sendMessage");
+  assert.ok(message);
+  assert.match(message.text, /No expenses/i);
+});
+
 test("text message never calls voice transcription", async () => {
   let transcribeCalled = false;
   const originalLog = console.log;
@@ -4058,6 +4158,7 @@ test("confirm callback clears the old draft keyboard and sends a new message whe
 function capturingClient(calls) {
   return {
     async sendMessage(message) { calls.push({ method: "sendMessage", ...message }); return { ok: true }; },
+    async sendDocument(message) { calls.push({ method: "sendDocument", ...message }); return { ok: true }; },
     async editMessageText(message) { calls.push({ method: "editMessageText", ...message }); return { ok: true }; },
     async answerCallbackQuery(message) { calls.push({ method: "answerCallbackQuery", ...message }); return { ok: true }; },
     async editMessageReplyMarkup(message) { calls.push({ method: "editMessageReplyMarkup", ...message }); return { ok: true }; },

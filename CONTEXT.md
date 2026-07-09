@@ -4,6 +4,10 @@ Money Flow помогает пользователю управлять дост
 
 ## Language
 
+**Expense CSV Export**:
+A user-triggered CSV file containing only the user's confirmed expense records from `expenses`. It is not a full accounting export and must not include drafts, pending confirmations, failed parses, budget top-ups, reserve events, planned-payment definitions, feedback, internal user identifiers, Telegram identifiers, raw Telegram init data, debug payloads, tokens, or environment values.
+_Avoid_: Full account export, cashflow export, backup dump, accounting ledger
+
 **Feedback**:
 A short user-authored message sent to Money Flow to report a problem, complaint, idea, or missing MVP capability. Feedback is not an expense, draft, support ticket, or accounting record.
 _Avoid_: Expense, ticket, task, admin note

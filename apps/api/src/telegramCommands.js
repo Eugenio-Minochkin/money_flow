@@ -6,7 +6,8 @@ const DEFAULT_COMMANDS = [
   { command: "month", description: "Show this month's spending" },
   { command: "budget", description: "Show budget status" },
   { command: "app", description: "Open the Mini App" },
-  { command: "settings", description: "Open settings" }
+  { command: "settings", description: "Open settings" },
+  { command: "export", description: "Export expenses to CSV" }
 ];
 
 const RU_COMMANDS = [
@@ -17,7 +18,8 @@ const RU_COMMANDS = [
   { command: "month", description: "Показать расходы за месяц" },
   { command: "budget", description: "Показать состояние бюджета" },
   { command: "app", description: "Открыть Mini App" },
-  { command: "settings", description: "Открыть настройки" }
+  { command: "settings", description: "Открыть настройки" },
+  { command: "export", description: "Экспортировать расходы в CSV" }
 ];
 
 export function buildTelegramCommandMenu(language = "en") {
