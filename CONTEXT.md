@@ -12,6 +12,10 @@ _Avoid_: Full account export, cashflow export, backup dump, accounting ledger
 A short user-authored message sent to Money Flow to report a problem, complaint, idea, or missing MVP capability. Feedback is not an expense, draft, support ticket, or accounting record.
 _Avoid_: Expense, ticket, task, admin note
 
+**Account Deletion / Удаление данных пользователя**:
+An irreversible user action that, after double confirmation, deletes user-owned Money Flow data: expenses, drafts, budgets, planned payments, reserves, settings, feedback, and user-owned analytics/events. After deletion, only one non-identifying `account_deleted` audit event remains with `user_id = NULL` and safe metadata without Telegram ID, internal user ID, financial data, feedback text, Telegram initData, or request body.
+_Avoid_: Account deactivation, logout, soft delete, anonymized profile, support cleanup, admin deletion
+
 **Пополнение бюджета (Budget Top-up)**:
 Разовое увеличение доступного бюджета конкретного месяца за счёт полученных пользователем дополнительных денег. Пополнение прибавляется к текущему месячному бюджету поверх обычного бюджета или месячного override, не меняет регулярный месячный бюджет, не считается расходом и не превращает Money Flow в учёт доходов.
 _Avoid_: Доход, зарплатный календарь, cashflow, перевод между своими счетами
