@@ -244,6 +244,21 @@ test("cancelAccountDeletion scopes by source and returns cancelled status", asyn
   assert.equal(queries[0].params[2], now);
 });
 
+test("cancelAccountDeletion is idempotent when no pending row is updated", async () => {
+  const repo = createRepository(fakePool((sql) => {
+    const query = String(sql);
+    if (query.includes("UPDATE account_deletion_requests")) return { rows: [] };
+    throw new Error(`Unexpected SQL: ${query}`);
+  }));
+
+  const result = await repo.cancelAccountDeletion(777, {
+    source: "telegram",
+    now: new Date("2026-07-09T10:00:00.000Z")
+  });
+
+  assert.deepEqual(result, { status: "cancelled" });
+});
+
 test("getPendingAccountDeletion returns null without active same-source request and an object when active", async () => {
   const now = new Date("2026-07-09T10:00:00.000Z");
   let active = false;

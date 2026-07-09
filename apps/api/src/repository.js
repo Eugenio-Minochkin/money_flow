@@ -173,7 +173,7 @@ export function createRepository(pool, options = {}) {
          RETURNING account_deletion_requests.*`,
         [telegramUserId, source, currentNow]
       );
-      return result.rows[0] ? { status: "cancelled" } : null;
+      return { status: "cancelled" };
     },
 
     async getPendingAccountDeletion(telegramUserId, { source, now = new Date() } = {}) {
