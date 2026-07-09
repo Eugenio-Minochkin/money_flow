@@ -230,6 +230,34 @@ function routePath(req) {
   }
 }
 
+function accountDeletionStatusResponse(result) {
+  const response = {
+    status: result.status,
+    stage: result.stage
+  };
+  const expiresAt = toIsoString(result.expiresAt);
+  if (expiresAt) response.expiresAt = expiresAt;
+  return response;
+}
+
+function toIsoString(value) {
+  if (!value) return null;
+  if (value instanceof Date && !Number.isNaN(value.getTime())) return value.toISOString();
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+}
+
+function accountDeletionErrorStatus(error) {
+  if (["invalid_account_deletion_source", "invalid_account_deletion_confirmation"].includes(error.code)) return 400;
+  if ([
+    "account_deletion_already_pending",
+    "account_deletion_not_pending",
+    "account_deletion_expired"
+  ].includes(error.code)) return 409;
+  if (error.code === "user_not_found") return 404;
+  return null;
+}
+
 async function route(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);
   if (await handleDevRoute({ req, res, url, readJson, repository, createBot, serveStatic })) {
@@ -444,7 +472,7 @@ async function route(req, res) {
 
   if (req.method === "POST" && url.pathname === "/api/exports/expenses") {
     const body = await readJson(req);
-    const auth = apiSecurity.resolveVerifiedTelegramUserId(req, url, body);
+    const auth = apiSecurity.resolveVerifiedTelegramUserId(req);
     if (auth.error) return sendJson(res, 400, { error: auth.error });
     const user = await repository.getUserByTelegramId(auth.telegramUserId);
     if (!user) return sendJson(res, 404, { error: "user_not_found" });
@@ -459,6 +487,66 @@ async function route(req, res) {
       message: result.message,
       filename: result.filename
     });
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/account-deletion/request") {
+    const body = await readJson(req);
+    if (body.source !== "miniapp") return sendJson(res, 400, { error: "invalid_account_deletion_source" });
+    const auth = apiSecurity.resolveVerifiedTelegramUserId(req);
+    if (auth.error) return sendJson(res, 400, { error: auth.error });
+    try {
+      const result = await repository.requestAccountDeletion(auth.telegramUserId, { source: "miniapp" });
+      return sendJson(res, 200, accountDeletionStatusResponse(result));
+    } catch (error) {
+      const status = accountDeletionErrorStatus(error);
+      if (status) return sendJson(res, status, { error: error.code });
+      throw error;
+    }
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/account-deletion/advance") {
+    const body = await readJson(req);
+    if (body.source !== "miniapp") return sendJson(res, 400, { error: "invalid_account_deletion_source" });
+    const auth = apiSecurity.resolveVerifiedTelegramUserId(req);
+    if (auth.error) return sendJson(res, 400, { error: auth.error });
+    try {
+      const result = await repository.advanceAccountDeletion(auth.telegramUserId, { source: "miniapp" });
+      return sendJson(res, 200, accountDeletionStatusResponse(result));
+    } catch (error) {
+      const status = accountDeletionErrorStatus(error);
+      if (status) return sendJson(res, status, { error: error.code });
+      throw error;
+    }
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/account-deletion/cancel") {
+    const body = await readJson(req);
+    if (body.source !== "miniapp") return sendJson(res, 400, { error: "invalid_account_deletion_source" });
+    const auth = apiSecurity.resolveVerifiedTelegramUserId(req);
+    if (auth.error) return sendJson(res, 400, { error: auth.error });
+    try {
+      await repository.cancelAccountDeletion(auth.telegramUserId, { source: "miniapp" });
+      return sendJson(res, 200, { status: "cancelled" });
+    } catch (error) {
+      const status = accountDeletionErrorStatus(error);
+      if (status) return sendJson(res, status, { error: error.code });
+      throw error;
+    }
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/account-deletion/confirm") {
+    const body = await readJson(req);
+    if (body.source !== "miniapp") return sendJson(res, 400, { error: "invalid_account_deletion_source" });
+    const auth = apiSecurity.resolveVerifiedTelegramUserId(req);
+    if (auth.error) return sendJson(res, 400, { error: auth.error });
+    try {
+      await repository.confirmAccountDeletion({ telegramUserId: auth.telegramUserId, source: "miniapp", confirmationText: body.confirmationText });
+      return sendJson(res, 200, { status: "deleted" });
+    } catch (error) {
+      const status = accountDeletionErrorStatus(error);
+      if (status) return sendJson(res, status, { error: error.code });
+      throw error;
+    }
   }
 
   const plannedPayMatch = url.pathname.match(/^\/api\/planned-expenses\/(\d+)\/pay$/);
