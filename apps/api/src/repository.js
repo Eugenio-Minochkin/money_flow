@@ -19,6 +19,8 @@ import { createExchangeRateProvider } from "./exchangeRates.js";
 import { buildReportMetrics } from "./reportService.js";
 
 const INVALID_PLANNED_DUE_DATE_LOGGED = Symbol("invalidPlannedDueDateLogged");
+const ACCOUNT_DELETION_TTL_MINUTES = 15;
+const ACCOUNT_DELETION_SOURCES = new Set(["miniapp", "telegram"]);
 
 export class DraftCanceledError extends Error {
   constructor() { super("Draft is canceled"); this.name = "DraftCanceledError"; }
@@ -91,6 +93,105 @@ export function createRepository(pool, options = {}) {
     async getUserByTelegramId(telegramUserId) {
       const result = await pool.query("SELECT * FROM users WHERE telegram_user_id = $1", [telegramUserId]);
       return result.rows[0] ?? null;
+    },
+
+    async requestAccountDeletion(telegramUserId, { source, ttlMinutes = ACCOUNT_DELETION_TTL_MINUTES, now = new Date() } = {}) {
+      assertAccountDeletionSource(source);
+      const currentNow = normalizeNow(now);
+      const user = await this.getUserByTelegramId(telegramUserId);
+      if (!user) return null;
+
+      await expireAccountDeletionRequests(pool, user.id, currentNow);
+      const pendingResult = await pool.query(
+        `SELECT * FROM account_deletion_requests
+         WHERE user_id = $1
+           AND status = 'pending'
+         ORDER BY updated_at DESC, id DESC
+         LIMIT 1`,
+        [user.id]
+      );
+      const pending = pendingResult.rows[0] ?? null;
+      const expiresAt = new Date(currentNow.getTime() + Number(ttlMinutes) * 60 * 1000);
+
+      if (pending && pending.source !== source) {
+        throw codedError("Account deletion already pending", "account_deletion_already_pending");
+      }
+      if (pending) {
+        const refreshed = await pool.query(
+          `UPDATE account_deletion_requests
+           SET stage = 'requested',
+               expires_at = $2,
+               updated_at = $3
+           WHERE id = $1
+           RETURNING *`,
+          [pending.id, expiresAt, currentNow]
+        );
+        return mapAccountDeletionRequest(refreshed.rows[0]);
+      }
+
+      const inserted = await pool.query(
+        `INSERT INTO account_deletion_requests (user_id, source, stage, status, expires_at, created_at, updated_at)
+         VALUES ($1, $2, 'requested', 'pending', $3, $4, $4)
+         RETURNING *`,
+        [user.id, source, expiresAt, currentNow]
+      );
+      return mapAccountDeletionRequest(inserted.rows[0]);
+    },
+
+    async advanceAccountDeletion(telegramUserId, { source, now = new Date() } = {}) {
+      assertAccountDeletionSource(source);
+      const currentNow = normalizeNow(now);
+      const result = await pool.query(
+        `UPDATE account_deletion_requests
+         SET stage = 'awaiting_text',
+             updated_at = $3
+         FROM users
+         WHERE account_deletion_requests.user_id = users.id
+           AND users.telegram_user_id = $1
+           AND account_deletion_requests.source = $2
+           AND account_deletion_requests.expires_at > $3
+           AND account_deletion_requests.status = 'pending'
+           AND account_deletion_requests.stage = 'requested'
+         RETURNING account_deletion_requests.*`,
+        [telegramUserId, source, currentNow]
+      );
+      return mapAccountDeletionRequest(result.rows[0]);
+    },
+
+    async cancelAccountDeletion(telegramUserId, { source, now = new Date() } = {}) {
+      assertAccountDeletionSource(source);
+      const currentNow = normalizeNow(now);
+      const result = await pool.query(
+        `UPDATE account_deletion_requests
+         SET status = 'cancelled',
+             updated_at = $3
+         FROM users
+         WHERE account_deletion_requests.user_id = users.id
+           AND users.telegram_user_id = $1
+           AND account_deletion_requests.source = $2
+           AND account_deletion_requests.status = 'pending'
+         RETURNING account_deletion_requests.*`,
+        [telegramUserId, source, currentNow]
+      );
+      return result.rows[0] ? { status: "cancelled" } : null;
+    },
+
+    async getPendingAccountDeletion(telegramUserId, { source, now = new Date() } = {}) {
+      assertAccountDeletionSource(source);
+      const currentNow = normalizeNow(now);
+      const result = await pool.query(
+        `SELECT account_deletion_requests.*
+         FROM account_deletion_requests
+         JOIN users ON users.id = account_deletion_requests.user_id
+         WHERE users.telegram_user_id = $1
+           AND account_deletion_requests.source = $2
+           AND account_deletion_requests.status = 'pending'
+           AND account_deletion_requests.expires_at > $3
+         ORDER BY account_deletion_requests.updated_at DESC, account_deletion_requests.id DESC
+         LIMIT 1`,
+        [telegramUserId, source, currentNow]
+      );
+      return mapAccountDeletionRequest(result.rows[0]);
     },
 
     async syncUserTimezone(telegramUserId, timeZone) {
@@ -3378,6 +3479,46 @@ function plannedPaymentKey(planned, occurrenceDate) {
     return `${occurrenceKey.slice(0, 7)}:${occurrenceKey}`;
   }
   return occurrenceKey.slice(0, 7);
+}
+
+function assertAccountDeletionSource(source) {
+  if (!ACCOUNT_DELETION_SOURCES.has(source)) {
+    throw codedError("Invalid account deletion source", "invalid_account_deletion_source");
+  }
+}
+
+function codedError(message, code) {
+  return Object.assign(new Error(message), { code });
+}
+
+function normalizeNow(now) {
+  const value = now instanceof Date ? now : new Date(now);
+  if (Number.isNaN(value.getTime())) return new Date();
+  return value;
+}
+
+function mapAccountDeletionRequest(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    userId: row.user_id,
+    status: row.status,
+    stage: row.stage,
+    source: row.source,
+    expiresAt: row.expires_at instanceof Date ? row.expires_at : new Date(row.expires_at)
+  };
+}
+
+async function expireAccountDeletionRequests(pool, userId, now) {
+  await pool.query(
+    `UPDATE account_deletion_requests
+     SET status = 'expired',
+         updated_at = $2
+     WHERE user_id = $1
+       AND status = 'pending'
+       AND expires_at <= $2`,
+    [userId, now]
+  );
 }
 
 function logInvalidPlannedDueDate(item) {

@@ -53,6 +53,230 @@ test("creates feedback with durable user and source metadata", async () => {
   assert.deepEqual(queries[0].params, [7, 100, "Please make category editing easier", "new", "bot"]);
 });
 
+test("requestAccountDeletion expires old pending request before creating a new pending request", async () => {
+  const now = new Date("2026-07-09T10:00:00.000Z");
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    const query = String(sql);
+    queries.push({ sql: query, params });
+    if (query.includes("SELECT * FROM users WHERE telegram_user_id")) {
+      return { rows: [{ id: 42, telegram_user_id: "777" }] };
+    }
+    if (query.includes("UPDATE account_deletion_requests") && query.includes("status = 'expired'")) {
+      return { rowCount: 1, rows: [] };
+    }
+    if (query.includes("SELECT * FROM account_deletion_requests")) return { rows: [] };
+    if (query.includes("INSERT INTO account_deletion_requests")) {
+      return {
+        rows: [{
+          id: 9,
+          user_id: params[0],
+          source: params[1],
+          stage: "requested",
+          status: "pending",
+          expires_at: params[2]
+        }]
+      };
+    }
+    throw new Error(`Unexpected SQL: ${query}`);
+  }));
+
+  const request = await repo.requestAccountDeletion(777, { source: "miniapp", now });
+
+  assert.equal(request.status, "pending");
+  const expireIndex = queries.findIndex((query) => query.sql.includes("status = 'expired'"));
+  const insertIndex = queries.findIndex((query) => query.sql.includes("INSERT INTO account_deletion_requests"));
+  assert.ok(expireIndex > -1, "expected expired request cleanup");
+  assert.ok(expireIndex < insertIndex, "expected cleanup before insert");
+  assert.equal(queries[expireIndex].params[0], 42);
+  assert.equal(queries[expireIndex].params[1], now);
+});
+
+test("requestAccountDeletion creates requested stage with default 15 minute ttl", async () => {
+  const now = new Date("2026-07-09T10:00:00.000Z");
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    const query = String(sql);
+    queries.push({ sql: query, params });
+    if (query.includes("SELECT * FROM users WHERE telegram_user_id")) {
+      return { rows: [{ id: 42, telegram_user_id: "777" }] };
+    }
+    if (query.includes("UPDATE account_deletion_requests")) return { rowCount: 0, rows: [] };
+    if (query.includes("SELECT * FROM account_deletion_requests")) return { rows: [] };
+    if (query.includes("INSERT INTO account_deletion_requests")) {
+      return {
+        rows: [{
+          id: 1,
+          user_id: params[0],
+          source: params[1],
+          stage: "requested",
+          status: "pending",
+          expires_at: params[2],
+          created_at: params[3],
+          updated_at: params[3]
+        }]
+      };
+    }
+    throw new Error(`Unexpected SQL: ${query}`);
+  }));
+
+  const request = await repo.requestAccountDeletion(777, { source: "miniapp", now });
+
+  assert.equal(request.status, "pending");
+  assert.equal(request.stage, "requested");
+  assert.equal(request.source, "miniapp");
+  assert.equal(request.expiresAt.toISOString(), "2026-07-09T10:15:00.000Z");
+  const insertQuery = queries.find((query) => query.sql.includes("INSERT INTO account_deletion_requests"));
+  assert.match(insertQuery.sql, /'requested'/);
+  assert.equal(insertQuery.params[0], 42);
+  assert.equal(insertQuery.params[1], "miniapp");
+});
+
+test("requestAccountDeletion refreshes same-source pending request to requested stage", async () => {
+  const now = new Date("2026-07-09T10:00:00.000Z");
+  const repo = createRepository(fakePool((sql, params) => {
+    const query = String(sql);
+    if (query.includes("SELECT * FROM users WHERE telegram_user_id")) return { rows: [{ id: 42 }] };
+    if (query.includes("UPDATE account_deletion_requests") && query.includes("status = 'expired'")) return { rows: [] };
+    if (query.includes("SELECT * FROM account_deletion_requests")) {
+      return { rows: [{ id: 5, user_id: 42, source: "telegram", stage: "awaiting_text", status: "pending" }] };
+    }
+    if (query.includes("UPDATE account_deletion_requests") && query.includes("stage = 'requested'")) {
+      return {
+        rows: [{
+          id: params[0],
+          user_id: 42,
+          source: "telegram",
+          stage: "requested",
+          status: "pending",
+          expires_at: params[1]
+        }]
+      };
+    }
+    throw new Error(`Unexpected SQL: ${query}`);
+  }));
+
+  const request = await repo.requestAccountDeletion(777, { source: "telegram", now });
+
+  assert.equal(request.id, 5);
+  assert.equal(request.stage, "requested");
+  assert.equal(request.expiresAt.toISOString(), "2026-07-09T10:15:00.000Z");
+});
+
+test("requestAccountDeletion rejects a different-source active pending request", async () => {
+  const repo = createRepository(fakePool((sql) => {
+    const query = String(sql);
+    if (query.includes("SELECT * FROM users WHERE telegram_user_id")) return { rows: [{ id: 42 }] };
+    if (query.includes("UPDATE account_deletion_requests")) return { rows: [] };
+    if (query.includes("SELECT * FROM account_deletion_requests")) {
+      return { rows: [{ id: 5, user_id: 42, source: "telegram", stage: "requested", status: "pending" }] };
+    }
+    throw new Error(`Unexpected SQL: ${query}`);
+  }));
+
+  await assert.rejects(
+    () => repo.requestAccountDeletion(777, { source: "miniapp", now: new Date("2026-07-09T10:00:00.000Z") }),
+    { code: "account_deletion_already_pending" }
+  );
+});
+
+test("advanceAccountDeletion only advances same-source requested active request", async () => {
+  const now = new Date("2026-07-09T10:00:00.000Z");
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    const query = String(sql);
+    queries.push({ sql: query, params });
+    if (query.includes("UPDATE account_deletion_requests")) {
+      return {
+        rows: [{
+          id: 5,
+          user_id: 42,
+          source: params[1],
+          stage: "awaiting_text",
+          status: "pending",
+          expires_at: new Date("2026-07-09T10:15:00.000Z")
+        }]
+      };
+    }
+    throw new Error(`Unexpected SQL: ${query}`);
+  }));
+
+  const request = await repo.advanceAccountDeletion(777, { source: "telegram", now });
+
+  assert.equal(request.stage, "awaiting_text");
+  assert.equal(request.status, "pending");
+  assert.equal(request.source, "telegram");
+  assert.match(queries[0].sql, /stage = 'requested'/);
+  assert.match(queries[0].sql, /expires_at > \$3/);
+  assert.match(queries[0].sql, /users\.telegram_user_id = \$1/);
+  assert.equal(queries[0].params[0], 777);
+  assert.equal(queries[0].params[1], "telegram");
+  assert.equal(queries[0].params[2], now);
+});
+
+test("cancelAccountDeletion scopes by source and returns cancelled status", async () => {
+  const now = new Date("2026-07-09T10:00:00.000Z");
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    const query = String(sql);
+    queries.push({ sql: query, params });
+    if (query.includes("UPDATE account_deletion_requests")) {
+      return {
+        rows: [{
+          id: 5,
+          user_id: 42,
+          source: params[1],
+          stage: "requested",
+          status: "cancelled",
+          expires_at: new Date("2026-07-09T10:15:00.000Z")
+        }]
+      };
+    }
+    throw new Error(`Unexpected SQL: ${query}`);
+  }));
+
+  const result = await repo.cancelAccountDeletion(777, { source: "miniapp", now });
+
+  assert.deepEqual(result, { status: "cancelled" });
+  assert.match(queries[0].sql, /account_deletion_requests\.source = \$2/);
+  assert.match(queries[0].sql, /users\.telegram_user_id = \$1/);
+  assert.equal(queries[0].params[0], 777);
+  assert.equal(queries[0].params[1], "miniapp");
+  assert.equal(queries[0].params[2], now);
+});
+
+test("getPendingAccountDeletion returns null without active same-source request and an object when active", async () => {
+  const now = new Date("2026-07-09T10:00:00.000Z");
+  let active = false;
+  const repo = createRepository(fakePool((sql, params) => {
+    const query = String(sql);
+    if (query.includes("SELECT account_deletion_requests.*")) {
+      if (!active) return { rows: [] };
+      return {
+        rows: [{
+          id: 5,
+          user_id: 42,
+          source: params[1],
+          stage: "requested",
+          status: "pending",
+          expires_at: new Date("2026-07-09T10:15:00.000Z")
+        }]
+      };
+    }
+    throw new Error(`Unexpected SQL: ${query}`);
+  }));
+
+  assert.equal(await repo.getPendingAccountDeletion(777, { source: "telegram", now }), null);
+  active = true;
+  const request = await repo.getPendingAccountDeletion(777, { source: "telegram", now });
+
+  assert.deepEqual(Object.keys(request).sort(), ["expiresAt", "id", "source", "stage", "status", "userId"].sort());
+  assert.equal(request.status, "pending");
+  assert.equal(request.stage, "requested");
+  assert.equal(request.source, "telegram");
+  assert.equal(request.expiresAt.toISOString(), "2026-07-09T10:15:00.000Z");
+});
+
 test("app event logging failures do not reject user operations", async () => {
   const warnings = [];
   const originalWarn = console.warn;
