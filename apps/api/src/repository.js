@@ -3500,8 +3500,6 @@ function normalizeNow(now) {
 function mapAccountDeletionRequest(row) {
   if (!row) return null;
   return {
-    id: row.id,
-    userId: row.user_id,
     status: row.status,
     stage: row.stage,
     source: row.source,

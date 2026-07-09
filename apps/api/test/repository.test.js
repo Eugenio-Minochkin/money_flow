@@ -158,7 +158,6 @@ test("requestAccountDeletion refreshes same-source pending request to requested 
 
   const request = await repo.requestAccountDeletion(777, { source: "telegram", now });
 
-  assert.equal(request.id, 5);
   assert.equal(request.stage, "requested");
   assert.equal(request.expiresAt.toISOString(), "2026-07-09T10:15:00.000Z");
 });
@@ -270,7 +269,7 @@ test("getPendingAccountDeletion returns null without active same-source request 
   active = true;
   const request = await repo.getPendingAccountDeletion(777, { source: "telegram", now });
 
-  assert.deepEqual(Object.keys(request).sort(), ["expiresAt", "id", "source", "stage", "status", "userId"].sort());
+  assert.deepEqual(Object.keys(request).sort(), ["expiresAt", "source", "stage", "status"].sort());
   assert.equal(request.status, "pending");
   assert.equal(request.stage, "requested");
   assert.equal(request.source, "telegram");
