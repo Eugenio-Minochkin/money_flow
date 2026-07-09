@@ -39,18 +39,24 @@ Avoid treating this as logout, account deactivation, soft delete, anonymized pro
 Add repository methods:
 
 ```js
-requestAccountDeletion(telegramUserId, { source, stage, ttlMinutes, now })
+requestAccountDeletion(telegramUserId, { source, ttlMinutes, now })
 advanceAccountDeletionToTextConfirmation(telegramUserId, { source, now })
 cancelAccountDeletion(telegramUserId, { source, now })
 confirmAccountDeletion({ telegramUserId, source, confirmationText, now })
-hasPendingAccountDeletion(telegramUserId, { source, now })
+getPendingAccountDeletion(telegramUserId, { source, now })
 ```
 
 Names may be simplified during implementation, but the state machine and final deletion contract must stay separate and directly testable.
 
+`requestAccountDeletion(...)` must always create or return a request with `stage = 'requested'`. Callers must not be able to create an already-armed `awaiting_text` request.
+
 `confirmAccountDeletion({ telegramUserId, source, confirmationText, now })` must not accept `userId` from client code.
 
-Before creating a new pending request, expire old pending requests for the same user:
+The default account deletion TTL is 15 minutes and is enforced by repository methods. UI text may display the TTL, but UI is not the source of truth.
+
+Before creating a new pending request:
+
+1. Expire old pending requests for the same user:
 
 ```sql
 UPDATE account_deletion_requests
@@ -60,7 +66,23 @@ WHERE user_id = $1
   AND expires_at <= $now;
 ```
 
+2. If a non-expired pending request already exists for the same user and same source, reset it to `stage = 'requested'`, refresh `expires_at` and `updated_at`, and return it.
+3. If a non-expired pending request exists for another source, return controlled error `account_deletion_already_pending`. Do not silently replace cross-source requests.
+
 This controlled cleanup belongs in repository logic, not migration SQL. It prevents an already-expired pending row from blocking a new request through the partial unique index.
+
+`getPendingAccountDeletion(...)` should not return a blind boolean. It should return `null` when no active pending request exists, or a small state object such as:
+
+```js
+{
+  status: "pending",
+  stage: "awaiting_text",
+  source: "telegram",
+  expiresAt
+}
+```
+
+Telegram uses this to distinguish `requested`, `awaiting_text`, source mismatch, and expired states before message text can reach parser/LLM handling.
 
 ## Final Deletion Transaction
 
@@ -187,10 +209,20 @@ Expected API errors:
 - `400 account_deletion_confirmation_required`
 - `400 account_deletion_not_requested`
 - `400 account_deletion_not_armed`
+- `400 account_deletion_already_pending`
 - `400 invalid_account_deletion_source`
 - `410 account_deletion_expired`
 - `404 user_not_found`
 - `500 internal_error`
+
+Expected API success responses:
+
+```json
+{ "status": "pending", "stage": "requested", "expiresAt": "..." }
+{ "status": "pending", "stage": "awaiting_text", "expiresAt": "..." }
+{ "status": "cancelled" }
+{ "status": "deleted" }
+```
 
 Unexpected errors may use the existing `server.js` catch path, which returns `internal_error` and sends safe admin alert context with route and method only.
 
@@ -293,10 +325,13 @@ Cover:
 
 - `requestAccountDeletion` creates a pending request and does not delete the user.
 - Expired pending request is marked expired before creating a new pending request.
-- Repeated request replaces or expires the old pending request safely.
+- Repeated same-source request resets the existing pending request to `requested`, refreshes TTL, and does not delete data.
+- Repeated cross-source request returns `account_deletion_already_pending` and does not replace or advance the existing request.
+- `requestAccountDeletion` never creates `awaiting_text`.
 - `advanceAccountDeletionToTextConfirmation` moves stage to `awaiting_text`.
 - Source mismatch does not allow advance, cancel, or confirm.
 - A pending request for `source = 'miniapp'` cannot be confirmed through `source = 'telegram'`, and vice versa.
+- `getPendingAccountDeletion` returns stage/source/expiresAt details, not just boolean.
 - `confirmAccountDeletion` does not delete without a pending request.
 - `confirmAccountDeletion` does not delete while stage is still `requested`.
 - `confirmAccountDeletion` accepts only exact `DELETE`.
