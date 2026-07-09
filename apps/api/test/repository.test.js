@@ -291,6 +291,142 @@ test("getPendingAccountDeletion returns null without active same-source request 
   assert.equal(request.expiresAt.toISOString(), "2026-07-09T10:15:00.000Z");
 });
 
+test("confirmAccountDeletion hard-deletes user-owned data and writes safe audit in one transaction", async () => {
+  const now = new Date("2026-07-09T10:00:00.000Z");
+  const { repository, queries } = confirmAccountDeletionRepository({
+    request: { source: "miniapp", stage: "awaiting_text", expires_at: new Date("2026-07-09T10:15:00.000Z") }
+  });
+
+  const result = await repository.confirmAccountDeletion({
+    telegramUserId: 777,
+    source: "miniapp",
+    confirmationText: "DELETE",
+    now
+  });
+
+  assert.deepEqual(result, { status: "deleted" });
+  assert.equal(queries[0].sql, "BEGIN");
+  assert.equal(queries.at(-1).sql, "COMMIT");
+  assert.match(queries[1].sql, /SELECT \* FROM users WHERE telegram_user_id = \$1 FOR UPDATE/i);
+  assert.deepEqual(queries[1].params, [777]);
+  assert.match(queries[2].sql, /SELECT \* FROM account_deletion_requests/i);
+  assert.match(queries[2].sql, /FOR UPDATE/i);
+  const appEventsDeleteIndex = queries.findIndex((query) => /DELETE FROM app_events/i.test(query.sql));
+  const feedbackDeleteIndex = queries.findIndex((query) => /DELETE FROM feedback/i.test(query.sql));
+  const deliveriesDeleteIndex = queries.findIndex((query) => /DELETE FROM release_note_deliveries/i.test(query.sql));
+  const auditIndex = queries.findIndex((query) => /INSERT INTO app_events/i.test(query.sql));
+  const userDeleteIndex = queries.findIndex((query) => /DELETE FROM users/i.test(query.sql));
+  const commitIndex = queries.findIndex((query) => query.sql === "COMMIT");
+  assert.ok(appEventsDeleteIndex > 2, "expected app_events delete after locked selects");
+  assert.ok(feedbackDeleteIndex > appEventsDeleteIndex, "expected feedback delete after app_events delete");
+  assert.ok(deliveriesDeleteIndex > feedbackDeleteIndex, "expected release note deliveries delete before audit");
+  assert.ok(auditIndex > deliveriesDeleteIndex, "expected audit insert after user-owned deletes");
+  assert.ok(userDeleteIndex > auditIndex, "expected user delete after audit insert");
+  assert.ok(commitIndex > userDeleteIndex, "expected commit after user delete");
+  assert.match(queries[appEventsDeleteIndex].sql, /WHERE user_id = \$1/i);
+  assert.deepEqual(queries[appEventsDeleteIndex].params, [42]);
+  assert.match(queries[feedbackDeleteIndex].sql, /WHERE user_id = \$1 OR telegram_user_id = \$2/i);
+  assert.deepEqual(queries[feedbackDeleteIndex].params, [42, 777]);
+  assert.deepEqual(queries[deliveriesDeleteIndex].params, [42]);
+  const audit = queries[auditIndex];
+  assert.deepEqual(audit.params, [null, "account_deleted", { source: "miniapp" }, now]);
+  assert.deepEqual(Object.keys(audit.params[2]), ["source"]);
+});
+
+test("confirmAccountDeletion rolls back without deleting when pending request source mismatches", async () => {
+  const { repository, queries } = confirmAccountDeletionRepository({
+    request: { source: "telegram", stage: "awaiting_text", expires_at: new Date("2026-07-09T10:15:00.000Z") }
+  });
+
+  await assert.rejects(
+    () => repository.confirmAccountDeletion({
+      telegramUserId: 777,
+      source: "miniapp",
+      confirmationText: "DELETE",
+      now: new Date("2026-07-09T10:00:00.000Z")
+    }),
+    { code: "account_deletion_not_pending" }
+  );
+
+  assert.equal(queries.at(-1).sql, "ROLLBACK");
+  assert.equal(queries.some((query) => /^DELETE FROM /i.test(query.sql)), false);
+  assert.equal(queries.some((query) => query.sql === "COMMIT"), false);
+});
+
+test("confirmAccountDeletion rolls back without deleting when request is not awaiting text", async () => {
+  const { repository, queries } = confirmAccountDeletionRepository({
+    request: { source: "telegram", stage: "requested", expires_at: new Date("2026-07-09T10:15:00.000Z") }
+  });
+
+  await assert.rejects(
+    () => repository.confirmAccountDeletion({
+      telegramUserId: 777,
+      source: "telegram",
+      confirmationText: "DELETE",
+      now: new Date("2026-07-09T10:00:00.000Z")
+    }),
+    { code: "account_deletion_not_pending" }
+  );
+
+  assert.equal(queries.at(-1).sql, "ROLLBACK");
+  assert.equal(queries.some((query) => /^DELETE FROM /i.test(query.sql)), false);
+});
+
+test("confirmAccountDeletion rolls back without deleting when request is expired", async () => {
+  const { repository, queries } = confirmAccountDeletionRepository({
+    request: { source: "telegram", stage: "awaiting_text", expires_at: new Date("2026-07-09T09:59:59.000Z") }
+  });
+
+  await assert.rejects(
+    () => repository.confirmAccountDeletion({
+      telegramUserId: 777,
+      source: "telegram",
+      confirmationText: "DELETE",
+      now: new Date("2026-07-09T10:00:00.000Z")
+    }),
+    { code: "account_deletion_expired" }
+  );
+
+  assert.equal(queries.at(-1).sql, "ROLLBACK");
+  assert.equal(queries.some((query) => /^DELETE FROM /i.test(query.sql)), false);
+});
+
+test("confirmAccountDeletion rejects confirmation text other than exact DELETE", async () => {
+  const repository = createRepository({
+    async connect() {
+      throw new Error("should not start transaction");
+    }
+  });
+
+  await assert.rejects(
+    () => repository.confirmAccountDeletion({
+      telegramUserId: 777,
+      source: "telegram",
+      confirmationText: "delete",
+      now: new Date("2026-07-09T10:00:00.000Z")
+    }),
+    { code: "invalid_account_deletion_confirmation" }
+  );
+});
+
+test("confirmAccountDeletion rolls back when the audit insert fails", async () => {
+  const { repository, queries } = confirmAccountDeletionRepository({ failAudit: true });
+
+  await assert.rejects(
+    () => repository.confirmAccountDeletion({
+      telegramUserId: 777,
+      source: "telegram",
+      confirmationText: "DELETE",
+      now: new Date("2026-07-09T10:00:00.000Z")
+    }),
+    /audit failed/
+  );
+
+  assert.equal(queries.at(-1).sql, "ROLLBACK");
+  assert.equal(queries.some((query) => query.sql === "COMMIT"), false);
+  assert.equal(queries.some((query) => /DELETE FROM users/i.test(query.sql)), false);
+});
+
 test("app event logging failures do not reject user operations", async () => {
   const warnings = [];
   const originalWarn = console.warn;
@@ -4089,6 +4225,47 @@ function fakePool(handler) {
     async query(sql, params = []) {
       return handler(sql, params);
     }
+  };
+}
+
+function confirmAccountDeletionRepository({
+  request = { source: "telegram", stage: "awaiting_text", expires_at: new Date("2026-07-09T10:15:00.000Z") },
+  failAudit = false
+} = {}) {
+  const queries = [];
+  const client = {
+    async query(sql, params = []) {
+      const query = String(sql);
+      queries.push({ sql: query, params });
+      if (query === "BEGIN" || query === "COMMIT" || query === "ROLLBACK") return { rows: [] };
+      if (/SELECT \* FROM users WHERE telegram_user_id = \$1 FOR UPDATE/i.test(query)) {
+        return { rows: [{ id: 42, telegram_user_id: params[0] }] };
+      }
+      if (/SELECT \* FROM account_deletion_requests/i.test(query)) {
+        return {
+          rows: [{
+            id: 7,
+            user_id: 42,
+            status: "pending",
+            ...request
+          }]
+        };
+      }
+      if (/DELETE FROM app_events/i.test(query)) return { rowCount: 3, rows: [] };
+      if (/DELETE FROM feedback/i.test(query)) return { rowCount: 2, rows: [] };
+      if (/DELETE FROM release_note_deliveries/i.test(query)) return { rowCount: 1, rows: [] };
+      if (/INSERT INTO app_events/i.test(query)) {
+        if (failAudit) throw new Error("audit failed");
+        return { rowCount: 1, rows: [] };
+      }
+      if (/DELETE FROM users/i.test(query)) return { rowCount: 1, rows: [] };
+      throw new Error(`Unexpected SQL: ${query}`);
+    },
+    release() {}
+  };
+  return {
+    queries,
+    repository: createRepository({ async connect() { return client; } })
   };
 }
 
