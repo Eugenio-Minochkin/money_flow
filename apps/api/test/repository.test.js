@@ -427,6 +427,23 @@ test("confirmAccountDeletion rolls back when the audit insert fails", async () =
   assert.equal(queries.some((query) => /DELETE FROM users/i.test(query.sql)), false);
 });
 
+test("confirmAccountDeletion preserves original audit error when rollback fails", async () => {
+  const { repository, queries } = confirmAccountDeletionRepository({ failAudit: true, failRollback: true });
+
+  await assert.rejects(
+    () => repository.confirmAccountDeletion({
+      telegramUserId: 777,
+      source: "telegram",
+      confirmationText: "DELETE",
+      now: new Date("2026-07-09T10:00:00.000Z")
+    }),
+    /audit failed/
+  );
+
+  assert.equal(queries.at(-1).sql, "ROLLBACK");
+  assert.equal(queries.some((query) => query.sql === "COMMIT"), false);
+});
+
 test("app event logging failures do not reject user operations", async () => {
   const warnings = [];
   const originalWarn = console.warn;
@@ -4230,13 +4247,15 @@ function fakePool(handler) {
 
 function confirmAccountDeletionRepository({
   request = { source: "telegram", stage: "awaiting_text", expires_at: new Date("2026-07-09T10:15:00.000Z") },
-  failAudit = false
+  failAudit = false,
+  failRollback = false
 } = {}) {
   const queries = [];
   const client = {
     async query(sql, params = []) {
       const query = String(sql);
       queries.push({ sql: query, params });
+      if (query === "ROLLBACK" && failRollback) throw new Error("rollback failed");
       if (query === "BEGIN" || query === "COMMIT" || query === "ROLLBACK") return { rows: [] };
       if (/SELECT \* FROM users WHERE telegram_user_id = \$1 FOR UPDATE/i.test(query)) {
         return { rows: [{ id: 42, telegram_user_id: params[0] }] };

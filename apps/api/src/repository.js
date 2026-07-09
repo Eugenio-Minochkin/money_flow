@@ -243,7 +243,7 @@ export function createRepository(pool, options = {}) {
         await client.query("COMMIT");
         return { status: "deleted" };
       } catch (error) {
-        await client.query("ROLLBACK");
+        try { await client.query("ROLLBACK"); } catch { /* preserve original transaction error */ }
         throw error;
       } finally {
         client.release();
