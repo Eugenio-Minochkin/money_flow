@@ -189,6 +189,20 @@ test("account deletion endpoints pass only verified Telegram identity to reposit
   assert.doesNotMatch(confirmBlock, /\burl\.searchParams\.get\("(telegramUserId|userId|telegram_user_id|user_id)"\)/);
 });
 
+test("account deletion request and advance map null repository results to controlled errors", async () => {
+  const source = await readFile(new URL("../src/server.js", import.meta.url), "utf8");
+
+  assert.match(
+    endpointBlock(source, "/api/account-deletion/request"),
+    /if\s*\(!result\)\s*return sendJson\(res,\s*404,\s*\{\s*error:\s*"user_not_found"\s*\}\)/
+  );
+  assert.match(
+    endpointBlock(source, "/api/account-deletion/advance"),
+    /if\s*\(!result\)\s*return sendJson\(res,\s*409,\s*\{\s*error:\s*"account_deletion_not_pending"\s*\}\)/
+  );
+  assert.match(source, /"account_deletion_expired"[\s\S]*return 409/);
+});
+
 test("API security rejects invalid Telegram init data hash", () => {
   const botToken = "123456:test-token";
   const authDate = String(Math.floor(Date.now() / 1000));

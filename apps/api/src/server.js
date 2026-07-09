@@ -496,6 +496,7 @@ async function route(req, res) {
     if (auth.error) return sendJson(res, 400, { error: auth.error });
     try {
       const result = await repository.requestAccountDeletion(auth.telegramUserId, { source: "miniapp" });
+      if (!result) return sendJson(res, 404, { error: "user_not_found" });
       return sendJson(res, 200, accountDeletionStatusResponse(result));
     } catch (error) {
       const status = accountDeletionErrorStatus(error);
@@ -511,6 +512,7 @@ async function route(req, res) {
     if (auth.error) return sendJson(res, 400, { error: auth.error });
     try {
       const result = await repository.advanceAccountDeletion(auth.telegramUserId, { source: "miniapp" });
+      if (!result) return sendJson(res, 409, { error: "account_deletion_not_pending" });
       return sendJson(res, 200, accountDeletionStatusResponse(result));
     } catch (error) {
       const status = accountDeletionErrorStatus(error);
