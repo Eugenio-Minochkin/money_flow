@@ -1,3 +1,4 @@
+import { DEFAULT_TIMEZONE, localDateKey, localMonthKey, normalizeTimeZone } from "../../../packages/shared/src/time.js";
 import { writeCsv } from "./csvWriter.js";
 
 const EXPORT_HEADERS = [
@@ -13,6 +14,7 @@ const EXPORT_HEADERS = [
 ];
 
 const DEFAULT_PAGE_SIZE = 500;
+const DEFAULT_MAX_EXPORT_ROWS = 10000;
 const DEFAULT_COOLDOWN_MS = 2 * 60_000;
 
 export function createExpenseExportService({
@@ -20,7 +22,8 @@ export function createExpenseExportService({
   sendDocument,
   now = () => new Date(),
   cooldownMs = DEFAULT_COOLDOWN_MS,
-  pageSize = DEFAULT_PAGE_SIZE
+  pageSize = DEFAULT_PAGE_SIZE,
+  maxRows = DEFAULT_MAX_EXPORT_ROWS
 }) {
   const lastExportByUser = new Map();
 
@@ -37,24 +40,29 @@ export function createExpenseExportService({
       const rows = [];
       let offset = 0;
       while (true) {
+        const limit = Math.min(pageSize, maxRows + 1 - rows.length);
         const page = await repository.listExpenseExportRowsForTelegramUser(telegramUserId, {
           period: normalizedPeriod,
-          limit: pageSize,
+          limit,
           offset,
           now: currentTime
         });
         if (!page.length) break;
         rows.push(...page);
+        if (rows.length > maxRows) {
+          return { status: "too_large", message: exportText(language, "tooLarge") };
+        }
         offset += page.length;
-        if (page.length < pageSize) break;
+        if (page.length < limit) break;
       }
 
       if (!rows.length) {
         return { status: "empty", message: exportText(language, "empty") };
       }
 
-      const csv = writeCsv(rows.map(exportRow), EXPORT_HEADERS);
-      const filename = exportFilename(normalizedPeriod, currentTime);
+      const timeZone = rowTimeZone(rows[0]);
+      const csv = writeCsv(rows.map((row) => exportRow(row, timeZone)), EXPORT_HEADERS);
+      const filename = exportFilename(normalizedPeriod, currentTime, timeZone);
       await sendDocument({
         chatId,
         filename,
@@ -67,9 +75,9 @@ export function createExpenseExportService({
   };
 }
 
-function exportRow(row) {
+function exportRow(row, timeZone) {
   return {
-    date: dateOnly(row.spent_at),
+    date: dateOnly(row.spent_at, timeZone),
     amount: stableNumber(row.amount_original),
     currency: row.currency_original ?? "",
     amount_display: stableNumber(row.display?.amount),
@@ -77,13 +85,13 @@ function exportRow(row) {
     category: row.category_slug ?? "",
     note: row.description ?? "",
     type: "expense",
-    created_at: dateTime(row.created_at)
+    created_at: dateTime(row.created_at, timeZone)
   };
 }
 
-function exportFilename(period, date) {
+function exportFilename(period, date, timeZone) {
   if (period === "all") return "money-flow-export-all.csv";
-  return `money-flow-export-${date.toISOString().slice(0, 7)}.csv`;
+  return `money-flow-export-${localMonthKey(date, timeZone)}.csv`;
 }
 
 function exportText(language, key) {
@@ -99,15 +107,21 @@ function exportText(language, key) {
     caption: "Done, here is your CSV file.",
     sent: "Done, here is your CSV file."
   };
+  if (key === "tooLarge") {
+    return language === "ru"
+      ? "Экспорт слишком большой. Попробуйте выбрать меньший период."
+      : "Export is too large. Please choose a smaller period.";
+  }
   return (language === "ru" ? ru : en)[key];
 }
 
-function dateOnly(value) {
-  return toDate(value).toISOString().slice(0, 10);
+function dateOnly(value, timeZone) {
+  return localDateKey(toDate(value), timeZone);
 }
 
-function dateTime(value) {
-  return toDate(value).toISOString().slice(0, 19).replace("T", " ");
+function dateTime(value, timeZone) {
+  const parts = localDateTimeParts(toDate(value), timeZone);
+  return `${parts.year}-${pad2(parts.month)}-${pad2(parts.day)} ${pad2(parts.hour)}:${pad2(parts.minute)}:${pad2(parts.second)}`;
 }
 
 function toDate(value) {
@@ -119,4 +133,30 @@ function stableNumber(value) {
   const number = Number(value);
   if (!Number.isFinite(number)) return "";
   return String(number);
+}
+
+function rowTimeZone(row) {
+  return normalizeTimeZone(row?.user_timezone ?? row?.timezone, DEFAULT_TIMEZONE).timeZone;
+}
+
+function localDateTimeParts(date, timeZone) {
+  const values = {};
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23"
+  }).formatToParts(date);
+  for (const part of parts) {
+    if (part.type !== "literal") values[part.type] = Number(part.value);
+  }
+  return values;
+}
+
+function pad2(value) {
+  return String(value).padStart(2, "0");
 }

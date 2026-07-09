@@ -1824,6 +1824,7 @@ export function createRepository(pool, options = {}) {
       const period = options.period === "all" ? "all" : "month";
       const limit = Math.max(1, Math.min(Number(options.limit) || 500, 1000));
       const offset = Math.max(0, Number(options.offset) || 0);
+      const timezone = userTimezone(user);
       const baseSelect = `SELECT id, amount_original, currency_original, amount_base,
                 converted_amounts, description, category_slug, spent_at, created_at
          FROM expenses
@@ -1831,7 +1832,7 @@ export function createRepository(pool, options = {}) {
       let sql;
       let params;
       if (period === "month") {
-        const bounds = localPeriodBounds(options.now ?? new Date(), "month", userTimezone(user));
+        const bounds = localPeriodBounds(options.now ?? new Date(), "month", timezone);
         sql = `${baseSelect} AND spent_at >= $2 AND spent_at < $3
          ORDER BY spent_at ASC, id ASC
          LIMIT $4 OFFSET $5`;
@@ -1843,7 +1844,7 @@ export function createRepository(pool, options = {}) {
         params = [user.id, limit, offset];
       }
       const result = await pool.query(sql, params);
-      return result.rows.map((row) => withDisplay(row, user));
+      return result.rows.map((row) => ({ ...withDisplay(row, user), user_timezone: timezone }));
     },
 
     async topCategories(userId, now = new Date()) {

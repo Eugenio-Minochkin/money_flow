@@ -18,7 +18,8 @@ test("requestExport sends confirmed expense CSV with safe columns", async () => 
         display: { amount: 7.69, currency: "USD" },
         user_id: 7,
         telegram_user_id: 100,
-        initData: "secret"
+        initData: "secret",
+        user_timezone: "UTC"
       }]
     ]),
     sendDocument: async (document) => documents.push(document)
@@ -43,6 +44,32 @@ test("requestExport sends confirmed expense CSV with safe columns", async () => 
   assert.doesNotMatch(csv, /telegram_user_id|user_id|initData|secret|100/);
 });
 
+test("requestExport formats CSV dates and month filename in the user timezone", async () => {
+  const documents = [];
+  const service = createExpenseExportService({
+    now: () => new Date("2026-06-30T17:30:00Z"),
+    repository: pagedRepository([
+      [{
+        ...row("2026-07-07T17:30:00Z"),
+        created_at: "2026-07-07T17:31:05Z",
+        user_timezone: "Asia/Bangkok"
+      }]
+    ]),
+    sendDocument: async (document) => documents.push(document)
+  });
+
+  const result = await service.requestExport({
+    telegramUserId: 100,
+    chatId: 500,
+    period: "month",
+    language: "en"
+  });
+
+  assert.equal(result.status, "sent");
+  assert.equal(documents[0].filename, "money-flow-export-2026-07.csv");
+  assert.match(documents[0].content.toString("utf8"), /2026-07-08,10,THB,0.31,USD,food_cafe,coffee,expense,2026-07-08 00:31:05/);
+});
+
 test("requestExport paginates all rows and uses all-time filename", async () => {
   const seen = [];
   const documents = [];
@@ -65,6 +92,28 @@ test("requestExport paginates all rows and uses all-time filename", async () => 
   assert.equal(documents[0].filename, "money-flow-export-all.csv");
   assert.equal((documents[0].content.toString("utf8").match(/expense/g) ?? []).length, 2);
   assert.deepEqual(seen.map((call) => call.options.offset), [0, 1, 2]);
+});
+
+test("requestExport returns a localized error when export is too large", async () => {
+  const documents = [];
+  const seen = [];
+  const service = createExpenseExportService({
+    repository: {
+      async listExpenseExportRowsForTelegramUser(telegramUserId, options) {
+        seen.push({ telegramUserId, options });
+        return [row("2026-07-01T00:00:00Z"), row("2026-07-02T00:00:00Z")];
+      }
+    },
+    sendDocument: async (document) => documents.push(document),
+    maxRows: 1
+  });
+
+  const result = await service.requestExport({ telegramUserId: 100, chatId: 500, period: "month", language: "ru" });
+
+  assert.equal(result.status, "too_large");
+  assert.match(result.message, /слишком большой/i);
+  assert.equal(documents.length, 0);
+  assert.equal(seen[0].options.limit, 2);
 });
 
 test("requestExport returns empty without sending a document", async () => {
@@ -119,7 +168,8 @@ function row(spentAt) {
     category_slug: "food_cafe",
     spent_at: spentAt,
     created_at: spentAt,
-    display: { amount: 0.31, currency: "USD" }
+    display: { amount: 0.31, currency: "USD" },
+    user_timezone: "UTC"
   };
 }
 

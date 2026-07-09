@@ -1811,6 +1811,7 @@ test("listExpenseExportRowsForTelegramUser scopes exports by internal user id an
   assert.equal(rows[0].description, "кофе");
   assert.equal(rows[0].display.amount, 7.69);
   assert.equal(rows[0].display.currency, "USD");
+  assert.equal(rows[0].user_timezone, "Europe/Moscow");
 });
 
 test("listExpenseExportRowsForTelegramUser all-time export has no period bounds", async () => {
