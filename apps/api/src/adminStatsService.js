@@ -1,4 +1,5 @@
 import { createTechnicalStatsService, formatTechnicalStats } from "./technicalStatsService.js";
+import { createProductStatsService } from "./productStatsService.js";
 
 export function createAdminStatsService({
   pool,
@@ -7,11 +8,10 @@ export function createAdminStatsService({
   technicalStatsService
 }) {
   const technical = technicalStatsService ?? createTechnicalStatsService({ pool, now });
-  const product = productStatsService ?? technical;
+  const product = productStatsService ?? createProductStatsService({ pool, now });
   return {
     getAdminStats() {
-      if (typeof product.getProductStats === "function") return product.getProductStats();
-      return product.getTechnicalStats();
+      return product.getProductStats();
     },
     getTechnicalStats() {
       return technical.getTechnicalStats();

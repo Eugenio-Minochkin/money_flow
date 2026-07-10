@@ -1,10 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { createAdminStatsService, formatAdminStats } from "../src/adminStatsService.js";
+import { createTechnicalStatsService, formatTechnicalStats as formatAdminStats } from "../src/technicalStatsService.js";
 
 test("admin processing diagnostics expose avg and p95 totals plus key stages", async () => {
-  const service = createAdminStatsService({
+  const service = createTechnicalStatsService({
     pool: fakePool((sql) => {
       const query = String(sql);
       if (query.includes("information_schema.columns")) return { rows: [{ exists: true }] };
@@ -67,7 +67,7 @@ test("admin processing diagnostics expose avg and p95 totals plus key stages", a
     now: () => new Date("2026-06-24T10:00:00.000Z")
   });
 
-  const stats = await service.getAdminStats();
+  const stats = await service.getTechnicalStats();
 
   assert.equal(stats.today.avgTextProcessingSeconds, 1.2);
   assert.equal(stats.today.p95TextProcessingSeconds, 1.9);
