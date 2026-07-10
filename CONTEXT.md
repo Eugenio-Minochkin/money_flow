@@ -12,6 +12,34 @@ _Avoid_: Full account export, cashflow export, backup dump, accounting ledger
 A short user-authored message sent to Money Flow to report a problem, complaint, idea, or missing MVP capability. Feedback is not an expense, draft, support ticket, or accounting record.
 _Avoid_: Expense, ticket, task, admin note
 
+**Acquisition Source**:
+The normalized source attached to a user's first valid entry into Money Flow; it identifies how the user originally arrived without retaining a full link or promotional text.
+_Avoid_: Current navigation source, report link, arbitrary query parameter
+
+**First-touch Attribution**:
+The rule that a user's first Acquisition Source is permanent and later launches cannot replace it.
+_Avoid_: Last-touch attribution, multi-touch attribution, latest link
+
+**Product Activation**:
+The first successfully saved expense after a user's first valid start.
+_Avoid_: Draft creation, draft confirmation without a saved expense, onboarding completion
+
+**Meaningful Activity**:
+A deliberate user action that advances or uses Money Flow, excluding automatic reports, reminders, health checks, and background work.
+_Avoid_: Any emitted event, automatic delivery, bot start without a product action
+
+**Reachable User**:
+A current user who has not been marked as having blocked the bot and whom Money Flow may therefore attempt to contact.
+_Avoid_: Active user, all-time joined user, guaranteed-deliverable user
+
+**D1 / D7 Retention**:
+The share of a mature new-user cohort that performs Meaningful Activity in the defined day-one or day-seven return window after its first start.
+_Avoid_: Calendar-day retention, automatic report delivery, all users as denominator
+
+**Habit Started**:
+A mature new user saving expenses on at least two distinct local dates during the first seven elapsed days after first start.
+_Avoid_: Two expenses on one day, any two active events
+
 **Account Deletion / Удаление данных пользователя**:
 An irreversible user action that, after double confirmation, deletes user-owned Money Flow data: expenses, drafts, budgets, planned payments, reserves, settings, feedback, and user-owned analytics/events. After deletion, only one non-identifying `account_deleted` audit event remains with `user_id = NULL` and safe metadata without Telegram ID, internal user ID, financial data, feedback text, Telegram initData, or request body.
 _Avoid_: Account deactivation, logout, soft delete, anonymized profile, support cleanup, admin deletion

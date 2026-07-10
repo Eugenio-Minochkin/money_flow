@@ -2,6 +2,14 @@
 
 This is a lightweight log for product and domain decisions that future agents should preserve unless the user explicitly asks to revisit them.
 
+## 2026-07-10 - Product Analytics Uses First-touch And Derived Milestones
+
+Money Flow stores one normalized acquisition source on the user at the first valid `/start` or authenticated Mini App launch and never overwrites it. Internal report navigation is product activity, not acquisition. Legacy users are not backfilled; unresolved legacy source is reported as `unknown` until a valid new entry assigns source or `direct`.
+
+Activation is the first successfully saved expense. Funnel milestones, median activation time, D1/D7 retention, and early habit are derived from canonical events rather than stored as parallel `first_*` or returned-user events. New-user cohorts are anchored by `users.created_at` so a legacy user pressing `/start` after analytics ships cannot appear newly joined.
+
+Product event writes are best-effort and never fail the primary user flow. One-time onboarding milestones are protected by a partial unique event index; subsequent settings changes use distinct repeatable events. Account deletion remains privacy-minimal: it deletes user-owned events and retains exactly one anonymous `account_deleted` event whose metadata is only `{ source }`.
+
 ## 2026-06-29 - Agents Must Start From Fresh Master
 
 Codex and other agents must fetch and fast-forward local `master` from `origin/master` before changing files or creating a task branch. Task branches start from fresh `master` / `origin/master`, not stale local history. Agents must verify that repository instruction files such as `AGENTS.md` and required docs such as `docs/superpowers/` exist locally before editing. If sync fails, the branch has diverged, required instruction/docs files are missing, or the working tree is unexpectedly dirty, agents stop and ask the user. They must not create missing instruction files from scratch or use destructive recovery such as `git reset --hard`, `git stash`, branch deletion, or overwriting local files without explicit approval for that exact action.
