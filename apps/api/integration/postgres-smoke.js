@@ -25,7 +25,7 @@ test.before(async () => {
   const applied = await pool.query("SELECT filename FROM schema_migrations ORDER BY filename");
   assert.deepEqual(
     applied.rows.map((row) => row.filename),
-    ["001_initial.sql", "002_draft_confirm_flow.sql", "003_budget_topups.sql", "004_report_deliveries.sql", "005_exchange_rates.sql", "006_feedback.sql", "007_account_deletion.sql"]
+    ["001_initial.sql", "002_draft_confirm_flow.sql", "003_budget_topups.sql", "004_report_deliveries.sql", "005_exchange_rates.sql", "006_feedback.sql", "007_account_deletion.sql", "008_product_analytics.sql"]
   );
 });
 
@@ -54,6 +54,35 @@ test("creates a Telegram user with persisted defaults", async () => {
   assert.equal(stored.rows[0].timezone, "Asia/Bangkok");
   assert.equal(stored.rows[0].interface_language, "en");
   assert.equal(stored.rows[0].budget_advice_enabled, true);
+});
+
+test("enforces singleton onboarding events without limiting repeatable events", async () => {
+  const user = await createSmokeUser(990010);
+
+  assert.deepEqual(
+    await repo.recordAppEventOnce(user.id, "onboarding_started"),
+    { recorded: true }
+  );
+  assert.deepEqual(
+    await repo.recordAppEventOnce(user.id, "onboarding_started"),
+    { recorded: false }
+  );
+  assert.deepEqual(
+    await repo.recordAppEventOnce(user.id, "currency_selected", { currency: "THB" }),
+    { recorded: true }
+  );
+  await repo.recordAppEvent(user.id, "bot_started", { source: "direct" });
+  await repo.recordAppEvent(user.id, "bot_started", { source: "direct" });
+
+  const events = await pool.query(
+    "SELECT event_name, COUNT(*)::int AS count FROM app_events WHERE user_id = $1 GROUP BY event_name ORDER BY event_name",
+    [user.id]
+  );
+  assert.deepEqual(events.rows, [
+    { event_name: "bot_started", count: 2 },
+    { event_name: "currency_selected", count: 1 },
+    { event_name: "onboarding_started", count: 1 }
+  ]);
 });
 
 test("saves a confirmed draft expense and reads it back", async () => {
