@@ -1396,7 +1396,7 @@ select {
 }
 
 #settingsTab .settings-page {
-  padding: 18px 16px calc(118px + env(safe-area-inset-bottom));
+  padding: 18px 16px 0;
 }
 
 .settings-section {
@@ -1488,7 +1488,7 @@ select {
 
 @media (max-width: 480px) {
   #settingsTab .settings-page {
-    padding: 16px 14px calc(118px + env(safe-area-inset-bottom));
+    padding: 16px 14px 0;
   }
 }
 
@@ -1525,6 +1525,66 @@ button:disabled {
   color: var(--red);
   font-size: 13px;
   padding: 5px 9px;
+}
+
+.danger-button--solid {
+  border-color: var(--red);
+  background: var(--red);
+  color: #fff;
+}
+
+.danger-zone {
+  margin: 18px 16px calc(118px + env(safe-area-inset-bottom));
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.danger-zone__label,
+.danger-zone__warning {
+  color: var(--red);
+}
+
+.danger-zone__card,
+.delete-account-state {
+  gap: 10px;
+}
+
+.delete-account-state {
+  display: grid;
+}
+
+.delete-account-state label {
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.delete-account-state .button-row {
+  margin-top: 2px;
+}
+
+.delete-account-cancel {
+  justify-self: start;
+}
+
+.danger-zone--deleted {
+  gap: 8px;
+}
+
+.deleted-account-state {
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--ink);
+  padding: 14px;
+  line-height: 1.5;
+}
+
+@media (max-width: 480px) {
+  .danger-zone {
+    margin-right: 14px;
+    margin-left: 14px;
+  }
 }
 
 .button-row {

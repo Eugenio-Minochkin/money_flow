@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { translations } from "../src/i18n.js";
 
 const miniAppRoot = "apps/miniapp/src";
 
@@ -22,7 +23,120 @@ test("Mini App keeps app.js and styles.css cache-busters in sync", async () => {
   assert.ok(appVersion, "index.html should version app.js with a ?v= query");
   assert.ok(cssVersion, "index.html should version styles.css with a ?v= query");
   assert.equal(appVersion, cssVersion, "app.js and styles.css cache-busters must stay in sync");
+  assert.equal(appVersion, "20260710-account-deletion-v15");
   assert.notEqual(appVersion, "20260626-dashboard-v12", "app.js must not keep the stale dashboard-v12 cache-buster");
+});
+
+test("settings tab contains account deletion danger zone after settings form", async () => {
+  const html = await readFile(join(miniAppRoot, "index.html"), "utf8");
+  const settingsTabIndex = html.indexOf('id="settingsTab"');
+  const settingsTabEnd = html.indexOf("</main>", settingsTabIndex);
+  const formStart = html.indexOf('id="settingsForm"', settingsTabIndex);
+  const formEnd = html.indexOf("</form>", formStart);
+  const deleteSection = html.indexOf('id="deleteAccountSection"', settingsTabIndex);
+
+  assert.ok(settingsTabIndex >= 0);
+  assert.ok(formStart > settingsTabIndex);
+  assert.ok(formEnd > formStart);
+  assert.ok(deleteSection > formEnd, "danger zone must follow the settings form");
+  assert.ok(deleteSection < settingsTabEnd, "danger zone must remain inside the settings tab");
+});
+
+test("account deletion markup and app wire every required control", async () => {
+  const html = await readFile(join(miniAppRoot, "index.html"), "utf8");
+  const app = await readFile(join(miniAppRoot, "app.js"), "utf8");
+  const controlIds = [
+    "deleteAccountStartButton",
+    "deleteAccountAdvanceButton",
+    "deleteAccountCancelButton",
+    "deleteAccountConfirmInput",
+    "deleteAccountConfirmButton"
+  ];
+
+  for (const id of controlIds) {
+    assert.match(html, new RegExp(`id="${id}"`));
+    assert.match(app, new RegExp(`getElementById\\("${id}"\\)`));
+  }
+  for (const id of controlIds.filter((id) => id !== "deleteAccountConfirmInput")) {
+    assert.match(app, new RegExp(`${id}[^]*addEventListener\\("click"`));
+  }
+  assert.match(app, /deleteAccountConfirmInput[^]*addEventListener\("input"/);
+  assert.equal((html.match(/id="deleteAccountCancelButton"/g) ?? []).length, 1);
+  assert.match(app, /deleteAccountCancelButton\?\.classList\.toggle\("hidden", stage === "start"\)/);
+});
+
+test("account deletion app uses all four endpoints with object bodies", async () => {
+  const app = await readFile(join(miniAppRoot, "app.js"), "utf8");
+
+  for (const endpoint of ["request", "advance", "cancel", "confirm"]) {
+    assert.match(app, new RegExp(`/api/account-deletion/${endpoint}`));
+  }
+  assert.match(app, /body:\s*\{\s*source:\s*"miniapp"/);
+  assert.match(app, /\/api\/account-deletion\/confirm",\s*\{ confirmationText \}/);
+  assert.doesNotMatch(app, /body:\s*JSON\.stringify\(\{\s*source:\s*"miniapp"/);
+});
+
+test("account deletion has complete English and Russian visible copy", () => {
+  const keys = [
+    "settings.dangerZone",
+    "settings.deleteDataTitle",
+    "settings.deleteDataHint",
+    "settings.deleteDataButton",
+    "settings.deleteDataWarningTitle",
+    "settings.deleteDataWarningBody",
+    "settings.deleteDataUnderstand",
+    "settings.deleteDataTypeDelete",
+    "settings.deleteDataConfirmButton",
+    "settings.deleteDataCancel",
+    "settings.deleteDataDeletedTitle",
+    "settings.deleteDataDeletedBody",
+    "toast.accountDeletionRequested",
+    "toast.accountDeletionCancelled",
+    "toast.accountDeletionExpired",
+    "toast.accountDeletionFailed"
+  ];
+
+  for (const language of ["en", "ru"]) {
+    for (const key of keys) {
+      assert.equal(typeof translations[language][key], "string", `${language}.${key} must exist`);
+      assert.ok(translations[language][key].length > 0, `${language}.${key} must not be empty`);
+    }
+  }
+  assert.equal(translations.en["settings.deleteDataConfirmButton"], "Delete permanently");
+  assert.equal(translations.ru["settings.deleteDataConfirmButton"], "Удалить навсегда");
+  assert.match(translations.en["settings.deleteDataWarningTitle"], /cannot be undone/i);
+  assert.match(translations.en["settings.deleteDataWarningBody"], /Nothing is deleted[^]*DELETE/);
+  assert.equal(
+    translations.en["settings.deleteDataDeletedBody"],
+    "Your Money Flow data has been deleted. You can start again by opening the bot or Mini App."
+  );
+});
+
+test("account deletion enables permanent deletion only for exact DELETE", async () => {
+  const app = await readFile(join(miniAppRoot, "app.js"), "utf8");
+
+  assert.match(app, /deleteAccountConfirmButton\.disabled\s*=\s*deleteAccountConfirmInput\.value\s*!==\s*"DELETE"/);
+  assert.match(app, /if \(confirmationText !== "DELETE"\) return;/);
+});
+
+test("app guards data access and disables actions after account deletion", async () => {
+  const app = await readFile(join(miniAppRoot, "app.js"), "utf8");
+
+  assert.match(app, /let accountDeleted = false;/);
+  assert.match(app, /async function loadDashboard\(\)\s*{\s*if \(accountDeleted\) return;/);
+  assert.match(app, /async function loadHistory\(\)\s*{\s*if \(accountDeleted\) return;/);
+  assert.match(app, /async function saveSettings\(event\)\s*{[^]*?if \(accountDeleted\) return;[^]*?await api\("\/api\/settings"/);
+  assert.match(app, /async function requestExpenseExport\(period\)\s*{\s*if \(accountDeleted\) return;/);
+  assert.match(app, /function switchTab\(tab\)\s*{\s*if \(accountDeleted\) return;/);
+  assert.match(app, /function renderDeletedState\(\)[^]*accountDeleted = true;/);
+  assert.match(app, /\.bottom-tabs/);
+  assert.match(app, /#settingsForm input, #settingsForm select, #settingsForm button/);
+  assert.match(app, /#dashboardTab button, #planTab button, #historyTab button/);
+
+  const confirmStart = app.indexOf("async function confirmAccountDeletion()");
+  const confirmEnd = app.indexOf("function renderDeletedState()", confirmStart);
+  const confirmBlock = app.slice(confirmStart, confirmEnd);
+  assert.doesNotMatch(confirmBlock, /saveSettings|loadDashboard|loadHistory|renderSettings|requestExpenseExport/);
 });
 
 test("Mini App local module imports resolve to files", async () => {

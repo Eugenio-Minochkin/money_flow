@@ -63,6 +63,13 @@ let translate = createTranslator(currentLanguage);
 let currentTheme = "light";
 let reserveSettingsExpanded = false;
 let settingsBaseline = "";
+let accountDeleted = false;
+
+const deleteAccountStartButton = document.getElementById("deleteAccountStartButton");
+const deleteAccountAdvanceButton = document.getElementById("deleteAccountAdvanceButton");
+const deleteAccountCancelButton = document.getElementById("deleteAccountCancelButton");
+const deleteAccountConfirmInput = document.getElementById("deleteAccountConfirmInput");
+const deleteAccountConfirmButton = document.getElementById("deleteAccountConfirmButton");
 
 const CURRENCY_MARKS = {
   THB: `<svg viewBox="0 0 30 20" role="img" aria-label="THB"><rect width="30" height="20" fill="#c6283c"/><rect y="3.2" width="30" height="13.6" fill="#fff"/><rect y="5.6" width="30" height="8.8" fill="#243a8f"/></svg>`,
@@ -111,6 +118,13 @@ document.querySelector("#openHistoryInboxButton")?.addEventListener("click", () 
 document.querySelectorAll("[data-export-period]").forEach((button) => {
   button.addEventListener("click", () => requestExpenseExport(button.dataset.exportPeriod));
 });
+deleteAccountStartButton?.addEventListener("click", requestAccountDeletion);
+deleteAccountAdvanceButton?.addEventListener("click", advanceAccountDeletion);
+deleteAccountCancelButton?.addEventListener("click", cancelAccountDeletion);
+deleteAccountConfirmInput?.addEventListener("input", () => {
+  deleteAccountConfirmButton.disabled = deleteAccountConfirmInput.value !== "DELETE";
+});
+deleteAccountConfirmButton?.addEventListener("click", confirmAccountDeletion);
 document.querySelectorAll("[data-history-period]").forEach((chip) => {
   chip.addEventListener("click", () => selectHistoryPeriod(chip.dataset.historyPeriod));
 });
@@ -160,7 +174,9 @@ async function load() {
 }
 
 async function loadDashboard() {
+  if (accountDeleted) return;
   const data = await api(`/api/dashboard?telegramUserId=${encodeURIComponent(telegramUserId)}`);
+  if (accountDeleted) return;
   dashboardState = data;
   setBaseCurrency(data.user?.base_currency ?? data.snapshot?.baseCurrency ?? "THB");
   renderSettings(data.user);
@@ -315,6 +331,7 @@ function renderMonthlyForecast(snapshot, analytics) {
 }
 
 async function loadHistory() {
+  if (accountDeleted) return;
   const search = document.querySelector("#historySearch").value.trim();
   const params = new URLSearchParams({
     telegramUserId: String(telegramUserId),
@@ -330,6 +347,7 @@ async function loadHistory() {
     api(`/api/expenses?${params.toString()}`),
     api(`/api/drafts?telegramUserId=${encodeURIComponent(telegramUserId)}&status=inbox`)
   ]);
+  if (accountDeleted) return;
   historyState = data.expenses ?? [];
   inboxState = inbox.drafts ?? [];
   renderDashboardInboxDrafts(inboxState);
@@ -516,6 +534,7 @@ async function loadDraft(id, options = {}) {
 }
 
 function switchTab(tab) {
+  if (accountDeleted) return;
   document.querySelector("#dashboardTab").classList.toggle("hidden", tab !== "dashboard");
   document.querySelector("#planTab").classList.toggle("hidden", tab !== "plan");
   document.querySelector("#historyTab").classList.toggle("hidden", tab !== "history");
@@ -1328,6 +1347,7 @@ function editableItemFields(item, prefix, index) {
 
 async function saveSettings(event) {
   event.preventDefault();
+  if (accountDeleted) return;
   await api("/api/settings", {
     method: "PATCH",
     body: {
@@ -1351,6 +1371,7 @@ async function saveSettings(event) {
 }
 
 async function requestExpenseExport(period) {
+  if (accountDeleted) return;
   try {
     const result = await api("/api/exports/expenses", {
       method: "POST",
@@ -1360,6 +1381,109 @@ async function requestExpenseExport(period) {
   } catch (error) {
     showToast(error.body?.message ?? error.message);
   }
+}
+
+async function callAccountDeletion(endpoint, body = {}) {
+  return api(endpoint, {
+    method: "POST",
+    body: { source: "miniapp", ...body }
+  });
+}
+
+function setDeleteAccountStage(stage) {
+  document.getElementById("deleteAccountStartState")?.classList.toggle("hidden", stage !== "start");
+  document.getElementById("deleteAccountWarningState")?.classList.toggle("hidden", stage !== "warning");
+  document.getElementById("deleteAccountConfirmState")?.classList.toggle("hidden", stage !== "confirm");
+  deleteAccountCancelButton?.classList.toggle("hidden", stage === "start");
+  if (stage !== "confirm" && deleteAccountConfirmInput && deleteAccountConfirmButton) {
+    deleteAccountConfirmInput.value = "";
+    deleteAccountConfirmButton.disabled = true;
+  }
+}
+
+function showAccountDeletionError(error) {
+  const code = error.body?.error ?? error.message;
+  if (code === "account_deletion_expired") {
+    setDeleteAccountStage("start");
+    showToast(t("toast.accountDeletionExpired"));
+    return;
+  }
+  showToast(t("toast.accountDeletionFailed"));
+}
+
+async function requestAccountDeletion() {
+  if (accountDeleted) return;
+  try {
+    await callAccountDeletion("/api/account-deletion/request");
+    setDeleteAccountStage("warning");
+    showToast(t("toast.accountDeletionRequested"));
+  } catch (error) {
+    showAccountDeletionError(error);
+  }
+}
+
+async function advanceAccountDeletion() {
+  if (accountDeleted) return;
+  try {
+    await callAccountDeletion("/api/account-deletion/advance");
+    setDeleteAccountStage("confirm");
+    deleteAccountConfirmInput?.focus();
+  } catch (error) {
+    showAccountDeletionError(error);
+  }
+}
+
+async function cancelAccountDeletion() {
+  if (accountDeleted) return;
+  try {
+    await callAccountDeletion("/api/account-deletion/cancel");
+    setDeleteAccountStage("start");
+    showToast(t("toast.accountDeletionCancelled"));
+  } catch (error) {
+    showAccountDeletionError(error);
+  }
+}
+
+async function confirmAccountDeletion() {
+  if (accountDeleted) return;
+  const confirmationText = deleteAccountConfirmInput?.value ?? "";
+  if (confirmationText !== "DELETE") return;
+  try {
+    await callAccountDeletion("/api/account-deletion/confirm", { confirmationText });
+    renderDeletedState();
+  } catch (error) {
+    showAccountDeletionError(error);
+  }
+}
+
+function renderDeletedState() {
+  accountDeleted = true;
+  const bottomTabs = document.querySelector(".bottom-tabs");
+  bottomTabs?.querySelectorAll("button").forEach((button) => {
+    button.disabled = true;
+  });
+  bottomTabs?.classList.add("hidden");
+  bottomTabs?.setAttribute("aria-hidden", "true");
+  document.querySelectorAll("#settingsForm input, #settingsForm select, #settingsForm button").forEach((control) => {
+    control.disabled = true;
+  });
+  document.querySelectorAll("[data-export-period]").forEach((control) => {
+    control.disabled = true;
+  });
+  document.querySelectorAll("#dashboardTab button, #planTab button, #historyTab button, #dashboardTab input, #planTab input, #historyTab input, #dashboardTab select, #planTab select, #historyTab select").forEach((control) => {
+    control.disabled = true;
+  });
+
+  const section = document.getElementById("deleteAccountSection");
+  if (!section) return;
+  const title = document.createElement("h3");
+  title.className = "settings-section-title danger-zone__label";
+  title.textContent = t("settings.deleteDataDeletedTitle");
+  const body = document.createElement("p");
+  body.className = "deleted-account-state";
+  body.textContent = t("settings.deleteDataDeletedBody");
+  section.classList.add("danger-zone--deleted");
+  section.replaceChildren(title, body);
 }
 
 function detectTimezone() {

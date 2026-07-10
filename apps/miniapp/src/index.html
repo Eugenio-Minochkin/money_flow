@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Money Flow</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/styles.css?v=20260626-dashboard-v14" />
+    <link rel="stylesheet" href="/styles.css?v=20260710-account-deletion-v15" />
   </head>
   <body data-theme="light">
     <main class="shell">
@@ -357,6 +357,34 @@
             </div>
           </form>
 
+          <section class="settings-section danger-zone" id="deleteAccountSection">
+            <h3 class="settings-section-title danger-zone__label" data-i18n="settings.dangerZone">Danger zone</h3>
+            <div class="settings-card danger-zone__card">
+              <div class="delete-account-state" id="deleteAccountStartState">
+                <strong data-i18n="settings.deleteDataTitle">Delete data</strong>
+                <p class="settings-hint" data-i18n="settings.deleteDataHint">Permanently delete your Money Flow data.</p>
+                <div class="button-row">
+                  <button type="button" class="danger-button" id="deleteAccountStartButton" data-i18n="settings.deleteDataButton">Delete my data</button>
+                </div>
+              </div>
+              <div class="delete-account-state hidden" id="deleteAccountWarningState">
+                <strong class="danger-zone__warning" data-i18n="settings.deleteDataWarningTitle">This cannot be undone</strong>
+                <p class="settings-hint" data-i18n="settings.deleteDataWarningBody">Nothing is deleted until you confirm again.</p>
+                <div class="button-row">
+                  <button type="button" class="danger-button" id="deleteAccountAdvanceButton" data-i18n="settings.deleteDataUnderstand">I understand</button>
+                </div>
+              </div>
+              <div class="delete-account-state hidden" id="deleteAccountConfirmState">
+                <label for="deleteAccountConfirmInput" data-i18n="settings.deleteDataTypeDelete">Type DELETE to confirm</label>
+                <input id="deleteAccountConfirmInput" type="text" autocomplete="off" autocapitalize="characters" spellcheck="false" />
+                <div class="button-row">
+                  <button type="button" class="danger-button danger-button--solid" id="deleteAccountConfirmButton" data-i18n="settings.deleteDataConfirmButton" disabled>Delete permanently</button>
+                </div>
+              </div>
+              <button type="button" class="ghost-button delete-account-cancel hidden" id="deleteAccountCancelButton" data-i18n="settings.deleteDataCancel">Cancel</button>
+            </div>
+          </section>
+
         </section>
       </section>
     </main>
@@ -396,6 +424,6 @@
     </nav>
 
     <div class="toast hidden" id="toast" role="status" aria-live="polite"></div>
-    <script src="/app.js?v=20260626-dashboard-v14" type="module"></script>
+    <script src="/app.js?v=20260710-account-deletion-v15" type="module"></script>
   </body>
 </html>
