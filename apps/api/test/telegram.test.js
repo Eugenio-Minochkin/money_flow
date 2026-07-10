@@ -2761,6 +2761,7 @@ test("command menus include delete_me in English and Russian", () => {
 test("/delete_me restarts a pending Telegram account deletion request with warning buttons", async () => {
   const messages = [];
   const repo = fakeRepository();
+  repo.user = { ...repo.user, interface_language: "en" };
   repo.pendingAccountDeletion = { status: "pending", stage: "awaiting_text", source: "telegram" };
   const bot = createTelegramBot({
     token: "test-token",
@@ -2784,6 +2785,7 @@ test("/delete_me restarts a pending Telegram account deletion request with warni
 test("delete_me advance asks for exact DELETE and keeps cancel button", async () => {
   const messages = [];
   const repo = fakeRepository();
+  repo.user = { ...repo.user, interface_language: "en" };
   const bot = createTelegramBot({
     token: "test-token",
     miniAppUrl: "http://localhost:3000",
@@ -2804,6 +2806,7 @@ test("delete_me advance asks for exact DELETE and keeps cancel button", async ()
 test("delete_me cancel cancels Telegram account deletion without deleting data", async () => {
   const messages = [];
   const repo = fakeRepository();
+  repo.user = { ...repo.user, interface_language: "en" };
   const bot = createTelegramBot({
     token: "test-token",
     miniAppUrl: "http://localhost:3000",
@@ -2818,9 +2821,66 @@ test("delete_me cancel cancels Telegram account deletion without deleting data",
   assert.match(messages[0].text, /nothing was deleted/i);
 });
 
+test("Telegram account deletion warning and buttons are localized in Russian", async () => {
+  const messages = [];
+  const repo = fakeRepository();
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: repo,
+    telegramClient: captureTelegramClient(messages)
+  });
+
+  await bot.handleUpdate(textUpdate("/delete_me", 100));
+
+  assert.match(messages[0].text, /безвозвратно удалит/i);
+  assert.deepEqual(messages[0].replyMarkup.inline_keyboard[0], [
+    { text: "Продолжить", callback_data: "delete_me:advance" },
+    { text: "Отмена", callback_data: "delete_me:cancel" }
+  ]);
+});
+
+test("Telegram account deletion DELETE prompt is localized in Russian", async () => {
+  const messages = [];
+  const repo = fakeRepository();
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: repo,
+    telegramClient: captureTelegramClient(messages)
+  });
+
+  await bot.handleUpdate(callbackUpdate("delete_me:advance", 100));
+
+  assert.match(messages[0].text, /Введите DELETE/i);
+  assert.deepEqual(messages[0].replyMarkup.inline_keyboard, [[
+    { text: "Отмена", callback_data: "delete_me:cancel" }
+  ]]);
+});
+
+test("expired delete_me advance callback returns a localized restart message", async () => {
+  const messages = [];
+  const repo = fakeRepository();
+  repo.user = { ...repo.user, interface_language: "en" };
+  repo.advanceAccountDeletion = async () => null;
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: repo,
+    telegramClient: captureTelegramClient(messages)
+  });
+
+  await assert.doesNotReject(() => bot.handleUpdate(callbackUpdate("delete_me:advance", 100)));
+
+  assert.equal(repo.accountDeletionConfirms.length, 0);
+  assert.match(messages[0].text, /expired/i);
+  assert.match(messages[0].text, /\/delete_me/);
+});
+
 test("pending DELETE confirms before parser queue and final message has no app keyboard", async () => {
   const messages = [];
   const repo = fakeRepository();
+  repo.user = { ...repo.user, interface_language: "en" };
   const queueCalls = [];
   const parserCalls = [];
   repo.pendingAccountDeletion = { status: "pending", stage: "awaiting_text", source: "telegram" };
@@ -2865,6 +2925,7 @@ test("pending DELETE confirms before parser queue and final message has no app k
 test("expired pending DELETE confirmation is handled without parser or queue", async () => {
   const messages = [];
   const repo = fakeRepository();
+  repo.user = { ...repo.user, interface_language: "en" };
   const queueCalls = [];
   repo.pendingAccountDeletion = { status: "pending", stage: "awaiting_text", source: "telegram" };
   repo.confirmAccountDeletion = async (args) => {
@@ -2897,6 +2958,7 @@ test("expired pending DELETE confirmation is handled without parser or queue", a
 test("wrong text during pending deletion does not reach parser or queue", async () => {
   const messages = [];
   const repo = fakeRepository();
+  repo.user = { ...repo.user, interface_language: "en" };
   const queueCalls = [];
   const parserCalls = [];
   repo.pendingAccountDeletion = { status: "pending", stage: "awaiting_text", source: "telegram" };
@@ -2936,6 +2998,7 @@ for (const { name, message } of [
   test(`pending deletion blocks ${name} input before events, queue, parser, and transcription`, async () => {
     const messages = [];
     const repo = fakeRepository();
+    repo.user = { ...repo.user, interface_language: "en" };
     const queueCalls = [];
     const parserCalls = [];
     const transcriberCalls = [];
@@ -3038,6 +3101,7 @@ test("final deletion message failure is best-effort after Telegram account delet
 test("unrelated command during pending deletion sends guidance before command handling", async () => {
   const messages = [];
   const repo = fakeRepository();
+  repo.user = { ...repo.user, interface_language: "en" };
   const queueCalls = [];
   const parserCalls = [];
   let dashboardCalls = 0;

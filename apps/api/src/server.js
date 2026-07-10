@@ -249,10 +249,10 @@ function toIsoString(value) {
 
 function accountDeletionErrorStatus(error) {
   if (["invalid_account_deletion_source", "invalid_account_deletion_confirmation"].includes(error.code)) return 400;
+  if (error.code === "account_deletion_expired") return 410;
   if ([
     "account_deletion_already_pending",
-    "account_deletion_not_pending",
-    "account_deletion_expired"
+    "account_deletion_not_pending"
   ].includes(error.code)) return 409;
   if (error.code === "user_not_found") return 404;
   return null;

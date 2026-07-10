@@ -200,7 +200,7 @@ test("account deletion request and advance map null repository results to contro
     endpointBlock(source, "/api/account-deletion/advance"),
     /if\s*\(!result\)\s*return sendJson\(res,\s*409,\s*\{\s*error:\s*"account_deletion_not_pending"\s*\}\)/
   );
-  assert.match(source, /"account_deletion_expired"[\s\S]*return 409/);
+  assert.match(source, /error\.code === "account_deletion_expired"[\s\S]*return 410/);
 });
 
 test("API security rejects invalid Telegram init data hash", () => {
