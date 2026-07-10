@@ -99,7 +99,13 @@ export function createRepository(pool, options = {}) {
           input.source ?? "bot"
         ]
       );
-      return result.rows[0];
+      const feedback = result.rows[0] ?? null;
+      if (feedback && input.userId != null) {
+        await this.recordAppEvent(input.userId, "feedback_sent", {
+          source: input.source === "miniapp" ? "miniapp" : "telegram"
+        });
+      }
+      return feedback;
     },
 
     async upsertTelegramUser(profile) {
@@ -1002,6 +1008,7 @@ export function createRepository(pool, options = {}) {
       );
       const user = result.rows[0] ?? null;
       if (user) await invalidateDailyBudgetSnapshot(pool, user.id, now, resolveUserTimeZone(user));
+      if (user) await this.recordAppEvent(user.id, "budget_changed", { source: "settings" });
       return user;
     },
 
@@ -1069,6 +1076,15 @@ export function createRepository(pool, options = {}) {
       );
       const user = result.rows[0] ?? null;
       if (user) await invalidateDailyBudgetSnapshot(pool, user.id, now, resolveUserTimeZone(user));
+      if (user && baseCurrency !== currentUser.base_currency) {
+        await this.recordAppEvent(user.id, "currency_changed", {
+          currency: baseCurrency,
+          source: "settings"
+        });
+      }
+      if (user && Number(monthlyBudgetAmount) !== Number(currentUser.monthly_budget_amount)) {
+        await this.recordAppEvent(user.id, "budget_changed", { source: "settings" });
+      }
       return user;
     },
 
@@ -2103,6 +2119,7 @@ export function createRepository(pool, options = {}) {
       );
       const row = result.rows[0] ?? null;
       if (row) await invalidateDailyBudgetSnapshot(pool, user.id, now, resolveUserTimeZone(user));
+      if (row) await this.recordAppEvent(row.user_id ?? user.id, "planned_expense_created", { source: "miniapp" });
       return row;
     },
 
@@ -2150,6 +2167,7 @@ export function createRepository(pool, options = {}) {
       );
       const row = result.rows[0] ?? null;
       if (row) await invalidateDailyBudgetSnapshot(pool, user.id, now, resolveUserTimeZone(user));
+      if (row) await this.recordAppEvent(row.user_id ?? user.id, "planned_expense_updated", { source: "miniapp" });
       return row;
     },
 
@@ -2165,6 +2183,7 @@ export function createRepository(pool, options = {}) {
       );
       const row = result.rows[0] ?? null;
       if (row && user) await invalidateDailyBudgetSnapshot(pool, user.id, now, resolveUserTimeZone(user));
+      if (row && user) await this.recordAppEvent(row.user_id ?? user.id, "planned_expense_deleted", { source: "miniapp" });
       return row;
     },
 

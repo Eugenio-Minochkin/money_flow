@@ -125,6 +125,9 @@ test("creates feedback with durable user and source metadata", async () => {
   assert.match(queries[0].sql, /INSERT INTO feedback/);
   assert.match(queries[0].sql, /RETURNING \*/);
   assert.deepEqual(queries[0].params, [7, 100, "Please make category editing easier", "new", "bot"]);
+  const event = queries.find((query) => query.sql.includes("INSERT INTO app_events"));
+  assert.deepEqual(event.params, [7, "feedback_sent", JSON.stringify({ source: "telegram" })]);
+  assert.doesNotMatch(event.params[2], /category editing/i);
 });
 
 test("requestAccountDeletion expires old pending request before creating a new pending request", async () => {
@@ -623,6 +626,9 @@ test("updates monthly budget for a Telegram user", async () => {
   assert.equal(Number(user.monthly_budget_amount), 60000);
   assert.equal(queries[0].params[0], 60000);
   assert.equal(queries[0].params[1], 100);
+  const event = queries.find((query) => query.sql.includes("INSERT INTO app_events"));
+  assert.deepEqual(event.params, [1, "budget_changed", JSON.stringify({ source: "settings" })]);
+  assert.doesNotMatch(event.params[2], /60000/);
 });
 
 test("recreates an invalidated daily snapshot from the updated monthly budget", async () => {
@@ -733,7 +739,8 @@ test("updates user budget and display currency settings", async () => {
         rows: [{
           id: 7,
           telegram_user_id: "100",
-          base_currency: "THB",
+          monthly_budget_amount: "45000",
+          base_currency: "USD",
           budget_advice_enabled: true,
           daily_entry_reminder_enabled: true
         }]
@@ -786,6 +793,13 @@ test("updates user budget and display currency settings", async () => {
   assert.equal(updateQuery.params[8], "light");
   assert.equal(updateQuery.params[9], "America/New_York");
   assert.equal(updateQuery.params[10], 100);
+  const events = queries
+    .filter((query) => query.sql.includes("INSERT INTO app_events"))
+    .map((query) => [query.params[1], JSON.parse(query.params[2])]);
+  assert.deepEqual(events, [
+    ["currency_changed", { currency: "THB", source: "settings" }],
+    ["budget_changed", { source: "settings" }]
+  ]);
 });
 
 test("updateUserSettings preserves disabled budget advice when omitted", async () => {
@@ -2490,12 +2504,16 @@ test("returns top categories", async () => {
 });
 
 test("creates and lists planned expenses", async () => {
+  const queries = [];
   const repo = createRepository(fakePool((_sql, params) => {
-    if (String(_sql).startsWith("INSERT")) {
+    const query = String(_sql);
+    queries.push({ sql: query, params });
+    if (query.includes("INSERT INTO planned_expenses")) {
       assert.match(String(_sql), /VALUES \(\$1, \$2, \$3, \$4, \$5, \$6, \$7, \$8, \$9, \$10, \$11, \$12, true\)/);
       assert.equal(params.length, 12);
-      return { rows: [{ id: "5", description: params[4], recurrence: params[7] }] };
+      return { rows: [{ id: "5", user_id: "5", description: params[4], recurrence: params[7] }] };
     }
+    if (query.includes("INSERT INTO app_events")) return { rows: [], rowCount: 1 };
     return { rows: [{ id: "5", description: "ChatGPT", recurrence: "monthly" }] };
   }));
 
@@ -2513,6 +2531,47 @@ test("creates and lists planned expenses", async () => {
 
   assert.equal(created.description, "ChatGPT");
   assert.equal(planned[0].recurrence, "monthly");
+  const event = queries.find((query) => query.sql.includes("INSERT INTO app_events"));
+  assert.deepEqual(event.params, ["5", "planned_expense_created", JSON.stringify({ source: "miniapp" })]);
+  assert.doesNotMatch(event.params[2], /ChatGPT|20/);
+});
+
+test("records safe events after planned expense update and deactivation", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    const query = String(sql);
+    queries.push({ sql: query, params });
+    if (query.startsWith("SELECT * FROM users")) {
+      return { rows: [{ id: "7", telegram_user_id: "100", base_currency: "THB", timezone: "Asia/Bangkok" }] };
+    }
+    if (query.startsWith("UPDATE planned_expenses") && query.includes("amount =")) {
+      return { rows: [{ id: "5", user_id: "7", active: true }] };
+    }
+    if (query.startsWith("UPDATE planned_expenses") && query.includes("active = false")) {
+      return { rows: [{ id: "5", user_id: "7" }] };
+    }
+    return { rows: [], rowCount: query.includes("INSERT INTO app_events") ? 1 : 0 };
+  }));
+
+  await repo.updatePlannedExpense(100, 5, {
+    amount: 20,
+    currency: "THB",
+    description: "Private description",
+    category_slug: "subscriptions",
+    recurrence: "monthly",
+    due_day: 10,
+    active: true
+  });
+  await repo.deactivatePlannedExpense(100, 5);
+
+  const events = queries
+    .filter((query) => query.sql.includes("INSERT INTO app_events"))
+    .map((query) => [query.params[1], JSON.parse(query.params[2])]);
+  assert.deepEqual(events, [
+    ["planned_expense_updated", { source: "miniapp" }],
+    ["planned_expense_deleted", { source: "miniapp" }]
+  ]);
+  assert.doesNotMatch(JSON.stringify(events), /Private description|20/);
 });
 
 test("paying a planned expense creates an expense and records payment month", async () => {

@@ -194,6 +194,18 @@ test("account deletion endpoints require verified identity and trusted Mini App 
   }
 });
 
+test("dashboard route delegates verified launches to the Mini App launch service", async () => {
+  const source = await readFile(new URL("../src/server.js", import.meta.url), "utf8");
+  const block = endpointBlock(source, "/api/dashboard");
+
+  assert.match(source, /createMiniAppLaunchService/);
+  assert.match(block, /if \(auth\.verified\)/);
+  assert.match(block, /miniAppLaunchService\.loadDashboard/);
+  assert.match(block, /reportType: url\.searchParams\.get\("reportType"\)/);
+  assert.match(block, /reportKey: url\.searchParams\.get\("reportKey"\)/);
+  assert.match(block, /timeZone/);
+});
+
 test("account deletion endpoints pass only verified Telegram identity to repository", async () => {
   const source = await readFile(new URL("../src/server.js", import.meta.url), "utf8");
 
