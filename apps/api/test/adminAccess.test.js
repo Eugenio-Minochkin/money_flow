@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   isAdminTelegramId,
   normalizeBotCommand,
+  parseBotCommand,
   parseAdminTelegramIds
 } from "../src/adminAccess.js";
 
@@ -52,4 +53,20 @@ test("normalizes Telegram bot command suffixes only for valid commands", () => {
   assert.equal(normalizeBotCommand("coffee@shop 100"), "coffee@shop 100");
   assert.equal(normalizeBotCommand("/admin_stats extra"), "/admin_stats extra");
   assert.equal(normalizeBotCommand(null), null);
+});
+
+test("parses start payloads without changing other command normalization", () => {
+  assert.deepEqual(parseBotCommand(" /start Friend_Alex "), {
+    command: "/start",
+    payload: "Friend_Alex"
+  });
+  assert.deepEqual(parseBotCommand("/start@MoneyFlowBot expat_cm"), {
+    command: "/start",
+    payload: "expat_cm"
+  });
+  assert.deepEqual(parseBotCommand("/start"), { command: "/start", payload: null });
+  assert.deepEqual(parseBotCommand("coffee@shop 100"), {
+    command: "coffee@shop 100",
+    payload: null
+  });
 });

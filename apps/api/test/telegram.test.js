@@ -28,6 +28,51 @@ test("exports the Telegram message sender used by the production server", async 
   assert.deepEqual(result, { ok: true, result: { message_id: 42 } });
 });
 
+test("new /start records the entry before showing and recording onboarding", async () => {
+  const calls = [];
+  const repo = fakeRepository();
+  repo.user = {
+    id: 1,
+    interface_language: "en",
+    onboarding_step: "language",
+    is_new: true
+  };
+  repo.upsertTelegramUser = async (input) => {
+    calls.push({ name: "upsert", input });
+    return repo.user;
+  };
+  repo.recordAppEvent = async (userId, eventName, metadata) => {
+    calls.push({ name: `event:${eventName}`, userId, metadata });
+  };
+  repo.recordAppEventOnce = async (userId, eventName, metadata) => {
+    calls.push({ name: `once:${eventName}`, userId, metadata });
+    return { recorded: true };
+  };
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: repo,
+    telegramClient: {
+      async sendMessage(message) {
+        calls.push({ name: "sendMessage", message });
+        return { ok: true };
+      }
+    }
+  });
+
+  await bot.handleUpdate(textUpdate("/start Friend_Alex", 100));
+
+  assert.deepEqual(calls.map((call) => call.name), [
+    "upsert",
+    "event:bot_started",
+    "sendMessage",
+    "once:onboarding_started"
+  ]);
+  assert.equal(calls[0].input.acquisitionSource, "friend_alex");
+  assert.deepEqual(calls[1].metadata, { source: "friend_alex" });
+  assert.deepEqual(calls[3].metadata, { source: "telegram" });
+});
+
 test("text message creates a pending draft response", async () => {
   const calls = [];
   const originalLog = console.log;
@@ -1689,6 +1734,21 @@ test("new user chooses language and completes budget setup in one message before
   assert.equal(repo.settings.baseCurrency, "IDR");
   assert.equal(repo.settings.monthlyBudgetAmount, 20000);
   assert.equal(repo.currentMonthBudget, null);
+  assert.deepEqual(
+    repo.events.map((event) => event.eventName),
+    [
+      "bot_started",
+      "onboarding_started",
+      "currency_selected",
+      "budget_set",
+      "onboarding_completed"
+    ]
+  );
+  assert.deepEqual(repo.events.find((event) => event.eventName === "budget_set").metadata, {
+    currency: "IDR",
+    budgetType: "monthly"
+  });
+  assert.doesNotMatch(JSON.stringify(repo.events), /20000/);
 });
 
 test("Russian language callback sends Russian budget setup text", async () => {
@@ -3183,6 +3243,13 @@ function fakeRepository() {
     },
     async recordAppEvent(userId, eventName, metadata = {}) {
       this.events.push({ userId, eventName, metadata });
+    },
+    async recordAppEventOnce(userId, eventName, metadata = {}) {
+      if (!this.events.some((event) => event.userId === userId && event.eventName === eventName)) {
+        this.events.push({ userId, eventName, metadata });
+        return { recorded: true };
+      }
+      return { recorded: false };
     },
     async updateUserSettings(_telegramUserId, settings) {
       this.settings = { ...this.settings, ...settings };

@@ -3,7 +3,7 @@ import { parseExpenseText } from "../../../packages/shared/src/parser.js";
 import { parseBudgetTopupText } from "../../../packages/shared/src/budgetTopupParser.js";
 import { parsePlannedExpenseText } from "../../../packages/shared/src/plannedParser.js";
 import { normalizeCurrency, SUPPORTED_CURRENCY_CODES } from "../../../packages/shared/src/currencies.js";
-import { isAdminTelegramId, normalizeBotCommand } from "./adminAccess.js";
+import { isAdminTelegramId, parseBotCommand } from "./adminAccess.js";
 import {
   localDateKey as timezoneLocalDateKey,
   localHour as timezoneLocalHour,
@@ -17,6 +17,7 @@ import { createTelegramJobQueue } from "./telegramJobQueue.js";
 import { formatBudgetTopupDraft, formatBudgetTopupSuccess, formatBudgetTopupUndoSuccess, formatDraft, formatPlannedDraft, formatReserveClosedEvent, formatSavedSummary, formatTotals, formatWeeklyReport } from "./telegramFormat.js";
 import { appKeyboard, budgetTopupDraftKeyboard, budgetTopupMiniAppKeyboard, budgetTopupSuccessKeyboard, draftKeyboard, inboxDraftKeyboard, plannedDraftKeyboard, parseBudgetTopupCallback, parseDraftCallback, categorySlugFromCode } from "./telegramKeyboards.js";
 import { DraftCanceledError, CategoryRequiredError } from "./repository.js";
+import { normalizeAcquisitionSource } from "./productAnalytics.js";
 
 // budget_setup is the primary onboarding path; base_currency/monthly_budget/month_opening_spend are legacy fallback states.
 const ONBOARDING_STEPS = ["language", "budget_setup", "base_currency", "monthly_budget", "current_month_budget", "month_opening_spend"];
@@ -90,18 +91,25 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
   const from = message.from;
   if (!from) return { ok: true };
 
+  const rawText = message.text?.trim() || null;
+  const parsedCommand = parseBotCommand(rawText);
+  const commandText = parsedCommand.command;
+  const acquisitionSource = commandText === "/start"
+    ? normalizeAcquisitionSource(parsedCommand.payload)
+    : "direct";
+
   trace.start("user_context");
   const user = await repository.upsertTelegramUser({
     id: from.id,
     firstName: from.first_name,
-    username: from.username
+    username: from.username,
+    acquisitionSource,
+    acquisitionSeenAt: now()
   });
   trace.end("user_context");
   const language = user.interface_language ?? "en";
   const chatId = message.chat.id;
 
-  const rawText = message.text?.trim() || null;
-  const commandText = normalizeBotCommand(rawText);
   const feedbackCommand = parseFeedbackCommand(rawText);
   const hasVoice = Boolean(message.voice || message.audio);
   const hasPhoto = Boolean(message.photo?.length);
@@ -188,8 +196,11 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
     }
 
     if (commandText === "/start") {
+      await safeRecordAppEvent(repository, user.id, "bot_started", { source: acquisitionSource });
       if (isOnboardingActive(user)) {
-        return sendTelegramResponse(trace, () => sendMessage(token, chatId, onboardingPrompt(user), onboardingReplyMarkup(user), telegramClient));
+        const response = await sendTelegramResponse(trace, () => sendMessage(token, chatId, onboardingPrompt(user), onboardingReplyMarkup(user), telegramClient));
+        await safeRecordAppEventOnce(repository, user.id, "onboarding_started", { source: "telegram" });
+        return response;
       }
       return sendTelegramResponse(trace, () => sendMessage(token, chatId, botText(language, "start"), appKeyboard(miniAppUrl, from.id, language), telegramClient));
     }
@@ -760,6 +771,18 @@ async function safeRecordAppEvent(repository, userId, eventName, metadata = {}) 
   }
 }
 
+async function safeRecordAppEventOnce(repository, userId, eventName, metadata = {}) {
+  try {
+    await repository.recordAppEventOnce?.(userId, eventName, metadata);
+  } catch (error) {
+    console.warn("[events] record failed", {
+      userId: userId ?? null,
+      eventName,
+      message: error.message
+    });
+  }
+}
+
 async function safeNotifyAdminError(adminAlertService, error, context) {
   if (typeof adminAlertService?.notifyAdminError !== "function") return;
   try {
@@ -932,6 +955,7 @@ async function handleOnboardingMessage({ text, user, repository, token, chatId, 
       });
     }
     trace.end("db_save");
+    await safeRecordAppEventOnce(repository, user.id, "currency_selected", { currency });
     return sendTelegramResponse(trace, () => sendMessage(token, chatId, onboardingText(language, "monthlyBudget", { currency }), null, telegramClient));
   }
 
@@ -955,9 +979,14 @@ async function handleOnboardingMessage({ text, user, repository, token, chatId, 
         onboardingStep: nextStep
       });
     }
+    await safeRecordAppEventOnce(repository, user.id, "budget_set", {
+      currency: user.base_currency ?? "THB",
+      budgetType: "monthly"
+    });
     if (nextStep === "completed") {
       await repository.setOnboardingStep?.(telegramUserId, "completed");
       trace.end("db_save");
+      await safeRecordAppEventOnce(repository, user.id, "onboarding_completed");
       return sendTelegramResponse(trace, () => sendMessage(token, chatId, onboardingText(language, "complete"), appKeyboard(miniAppUrl, telegramUserId, language), telegramClient));
     }
     trace.end("db_save");
@@ -969,6 +998,7 @@ async function handleOnboardingMessage({ text, user, repository, token, chatId, 
       trace.start("db_save");
       await repository.setOnboardingStep?.(telegramUserId, "completed");
       trace.end("db_save");
+      await safeRecordAppEventOnce(repository, user.id, "onboarding_completed");
       return sendTelegramResponse(trace, () => sendMessage(token, chatId, onboardingText(language, "complete"), appKeyboard(miniAppUrl, telegramUserId, language), telegramClient));
     }
     const amount = parseSingleAmount(text, user.base_currency ?? "THB");
@@ -993,12 +1023,14 @@ async function handleOnboardingMessage({ text, user, repository, token, chatId, 
       await repository.setOnboardingStep?.(telegramUserId, "completed");
     }
     trace.end("db_save");
+    await safeRecordAppEventOnce(repository, user.id, "onboarding_completed");
     return sendTelegramResponse(trace, () => sendMessage(token, chatId, onboardingText(language, "complete"), appKeyboard(miniAppUrl, telegramUserId, language), telegramClient));
   }
 
   trace.start("db_save");
   await repository.setOnboardingStep?.(telegramUserId, "completed");
   trace.end("db_save");
+  await safeRecordAppEventOnce(repository, user.id, "onboarding_completed");
   return sendTelegramResponse(trace, () => sendMessage(token, chatId, onboardingText(language, "complete"), appKeyboard(miniAppUrl, telegramUserId, language), telegramClient));
 }
 
@@ -1052,8 +1084,14 @@ async function handleBudgetSetupMessage({ text, user, repository, token, chatId,
     await repository.updateOnboardingData?.(telegramUserId, {});
   }
   trace.end("db_save");
+  await safeRecordAppEventOnce(repository, user.id, "currency_selected", { currency });
+  await safeRecordAppEventOnce(repository, user.id, "budget_set", {
+    currency,
+    budgetType: "monthly"
+  });
 
   if (nextStep === "completed") {
+    await safeRecordAppEventOnce(repository, user.id, "onboarding_completed");
     return sendTelegramResponse(trace, () => sendMessage(token, chatId, onboardingText(language, "complete"), appKeyboard(miniAppUrl, telegramUserId, language), telegramClient));
   }
   return sendTelegramResponse(trace, () => sendMessage(token, chatId, onboardingText(language, "currentMonthBudget", { currency }), null, telegramClient));

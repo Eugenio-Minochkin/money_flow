@@ -28,3 +28,13 @@ export function normalizeBotCommand(text) {
   const match = trimmed.match(/^(\/[a-z0-9_]+)(?:@[a-z0-9_]+)?$/i);
   return match ? match[1] : trimmed;
 }
+
+export function parseBotCommand(text) {
+  if (text == null) return { command: null, payload: null };
+  const trimmed = String(text).trim();
+  const start = trimmed.match(/^\/start(?:@[a-z0-9_]+)?(?:\s+([^\s]+))?$/i);
+  if (start) {
+    return { command: "/start", payload: start[1] ?? null };
+  }
+  return { command: normalizeBotCommand(trimmed), payload: null };
+}
