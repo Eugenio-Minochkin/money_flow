@@ -1470,4 +1470,3 @@ gh pr create --draft --base master --head codex/account-deletion-design --title 
 ```
 
 Expected: draft PR URL.
-
