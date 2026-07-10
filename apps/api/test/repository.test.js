@@ -1519,14 +1519,41 @@ test("counts active users missing a release note delivery", async () => {
   assert.deepEqual(queries[0].params, [7]);
 });
 
-test("marks user as bot blocked", async () => {
+test("records blocked and unblocked events only for real state transitions", async () => {
+  const queries = [];
+  let transitions = 0;
   const repo = createRepository(fakePool((sql, params) => {
-    assert.match(String(sql), /UPDATE users SET bot_blocked = true/);
-    assert.deepEqual(params, [1]);
+    queries.push({ sql: String(sql), params });
+    if (String(sql).includes("UPDATE users")) {
+      transitions += 1;
+      return { rows: transitions === 1 ? [{ id: 1 }] : [] };
+    }
     return { rows: [] };
   }));
 
-  await repo.markUserBotBlocked(1);
+  assert.deepEqual(await repo.setUserBotBlocked(1, { blocked: true, source: "telegram_status", now: new Date("2026-07-10T10:00:00Z") }), { changed: true });
+  assert.deepEqual(await repo.setUserBotBlocked(1, { blocked: true, source: "telegram_status", now: new Date("2026-07-10T10:01:00Z") }), { changed: false });
+
+  assert.match(queries[0].sql, /bot_blocked IS DISTINCT FROM/);
+  assert.match(queries[0].sql, /bot_blocked_at/);
+  assert.deepEqual(queries[0].params, [1, true, new Date("2026-07-10T10:00:00Z")]);
+  assert.deepEqual(queries[1].params, [1, "bot_blocked", JSON.stringify({ source: "telegram_status" })]);
+  assert.equal(queries.filter((query) => query.sql.includes("INSERT INTO app_events")).length, 1);
+});
+
+test("clears blocked state by Telegram id without creating unknown users", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql: String(sql), params });
+    if (String(sql).includes("UPDATE users")) return { rows: [{ id: 7 }] };
+    return { rows: [] };
+  }));
+
+  assert.deepEqual(await repo.clearTelegramUserBotBlocked(100, { source: "incoming_message", now: new Date("2026-07-10T10:00:00Z") }), { changed: true });
+
+  assert.match(queries[0].sql, /telegram_user_id = \$1/);
+  assert.deepEqual(queries[0].params, [100, new Date("2026-07-10T10:00:00Z")]);
+  assert.deepEqual(queries[1].params, [7, "bot_unblocked", JSON.stringify({ source: "incoming_message" })]);
 });
 
 test("records app events with json metadata", async () => {

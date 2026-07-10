@@ -982,11 +982,70 @@ export function createRepository(pool, options = {}) {
       );
     },
 
-    async markUserBotBlocked(userId) {
-      await pool.query(
-        "UPDATE users SET bot_blocked = true WHERE id = $1",
-        [userId]
+    async setUserBotBlocked(userId, { blocked, source, now = new Date() }) {
+      const result = await pool.query(
+        `UPDATE users
+         SET bot_blocked = $2,
+             bot_blocked_at = CASE WHEN $2 THEN $3 ELSE bot_blocked_at END,
+             bot_unblocked_at = CASE WHEN $2 THEN bot_unblocked_at ELSE $3 END
+         WHERE id = $1
+           AND bot_blocked IS DISTINCT FROM $2
+         RETURNING id`,
+        [userId, Boolean(blocked), now]
       );
+      const transitionedUserId = result.rows[0]?.id;
+      if (!transitionedUserId) return { changed: false };
+      try {
+        await this.recordAppEvent(transitionedUserId, blocked ? "bot_blocked" : "bot_unblocked", { source });
+      } catch (error) {
+        console.error("[repository] failed to record bot availability transition", error);
+      }
+      return { changed: true };
+    },
+
+    async setTelegramUserBotBlocked(telegramUserId, { blocked, source, now = new Date() }) {
+      const result = await pool.query(
+        `UPDATE users
+         SET bot_blocked = $2,
+             bot_blocked_at = CASE WHEN $2 THEN $3 ELSE bot_blocked_at END,
+             bot_unblocked_at = CASE WHEN $2 THEN bot_unblocked_at ELSE $3 END
+         WHERE telegram_user_id = $1
+           AND bot_blocked IS DISTINCT FROM $2
+         RETURNING id`,
+        [telegramUserId, Boolean(blocked), now]
+      );
+      const userId = result.rows[0]?.id;
+      if (!userId) return { changed: false };
+      try {
+        await this.recordAppEvent(userId, blocked ? "bot_blocked" : "bot_unblocked", { source });
+      } catch (error) {
+        console.error("[repository] failed to record bot availability transition", error);
+      }
+      return { changed: true };
+    },
+
+    async clearTelegramUserBotBlocked(telegramUserId, { source, now = new Date() }) {
+      const result = await pool.query(
+        `UPDATE users
+         SET bot_blocked = false,
+             bot_unblocked_at = $2
+         WHERE telegram_user_id = $1
+           AND bot_blocked = true
+         RETURNING id`,
+        [telegramUserId, now]
+      );
+      const userId = result.rows[0]?.id;
+      if (!userId) return { changed: false };
+      try {
+        await this.recordAppEvent(userId, "bot_unblocked", { source });
+      } catch (error) {
+        console.error("[repository] failed to record bot availability transition", error);
+      }
+      return { changed: true };
+    },
+
+    async markUserBotBlocked(userId) {
+      return this.setUserBotBlocked(userId, { blocked: true, source: "telegram_error" });
     },
 
     async updateMonthlyBudget(telegramUserId, monthlyBudgetAmount, now = new Date()) {

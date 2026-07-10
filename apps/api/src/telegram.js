@@ -54,6 +54,11 @@ export function createTelegramBot({
     async handleUpdate(update) {
       const trace = createPerfTrace({ update, logger: perfLogger });
       let success = false;
+      if (update.my_chat_member) {
+        await handleMyChatMember({ update, repository, now });
+        trace.finish(true);
+        return { ok: true };
+      }
       if (update.message) {
         try {
           const result = await handleMessage({ update, repository, token, miniAppUrl, expenseParser, voiceTranscriber, telegramClient, adminTelegramIds, adminStatsService, releaseNotesService, adminAlertService, expenseExportService: sharedExpenseExportService, now, trace, telegramJobQueue, awaitQueuedJobs });
@@ -107,6 +112,10 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
     acquisitionSeenAt: now()
   });
   trace.end("user_context");
+  await repository.clearTelegramUserBotBlocked?.(from.id, {
+    source: "incoming_message",
+    now: now()
+  });
   const language = user.interface_language ?? "en";
   const chatId = message.chat.id;
 
@@ -769,6 +778,27 @@ async function safeRecordAppEvent(repository, userId, eventName, metadata = {}) 
       message: error.message
     });
   }
+}
+
+async function handleMyChatMember({ update, repository, now }) {
+  const memberUpdate = update.my_chat_member;
+  if (memberUpdate?.chat?.type !== "private") return;
+  const oldAvailable = telegramMemberIsAvailable(memberUpdate.old_chat_member);
+  const newAvailable = telegramMemberIsAvailable(memberUpdate.new_chat_member);
+  if (oldAvailable === newAvailable || newAvailable == null) return;
+  await repository.setTelegramUserBotBlocked?.(memberUpdate.chat.id, {
+    blocked: !newAvailable,
+    source: "telegram_status",
+    now: now()
+  });
+}
+
+function telegramMemberIsAvailable(member) {
+  const status = member?.status;
+  if (["creator", "administrator", "member"].includes(status)) return true;
+  if (status === "restricted") return member?.is_member !== false;
+  if (["left", "kicked"].includes(status)) return false;
+  return null;
 }
 
 async function safeRecordAppEventOnce(repository, userId, eventName, metadata = {}) {

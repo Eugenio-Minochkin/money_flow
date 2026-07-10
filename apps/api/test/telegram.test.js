@@ -41,6 +41,10 @@ test("new /start records the entry before showing and recording onboarding", asy
     calls.push({ name: "upsert", input });
     return repo.user;
   };
+  repo.clearTelegramUserBotBlocked = async (telegramUserId, options) => {
+    calls.push({ name: "clearBlocked", telegramUserId, options });
+    return { changed: false };
+  };
   repo.recordAppEvent = async (userId, eventName, metadata) => {
     calls.push({ name: `event:${eventName}`, userId, metadata });
   };
@@ -64,13 +68,50 @@ test("new /start records the entry before showing and recording onboarding", asy
 
   assert.deepEqual(calls.map((call) => call.name), [
     "upsert",
+    "clearBlocked",
     "event:bot_started",
     "sendMessage",
     "once:onboarding_started"
   ]);
   assert.equal(calls[0].input.acquisitionSource, "friend_alex");
-  assert.deepEqual(calls[1].metadata, { source: "friend_alex" });
-  assert.deepEqual(calls[3].metadata, { source: "telegram" });
+  assert.deepEqual(calls[2].metadata, { source: "friend_alex" });
+  assert.deepEqual(calls[4].metadata, { source: "telegram" });
+});
+
+test("private chat member transitions update blocked state without creating a user", async () => {
+  const calls = [];
+  const repo = fakeRepository();
+  repo.setTelegramUserBotBlocked = async (telegramUserId, options) => {
+    calls.push({ telegramUserId, options });
+    return { changed: true };
+  };
+  const bot = createTelegramBot({ token: "test-token", miniAppUrl: "http://localhost:3000", repository: repo });
+
+  await bot.handleUpdate({
+    my_chat_member: {
+      chat: { id: 100, type: "private" },
+      from: { id: 100 },
+      old_chat_member: { status: "member" },
+      new_chat_member: { status: "kicked" }
+    }
+  });
+
+  assert.deepEqual(calls, [{
+    telegramUserId: 100,
+    options: { blocked: true, source: "telegram_status", now: calls[0].options.now }
+  }]);
+});
+
+test("chat member updates ignore groups and repeated availability states", async () => {
+  const calls = [];
+  const repo = fakeRepository();
+  repo.setTelegramUserBotBlocked = async (...args) => calls.push(args);
+  const bot = createTelegramBot({ token: "test-token", miniAppUrl: "http://localhost:3000", repository: repo });
+
+  await bot.handleUpdate({ my_chat_member: { chat: { id: -100, type: "group" }, old_chat_member: { status: "member" }, new_chat_member: { status: "kicked" } } });
+  await bot.handleUpdate({ my_chat_member: { chat: { id: 100, type: "private" }, old_chat_member: { status: "member" }, new_chat_member: { status: "member" } } });
+
+  assert.deepEqual(calls, []);
 });
 
 test("text message creates a pending draft response", async () => {
