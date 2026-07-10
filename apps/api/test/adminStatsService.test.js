@@ -3,6 +3,19 @@ import assert from "node:assert/strict";
 
 import { createAdminStatsService, formatAdminStats } from "../src/adminStatsService.js";
 
+test("admin stats facade keeps product and technical dependencies isolated", async () => {
+  const calls = [];
+  const service = createAdminStatsService({
+    productStatsService: { async getProductStats() { calls.push("product"); return { kind: "product" }; } },
+    technicalStatsService: { async getTechnicalStats() { calls.push("technical"); return { kind: "technical" }; } }
+  });
+
+  assert.deepEqual(await service.getAdminStats(), { kind: "product" });
+  assert.deepEqual(calls, ["product"]);
+  assert.deepEqual(await service.getTechnicalStats(), { kind: "technical" });
+  assert.deepEqual(calls, ["product", "technical"]);
+});
+
 test("aggregates admin stats from app events and users", async () => {
   const queries = [];
   const service = createAdminStatsService({
@@ -317,8 +330,7 @@ test("formats admin stats as a compact Telegram message", () => {
   assert.match(text, /Shadow: 0\/0 disagreements/);
   assert.match(text, /Rejects: no_amount 2/);
   assert.match(text, /Shadow fields: amount 1/);
-  assert.match(text, /Last 30 days:/);
-  assert.match(text, /Confirm rate: -/);
+  assert.doesNotMatch(text, /Last 30 days:/);
   assert.match(text, /Avg stages text: queue - \/ tg - \/ llm - \/ db -/);
   assert.match(text, /Avg stages voice: queue - \/ dl - \/ asr - \/ llm - \/ tg - \/ db -/);
 });
