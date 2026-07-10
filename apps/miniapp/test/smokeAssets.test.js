@@ -108,7 +108,11 @@ test("account deletion has complete English and Russian visible copy", () => {
   assert.match(translations.en["settings.deleteDataWarningBody"], /Nothing is deleted[^]*DELETE/);
   assert.equal(
     translations.en["settings.deleteDataDeletedBody"],
-    "Your Money Flow data has been deleted. You can start again by opening the bot or Mini App."
+    "Your Money Flow data has been deleted. To start again, send /start to the bot."
+  );
+  assert.equal(
+    translations.ru["settings.deleteDataDeletedBody"],
+    "Ваши данные Money Flow удалены. Чтобы начать заново, отправьте боту команду /start."
   );
 });
 

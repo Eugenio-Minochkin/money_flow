@@ -64,6 +64,7 @@ The suite refuses to run unless `DATABASE_URL` points at localhost/127.0.0.1 and
 - planned payment create/list/pay/deactivate;
 - reserve create/read through dashboard state;
 - expense edit/delete and recalculated totals;
+- transactional account deletion, privacy-sensitive row cleanup, safe audit metadata, and global exchange-rate preservation;
 - timezone day/month boundaries with fixed dates.
 
 GitHub Actions runs the same command in the `Postgres integration smoke` job with a disposable `postgres` service and this test-only URL:

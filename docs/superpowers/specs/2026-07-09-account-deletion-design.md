@@ -272,7 +272,7 @@ UX:
 6. `Delete permanently / Удалить навсегда` is disabled until input is exactly `DELETE`.
 7. `Cancel` is available on both stages and calls `/api/account-deletion/cancel`.
 8. After success, render a static deleted state:
-   - `Your Money Flow data has been deleted. You can start again by opening the bot or Mini App.`
+   - `Your Money Flow data has been deleted. To start again, send /start to the bot.`
 9. Do not reload dashboard/history or old user data after success.
 
 After successful deletion:
