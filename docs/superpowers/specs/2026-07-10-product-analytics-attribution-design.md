@@ -163,8 +163,8 @@ For every valid `/start`:
 
 1. Parse and normalize the optional payload.
 2. Upsert the Telegram profile and first-touch source atomically.
-3. If this is a new user, show onboarding and best-effort insert `onboarding_started` once.
-4. Best-effort insert `bot_started` with the normalized launch source.
+3. Best-effort insert `bot_started` with the normalized launch source.
+4. If this is a new user, show onboarding and then best-effort insert `onboarding_started` once.
 5. Continue the existing onboarding state; do not create a second user or reset a completed flow.
 
 Repeated `/start` commands may create repeatable `bot_started` events but do not change first-touch attribution.
@@ -178,15 +178,15 @@ For an authenticated Mini App launch:
 1. Verify initData before any user creation or event write.
 2. Normalize the signed `start_param` as acquisition input.
 3. Upsert the same user/profile boundary used by `/start`.
-4. For a new user, set `onboarding_step = 'language'`, insert `onboarding_started` once, and return data that lets the Mini App begin onboarding instead of returning `404`.
-5. Insert repeatable `miniapp_opened` after successful authorization.
-6. Load dashboard/onboarding data and insert one `dashboard_opened` with the resolved source.
+4. Insert repeatable `miniapp_opened` after successful authorization.
+5. For a new user, set `onboarding_step = 'language'`, return data that lets the Mini App begin onboarding instead of returning `404`, and then insert `onboarding_started` once.
+6. Insert `dashboard_opened` only when the user is successfully shown the actual dashboard. Returning onboarding state alone does not create a dashboard event.
 
 Unsigned query parameters, expired initData, invalid signatures, and a Telegram-ID query parameter alone cannot create a user, assign attribution, or create product events.
 
 ## Dashboard and Report Launches
 
-An ordinary authenticated dashboard load creates one `dashboard_opened`. A report launch creates one `report_app_clicked` and one `dashboard_opened` with `source = report`; it must not also create `dashboard_opened.source = direct` for the same request.
+An ordinary authenticated load creates one `dashboard_opened` only when it successfully returns the actual dashboard rather than onboarding-only state. A report launch creates one `report_app_clicked` and one `dashboard_opened` with `source = report`; it must not also create `dashboard_opened.source = direct` for the same request.
 
 Report markers are not acquisition sources. Validate them as follows:
 
@@ -417,6 +417,8 @@ Every behavioral slice follows red-green-refactor. Required focused coverage inc
 - source normalization and concurrent first-touch upsert;
 - `/start` user creation, repeat launches, profile refresh, and immutable attribution;
 - valid `startapp` user creation at `language`, invalid/expired initData rejection, repeat launch deduplication, and unsigned parameter rejection;
+- entry-event ordering so `bot_started` or `miniapp_opened` precedes the new user's `onboarding_started`;
+- onboarding-only Mini App responses do not create `dashboard_opened`, while a successful dashboard or report launch creates exactly one;
 - one-time onboarding events and later settings events;
 - safe metadata for budget, feedback, reports, and account deletion;
 - report success/failure ordering, allowlisted error types, delivery-backed clicks, and unique-user CTR;
