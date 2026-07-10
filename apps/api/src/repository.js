@@ -16,6 +16,7 @@ import {
 } from "../../../packages/shared/src/time.js";
 import { calculateReserveState, validateReserveCapacity } from "../../../packages/shared/src/reserve.js";
 import { createExchangeRateProvider } from "./exchangeRates.js";
+import { normalizeAcquisitionSource, SINGLETON_ONBOARDING_EVENTS } from "./productAnalytics.js";
 import { buildReportMetrics } from "./reportService.js";
 
 const INVALID_PLANNED_DUE_DATE_LOGGED = Symbol("invalidPlannedDueDateLogged");
@@ -61,6 +62,29 @@ export function createRepository(pool, options = {}) {
       }
     },
 
+    async recordAppEventOnce(userId, eventName, metadata = {}) {
+      if (!SINGLETON_ONBOARDING_EVENTS.has(eventName)) {
+        throw codedError("Invalid singleton event", "invalid_singleton_event");
+      }
+      try {
+        const result = await pool.query(
+          `INSERT INTO app_events (user_id, event_name, metadata)
+           VALUES ($1, $2, $3::jsonb)
+           ON CONFLICT DO NOTHING
+           RETURNING id`,
+          [userId, eventName, JSON.stringify(metadata ?? {})]
+        );
+        return { recorded: (result.rowCount ?? result.rows?.length ?? 0) > 0 };
+      } catch (error) {
+        console.warn("[events] record failed", {
+          userId: userId ?? null,
+          eventName,
+          message: error.message
+        });
+        return { recorded: false };
+      }
+    },
+
     async createFeedback(input) {
       const message = String(input.message ?? "").trim();
       const result = await pool.query(
@@ -79,13 +103,31 @@ export function createRepository(pool, options = {}) {
     },
 
     async upsertTelegramUser(profile) {
+      const acquisitionSource = normalizeAcquisitionSource(profile.acquisitionSource);
+      const acquisitionSeenAt = profile.acquisitionSeenAt instanceof Date
+        ? profile.acquisitionSeenAt
+        : new Date(profile.acquisitionSeenAt ?? Date.now());
       const result = await pool.query(
-        `INSERT INTO users (telegram_user_id, first_name, username, monthly_budget_amount, onboarding_step)
-         VALUES ($1, $2, $3, $4, 'language')
+        `INSERT INTO users (
+           telegram_user_id, first_name, username, monthly_budget_amount, onboarding_step,
+           acquisition_source, acquisition_first_seen_at
+         )
+         VALUES ($1, $2, $3, $4, 'language', $5, $6)
          ON CONFLICT (telegram_user_id)
-         DO UPDATE SET first_name = EXCLUDED.first_name, username = EXCLUDED.username
+         DO UPDATE SET
+           first_name = COALESCE(EXCLUDED.first_name, users.first_name),
+           username = COALESCE(EXCLUDED.username, users.username),
+           acquisition_source = COALESCE(users.acquisition_source, EXCLUDED.acquisition_source),
+           acquisition_first_seen_at = COALESCE(users.acquisition_first_seen_at, EXCLUDED.acquisition_first_seen_at)
          RETURNING *, (xmax = 0) AS is_new`,
-        [profile.id, profile.firstName ?? null, profile.username ?? null, defaultMonthlyBudget]
+        [
+          profile.id,
+          profile.firstName ?? null,
+          profile.username ?? null,
+          defaultMonthlyBudget,
+          acquisitionSource,
+          acquisitionSeenAt
+        ]
       );
       return result.rows[0];
     },

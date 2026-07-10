@@ -19,6 +19,80 @@ test("records app events with JSON metadata", async () => {
   assert.deepEqual(queries[0].params, [7, "message_received", JSON.stringify({ inputType: "text" })]);
 });
 
+test("records singleton onboarding events with conflict protection", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql: String(sql), params });
+    return { rows: [], rowCount: 0 };
+  }));
+
+  const result = await repo.recordAppEventOnce(7, "onboarding_started", { source: "telegram" });
+
+  assert.deepEqual(result, { recorded: false });
+  assert.match(queries[0].sql, /INSERT INTO app_events/);
+  assert.match(queries[0].sql, /ON CONFLICT DO NOTHING/);
+  assert.deepEqual(queries[0].params, [7, "onboarding_started", JSON.stringify({ source: "telegram" })]);
+});
+
+test("rejects repeatable events through the singleton event boundary", async () => {
+  const repo = createRepository(fakePool(() => {
+    throw new Error("database should not be called");
+  }));
+
+  await assert.rejects(
+    () => repo.recordAppEventOnce(7, "bot_started"),
+    { code: "invalid_singleton_event" }
+  );
+});
+
+test("upsertTelegramUser assigns first-touch in one atomic statement", async () => {
+  const queries = [];
+  const seenAt = new Date("2026-07-10T10:00:00.000Z");
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql: String(sql), params });
+    return {
+      rows: [{
+        id: 7,
+        telegram_user_id: params[0],
+        acquisition_source: "friend_alex",
+        is_new: false
+      }]
+    };
+  }));
+
+  await repo.upsertTelegramUser({
+    id: 100,
+    firstName: "New name",
+    username: "new_user",
+    acquisitionSource: " EXPAT_CM ",
+    acquisitionSeenAt: seenAt
+  });
+
+  assert.equal(queries.length, 1);
+  assert.match(queries[0].sql, /INSERT INTO users/);
+  assert.match(queries[0].sql, /acquisition_source = COALESCE\(users\.acquisition_source, EXCLUDED\.acquisition_source\)/);
+  assert.match(queries[0].sql, /acquisition_first_seen_at = COALESCE\(users\.acquisition_first_seen_at, EXCLUDED\.acquisition_first_seen_at\)/);
+  assert.deepEqual(queries[0].params, [100, "New name", "new_user", 45000, "expat_cm", seenAt]);
+});
+
+test("concurrent first-touch upserts use only the same atomic statement", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool(async (sql, params) => {
+    queries.push({ sql: String(sql), params });
+    await Promise.resolve();
+    return { rows: [{ id: 7, telegram_user_id: params[0], is_new: false }] };
+  }));
+
+  await Promise.all([
+    repo.upsertTelegramUser({ id: 100, acquisitionSource: "friend_alex" }),
+    repo.upsertTelegramUser({ id: 100, acquisitionSource: "expat_cm" })
+  ]);
+
+  assert.equal(queries.length, 2);
+  assert.equal(queries.every(({ sql }) => /INSERT INTO users/.test(sql)), true);
+  assert.equal(queries.some(({ sql }) => /^SELECT/i.test(sql.trim())), false);
+});
+
 test("creates feedback with durable user and source metadata", async () => {
   const queries = [];
   const repo = createRepository(fakePool((sql, params) => {
@@ -476,7 +550,7 @@ test("creates new Telegram users at the language onboarding step", async () => {
   const user = await repo.upsertTelegramUser({ id: 100, firstName: "M", username: "mino" });
 
   assert.equal(user.onboarding_step, "language");
-  assert.match(queries[0].sql, /onboarding_step\)/);
+  assert.match(queries[0].sql, /onboarding_step/);
   assert.match(queries[0].sql, /'language'/);
 });
 
