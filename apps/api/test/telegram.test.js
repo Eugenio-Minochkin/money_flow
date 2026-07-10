@@ -2928,6 +2928,113 @@ test("wrong text during pending deletion does not reach parser or queue", async 
   assert.match(messages[0].text, /Type DELETE to confirm or \/delete_me to start again\./);
 });
 
+for (const { name, message } of [
+  { name: "voice", message: { voice: { file_id: "voice-file-id", mime_type: "audio/ogg" } } },
+  { name: "photo", message: { photo: [{ file_id: "photo-file-id" }] } },
+  { name: "unsupported", message: { sticker: { file_id: "sticker-file-id" } } }
+]) {
+  test(`pending deletion blocks ${name} input before events, queue, parser, and transcription`, async () => {
+    const messages = [];
+    const repo = fakeRepository();
+    const queueCalls = [];
+    const parserCalls = [];
+    const transcriberCalls = [];
+    repo.pendingAccountDeletion = { status: "pending", stage: "awaiting_text", source: "telegram" };
+    const bot = createTelegramBot({
+      token: "test-token",
+      miniAppUrl: "http://localhost:3000",
+      repository: repo,
+      telegramClient: captureTelegramClient(messages),
+      telegramJobQueue: {
+        enqueue(job) {
+          queueCalls.push(job);
+          return { accepted: true, status: "started", stats: {}, promise: Promise.resolve() };
+        }
+      },
+      expenseParser: {
+        async parse() {
+          parserCalls.push("parse");
+          return { expenses: [], notes: [] };
+        }
+      },
+      voiceTranscriber: {
+        isConfigured: () => true,
+        async transcribeTelegramVoice() {
+          transcriberCalls.push("transcribe");
+          return "coffee 70 baht";
+        }
+      }
+    });
+
+    await bot.handleUpdate({
+      message: {
+        chat: { id: 10 },
+        from: { id: 100, first_name: "M" },
+        ...message
+      }
+    });
+
+    assert.equal(repo.accountDeletionPendingLookups.length, 1);
+    assert.equal(repo.accountDeletionConfirms.length, 0);
+    assert.equal(queueCalls.length, 0);
+    assert.equal(parserCalls.length, 0);
+    assert.equal(transcriberCalls.length, 0);
+    assert.equal(repo.events.some((event) => event.eventName === "message_received"), false);
+    assert.match(messages[0].text, /Type DELETE to confirm or \/delete_me to start again\./);
+  });
+}
+
+test("final deletion message failure is best-effort after Telegram account deletion commits", async () => {
+  const repo = fakeRepository();
+  const queueCalls = [];
+  const parserCalls = [];
+  const adminAlerts = [];
+  const errorLogs = [];
+  const originalError = console.error;
+  repo.pendingAccountDeletion = { status: "pending", stage: "awaiting_text", source: "telegram" };
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: repo,
+    telegramClient: {
+      async sendMessage() {
+        throw new Error("send failed for chat 10 user 100 with DELETE");
+      }
+    },
+    telegramJobQueue: {
+      enqueue(job) {
+        queueCalls.push(job);
+        return { accepted: true, status: "started", stats: {}, promise: Promise.resolve() };
+      }
+    },
+    expenseParser: {
+      async parse() {
+        parserCalls.push("parse");
+        return { expenses: [], notes: [] };
+      }
+    },
+    adminAlertService: {
+      async notifyAdminError(...args) {
+        adminAlerts.push(args);
+      }
+    }
+  });
+
+  console.error = (...args) => errorLogs.push(args);
+  try {
+    await assert.doesNotReject(() => bot.handleUpdate(textUpdate("DELETE", 100)));
+  } finally {
+    console.error = originalError;
+  }
+
+  assert.equal(repo.accountDeletionConfirms.length, 1);
+  assert.equal(queueCalls.length, 0);
+  assert.equal(parserCalls.length, 0);
+  assert.equal(repo.events.some((event) => event.eventName === "message_received"), false);
+  assert.equal(adminAlerts.length, 0);
+  assert.deepEqual(errorLogs, [["[telegram] failed to send account deletion completion message"]]);
+});
+
 test("unrelated command during pending deletion sends guidance before command handling", async () => {
   const messages = [];
   const repo = fakeRepository();

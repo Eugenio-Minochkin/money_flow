@@ -105,22 +105,16 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
   const feedbackCommand = parseFeedbackCommand(rawText);
   const hasVoice = Boolean(message.voice || message.audio);
   const hasPhoto = Boolean(message.photo?.length);
+  const restartsAccountDeletion = commandText === "/delete_me" && !hasVoice && !hasPhoto;
 
-  if (!rawText && !hasVoice && !hasPhoto) {
-    return sendTelegramResponse(trace, () => sendMessage(token, chatId, botText(language, "unsupported"), null, telegramClient));
-  }
-  if (hasVoice && !rawText && !voiceTranscriber?.isConfigured()) {
-    return sendTelegramResponse(trace, () => sendMessage(token, chatId, botText(language, "unsupported"), null, telegramClient));
-  }
-
-  if (rawText && !hasVoice && commandText !== "/delete_me") {
+  if (!restartsAccountDeletion) {
     const currentNow = now();
     const pendingDeletion = await repository.getPendingAccountDeletion?.(from.id, {
       source: ACCOUNT_DELETION_SOURCE_TELEGRAM,
       now: currentNow
     });
     if (pendingDeletion?.stage === "awaiting_text") {
-      if (rawText === "DELETE") {
+      if (rawText === "DELETE" && !hasVoice && !hasPhoto) {
         try {
           await repository.confirmAccountDeletion({
             telegramUserId: from.id,
@@ -134,10 +128,24 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
           }
           throw error;
         }
-        return sendTelegramResponse(trace, () => sendMessage(token, chatId, accountDeletionText("deleted"), null, telegramClient));
+        return sendTelegramResponse(trace, async () => {
+          try {
+            return await sendMessage(token, chatId, accountDeletionText("deleted"), null, telegramClient);
+          } catch {
+            console.error("[telegram] failed to send account deletion completion message");
+            return { ok: true };
+          }
+        });
       }
       return sendTelegramResponse(trace, () => sendMessage(token, chatId, accountDeletionText("retry"), null, telegramClient));
     }
+  }
+
+  if (!rawText && !hasVoice && !hasPhoto) {
+    return sendTelegramResponse(trace, () => sendMessage(token, chatId, botText(language, "unsupported"), null, telegramClient));
+  }
+  if (hasVoice && !rawText && !voiceTranscriber?.isConfigured()) {
+    return sendTelegramResponse(trace, () => sendMessage(token, chatId, botText(language, "unsupported"), null, telegramClient));
   }
 
   if (rawText && !hasVoice) {
