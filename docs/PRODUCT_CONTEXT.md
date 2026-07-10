@@ -29,3 +29,11 @@ The product should feel simple, fast, and light: a user records expenses in the 
 - Evening empty-day reminders should feel gentle and easy to dismiss, with a clear opt-out.
 - Timezone settings should stay lightweight: show the current timezone, allow auto-detect, and offer a short common list.
 - Reports should feel calm and readable: meaningful sections, exact sums, no shame, and no double-counting.
+
+## Product Analytics Boundaries
+
+- Product analytics measures acquisition, onboarding, first `expense_saved`, meaningful activity, retention, habit, report engagement, and current reachability.
+- New-user cohorts are anchored to `users.created_at`; a legacy user returning after analytics launch is not treated as newly joined.
+- First-touch source is write-once. There is no attribution backfill for legacy accounts; a later valid entry may fill a missing source once.
+- Deleted users cannot reconstruct acquisition or funnel history because personal event ownership is removed. Only an anonymous deletion count remains.
+- Admin product and technical reports are operational tools, not end-user dashboard features.

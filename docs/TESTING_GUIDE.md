@@ -82,3 +82,11 @@ npm.cmd test
 ```
 
 For UI work, also use the local acceptance sandbox described in `README.md` and check the affected dashboard/settings/planned-payment flows on narrow mobile widths.
+
+## Product Analytics Contracts
+
+- Test new-user funnels with `users.created_at` as the cohort anchor and require entry events at or after account creation.
+- Test activation against the first `expense_saved`, including event ordering after `bot_started` or `miniapp_opened`.
+- Cover mature D1 `[24h, 48h)` and D7 `[6d, 8d)` denominators, meaningful return activity, and empty-cohort rendering.
+- Cover Habit grouping with the current `users.timezone`, report-click delivery validation, unique-user CTR, anonymous deletion counts, and missing legacy attribution.
+- `## User Release Notes` contains only user-visible changes; exclude internal SQL, index implementation, and event taxonomy details.

@@ -42,6 +42,24 @@ test('GitHub Actions runs Postgres smoke integration tests against a disposable 
   assert.doesNotMatch(workflow, /secrets\.[A-Z_]*DATABASE/);
 });
 
+test('durable docs preserve product analytics cohort and privacy contracts', () => {
+  const domain = readText('docs/DOMAIN_RULES.md');
+  const product = readText('docs/PRODUCT_CONTEXT.md');
+  const testing = readText('docs/TESTING_GUIDE.md');
+
+  for (const text of [domain, product, testing]) {
+    assert.match(text, /users\.created_at/);
+    assert.match(text, /expense_saved/);
+  }
+  assert.match(domain, /\[24h, 48h\)/);
+  assert.match(domain, /\[6d, 8d\)/);
+  assert.match(domain, /current `users\.timezone`/);
+  assert.match(product, /no attribution backfill/i);
+  assert.match(product, /deleted users.*cannot.*reconstruct/i);
+  assert.match(testing, /User Release Notes.*user-visible/i);
+  assert.match(testing, /exclude.*SQL.*index.*taxonomy/i);
+});
+
 test('production compose passes configured admin Telegram ids to the API', () => {
   const compose = readText('compose.prod.yml');
 
