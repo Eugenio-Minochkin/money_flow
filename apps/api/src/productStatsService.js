@@ -45,6 +45,74 @@ export function createProductStatsService({ pool, now = () => new Date() }) {
   };
 }
 
+export function formatProductStatsSections(stats) {
+  const funnel = stats.funnel ?? {};
+  const started = number(funnel.started);
+  return [
+    { heading: "Product stats", rows: [] },
+    { heading: "User base", rows: [
+      `Reachable now: ${number(stats.userBase?.reachableNow)}`,
+      `Blocked now: ${number(stats.userBase?.blockedNow)}`,
+      `Deleted all time: ${number(stats.userBase?.deletedAllTime)}`,
+      `All time joined: ${number(stats.userBase?.allTimeJoined)}`
+    ] },
+    periodSection("Today", stats.periods?.today),
+    periodSection("Last 3 days", stats.periods?.last3Days),
+    periodSection("Last 7 days", stats.periods?.last7Days, "activeTwoDays"),
+    periodSection("Last 30 days", stats.periods?.last30Days, "activeThreeDays"),
+    { heading: "Activation", rows: [
+      funnelRow("Started", started, started),
+      funnelRow("Onboarding started", funnel.onboardingStarted, started),
+      funnelRow("Onboarding completed", funnel.onboardingCompleted, started),
+      funnelRow("First draft created", funnel.firstDraftCreated, started),
+      funnelRow("First expense saved", funnel.firstExpenseSaved, started),
+      funnelRow("Dashboard opened", funnel.dashboardOpened, started),
+      `Median time to first expense: ${stats.activation?.medianHours == null ? "—" : `${formatNumber(stats.activation.medianHours)}h`}`,
+      `Habit started in first 7d: ${formatRatio(stats.habit?.rate)} (${number(stats.habit?.started)}/${number(stats.habit?.eligible)})`
+    ] },
+    { heading: "Retention", rows: [
+      `D1: ${formatRatio(stats.retention?.d1Rate)} (${number(stats.retention?.d1Returned)}/${number(stats.retention?.d1Eligible)})`,
+      `D7: ${formatRatio(stats.retention?.d7Rate)} (${number(stats.retention?.d7Returned)}/${number(stats.retention?.d7Eligible)})`
+    ] },
+    { heading: "Reports", rows: [
+      `Delivered users: ${number(stats.reports?.deliveredUsers)}`,
+      `Clicked users: ${number(stats.reports?.clickedUsers)}`,
+      `Failed attempts: ${number(stats.reports?.failedAttempts)}`,
+      `CTR: ${formatRatio(stats.reports?.ctr)}`
+    ] },
+    { heading: "Sources", rows: (stats.sources ?? []).length > 0
+      ? stats.sources.map((source) => `${source.source}: ${number(source.started)} started / ${number(source.activated)} activated / ${formatRatio(source.activationRate)}`)
+      : ["—"] },
+    { heading: "Health — Last 7 days", rows: [
+      `Parse failed: ${number(stats.health?.parseFailed)} (${formatRatio(stats.health?.parseFailedRate)})`,
+      `Transcription failed: ${number(stats.health?.transcriptionFailed)}`,
+      `P95 processing: text ${formatSeconds(stats.health?.p95TextSeconds)} / voice ${formatSeconds(stats.health?.p95VoiceSeconds)}`
+    ] }
+  ];
+}
+
+function periodSection(heading, stats = {}, habitField = null) {
+  const rows = [
+    `Active users: ${number(stats.activeUsers)} / new users: ${number(stats.newUsers)}`,
+    `Expenses saved: ${number(stats.expensesSaved)} / per active: ${stats.expensesPerActiveUser == null ? "—" : formatNumber(stats.expensesPerActiveUser)}`,
+    `Drafts: ${number(stats.draftsCreated)} created / ${number(stats.draftsConfirmed)} confirmed / ${formatRatio(stats.confirmRate)}`,
+    `Feedback: ${number(stats.feedbackSent)}`,
+    `Reachability: +${number(stats.newlyBlocked)} blocked / +${number(stats.newlyUnblocked)} unblocked`,
+    `Deleted: ${number(stats.deletedAccounts)}`
+  ];
+  if (habitField) rows.push(`Active on ${habitField === "activeTwoDays" ? "2+" : "3+"} days: ${number(stats[habitField])}`);
+  return { heading, rows };
+}
+
+function funnelRow(label, value, started) {
+  const count = number(value);
+  return `${label}: ${count} (${formatRatio(ratio(count, started))})`;
+}
+
+function formatRatio(value) { return value == null ? "—" : `${Math.round(Number(value) * 100)}%`; }
+function formatNumber(value) { return Number(value).toFixed(1).replace(/\.0$/, ""); }
+function formatSeconds(value) { return value == null ? "—" : `${formatNumber(value)}s`; }
+
 const USER_BASE_SQL = `
 /* product_user_base */
 SELECT

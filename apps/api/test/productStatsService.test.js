@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { createProductStatsService } from "../src/productStatsService.js";
+import { createProductStatsService, formatProductStatsSections } from "../src/productStatsService.js";
+import { formatAdminMessageParts } from "../src/adminStatsService.js";
 import { MEANINGFUL_ACTIVITY_EVENTS } from "../src/productAnalytics.js";
 
 test("product stats use grouped periods and privacy-preserving user base", async () => {
@@ -59,6 +60,34 @@ test("report CTR and sources are mapped without click inflation", async () => {
   ]);
 });
 
+test("product formatter uses canonical activation wording and escapes sources", () => {
+  const stats = productFixture();
+  stats.sources = [{ source: "friend_<script>&", started: 2, activated: 1, activationRate: 0.5 }];
+
+  const parts = formatAdminMessageParts(formatProductStatsSections(stats));
+  const html = parts.map((part) => part.html).join("\n");
+
+  assert.match(html, /First expense saved/);
+  assert.match(html, /D7: —/);
+  assert.match(html, /friend_&lt;script&gt;&amp;/);
+  assert.doesNotMatch(html, /<script>/);
+});
+
+test("admin formatter chunks only complete escaped rows under 3900 characters", () => {
+  const sections = Array.from({ length: 40 }, (_, index) => ({
+    heading: `Sources ${index}`,
+    rows: Array.from({ length: 8 }, (__, row) => `source_${index}_${row}: ${"x".repeat(35)}`)
+  }));
+  const parts = formatAdminMessageParts(sections, { maxLength: 3900 });
+
+  assert.ok(parts.length > 1);
+  for (const part of parts) {
+    assert.ok(part.html.length <= 3900);
+    assert.equal((part.html.match(/<b>/g) ?? []).length, (part.html.match(/<\/b>/g) ?? []).length);
+    assert.ok(part.plainText.length > 0);
+  }
+});
+
 function fixturePool(queries) {
   return {
     async query(sql, params = []) {
@@ -93,5 +122,20 @@ function period(label, overrides = {}) {
     label, active_users: 0, new_users: 0, expenses_saved: 0, drafts_created: 0,
     drafts_confirmed: 0, feedback_sent: 0, newly_blocked: 0, newly_unblocked: 0,
     deleted_accounts: 0, active_two_days: 0, active_three_days: 0, ...overrides
+  };
+}
+
+function productFixture() {
+  const periodStats = { activeUsers: 1, newUsers: 1, expensesSaved: 1, expensesPerActiveUser: 1, draftsCreated: 1, draftsConfirmed: 1, confirmRate: 1, feedbackSent: 0, newlyBlocked: 0, newlyUnblocked: 0, deletedAccounts: 0, activeTwoDays: 0, activeThreeDays: 0 };
+  return {
+    userBase: { reachableNow: 1, blockedNow: 0, deletedAllTime: 0, allTimeJoined: 1 },
+    periods: { today: periodStats, last3Days: periodStats, last7Days: periodStats, last30Days: periodStats },
+    funnel: { started: 1, onboardingStarted: 1, onboardingCompleted: 1, firstDraftCreated: 1, firstExpenseSaved: 1, dashboardOpened: 1 },
+    activation: { medianHours: 2 },
+    retention: { d1Eligible: 1, d1Returned: 1, d1Rate: 1, d7Eligible: 0, d7Returned: 0, d7Rate: null },
+    habit: { eligible: 0, started: 0, rate: null },
+    reports: { deliveredUsers: 1, clickedUsers: 1, failedAttempts: 0, ctr: 1 },
+    sources: [],
+    health: { parseFailed: 0, parseFailedRate: null, transcriptionFailed: 0, p95TextSeconds: null, p95VoiceSeconds: null }
   };
 }

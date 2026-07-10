@@ -1101,16 +1101,13 @@ test("admin stats shows non-zero metrics after message draft and confirm flow", 
   const statsService = {
     async getAdminStats() {
       const count = (name) => repo.events.filter((event) => event.eventName === name).length;
-      const period = emptyAdminPeriod({
+      const period = emptyProductPeriod({
         activeUsers: repo.events.length > 0 ? 1 : 0,
-        messagesTotal: count("message_received"),
-        textMessages: repo.events.filter((event) => event.eventName === "message_received" && event.metadata.inputType === "text").length,
         expensesSaved: count("expense_saved"),
         draftsCreated: count("expense_draft_created"),
-        draftsConfirmed: count("expense_draft_confirmed"),
-        avgTextProcessingSeconds: count("message_processing_completed") > 0 ? 0.1 : null
+        draftsConfirmed: count("expense_draft_confirmed")
       });
-      return { today: period, last7Days: period, last30Days: period };
+      return emptyProductAdminStats({ periods: { today: period, last3Days: period, last7Days: period, last30Days: period } });
     }
   };
   const bot = createTelegramBot({
@@ -1146,11 +1143,9 @@ test("admin stats shows non-zero metrics after message draft and confirm flow", 
   });
 
   const statsMessage = messages.at(-1).text;
-  assert.match(statsMessage, /Users: 1 active/);
-  assert.match(statsMessage, /Messages: 1 total \/ 1 text/);
+  assert.match(statsMessage, /Active users: 1/);
   assert.match(statsMessage, /Expenses saved: 1/);
   assert.match(statsMessage, /Drafts: 1 created \/ 1 confirmed/);
-  assert.match(statsMessage, /Avg processing: text 0\.1s/);
 });
 
 test("empty parse records a parse failure event", async () => {
@@ -1568,11 +1563,10 @@ test("admin stats command sends stats only to configured admin ids", async () =>
       adminTelegramIds: new Set([100]),
       adminStatsService: {
         async getAdminStats() {
-          return {
-            today: emptyAdminPeriod({ activeUsers: 1 }),
-            last7Days: emptyAdminPeriod(),
-            last30Days: emptyAdminPeriod()
-          };
+          return emptyProductAdminStats({ periods: {
+            today: emptyProductPeriod({ activeUsers: 1 }),
+            last3Days: emptyProductPeriod(), last7Days: emptyProductPeriod(), last30Days: emptyProductPeriod()
+          } });
         }
       }
     });
@@ -1589,9 +1583,9 @@ test("admin stats command sends stats only to configured admin ids", async () =>
   }
 
   assert.equal(calls.length, 1);
-  assert.match(calls[0][1].text, /Admin stats/);
-  assert.match(calls[0][1].text, /Today:/);
-  assert.match(calls[0][1].text, /Users: 1 active \/ 0 new/);
+  assert.match(calls[0][1].text, /Product stats/);
+  assert.match(calls[0][1].text, /Today/);
+  assert.match(calls[0][1].text, /Active users: 1 \/ new users: 0/);
 });
 
 test("admin stats accepts numeric-string ids and bot command suffixes", async () => {
@@ -1605,11 +1599,7 @@ test("admin stats accepts numeric-string ids and bot command suffixes", async ()
     adminStatsService: {
       async getAdminStats() {
         serviceCalls += 1;
-        return {
-          today: emptyAdminPeriod(),
-          last7Days: emptyAdminPeriod(),
-          last30Days: emptyAdminPeriod()
-        };
+        return emptyProductAdminStats();
       }
     },
     telegramClient: captureTelegramClient(messages)
@@ -1624,7 +1614,54 @@ test("admin stats accepts numeric-string ids and bot command suffixes", async ()
   });
 
   assert.equal(serviceCalls, 1);
-  assert.match(messages[0].text, /Admin stats/);
+  assert.match(messages[0].text, /Product stats/);
+});
+
+test("technical admin stats use the separate suffixed command", async () => {
+  const messages = [];
+  let calls = 0;
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: fakeRepository(),
+    adminTelegramIds: new Set([100]),
+    adminStatsService: {
+      async getTechnicalStats() {
+        calls += 1;
+        return { today: emptyAdminPeriod(), last7Days: emptyAdminPeriod() };
+      }
+    },
+    telegramClient: captureTelegramClient(messages)
+  });
+
+  await bot.handleUpdate(textUpdate("/admin_stats_tech@MoneyFlowBot", 100));
+
+  assert.equal(calls, 1);
+  assert.match(messages[0].text, /Technical stats/);
+  assert.match(messages[0].text, /Today — Traffic/);
+  assert.doesNotMatch(messages[0].text, /Last 30 days/);
+});
+
+test("product and technical admin stats fail independently", async () => {
+  const messages = [];
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: fakeRepository(),
+    adminTelegramIds: new Set([100]),
+    adminStatsService: {
+      async getTechnicalStats() { throw new Error("technical down"); }
+    },
+    telegramClient: captureTelegramClient(messages)
+  });
+
+  await bot.handleUpdate(textUpdate("/admin_stats", 100));
+  await bot.handleUpdate(textUpdate("/admin_stats_tech", 100));
+
+  assert.deepEqual(messages.map((message) => message.text), [
+    "Product stats unavailable",
+    "Technical stats unavailable"
+  ]);
 });
 
 test("admin stats command does not reveal stats to non-admin users", async () => {
@@ -3573,6 +3610,31 @@ function emptyAdminPeriod(overrides = {}) {
     avgVoiceProcessingSeconds: null,
     confirmRate: null,
     parseFailedRate: null,
+    ...overrides
+  };
+}
+
+function emptyProductPeriod(overrides = {}) {
+  return {
+    activeUsers: 0, newUsers: 0, expensesSaved: 0, expensesPerActiveUser: null,
+    draftsCreated: 0, draftsConfirmed: 0, confirmRate: null, feedbackSent: 0,
+    newlyBlocked: 0, newlyUnblocked: 0, deletedAccounts: 0, activeTwoDays: 0,
+    activeThreeDays: 0, ...overrides
+  };
+}
+
+function emptyProductAdminStats(overrides = {}) {
+  const period = emptyProductPeriod();
+  return {
+    userBase: { reachableNow: 0, blockedNow: 0, deletedAllTime: 0, allTimeJoined: 0 },
+    periods: { today: period, last3Days: period, last7Days: period, last30Days: period },
+    funnel: { started: 0, onboardingStarted: 0, onboardingCompleted: 0, firstDraftCreated: 0, firstExpenseSaved: 0, dashboardOpened: 0 },
+    activation: { medianHours: null },
+    retention: { d1Eligible: 0, d1Returned: 0, d1Rate: null, d7Eligible: 0, d7Returned: 0, d7Rate: null },
+    habit: { eligible: 0, started: 0, rate: null },
+    reports: { deliveredUsers: 0, clickedUsers: 0, failedAttempts: 0, ctr: null },
+    sources: [],
+    health: { parseFailed: 0, parseFailedRate: null, transcriptionFailed: 0, p95TextSeconds: null, p95VoiceSeconds: null },
     ...overrides
   };
 }

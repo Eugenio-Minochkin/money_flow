@@ -11,7 +11,9 @@ import {
   localWeekday as timezoneLocalWeekday,
   normalizeTimeZone
 } from "../../../packages/shared/src/time.js";
-import { formatAdminStats } from "./adminStatsService.js";
+import { formatAdminMessageParts } from "./adminStatsService.js";
+import { formatProductStatsSections } from "./productStatsService.js";
+import { formatTechnicalStatsSections } from "./technicalStatsService.js";
 import { createExpenseExportService } from "./expenseExportService.js";
 import { createTelegramJobQueue } from "./telegramJobQueue.js";
 import { formatBudgetTopupDraft, formatBudgetTopupSuccess, formatBudgetTopupUndoSuccess, formatDraft, formatPlannedDraft, formatReserveClosedEvent, formatSavedSummary, formatTotals, formatWeeklyReport } from "./telegramFormat.js";
@@ -180,10 +182,10 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
       });
     }
 
-    if (commandText === "/admin_stats") {
+    if (commandText === "/admin_stats" || commandText === "/admin_stats_tech") {
       if (!isAdminTelegramId(from.id, adminTelegramIds)) {
         console.warn("[admin] access denied", {
-          command: "/admin_stats",
+          command: commandText,
           fromId: from.id,
           username: from.username ?? null,
           chatId,
@@ -192,15 +194,22 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
         });
         return sendTelegramResponse(trace, () => sendMessage(token, chatId, "Access denied", null, telegramClient));
       }
-      if (!adminStatsService?.getAdminStats) {
-        return sendTelegramResponse(trace, () => sendMessage(token, chatId, "Admin stats unavailable", null, telegramClient));
-      }
+      const technical = commandText === "/admin_stats_tech";
+      const method = technical ? "getTechnicalStats" : "getAdminStats";
+      const unavailable = technical ? "Technical stats unavailable" : "Product stats unavailable";
+      if (typeof adminStatsService?.[method] !== "function") return sendTelegramResponse(trace, () => sendMessage(token, chatId, unavailable, null, telegramClient));
       try {
-        const stats = await adminStatsService.getAdminStats();
-        return sendTelegramResponse(trace, () => sendMessage(token, chatId, formatAdminStats(stats), null, telegramClient));
+        const stats = await adminStatsService[method]();
+        const sections = technical ? formatTechnicalStatsSections(stats) : formatProductStatsSections(stats);
+        const parts = formatAdminMessageParts(sections);
+        let response;
+        for (const part of parts) {
+          response = await sendMessage(token, chatId, part.html, null, telegramClient, part.plainText);
+        }
+        return response;
       } catch (error) {
         console.error("[telegram] admin stats failed", error);
-        return sendTelegramResponse(trace, () => sendMessage(token, chatId, "Admin stats unavailable", null, telegramClient));
+        return sendTelegramResponse(trace, () => sendMessage(token, chatId, unavailable, null, telegramClient));
       }
     }
 
@@ -1753,9 +1762,14 @@ function nextLogMessageId() {
   return logMessageIdSequence;
 }
 
-async function sendMessage(token, chatId, text, replyMarkup, telegramClient) {
+async function sendMessage(token, chatId, text, replyMarkup, telegramClient, plainTextFallback = null) {
   if (telegramClient) {
-    return telegramClient.sendMessage({ chatId, text, replyMarkup });
+    try {
+      return await telegramClient.sendMessage({ chatId, text, replyMarkup });
+    } catch (error) {
+      if (!shouldRetryPlainText(error)) throw error;
+      return telegramClient.sendMessage({ chatId, text: plainTextFallback ?? stripTelegramHtml(text), replyMarkup });
+    }
   }
   if (!token) {
     const logMessageId = nextLogMessageId();
@@ -1775,7 +1789,7 @@ async function sendMessage(token, chatId, text, replyMarkup, telegramClient) {
     console.error("[telegram] sendMessage HTML rejected, retrying plain text", error.message);
     return telegramRequest(token, "sendMessage", {
       ...body,
-      text: stripTelegramHtml(text),
+      text: plainTextFallback ?? stripTelegramHtml(text),
       parse_mode: undefined
     });
   }

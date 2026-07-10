@@ -28,6 +28,29 @@ export function formatTechnicalStats(stats) {
   ].join("\n");
 }
 
+export function formatTechnicalStatsSections(stats) {
+  const sections = [{ heading: "Technical stats", rows: [] }];
+  for (const [label, period] of [["Today", stats.today], ["Last 7 days", stats.last7Days]]) {
+    const lines = formatPeriod(label, period, { includeRates: label !== "Today" }).split("\n").slice(1);
+    const groups = [
+      ["Traffic", /^(Users|Messages|Expenses saved|Drafts):/],
+      ["Errors", /^(Errors|Confirm rate|Parse failed rate):/],
+      ["Processing", /^(Avg processing|P95 processing):/],
+      ["Processing stages", /^(Avg stages|P95 stages):/],
+      ["Parser routing and averages", /^(Parser:|Parser routing:|Parser avg:)/],
+      ["Review", /^Review:/],
+      ["Shadow", /^Shadow:/],
+      ["Rejects", /^Rejects:/],
+      ["Shadow fields", /^Shadow fields:/]
+    ];
+    for (const [name, pattern] of groups) {
+      const rows = lines.filter((line) => pattern.test(line));
+      if (rows.length > 0) sections.push({ heading: `${label} — ${name}`, rows });
+    }
+  }
+  return sections;
+}
+
 async function periodStats(pool, period, usersCreatedAtAvailable) {
   const [events, historical, newUsers] = await Promise.all([
     aggregateEvents(pool, period),
