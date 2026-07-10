@@ -2758,9 +2758,10 @@ test("command menus include delete_me in English and Russian", () => {
   assert.ok(ruCommands.some((command) => command.command === "delete_me"));
 });
 
-test("/delete_me starts Telegram account deletion request with warning buttons", async () => {
+test("/delete_me restarts a pending Telegram account deletion request with warning buttons", async () => {
   const messages = [];
   const repo = fakeRepository();
+  repo.pendingAccountDeletion = { status: "pending", stage: "awaiting_text", source: "telegram" };
   const bot = createTelegramBot({
     token: "test-token",
     miniAppUrl: "http://localhost:3000",
@@ -2921,6 +2922,45 @@ test("wrong text during pending deletion does not reach parser or queue", async 
   await bot.handleUpdate(textUpdate("delete", 100));
 
   assert.equal(repo.accountDeletionConfirms.length, 0);
+  assert.equal(queueCalls.length, 0);
+  assert.equal(parserCalls.length, 0);
+  assert.equal(repo.events.some((event) => event.eventName === "message_received"), false);
+  assert.match(messages[0].text, /Type DELETE to confirm or \/delete_me to start again\./);
+});
+
+test("unrelated command during pending deletion sends guidance before command handling", async () => {
+  const messages = [];
+  const repo = fakeRepository();
+  const queueCalls = [];
+  const parserCalls = [];
+  let dashboardCalls = 0;
+  repo.pendingAccountDeletion = { status: "pending", stage: "awaiting_text", source: "telegram" };
+  repo.dashboard = async () => {
+    dashboardCalls += 1;
+    return { snapshot: {} };
+  };
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: repo,
+    telegramClient: captureTelegramClient(messages),
+    telegramJobQueue: {
+      enqueue(job) {
+        queueCalls.push(job);
+        return { accepted: true, status: "started", stats: {}, promise: Promise.resolve() };
+      }
+    },
+    expenseParser: {
+      async parse() {
+        parserCalls.push("parse");
+        return { expenses: [], notes: [] };
+      }
+    }
+  });
+
+  await bot.handleUpdate(textUpdate("/today", 100));
+
+  assert.equal(dashboardCalls, 0);
   assert.equal(queueCalls.length, 0);
   assert.equal(parserCalls.length, 0);
   assert.equal(repo.events.some((event) => event.eventName === "message_received"), false);

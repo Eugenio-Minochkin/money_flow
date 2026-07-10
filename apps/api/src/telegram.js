@@ -113,6 +113,33 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
     return sendTelegramResponse(trace, () => sendMessage(token, chatId, botText(language, "unsupported"), null, telegramClient));
   }
 
+  if (rawText && !hasVoice && commandText !== "/delete_me") {
+    const currentNow = now();
+    const pendingDeletion = await repository.getPendingAccountDeletion?.(from.id, {
+      source: ACCOUNT_DELETION_SOURCE_TELEGRAM,
+      now: currentNow
+    });
+    if (pendingDeletion?.stage === "awaiting_text") {
+      if (rawText === "DELETE") {
+        try {
+          await repository.confirmAccountDeletion({
+            telegramUserId: from.id,
+            source: ACCOUNT_DELETION_SOURCE_TELEGRAM,
+            confirmationText: rawText,
+            now: currentNow
+          });
+        } catch (error) {
+          if (isAccountDeletionPendingGone(error)) {
+            return sendTelegramResponse(trace, () => sendMessage(token, chatId, accountDeletionText("expired"), null, telegramClient));
+          }
+          throw error;
+        }
+        return sendTelegramResponse(trace, () => sendMessage(token, chatId, accountDeletionText("deleted"), null, telegramClient));
+      }
+      return sendTelegramResponse(trace, () => sendMessage(token, chatId, accountDeletionText("retry"), null, telegramClient));
+    }
+  }
+
   if (rawText && !hasVoice) {
     if (isAdminReleaseCommand(commandText)) {
       return handleAdminReleaseCommand({
@@ -202,33 +229,6 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
 
     if (commandText === "/app" || commandText === "/settings") {
       return sendTelegramResponse(trace, () => sendMessage(token, chatId, botText(language, "openMiniApp"), appKeyboard(miniAppUrl, from.id, language), telegramClient));
-    }
-  }
-
-  if (rawText && !hasVoice) {
-    const currentNow = now();
-    const pendingDeletion = await repository.getPendingAccountDeletion?.(from.id, {
-      source: ACCOUNT_DELETION_SOURCE_TELEGRAM,
-      now: currentNow
-    });
-    if (pendingDeletion?.stage === "awaiting_text") {
-      if (rawText === "DELETE") {
-        try {
-          await repository.confirmAccountDeletion({
-            telegramUserId: from.id,
-            source: ACCOUNT_DELETION_SOURCE_TELEGRAM,
-            confirmationText: rawText,
-            now: currentNow
-          });
-        } catch (error) {
-          if (isAccountDeletionPendingGone(error)) {
-            return sendTelegramResponse(trace, () => sendMessage(token, chatId, accountDeletionText("expired"), null, telegramClient));
-          }
-          throw error;
-        }
-        return sendTelegramResponse(trace, () => sendMessage(token, chatId, accountDeletionText("deleted"), null, telegramClient));
-      }
-      return sendTelegramResponse(trace, () => sendMessage(token, chatId, accountDeletionText("retry"), null, telegramClient));
     }
   }
 
