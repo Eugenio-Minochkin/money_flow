@@ -8,7 +8,7 @@ test("weekly report keyboard opens selected week and add-expense flow", () => {
   const buttons = keyboard.inline_keyboard.flat();
 
   assert.equal(buttons[0].text, "Open week");
-  assert.equal(buttons[0].web_app.url, "http://localhost:3000?telegramUserId=100&view=history&period=week&periodKey=2026-W25");
+  assert.equal(buttons[0].web_app.url, "http://localhost:3000/?telegramUserId=100&view=history&period=week&periodKey=2026-W25&launchSource=report&reportType=weekly&reportKey=2026-W25");
   assert.equal(buttons[1].text, "Add expense");
   assert.equal(buttons[1].web_app.url, "http://localhost:3000?telegramUserId=100&action=addExpense");
 });
@@ -18,7 +18,7 @@ test("monthly report keyboard opens selected month and budget screen in Russian"
   const buttons = keyboard.inline_keyboard.flat();
 
   assert.equal(buttons[0].text, "Открыть месяц");
-  assert.equal(buttons[0].web_app.url, "http://localhost:3000?telegramUserId=100&view=history&period=month&periodKey=2026-06");
+  assert.equal(buttons[0].web_app.url, "http://localhost:3000/?telegramUserId=100&view=history&period=month&periodKey=2026-06&launchSource=report&reportType=monthly&reportKey=2026-06");
   assert.equal(buttons[1].text, "Бюджет на новый месяц");
   assert.equal(buttons[1].web_app.url, "http://localhost:3000?telegramUserId=100&view=settings&focus=budget");
 });

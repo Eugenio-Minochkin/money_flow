@@ -2563,6 +2563,19 @@ test("creates and lists planned expenses", async () => {
   assert.doesNotMatch(event.params[2], /ChatGPT|20/);
 });
 
+test("checks successful report delivery for an exact user type and key", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql: String(sql), params });
+    return { rows: [{ exists: true }] };
+  }));
+
+  assert.equal(await repo.hasReportDelivery(7, "weekly", "2026-W27"), true);
+  assert.match(queries[0].sql, /SELECT EXISTS/);
+  assert.match(queries[0].sql, /status = 'sent'/);
+  assert.deepEqual(queries[0].params, [7, "weekly", "2026-W27"]);
+});
+
 test("records safe events after planned expense update and deactivation", async () => {
   const queries = [];
   const repo = createRepository(fakePool((sql, params) => {

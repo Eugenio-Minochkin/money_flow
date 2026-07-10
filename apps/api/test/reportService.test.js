@@ -159,9 +159,13 @@ test("runDueReports sends monthly before weekly when both are due", async () => 
 
   assert.equal(summary.sent, 2);
   assert.deepEqual(sent.map((message) => message.reportType), ["monthly", "weekly"]);
-  assert.deepEqual(repo.events.filter((event) => event.name.endsWith("_report_sent")).map((event) => event.name), [
-    "monthly_report_sent",
-    "weekly_report_sent"
+  assert.deepEqual(repo.events.filter((event) => event.name === "report_delivered").map((event) => event.name), [
+    "report_delivered",
+    "report_delivered"
+  ]);
+  assert.deepEqual(repo.events.filter((event) => event.name === "report_delivered").map((event) => event.metadata), [
+    { reportType: "monthly", reportKey: "2024-06" },
+    { reportType: "weekly", reportKey: "2024-W26" }
   ]);
 });
 
@@ -252,6 +256,32 @@ test("failed delivery is claimed back to pending and retried", async () => {
   assert.equal(repo.sent[0].telegramMessageId, 77);
 });
 
+test("analytics failure after a sent delivery does not retry Telegram send", async () => {
+  const repo = reportRepo({ now: new Date("2026-07-06T02:30:00Z") });
+  const originalRecord = repo.recordAppEvent.bind(repo);
+  repo.recordAppEvent = async (userId, name, metadata) => {
+    if (name === "report_delivered") throw new Error("analytics unavailable");
+    return originalRecord(userId, name, metadata);
+  };
+  let sends = 0;
+  const service = createReportService({
+    repository: repo,
+    miniAppUrl: "http://localhost:3000",
+    now: () => new Date("2026-07-06T02:30:00Z"),
+    sendMessage: async () => {
+      sends += 1;
+      return { message_id: 77 };
+    }
+  });
+
+  const summary = await service.runDueReports();
+
+  assert.equal(summary.sent, 1);
+  assert.equal(sends, 1);
+  assert.equal(repo.sent.length, 1);
+  assert.equal(repo.failed.length, 0);
+});
+
 test("force delivery claims an existing sent row before sending", async () => {
   const sent = [];
   const repo = reportRepo({
@@ -301,6 +331,11 @@ test("blocked Telegram errors mark delivery failed and user bot blocked", async 
   assert.deepEqual(repo.blockedUsers, [1]);
   assert.equal(repo.failed[0].errorCode, "403");
   assert.equal(repo.failed[0].reportType, "weekly");
+  assert.deepEqual(repo.events.find((event) => event.name === "report_delivery_failed")?.metadata, {
+    reportType: "weekly",
+    reportKey: "2026-W27",
+    errorType: "blocked"
+  });
 });
 
 test("monthly backfill skips no-activity reports and records skipped delivery", async () => {

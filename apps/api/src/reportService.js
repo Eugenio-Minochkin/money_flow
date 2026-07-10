@@ -1,4 +1,3 @@
-import { isBotBlockedError } from "./releaseNotesService.js";
 import { formatMonthlyReport, formatWeeklyReport } from "./reportFormat.js";
 import { monthlyReportKeyboard, weeklyReportKeyboard } from "./reportKeyboards.js";
 import {
@@ -8,6 +7,7 @@ import {
   weeklyPeriodForSend
 } from "./reportPeriods.js";
 import { localMonthKey, normalizeTimeZone, timeZoneMonthBounds } from "../../../packages/shared/src/time.js";
+import { reportDeliveryErrorType } from "./productAnalytics.js";
 
 const ZERO_DECIMAL_DISPLAY_CURRENCIES = new Set(["THB", "RUB", "IDR", "BYN"]);
 
@@ -170,7 +170,7 @@ export function createReportService(options = {}) {
         metadata: deliveryMetadata(report)
       });
       if (!delivery) return "skipped";
-      await repository.recordAppEvent?.(user.id, `${reportType}_report_skipped`, { ...deliveryMetadata(report), skip_reason: "no_activity" });
+      await safeRecordAppEvent(repository, user.id, `${reportType}_report_skipped`, { ...deliveryMetadata(report), skip_reason: "no_activity" });
       return "skipped";
     }
     if (input.dryRun === true) return "willSend";
@@ -187,7 +187,7 @@ export function createReportService(options = {}) {
       metadata: deliveryMetadata(report)
     });
     if (!delivery) return "skipped";
-    await repository.recordAppEvent?.(user.id, `${reportType}_report_generated`, deliveryMetadata(report));
+    await safeRecordAppEvent(repository, user.id, `${reportType}_report_generated`, deliveryMetadata(report));
 
     try {
       const response = await sendMessage({
@@ -208,21 +208,33 @@ export function createReportService(options = {}) {
         sentAt: input.current,
         metadata: deliveryMetadata(report)
       });
-      await repository.recordAppEvent?.(user.id, `${reportType}_report_sent`, deliveryMetadata(report));
+      await safeRecordAppEvent(repository, user.id, "report_delivered", {
+        reportType,
+        reportKey: period.periodKey
+      });
       return "sent";
     } catch (error) {
-      const blocked = isBotBlockedError(error);
-      const metadata = { ...deliveryMetadata(report), blocked };
+      const errorType = reportDeliveryErrorType(error);
       await repository.markReportDeliveryFailed({
         userId: user.id,
         reportType,
         periodKey: period.periodKey,
         errorCode: error.status ? String(error.status) : error.code ?? "send_failed",
         errorMessage: error.message,
-        metadata
+        metadata: deliveryMetadata(report)
       });
-      await repository.recordAppEvent?.(user.id, `${reportType}_report_failed`, metadata);
-      if (blocked) await repository.markUserBotBlocked(user.id);
+      await safeRecordAppEvent(repository, user.id, "report_delivery_failed", {
+        reportType,
+        reportKey: period.periodKey,
+        errorType
+      });
+      if (errorType === "blocked") {
+        if (typeof repository.setUserBotBlocked === "function") {
+          await repository.setUserBotBlocked(user.id, { blocked: true, source: "telegram_error", now: input.current });
+        } else {
+          await repository.markUserBotBlocked(user.id);
+        }
+      }
       return "failed";
     }
   }
@@ -251,6 +263,14 @@ export function createReportService(options = {}) {
       insight: "",
       generatedAt: current
     };
+  }
+}
+
+async function safeRecordAppEvent(repository, userId, eventName, metadata) {
+  try {
+    await repository.recordAppEvent?.(userId, eventName, metadata);
+  } catch (error) {
+    console.error("[reports] failed to record analytics event", { eventName, message: error.message });
   }
 }
 

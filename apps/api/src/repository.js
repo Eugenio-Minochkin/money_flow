@@ -1257,6 +1257,21 @@ export function createRepository(pool, options = {}) {
       return result.rows[0] ?? null;
     },
 
+    async hasReportDelivery(userId, reportType, reportKey) {
+      const result = await pool.query(
+        `SELECT EXISTS (
+           SELECT 1
+           FROM report_deliveries
+           WHERE user_id = $1
+             AND report_type = $2
+             AND period_key = $3
+             AND status = 'sent'
+         ) AS exists`,
+        [userId, reportType, reportKey]
+      );
+      return Boolean(result.rows[0]?.exists);
+    },
+
     async createReportDelivery(input) {
       const result = await pool.query(
         `INSERT INTO report_deliveries (
