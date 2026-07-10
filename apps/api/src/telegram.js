@@ -23,6 +23,7 @@ const ONBOARDING_STEPS = ["language", "budget_setup", "base_currency", "monthly_
 const FEEDBACK_PENDING_TTL_MS = 30 * 60_000;
 const MIN_FEEDBACK_MESSAGE_LENGTH = 3;
 const pendingFeedbackByTelegramUser = new Map();
+const ACCOUNT_DELETION_SOURCE_TELEGRAM = "telegram";
 
 export function createTelegramBot({
   repository,
@@ -104,6 +105,41 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
   const feedbackCommand = parseFeedbackCommand(rawText);
   const hasVoice = Boolean(message.voice || message.audio);
   const hasPhoto = Boolean(message.photo?.length);
+  const restartsAccountDeletion = commandText === "/delete_me" && !hasVoice && !hasPhoto;
+
+  if (!restartsAccountDeletion) {
+    const currentNow = now();
+    const pendingDeletion = await repository.getPendingAccountDeletion?.(from.id, {
+      source: ACCOUNT_DELETION_SOURCE_TELEGRAM,
+      now: currentNow
+    });
+    if (pendingDeletion?.stage === "awaiting_text") {
+      if (rawText === "DELETE" && !hasVoice && !hasPhoto) {
+        try {
+          await repository.confirmAccountDeletion({
+            telegramUserId: from.id,
+            source: ACCOUNT_DELETION_SOURCE_TELEGRAM,
+            confirmationText: rawText,
+            now: currentNow
+          });
+        } catch (error) {
+          if (isAccountDeletionPendingGone(error)) {
+            return sendTelegramResponse(trace, () => sendMessage(token, chatId, accountDeletionText(language, "expired"), null, telegramClient));
+          }
+          throw error;
+        }
+        return sendTelegramResponse(trace, async () => {
+          try {
+            return await sendMessage(token, chatId, accountDeletionText(language, "deleted"), null, telegramClient);
+          } catch {
+            console.error("[telegram] failed to send account deletion completion message");
+            return { ok: true };
+          }
+        });
+      }
+      return sendTelegramResponse(trace, () => sendMessage(token, chatId, accountDeletionText(language, "retry"), null, telegramClient));
+    }
+  }
 
   if (!rawText && !hasVoice && !hasPhoto) {
     return sendTelegramResponse(trace, () => sendMessage(token, chatId, botText(language, "unsupported"), null, telegramClient));
@@ -177,6 +213,11 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
       }
       setPendingFeedback(from.id, now());
       return sendTelegramResponse(trace, () => sendMessage(token, chatId, feedbackPromptText(language), null, telegramClient));
+    }
+
+    if (commandText === "/delete_me") {
+      await repository.requestAccountDeletion(from.id, { source: ACCOUNT_DELETION_SOURCE_TELEGRAM });
+      return sendTelegramResponse(trace, () => sendMessage(token, chatId, accountDeletionText(language, "warning"), accountDeletionButtons(language, "requested"), telegramClient));
     }
 
     if (commandText === "/export") {
@@ -669,6 +710,44 @@ function feedbackTooShortText(language) {
   return "Please write a little more detail in one message.";
 }
 
+function accountDeletionButtons(language, stage = "requested") {
+  const cancelText = language === "ru" ? "Отмена" : "Cancel";
+  if (stage === "awaiting_text") {
+    return { inline_keyboard: [[{ text: cancelText, callback_data: "delete_me:cancel" }]] };
+  }
+  return {
+    inline_keyboard: [[
+      { text: language === "ru" ? "Продолжить" : "Continue", callback_data: "delete_me:advance" },
+      { text: cancelText, callback_data: "delete_me:cancel" }
+    ]]
+  };
+}
+
+function accountDeletionText(language, key) {
+  const messages = language === "ru" ? {
+    warning: "Это безвозвратно удалит ваши данные Money Flow. Продолжайте, только если вы уверены.",
+    promptDelete: "Последний шаг: введите DELETE в этом чате, чтобы навсегда удалить данные.",
+    cancelled: "Удаление аккаунта отменено. Ничего не удалено.",
+    deleted: "Ваши данные Money Flow удалены.",
+    expired: "Запрос на удаление истёк или уже не активен. Используйте /delete_me, чтобы начать заново.",
+    expiredCallback: "Запрос на удаление истёк.",
+    retry: "Введите DELETE для подтверждения или /delete_me, чтобы начать заново."
+  } : {
+    warning: "This permanently deletes your Money Flow data. Continue only if you are sure.",
+    promptDelete: "Final step: type DELETE in this chat to permanently delete your data.",
+    cancelled: "Account deletion cancelled. Nothing was deleted.",
+    deleted: "Your Money Flow data has been deleted.",
+    expired: "Account deletion request expired or is no longer pending. Use /delete_me to start again.",
+    expiredCallback: "Account deletion request expired.",
+    retry: "Type DELETE to confirm or /delete_me to start again."
+  };
+  return messages[key];
+}
+
+function isAccountDeletionPendingGone(error) {
+  return error?.code === "account_deletion_not_pending" || error?.code === "account_deletion_expired";
+}
+
 async function safeRecordAppEvent(repository, userId, eventName, metadata = {}) {
   try {
     await repository.recordAppEvent?.(userId, eventName, metadata);
@@ -1081,6 +1160,43 @@ export async function handleCallback({ update, repository, token, miniAppUrl, te
   const user = await repository.getUserByTelegramId?.(telegramUserId);
   trace.end("user_context");
   const language = user?.interface_language ?? "en";
+
+  if (action === "delete_me") {
+    if (draftId === "cancel") {
+      await repository.cancelAccountDeletion(callback.from.id, { source: ACCOUNT_DELETION_SOURCE_TELEGRAM });
+      return sendTelegramResponse(trace, async () => {
+        await answerCallback(token, callback.id, botText(language, "cancelledCallback"), telegramClient);
+        return editMessageText(token, callback.message.chat.id, callback.message.message_id, accountDeletionText(language, "cancelled"), null, telegramClient);
+      });
+    }
+    if (draftId === "advance") {
+      const request = await repository.advanceAccountDeletion(callback.from.id, { source: ACCOUNT_DELETION_SOURCE_TELEGRAM });
+      if (!request) {
+        return sendTelegramResponse(trace, async () => {
+          await answerCallback(token, callback.id, accountDeletionText(language, "expiredCallback"), telegramClient);
+          return editMessageText(
+            token,
+            callback.message.chat.id,
+            callback.message.message_id,
+            accountDeletionText(language, "expired"),
+            null,
+            telegramClient
+          );
+        });
+      }
+      return sendTelegramResponse(trace, async () => {
+        await answerCallback(token, callback.id, botText(language, "savedCallback"), telegramClient);
+        return editMessageText(
+          token,
+          callback.message.chat.id,
+          callback.message.message_id,
+          accountDeletionText(language, "promptDelete"),
+          accountDeletionButtons(language, request.stage),
+          telegramClient
+        );
+      });
+    }
+  }
 
   const budgetTopupCallback = parseBudgetTopupCallback(callback.data);
   if (budgetTopupCallback) {

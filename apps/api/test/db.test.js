@@ -89,6 +89,41 @@ test("feedback migration creates feedback capture table", async () => {
   assert.match(sql, /CREATE INDEX IF NOT EXISTS feedback_telegram_user_created_at_idx/i);
 });
 
+test("account deletion migration creates request table and indexes", async () => {
+  const dir = resolve(dirname(fileURLToPath(import.meta.url)), "..", "migrations");
+  const sql = await readFile(resolve(dir, "007_account_deletion.sql"), "utf8");
+
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS account_deletion_requests/i);
+  assert.match(sql, /id BIGSERIAL PRIMARY KEY/i);
+  assert.match(sql, /user_id BIGINT NOT NULL REFERENCES users\(id\) ON DELETE CASCADE/i);
+  assert.match(sql, /source TEXT NOT NULL CHECK \(source IN \('telegram', 'miniapp'\)\)/i);
+  assert.match(sql, /stage TEXT NOT NULL CHECK \(stage IN \('requested', 'awaiting_text'\)\)/i);
+  assert.match(sql, /status TEXT NOT NULL CHECK \(status IN \('pending', 'cancelled', 'expired'\)\)/i);
+  assert.match(sql, /expires_at TIMESTAMPTZ NOT NULL/i);
+  assert.match(sql, /created_at TIMESTAMPTZ NOT NULL DEFAULT now\(\)/i);
+  assert.match(sql, /updated_at TIMESTAMPTZ NOT NULL DEFAULT now\(\)/i);
+  assert.match(sql, /CREATE UNIQUE INDEX IF NOT EXISTS account_deletion_requests_one_pending_per_user/i);
+  assert.match(sql, /ON account_deletion_requests\(user_id\)/i);
+  assert.match(sql, /WHERE status = 'pending'/i);
+  assert.match(sql, /CREATE INDEX IF NOT EXISTS account_deletion_requests_user_status_expires_idx/i);
+  assert.match(sql, /ON account_deletion_requests\(user_id, status, expires_at\)/i);
+});
+
+test("account deletion migration repairs release note delivery user cascade FK idempotently", async () => {
+  const dir = resolve(dirname(fileURLToPath(import.meta.url)), "..", "migrations");
+  const sql = await readFile(resolve(dir, "007_account_deletion.sql"), "utf8");
+
+  assert.match(sql, /DO \$\$/i);
+  assert.match(sql, /FROM pg_constraint/i);
+  assert.match(sql, /JOIN pg_class child_table/i);
+  assert.match(sql, /JOIN pg_attribute child_column/i);
+  assert.match(sql, /child_table\.relname = 'release_note_deliveries'/i);
+  assert.match(sql, /child_column\.attname = 'user_id'/i);
+  assert.match(sql, /DROP CONSTRAINT IF EXISTS/i);
+  assert.match(sql, /ADD CONSTRAINT release_note_deliveries_user_id_fkey/i);
+  assert.match(sql, /FOREIGN KEY \(user_id\) REFERENCES users\(id\) ON DELETE CASCADE/i);
+});
+
 test("migrate records applied files and skips them on the second run", async () => {
   const dir = await createTempMigrations({
     "001_create_sample.sql": "CREATE TABLE sample_migration_probe (id integer PRIMARY KEY);",

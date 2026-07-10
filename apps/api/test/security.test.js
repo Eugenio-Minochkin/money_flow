@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
+import { readFile } from "node:fs/promises";
 
 import { createApiSecurity } from "../src/apiSecurity.js";
 import { buildConfig, requireRuntimeConfig } from "../src/config.js";
@@ -129,10 +130,9 @@ test("API security can resolve verified Telegram user id while ignoring request 
     requireTelegramInitData: true
   });
   const req = { headers: { "x-telegram-init-data": initData } };
-  const url = new URL("http://localhost/api/exports/expenses?telegramUserId=999&user_id=888&telegram_user_id=777");
 
   assert.deepEqual(
-    security.resolveVerifiedTelegramUserId(req, url, { telegramUserId: 999, user_id: 888, telegram_user_id: 777 }),
+    security.resolveVerifiedTelegramUserId(req),
     { telegramUserId: 100 }
   );
 });
@@ -144,13 +144,63 @@ test("verified-only API security rejects missing Telegram init data", () => {
   });
 
   assert.deepEqual(
-    security.resolveVerifiedTelegramUserId(
-      { headers: {} },
-      new URL("http://localhost/api/exports/expenses?telegramUserId=100"),
-      { telegramUserId: 100 }
-    ),
+    security.resolveVerifiedTelegramUserId({ headers: {} }),
     { error: "telegram_init_data_required" }
   );
+});
+
+test("account deletion endpoints require verified identity and trusted Mini App source", async () => {
+  const source = await readFile(new URL("../src/server.js", import.meta.url), "utf8");
+  const endpointPaths = [
+    "/api/account-deletion/request",
+    "/api/account-deletion/advance",
+    "/api/account-deletion/cancel",
+    "/api/account-deletion/confirm"
+  ];
+
+  for (const path of endpointPaths) {
+    assert.ok(source.includes(`url.pathname === "${path}"`), `${path} route is registered`);
+    const block = endpointBlock(source, path);
+    assert.match(block, /apiSecurity\.resolveVerifiedTelegramUserId\(req\)/, `${path} uses verified auth`);
+    assert.doesNotMatch(block, /apiSecurity\.resolveTelegramUserId\(/, `${path} does not use client-declared auth`);
+    assert.match(block, /body\.source\s*!==\s*"miniapp"/, `${path} strictly rejects non-Mini App source`);
+    assert.match(block, /sendJson\(res,\s*400,\s*\{\s*error:\s*"invalid_account_deletion_source"\s*\}\)/, `${path} maps invalid source to 400`);
+  }
+});
+
+test("account deletion endpoints pass only verified Telegram identity to repository", async () => {
+  const source = await readFile(new URL("../src/server.js", import.meta.url), "utf8");
+
+  assert.match(
+    endpointBlock(source, "/api/account-deletion/request"),
+    /repository\.requestAccountDeletion\(auth\.telegramUserId,\s*\{\s*source:\s*"miniapp"\s*\}\)/
+  );
+  assert.match(
+    endpointBlock(source, "/api/account-deletion/advance"),
+    /repository\.advanceAccountDeletion\(auth\.telegramUserId,\s*\{\s*source:\s*"miniapp"\s*\}\)/
+  );
+  assert.match(
+    endpointBlock(source, "/api/account-deletion/cancel"),
+    /repository\.cancelAccountDeletion\(auth\.telegramUserId,\s*\{\s*source:\s*"miniapp"\s*\}\)/
+  );
+  const confirmBlock = endpointBlock(source, "/api/account-deletion/confirm");
+  assert.match(confirmBlock, /repository\.confirmAccountDeletion\(\{\s*telegramUserId:\s*auth\.telegramUserId,\s*source:\s*"miniapp",\s*confirmationText:\s*body\.confirmationText\s*\}\)/);
+  assert.doesNotMatch(confirmBlock, /\bbody\.(telegramUserId|userId|telegram_user_id|user_id)\b/);
+  assert.doesNotMatch(confirmBlock, /\burl\.searchParams\.get\("(telegramUserId|userId|telegram_user_id|user_id)"\)/);
+});
+
+test("account deletion request and advance map null repository results to controlled errors", async () => {
+  const source = await readFile(new URL("../src/server.js", import.meta.url), "utf8");
+
+  assert.match(
+    endpointBlock(source, "/api/account-deletion/request"),
+    /if\s*\(!result\)\s*return sendJson\(res,\s*404,\s*\{\s*error:\s*"user_not_found"\s*\}\)/
+  );
+  assert.match(
+    endpointBlock(source, "/api/account-deletion/advance"),
+    /if\s*\(!result\)\s*return sendJson\(res,\s*409,\s*\{\s*error:\s*"account_deletion_not_pending"\s*\}\)/
+  );
+  assert.match(source, /error\.code === "account_deletion_expired"[\s\S]*return 410/);
 });
 
 test("API security rejects invalid Telegram init data hash", () => {
@@ -342,4 +392,13 @@ function signInitData(params, botToken) {
   const hash = crypto.createHmac("sha256", secret).update(checkString).digest("hex");
   data.set("hash", hash);
   return data.toString();
+}
+
+function endpointBlock(source, path) {
+  const marker = `url.pathname === "${path}"`;
+  const start = source.indexOf(marker);
+  assert.notEqual(start, -1, `${path} route is registered`);
+  const blockStart = source.lastIndexOf("if (", start);
+  const nextBlock = source.indexOf("\n  if (", start + marker.length);
+  return source.slice(blockStart, nextBlock === -1 ? source.length : nextBlock);
 }

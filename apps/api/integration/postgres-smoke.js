@@ -25,7 +25,7 @@ test.before(async () => {
   const applied = await pool.query("SELECT filename FROM schema_migrations ORDER BY filename");
   assert.deepEqual(
     applied.rows.map((row) => row.filename),
-    ["001_initial.sql", "002_draft_confirm_flow.sql", "003_budget_topups.sql", "004_report_deliveries.sql", "005_exchange_rates.sql", "006_feedback.sql"]
+    ["001_initial.sql", "002_draft_confirm_flow.sql", "003_budget_topups.sql", "004_report_deliveries.sql", "005_exchange_rates.sql", "006_feedback.sql", "007_account_deletion.sql"]
   );
 });
 
@@ -106,6 +106,52 @@ test("saves feedback with source metadata", async () => {
   assert.equal(stored.rowCount, 1);
   assert.equal(stored.rows[0].source, "bot");
   assert.equal(stored.rows[0].status, "new");
+});
+
+test("deletes user-owned data and leaves only a safe audit event", async () => {
+  const telegramUserId = 990009;
+  const now = new Date("2026-07-09T10:00:00.000Z");
+  const user = await createSmokeUser(telegramUserId);
+
+  await repo.recordAppEvent(user.id, "message_received", { source_text: "coffee 120" });
+  await repo.createFeedback({
+    userId: user.id,
+    telegramUserId,
+    message: "Delete this feedback too",
+    source: "miniapp"
+  });
+  const releaseNote = await pool.query(
+    `INSERT INTO release_notes (version, title_ru, body_ru)
+     VALUES ('v.1.990009', 'Smoke', 'Smoke')
+     RETURNING id`
+  );
+  await pool.query(
+    "INSERT INTO release_note_deliveries (release_note_id, user_id) VALUES ($1, $2)",
+    [releaseNote.rows[0].id, user.id]
+  );
+  await pool.query(
+    `INSERT INTO exchange_rates (rate_date, base_currency, quote_currency, rate, provider)
+     VALUES ('2026-07-09', 'USD', 'THB', 32.65, 'smoke')`
+  );
+
+  await repo.requestAccountDeletion(telegramUserId, { source: "miniapp", now });
+  await repo.advanceAccountDeletion(telegramUserId, { source: "miniapp", now });
+  const result = await repo.confirmAccountDeletion({
+    telegramUserId,
+    source: "miniapp",
+    confirmationText: "DELETE",
+    now
+  });
+
+  assert.deepEqual(result, { status: "deleted" });
+  assert.equal(await repo.getUserByTelegramId(telegramUserId), null);
+  assert.equal((await pool.query("SELECT * FROM feedback WHERE telegram_user_id = $1", [telegramUserId])).rowCount, 0);
+  assert.equal((await pool.query("SELECT * FROM release_note_deliveries WHERE user_id = $1", [user.id])).rowCount, 0);
+  assert.equal((await pool.query("SELECT * FROM account_deletion_requests WHERE user_id = $1", [user.id])).rowCount, 0);
+
+  const events = await pool.query("SELECT user_id, event_name, metadata FROM app_events ORDER BY id");
+  assert.deepEqual(events.rows, [{ user_id: null, event_name: "account_deleted", metadata: { source: "miniapp" } }]);
+  assert.equal((await pool.query("SELECT * FROM exchange_rates WHERE provider = 'smoke'")).rowCount, 1);
 });
 
 test("recalculates dashboard budget summary from real expense rows", async () => {

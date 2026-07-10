@@ -117,6 +117,6 @@ test("server wires expense export through verified Mini App auth and shared serv
   assert.match(source, /sendTelegramDocument/);
   assert.match(source, /const expenseExportService = createExpenseExportService\(/);
   assert.match(source, /url\.pathname === "\/api\/exports\/expenses"/);
-  assert.match(source, /apiSecurity\.resolveVerifiedTelegramUserId\(req,\s*url,\s*body\)/);
+  assert.match(source, /apiSecurity\.resolveVerifiedTelegramUserId\(req\)/);
   assert.match(source, /expenseExportService\.requestExport\(/);
 });
