@@ -637,7 +637,7 @@ test("recreates an invalidated daily snapshot from the updated monthly budget", 
   let totalsCall = 0;
   const repo = createRepository(fakePool((sql, params) => {
     const query = String(sql);
-    if (query.includes("WITH current_user AS") && query.includes("UPDATE users u")) {
+    if (query.includes("WITH existing_user AS") && query.includes("UPDATE users u")) {
       monthlyBudget = Number(params[0]);
       return { rows: [{ id: "1", telegram_user_id: "100", monthly_budget_amount: monthlyBudget, budget_changed: true }] };
     }
@@ -1551,7 +1551,7 @@ test("saving the same monthly budget does not record meaningful activity", async
   const user = await repo.updateMonthlyBudget(100, 60000);
 
   assert.equal(Number(user.monthly_budget_amount), 60000);
-  assert.match(queries[0].sql, /current_user AS/);
+  assert.match(queries[0].sql, /existing_user AS/);
   assert.match(queries[0].sql, /IS DISTINCT FROM/);
   assert.equal(queries.some((query) => query.sql.includes("INSERT INTO app_events")), false);
   assert.equal(queries.some((query) => query.sql.includes("DELETE FROM daily_budget_snapshots")), false);

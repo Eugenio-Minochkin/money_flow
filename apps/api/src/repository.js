@@ -1059,16 +1059,16 @@ export function createRepository(pool, options = {}) {
         await assertReserveBudgetCapacity(pool, user, amount, new Date());
       }
       const result = await pool.query(
-        `WITH current_user AS MATERIALIZED (
+        `WITH existing_user AS MATERIALIZED (
            SELECT id, monthly_budget_amount
            FROM users
            WHERE telegram_user_id = $2
          ), updated AS (
            UPDATE users u
            SET monthly_budget_amount = $1
-           FROM current_user current
-           WHERE u.id = current.id
-           RETURNING u.*, current.monthly_budget_amount IS DISTINCT FROM $1 AS budget_changed
+           FROM existing_user existing
+           WHERE u.id = existing.id
+           RETURNING u.*, existing.monthly_budget_amount IS DISTINCT FROM $1 AS budget_changed
          )
          SELECT * FROM updated`,
         [amount, telegramUserId]
