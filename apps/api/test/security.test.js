@@ -9,16 +9,18 @@ import { createRateLimiter, getRateLimitKey } from "../src/rateLimit.js";
 import { shouldRateLimitRequest } from "../src/routing.js";
 import { verifyTelegramInitData } from "../src/telegramAuth.js";
 
-test("verifies Telegram Mini App init data and returns the user id", () => {
+test("verifies Telegram Mini App init data and returns the signed profile and start parameter", () => {
   const botToken = "123456:test-token";
   const authDate = String(Math.floor(new Date("2026-06-02T10:00:00Z").getTime() / 1000));
-  const user = JSON.stringify({ id: 100, first_name: "M" });
-  const initData = signInitData({ auth_date: authDate, user }, botToken);
+  const user = JSON.stringify({ id: 100, first_name: "M", username: "mino" });
+  const initData = signInitData({ auth_date: authDate, user, start_param: "expat_cm" }, botToken);
 
   const result = verifyTelegramInitData(initData, botToken, { now: new Date("2026-06-02T10:00:00Z") });
 
   assert.equal(result.ok, true);
   assert.equal(result.telegramUserId, 100);
+  assert.deepEqual(result.profile, { id: 100, firstName: "M", username: "mino" });
+  assert.equal(result.startParam, "expat_cm");
 });
 
 test("rejects tampered Telegram Mini App init data", () => {
@@ -30,6 +32,20 @@ test("rejects tampered Telegram Mini App init data", () => {
 
   assert.equal(result.ok, false);
   assert.equal(result.reason, "invalid_hash");
+});
+
+test("does not expose profile or start parameter from expired init data", () => {
+  const botToken = "123456:test-token";
+  const authDate = String(Math.floor(new Date("2026-06-01T08:00:00Z").getTime() / 1000));
+  const initData = signInitData({
+    auth_date: authDate,
+    user: JSON.stringify({ id: 100, first_name: "M" }),
+    start_param: "expat_cm"
+  }, botToken);
+
+  const result = verifyTelegramInitData(initData, botToken, { now: new Date("2026-06-02T10:00:00Z") });
+
+  assert.deepEqual(result, { ok: false, reason: "expired" });
 });
 
 test("rate limiter allows requests until the limit and then blocks", () => {
@@ -117,7 +133,12 @@ test("API security accepts valid Telegram init data", () => {
 
   assert.deepEqual(
     security.resolveTelegramUserId(req, new URL("http://localhost/api/dashboard?telegramUserId=100")),
-    { telegramUserId: 100 }
+    {
+      telegramUserId: 100,
+      verified: true,
+      profile: { id: 100, firstName: null, username: null },
+      startParam: null
+    }
   );
 });
 
@@ -133,7 +154,12 @@ test("API security can resolve verified Telegram user id while ignoring request 
 
   assert.deepEqual(
     security.resolveVerifiedTelegramUserId(req),
-    { telegramUserId: 100 }
+    {
+      telegramUserId: 100,
+      verified: true,
+      profile: { id: 100, firstName: null, username: null },
+      startParam: null
+    }
   );
 });
 
@@ -166,6 +192,18 @@ test("account deletion endpoints require verified identity and trusted Mini App 
     assert.match(block, /body\.source\s*!==\s*"miniapp"/, `${path} strictly rejects non-Mini App source`);
     assert.match(block, /sendJson\(res,\s*400,\s*\{\s*error:\s*"invalid_account_deletion_source"\s*\}\)/, `${path} maps invalid source to 400`);
   }
+});
+
+test("dashboard route delegates verified launches to the Mini App launch service", async () => {
+  const source = await readFile(new URL("../src/server.js", import.meta.url), "utf8");
+  const block = endpointBlock(source, "/api/dashboard");
+
+  assert.match(source, /createMiniAppLaunchService/);
+  assert.match(block, /if \(auth\.verified\)/);
+  assert.match(block, /miniAppLaunchService\.loadDashboard/);
+  assert.match(block, /reportType: url\.searchParams\.get\("reportType"\)/);
+  assert.match(block, /reportKey: url\.searchParams\.get\("reportKey"\)/);
+  assert.match(block, /timeZone/);
 });
 
 test("account deletion endpoints pass only verified Telegram identity to repository", async () => {

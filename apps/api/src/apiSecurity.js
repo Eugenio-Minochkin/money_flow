@@ -15,7 +15,7 @@ export function createApiSecurity({ telegramBotToken, requireTelegramInitData = 
         const auth = verifyTelegramInitData(initData, telegramBotToken);
         if (!auth.ok) return { error: auth.reason };
         if (declaredId && declaredId !== auth.telegramUserId) return { error: "telegram_user_mismatch" };
-        return { telegramUserId: auth.telegramUserId };
+        return verifiedIdentity(auth);
       }
 
       if (requireTelegramInitData) return { error: "telegram_init_data_required" };
@@ -28,7 +28,16 @@ export function createApiSecurity({ telegramBotToken, requireTelegramInitData = 
       if (!initData) return { error: "telegram_init_data_required" };
       const auth = verifyTelegramInitData(initData, telegramBotToken);
       if (!auth.ok) return { error: auth.reason };
-      return { telegramUserId: auth.telegramUserId };
+      return verifiedIdentity(auth);
     }
+  };
+}
+
+function verifiedIdentity(auth) {
+  return {
+    telegramUserId: auth.telegramUserId,
+    verified: true,
+    profile: auth.profile,
+    startParam: auth.startParam
   };
 }

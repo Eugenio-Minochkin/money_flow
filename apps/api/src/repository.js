@@ -16,6 +16,7 @@ import {
 } from "../../../packages/shared/src/time.js";
 import { calculateReserveState, validateReserveCapacity } from "../../../packages/shared/src/reserve.js";
 import { createExchangeRateProvider } from "./exchangeRates.js";
+import { normalizeAcquisitionSource, SINGLETON_ONBOARDING_EVENTS } from "./productAnalytics.js";
 import { buildReportMetrics } from "./reportService.js";
 
 const INVALID_PLANNED_DUE_DATE_LOGGED = Symbol("invalidPlannedDueDateLogged");
@@ -61,6 +62,29 @@ export function createRepository(pool, options = {}) {
       }
     },
 
+    async recordAppEventOnce(userId, eventName, metadata = {}) {
+      if (!SINGLETON_ONBOARDING_EVENTS.has(eventName)) {
+        throw codedError("Invalid singleton event", "invalid_singleton_event");
+      }
+      try {
+        const result = await pool.query(
+          `INSERT INTO app_events (user_id, event_name, metadata)
+           VALUES ($1, $2, $3::jsonb)
+           ON CONFLICT DO NOTHING
+           RETURNING id`,
+          [userId, eventName, JSON.stringify(metadata ?? {})]
+        );
+        return { recorded: (result.rowCount ?? result.rows?.length ?? 0) > 0 };
+      } catch (error) {
+        console.warn("[events] record failed", {
+          userId: userId ?? null,
+          eventName,
+          message: error.message
+        });
+        return { recorded: false };
+      }
+    },
+
     async createFeedback(input) {
       const message = String(input.message ?? "").trim();
       const result = await pool.query(
@@ -75,17 +99,41 @@ export function createRepository(pool, options = {}) {
           input.source ?? "bot"
         ]
       );
-      return result.rows[0];
+      const feedback = result.rows[0] ?? null;
+      if (feedback && input.userId != null) {
+        await this.recordAppEvent(input.userId, "feedback_sent", {
+          source: input.source === "miniapp" ? "miniapp" : "telegram"
+        });
+      }
+      return feedback;
     },
 
     async upsertTelegramUser(profile) {
+      const acquisitionSource = normalizeAcquisitionSource(profile.acquisitionSource);
+      const acquisitionSeenAt = profile.acquisitionSeenAt instanceof Date
+        ? profile.acquisitionSeenAt
+        : new Date(profile.acquisitionSeenAt ?? Date.now());
       const result = await pool.query(
-        `INSERT INTO users (telegram_user_id, first_name, username, monthly_budget_amount, onboarding_step)
-         VALUES ($1, $2, $3, $4, 'language')
+        `INSERT INTO users (
+           telegram_user_id, first_name, username, monthly_budget_amount, onboarding_step,
+           acquisition_source, acquisition_first_seen_at
+         )
+         VALUES ($1, $2, $3, $4, 'language', $5, $6)
          ON CONFLICT (telegram_user_id)
-         DO UPDATE SET first_name = EXCLUDED.first_name, username = EXCLUDED.username
+         DO UPDATE SET
+           first_name = COALESCE(EXCLUDED.first_name, users.first_name),
+           username = COALESCE(EXCLUDED.username, users.username),
+           acquisition_source = COALESCE(users.acquisition_source, EXCLUDED.acquisition_source),
+           acquisition_first_seen_at = COALESCE(users.acquisition_first_seen_at, EXCLUDED.acquisition_first_seen_at)
          RETURNING *, (xmax = 0) AS is_new`,
-        [profile.id, profile.firstName ?? null, profile.username ?? null, defaultMonthlyBudget]
+        [
+          profile.id,
+          profile.firstName ?? null,
+          profile.username ?? null,
+          defaultMonthlyBudget,
+          acquisitionSource,
+          acquisitionSeenAt
+        ]
       );
       return result.rows[0];
     },
@@ -934,11 +982,70 @@ export function createRepository(pool, options = {}) {
       );
     },
 
-    async markUserBotBlocked(userId) {
-      await pool.query(
-        "UPDATE users SET bot_blocked = true WHERE id = $1",
-        [userId]
+    async setUserBotBlocked(userId, { blocked, source, now = new Date() }) {
+      const result = await pool.query(
+        `UPDATE users
+         SET bot_blocked = $2,
+             bot_blocked_at = CASE WHEN $2 THEN $3 ELSE bot_blocked_at END,
+             bot_unblocked_at = CASE WHEN $2 THEN bot_unblocked_at ELSE $3 END
+         WHERE id = $1
+           AND bot_blocked IS DISTINCT FROM $2
+         RETURNING id`,
+        [userId, Boolean(blocked), now]
       );
+      const transitionedUserId = result.rows[0]?.id;
+      if (!transitionedUserId) return { changed: false };
+      try {
+        await this.recordAppEvent(transitionedUserId, blocked ? "bot_blocked" : "bot_unblocked", { source });
+      } catch (error) {
+        console.error("[repository] failed to record bot availability transition", error);
+      }
+      return { changed: true };
+    },
+
+    async setTelegramUserBotBlocked(telegramUserId, { blocked, source, now = new Date() }) {
+      const result = await pool.query(
+        `UPDATE users
+         SET bot_blocked = $2,
+             bot_blocked_at = CASE WHEN $2 THEN $3 ELSE bot_blocked_at END,
+             bot_unblocked_at = CASE WHEN $2 THEN bot_unblocked_at ELSE $3 END
+         WHERE telegram_user_id = $1
+           AND bot_blocked IS DISTINCT FROM $2
+         RETURNING id`,
+        [telegramUserId, Boolean(blocked), now]
+      );
+      const userId = result.rows[0]?.id;
+      if (!userId) return { changed: false };
+      try {
+        await this.recordAppEvent(userId, blocked ? "bot_blocked" : "bot_unblocked", { source });
+      } catch (error) {
+        console.error("[repository] failed to record bot availability transition", error);
+      }
+      return { changed: true };
+    },
+
+    async clearTelegramUserBotBlocked(telegramUserId, { source, now = new Date() }) {
+      const result = await pool.query(
+        `UPDATE users
+         SET bot_blocked = false,
+             bot_unblocked_at = $2
+         WHERE telegram_user_id = $1
+           AND bot_blocked = true
+         RETURNING id`,
+        [telegramUserId, now]
+      );
+      const userId = result.rows[0]?.id;
+      if (!userId) return { changed: false };
+      try {
+        await this.recordAppEvent(userId, "bot_unblocked", { source });
+      } catch (error) {
+        console.error("[repository] failed to record bot availability transition", error);
+      }
+      return { changed: true };
+    },
+
+    async markUserBotBlocked(userId) {
+      return this.setUserBotBlocked(userId, { blocked: true, source: "telegram_error" });
     },
 
     async updateMonthlyBudget(telegramUserId, monthlyBudgetAmount, now = new Date()) {
@@ -952,14 +1059,24 @@ export function createRepository(pool, options = {}) {
         await assertReserveBudgetCapacity(pool, user, amount, new Date());
       }
       const result = await pool.query(
-        `UPDATE users
-         SET monthly_budget_amount = $1
-         WHERE telegram_user_id = $2
-         RETURNING *`,
+        `WITH existing_user AS MATERIALIZED (
+           SELECT id, monthly_budget_amount
+           FROM users
+           WHERE telegram_user_id = $2
+         ), updated AS (
+           UPDATE users u
+           SET monthly_budget_amount = $1
+           FROM existing_user existing
+           WHERE u.id = existing.id
+           RETURNING u.*, existing.monthly_budget_amount IS DISTINCT FROM $1 AS budget_changed
+         )
+         SELECT * FROM updated`,
         [amount, telegramUserId]
       );
       const user = result.rows[0] ?? null;
-      if (user) await invalidateDailyBudgetSnapshot(pool, user.id, now, resolveUserTimeZone(user));
+      const budgetChanged = user?.budget_changed !== false;
+      if (user && budgetChanged) await invalidateDailyBudgetSnapshot(pool, user.id, now, resolveUserTimeZone(user));
+      if (user && budgetChanged) await this.recordAppEvent(user.id, "budget_changed", { source: "settings" });
       return user;
     },
 
@@ -1027,6 +1144,15 @@ export function createRepository(pool, options = {}) {
       );
       const user = result.rows[0] ?? null;
       if (user) await invalidateDailyBudgetSnapshot(pool, user.id, now, resolveUserTimeZone(user));
+      if (user && baseCurrency !== currentUser.base_currency) {
+        await this.recordAppEvent(user.id, "currency_changed", {
+          currency: baseCurrency,
+          source: "settings"
+        });
+      }
+      if (user && Number(monthlyBudgetAmount) !== Number(currentUser.monthly_budget_amount)) {
+        await this.recordAppEvent(user.id, "budget_changed", { source: "settings" });
+      }
       return user;
     },
 
@@ -1138,6 +1264,21 @@ export function createRepository(pool, options = {}) {
         [userId, reportType, periodKey]
       );
       return result.rows[0] ?? null;
+    },
+
+    async hasReportDelivery(userId, reportType, reportKey) {
+      const result = await pool.query(
+        `SELECT EXISTS (
+           SELECT 1
+           FROM report_deliveries
+           WHERE user_id = $1
+             AND report_type = $2
+             AND period_key = $3
+             AND status = 'sent'
+         ) AS exists`,
+        [userId, reportType, reportKey]
+      );
+      return Boolean(result.rows[0]?.exists);
     },
 
     async createReportDelivery(input) {
@@ -2061,6 +2202,7 @@ export function createRepository(pool, options = {}) {
       );
       const row = result.rows[0] ?? null;
       if (row) await invalidateDailyBudgetSnapshot(pool, user.id, now, resolveUserTimeZone(user));
+      if (row) await this.recordAppEvent(row.user_id ?? user.id, "planned_expense_created", { source: "miniapp" });
       return row;
     },
 
@@ -2108,6 +2250,7 @@ export function createRepository(pool, options = {}) {
       );
       const row = result.rows[0] ?? null;
       if (row) await invalidateDailyBudgetSnapshot(pool, user.id, now, resolveUserTimeZone(user));
+      if (row) await this.recordAppEvent(row.user_id ?? user.id, "planned_expense_updated", { source: "miniapp" });
       return row;
     },
 
@@ -2123,6 +2266,7 @@ export function createRepository(pool, options = {}) {
       );
       const row = result.rows[0] ?? null;
       if (row && user) await invalidateDailyBudgetSnapshot(pool, user.id, now, resolveUserTimeZone(user));
+      if (row && user) await this.recordAppEvent(row.user_id ?? user.id, "planned_expense_deleted", { source: "miniapp" });
       return row;
     },
 

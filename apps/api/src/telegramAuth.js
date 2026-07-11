@@ -26,9 +26,23 @@ export function verifyTelegramInitData(initData, botToken, options = {}) {
     return { ok: false, reason: "expired" };
   }
 
-  const user = JSON.parse(params.get("user") ?? "{}");
+  let user;
+  try {
+    user = JSON.parse(params.get("user") ?? "{}");
+  } catch {
+    return { ok: false, reason: "invalid_user" };
+  }
   if (!Number(user.id)) return { ok: false, reason: "missing_user" };
-  return { ok: true, telegramUserId: Number(user.id) };
+  return {
+    ok: true,
+    telegramUserId: Number(user.id),
+    profile: {
+      id: Number(user.id),
+      firstName: typeof user.first_name === "string" ? user.first_name : null,
+      username: typeof user.username === "string" ? user.username : null
+    },
+    startParam: params.get("start_param")
+  };
 }
 
 function safeEqual(left, right) {

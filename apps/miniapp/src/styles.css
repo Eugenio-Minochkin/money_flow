@@ -1715,6 +1715,35 @@ button:disabled {
   display: none;
 }
 
+.onboarding-state {
+  min-height: 62vh;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 14px;
+  padding: 28px 18px;
+  text-align: center;
+}
+
+.onboarding-state.hidden {
+  display: none;
+}
+
+.onboarding-state__icon {
+  font-size: 44px;
+}
+
+.onboarding-state h1,
+.onboarding-state p {
+  margin: 0;
+}
+
+.onboarding-state p {
+  max-width: 340px;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
 .toast {
   position: fixed;
   left: 50%;

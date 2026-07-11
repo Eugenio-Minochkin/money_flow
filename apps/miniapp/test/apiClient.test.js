@@ -1,7 +1,18 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { createApiClient } from "../src/apiClient.js";
+import { buildDashboardRequestPath, createApiClient, isOnboardingDashboardResponse } from "../src/apiClient.js";
+
+test("dashboard request forwards report markers from the Mini App launch URL", () => {
+  const path = buildDashboardRequestPath(100, "?telegramUserId=100&view=history&reportType=weekly&reportKey=2026-W28&launchSource=report");
+
+  assert.equal(path, "/api/dashboard?telegramUserId=100&reportType=weekly&reportKey=2026-W28");
+});
+
+test("dashboard response identifies onboarding before dashboard rendering", () => {
+  assert.equal(isOnboardingDashboardResponse({ onboarding: true, user: { onboarding_step: "language" } }), true);
+  assert.equal(isOnboardingDashboardResponse({ user: {}, snapshot: {} }), false);
+});
 
 test("API client sends Telegram init data header and JSON body", async () => {
   const calls = [];

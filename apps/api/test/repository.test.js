@@ -19,6 +19,80 @@ test("records app events with JSON metadata", async () => {
   assert.deepEqual(queries[0].params, [7, "message_received", JSON.stringify({ inputType: "text" })]);
 });
 
+test("records singleton onboarding events with conflict protection", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql: String(sql), params });
+    return { rows: [], rowCount: 0 };
+  }));
+
+  const result = await repo.recordAppEventOnce(7, "onboarding_started", { source: "telegram" });
+
+  assert.deepEqual(result, { recorded: false });
+  assert.match(queries[0].sql, /INSERT INTO app_events/);
+  assert.match(queries[0].sql, /ON CONFLICT DO NOTHING/);
+  assert.deepEqual(queries[0].params, [7, "onboarding_started", JSON.stringify({ source: "telegram" })]);
+});
+
+test("rejects repeatable events through the singleton event boundary", async () => {
+  const repo = createRepository(fakePool(() => {
+    throw new Error("database should not be called");
+  }));
+
+  await assert.rejects(
+    () => repo.recordAppEventOnce(7, "bot_started"),
+    { code: "invalid_singleton_event" }
+  );
+});
+
+test("upsertTelegramUser assigns first-touch in one atomic statement", async () => {
+  const queries = [];
+  const seenAt = new Date("2026-07-10T10:00:00.000Z");
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql: String(sql), params });
+    return {
+      rows: [{
+        id: 7,
+        telegram_user_id: params[0],
+        acquisition_source: "friend_alex",
+        is_new: false
+      }]
+    };
+  }));
+
+  await repo.upsertTelegramUser({
+    id: 100,
+    firstName: "New name",
+    username: "new_user",
+    acquisitionSource: " EXPAT_CM ",
+    acquisitionSeenAt: seenAt
+  });
+
+  assert.equal(queries.length, 1);
+  assert.match(queries[0].sql, /INSERT INTO users/);
+  assert.match(queries[0].sql, /acquisition_source = COALESCE\(users\.acquisition_source, EXCLUDED\.acquisition_source\)/);
+  assert.match(queries[0].sql, /acquisition_first_seen_at = COALESCE\(users\.acquisition_first_seen_at, EXCLUDED\.acquisition_first_seen_at\)/);
+  assert.deepEqual(queries[0].params, [100, "New name", "new_user", 45000, "expat_cm", seenAt]);
+});
+
+test("concurrent first-touch upserts use only the same atomic statement", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool(async (sql, params) => {
+    queries.push({ sql: String(sql), params });
+    await Promise.resolve();
+    return { rows: [{ id: 7, telegram_user_id: params[0], is_new: false }] };
+  }));
+
+  await Promise.all([
+    repo.upsertTelegramUser({ id: 100, acquisitionSource: "friend_alex" }),
+    repo.upsertTelegramUser({ id: 100, acquisitionSource: "expat_cm" })
+  ]);
+
+  assert.equal(queries.length, 2);
+  assert.equal(queries.every(({ sql }) => /INSERT INTO users/.test(sql)), true);
+  assert.equal(queries.some(({ sql }) => /^SELECT/i.test(sql.trim())), false);
+});
+
 test("creates feedback with durable user and source metadata", async () => {
   const queries = [];
   const repo = createRepository(fakePool((sql, params) => {
@@ -51,6 +125,9 @@ test("creates feedback with durable user and source metadata", async () => {
   assert.match(queries[0].sql, /INSERT INTO feedback/);
   assert.match(queries[0].sql, /RETURNING \*/);
   assert.deepEqual(queries[0].params, [7, 100, "Please make category editing easier", "new", "bot"]);
+  const event = queries.find((query) => query.sql.includes("INSERT INTO app_events"));
+  assert.deepEqual(event.params, [7, "feedback_sent", JSON.stringify({ source: "telegram" })]);
+  assert.doesNotMatch(event.params[2], /category editing/i);
 });
 
 test("requestAccountDeletion expires old pending request before creating a new pending request", async () => {
@@ -476,7 +553,7 @@ test("creates new Telegram users at the language onboarding step", async () => {
   const user = await repo.upsertTelegramUser({ id: 100, firstName: "M", username: "mino" });
 
   assert.equal(user.onboarding_step, "language");
-  assert.match(queries[0].sql, /onboarding_step\)/);
+  assert.match(queries[0].sql, /onboarding_step/);
   assert.match(queries[0].sql, /'language'/);
 });
 
@@ -549,6 +626,9 @@ test("updates monthly budget for a Telegram user", async () => {
   assert.equal(Number(user.monthly_budget_amount), 60000);
   assert.equal(queries[0].params[0], 60000);
   assert.equal(queries[0].params[1], 100);
+  const event = queries.find((query) => query.sql.includes("INSERT INTO app_events"));
+  assert.deepEqual(event.params, [1, "budget_changed", JSON.stringify({ source: "settings" })]);
+  assert.doesNotMatch(event.params[2], /60000/);
 });
 
 test("recreates an invalidated daily snapshot from the updated monthly budget", async () => {
@@ -557,9 +637,9 @@ test("recreates an invalidated daily snapshot from the updated monthly budget", 
   let totalsCall = 0;
   const repo = createRepository(fakePool((sql, params) => {
     const query = String(sql);
-    if (query.startsWith("UPDATE users")) {
+    if (query.includes("WITH existing_user AS") && query.includes("UPDATE users u")) {
       monthlyBudget = Number(params[0]);
-      return { rows: [{ id: "1", telegram_user_id: "100", monthly_budget_amount: monthlyBudget }] };
+      return { rows: [{ id: "1", telegram_user_id: "100", monthly_budget_amount: monthlyBudget, budget_changed: true }] };
     }
     if (query.includes("DELETE FROM daily_budget_snapshots")) {
       storedDayBudget = null;
@@ -659,7 +739,8 @@ test("updates user budget and display currency settings", async () => {
         rows: [{
           id: 7,
           telegram_user_id: "100",
-          base_currency: "THB",
+          monthly_budget_amount: "45000",
+          base_currency: "USD",
           budget_advice_enabled: true,
           daily_entry_reminder_enabled: true
         }]
@@ -712,6 +793,13 @@ test("updates user budget and display currency settings", async () => {
   assert.equal(updateQuery.params[8], "light");
   assert.equal(updateQuery.params[9], "America/New_York");
   assert.equal(updateQuery.params[10], 100);
+  const events = queries
+    .filter((query) => query.sql.includes("INSERT INTO app_events"))
+    .map((query) => [query.params[1], JSON.parse(query.params[2])]);
+  assert.deepEqual(events, [
+    ["currency_changed", { currency: "THB", source: "settings" }],
+    ["budget_changed", { source: "settings" }]
+  ]);
 });
 
 test("updateUserSettings preserves disabled budget advice when omitted", async () => {
@@ -1431,14 +1519,57 @@ test("counts active users missing a release note delivery", async () => {
   assert.deepEqual(queries[0].params, [7]);
 });
 
-test("marks user as bot blocked", async () => {
+test("records blocked and unblocked events only for real state transitions", async () => {
+  const queries = [];
+  let transitions = 0;
   const repo = createRepository(fakePool((sql, params) => {
-    assert.match(String(sql), /UPDATE users SET bot_blocked = true/);
-    assert.deepEqual(params, [1]);
+    queries.push({ sql: String(sql), params });
+    if (String(sql).includes("UPDATE users")) {
+      transitions += 1;
+      return { rows: transitions === 1 ? [{ id: 1 }] : [] };
+    }
     return { rows: [] };
   }));
 
-  await repo.markUserBotBlocked(1);
+  assert.deepEqual(await repo.setUserBotBlocked(1, { blocked: true, source: "telegram_status", now: new Date("2026-07-10T10:00:00Z") }), { changed: true });
+  assert.deepEqual(await repo.setUserBotBlocked(1, { blocked: true, source: "telegram_status", now: new Date("2026-07-10T10:01:00Z") }), { changed: false });
+
+  assert.match(queries[0].sql, /bot_blocked IS DISTINCT FROM/);
+  assert.match(queries[0].sql, /bot_blocked_at/);
+  assert.deepEqual(queries[0].params, [1, true, new Date("2026-07-10T10:00:00Z")]);
+  assert.deepEqual(queries[1].params, [1, "bot_blocked", JSON.stringify({ source: "telegram_status" })]);
+  assert.equal(queries.filter((query) => query.sql.includes("INSERT INTO app_events")).length, 1);
+});
+
+test("saving the same monthly budget does not record meaningful activity", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql: String(sql), params });
+    return { rows: [{ id: 1, monthly_budget_amount: "60000", budget_changed: false }] };
+  }));
+
+  const user = await repo.updateMonthlyBudget(100, 60000);
+
+  assert.equal(Number(user.monthly_budget_amount), 60000);
+  assert.match(queries[0].sql, /existing_user AS/);
+  assert.match(queries[0].sql, /IS DISTINCT FROM/);
+  assert.equal(queries.some((query) => query.sql.includes("INSERT INTO app_events")), false);
+  assert.equal(queries.some((query) => query.sql.includes("DELETE FROM daily_budget_snapshots")), false);
+});
+
+test("clears blocked state by Telegram id without creating unknown users", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql: String(sql), params });
+    if (String(sql).includes("UPDATE users")) return { rows: [{ id: 7 }] };
+    return { rows: [] };
+  }));
+
+  assert.deepEqual(await repo.clearTelegramUserBotBlocked(100, { source: "incoming_message", now: new Date("2026-07-10T10:00:00Z") }), { changed: true });
+
+  assert.match(queries[0].sql, /telegram_user_id = \$1/);
+  assert.deepEqual(queries[0].params, [100, new Date("2026-07-10T10:00:00Z")]);
+  assert.deepEqual(queries[1].params, [7, "bot_unblocked", JSON.stringify({ source: "incoming_message" })]);
 });
 
 test("records app events with json metadata", async () => {
@@ -2416,12 +2547,16 @@ test("returns top categories", async () => {
 });
 
 test("creates and lists planned expenses", async () => {
+  const queries = [];
   const repo = createRepository(fakePool((_sql, params) => {
-    if (String(_sql).startsWith("INSERT")) {
+    const query = String(_sql);
+    queries.push({ sql: query, params });
+    if (query.includes("INSERT INTO planned_expenses")) {
       assert.match(String(_sql), /VALUES \(\$1, \$2, \$3, \$4, \$5, \$6, \$7, \$8, \$9, \$10, \$11, \$12, true\)/);
       assert.equal(params.length, 12);
-      return { rows: [{ id: "5", description: params[4], recurrence: params[7] }] };
+      return { rows: [{ id: "5", user_id: "5", description: params[4], recurrence: params[7] }] };
     }
+    if (query.includes("INSERT INTO app_events")) return { rows: [], rowCount: 1 };
     return { rows: [{ id: "5", description: "ChatGPT", recurrence: "monthly" }] };
   }));
 
@@ -2439,6 +2574,60 @@ test("creates and lists planned expenses", async () => {
 
   assert.equal(created.description, "ChatGPT");
   assert.equal(planned[0].recurrence, "monthly");
+  const event = queries.find((query) => query.sql.includes("INSERT INTO app_events"));
+  assert.deepEqual(event.params, ["5", "planned_expense_created", JSON.stringify({ source: "miniapp" })]);
+  assert.doesNotMatch(event.params[2], /ChatGPT|20/);
+});
+
+test("checks successful report delivery for an exact user type and key", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql: String(sql), params });
+    return { rows: [{ exists: true }] };
+  }));
+
+  assert.equal(await repo.hasReportDelivery(7, "weekly", "2026-W27"), true);
+  assert.match(queries[0].sql, /SELECT EXISTS/);
+  assert.match(queries[0].sql, /status = 'sent'/);
+  assert.deepEqual(queries[0].params, [7, "weekly", "2026-W27"]);
+});
+
+test("records safe events after planned expense update and deactivation", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    const query = String(sql);
+    queries.push({ sql: query, params });
+    if (query.startsWith("SELECT * FROM users")) {
+      return { rows: [{ id: "7", telegram_user_id: "100", base_currency: "THB", timezone: "Asia/Bangkok" }] };
+    }
+    if (query.startsWith("UPDATE planned_expenses") && query.includes("amount =")) {
+      return { rows: [{ id: "5", user_id: "7", active: true }] };
+    }
+    if (query.startsWith("UPDATE planned_expenses") && query.includes("active = false")) {
+      return { rows: [{ id: "5", user_id: "7" }] };
+    }
+    return { rows: [], rowCount: query.includes("INSERT INTO app_events") ? 1 : 0 };
+  }));
+
+  await repo.updatePlannedExpense(100, 5, {
+    amount: 20,
+    currency: "THB",
+    description: "Private description",
+    category_slug: "subscriptions",
+    recurrence: "monthly",
+    due_day: 10,
+    active: true
+  });
+  await repo.deactivatePlannedExpense(100, 5);
+
+  const events = queries
+    .filter((query) => query.sql.includes("INSERT INTO app_events"))
+    .map((query) => [query.params[1], JSON.parse(query.params[2])]);
+  assert.deepEqual(events, [
+    ["planned_expense_updated", { source: "miniapp" }],
+    ["planned_expense_deleted", { source: "miniapp" }]
+  ]);
+  assert.doesNotMatch(JSON.stringify(events), /Private description|20/);
 });
 
 test("paying a planned expense creates an expense and records payment month", async () => {

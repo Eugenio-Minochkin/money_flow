@@ -23,11 +23,12 @@ test("retries transient startup failures before succeeding", async () => {
   assert.equal(attempts, 3);
 });
 
-test("migration files are listed in lexical order and include 001 and 002", async () => {
+test("migration files are listed in lexical order and include the product analytics migration", async () => {
   const dir = resolve(dirname(fileURLToPath(import.meta.url)), "..", "migrations");
   const files = await listMigrationFiles(dir);
   assert.ok(files.includes("001_initial.sql"));
   assert.ok(files.includes("002_draft_confirm_flow.sql"));
+  assert.ok(files.includes("008_product_analytics.sql"));
   assert.deepEqual(files, [...files].sort());
 });
 
@@ -122,6 +123,22 @@ test("account deletion migration repairs release note delivery user cascade FK i
   assert.match(sql, /DROP CONSTRAINT IF EXISTS/i);
   assert.match(sql, /ADD CONSTRAINT release_note_deliveries_user_id_fkey/i);
   assert.match(sql, /FOREIGN KEY \(user_id\) REFERENCES users\(id\) ON DELETE CASCADE/i);
+});
+
+test("product analytics migration adds first-touch fields and singleton onboarding index without backfill", async () => {
+  const dir = resolve(dirname(fileURLToPath(import.meta.url)), "..", "migrations");
+  const sql = await readFile(resolve(dir, "008_product_analytics.sql"), "utf8");
+
+  assert.match(sql, /ALTER TABLE users ADD COLUMN IF NOT EXISTS acquisition_source TEXT/i);
+  assert.match(sql, /ALTER TABLE users ADD COLUMN IF NOT EXISTS acquisition_first_seen_at TIMESTAMPTZ/i);
+  assert.match(sql, /ALTER TABLE users ADD COLUMN IF NOT EXISTS bot_blocked_at TIMESTAMPTZ/i);
+  assert.match(sql, /ALTER TABLE users ADD COLUMN IF NOT EXISTS bot_unblocked_at TIMESTAMPTZ/i);
+  assert.match(sql, /CREATE UNIQUE INDEX IF NOT EXISTS app_events_singleton_onboarding_user_event_idx/i);
+  assert.match(sql, /ON app_events \(user_id, event_name\)/i);
+  assert.match(sql, /WHERE user_id IS NOT NULL/i);
+  assert.match(sql, /event_name IN \(\s*'onboarding_started',\s*'currency_selected',\s*'budget_set',\s*'onboarding_completed'\s*\)/i);
+  assert.doesNotMatch(sql, /UPDATE\s+users/i);
+  assert.doesNotMatch(sql, /INSERT\s+INTO\s+app_events/i);
 });
 
 test("migrate records applied files and skips them on the second run", async () => {

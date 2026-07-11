@@ -3,7 +3,7 @@ import { parseExpenseText } from "../../../packages/shared/src/parser.js";
 import { parseBudgetTopupText } from "../../../packages/shared/src/budgetTopupParser.js";
 import { parsePlannedExpenseText } from "../../../packages/shared/src/plannedParser.js";
 import { normalizeCurrency, SUPPORTED_CURRENCY_CODES } from "../../../packages/shared/src/currencies.js";
-import { isAdminTelegramId, normalizeBotCommand } from "./adminAccess.js";
+import { isAdminTelegramId, parseBotCommand } from "./adminAccess.js";
 import {
   localDateKey as timezoneLocalDateKey,
   localHour as timezoneLocalHour,
@@ -11,12 +11,15 @@ import {
   localWeekday as timezoneLocalWeekday,
   normalizeTimeZone
 } from "../../../packages/shared/src/time.js";
-import { formatAdminStats } from "./adminStatsService.js";
+import { formatAdminMessageParts } from "./adminStatsService.js";
+import { formatProductStatsSections } from "./productStatsService.js";
+import { formatTechnicalStatsSections } from "./technicalStatsService.js";
 import { createExpenseExportService } from "./expenseExportService.js";
 import { createTelegramJobQueue } from "./telegramJobQueue.js";
 import { formatBudgetTopupDraft, formatBudgetTopupSuccess, formatBudgetTopupUndoSuccess, formatDraft, formatPlannedDraft, formatReserveClosedEvent, formatSavedSummary, formatTotals, formatWeeklyReport } from "./telegramFormat.js";
 import { appKeyboard, budgetTopupDraftKeyboard, budgetTopupMiniAppKeyboard, budgetTopupSuccessKeyboard, draftKeyboard, inboxDraftKeyboard, plannedDraftKeyboard, parseBudgetTopupCallback, parseDraftCallback, categorySlugFromCode } from "./telegramKeyboards.js";
 import { DraftCanceledError, CategoryRequiredError } from "./repository.js";
+import { normalizeAcquisitionSource } from "./productAnalytics.js";
 
 // budget_setup is the primary onboarding path; base_currency/monthly_budget/month_opening_spend are legacy fallback states.
 const ONBOARDING_STEPS = ["language", "budget_setup", "base_currency", "monthly_budget", "current_month_budget", "month_opening_spend"];
@@ -53,6 +56,11 @@ export function createTelegramBot({
     async handleUpdate(update) {
       const trace = createPerfTrace({ update, logger: perfLogger });
       let success = false;
+      if (update.my_chat_member) {
+        await handleMyChatMember({ update, repository, now });
+        trace.finish(true);
+        return { ok: true };
+      }
       if (update.message) {
         try {
           const result = await handleMessage({ update, repository, token, miniAppUrl, expenseParser, voiceTranscriber, telegramClient, adminTelegramIds, adminStatsService, releaseNotesService, adminAlertService, expenseExportService: sharedExpenseExportService, now, trace, telegramJobQueue, awaitQueuedJobs });
@@ -90,18 +98,29 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
   const from = message.from;
   if (!from) return { ok: true };
 
+  const rawText = message.text?.trim() || null;
+  const parsedCommand = parseBotCommand(rawText);
+  const commandText = parsedCommand.command;
+  const acquisitionSource = commandText === "/start"
+    ? normalizeAcquisitionSource(parsedCommand.payload)
+    : "direct";
+
   trace.start("user_context");
   const user = await repository.upsertTelegramUser({
     id: from.id,
     firstName: from.first_name,
-    username: from.username
+    username: from.username,
+    acquisitionSource,
+    acquisitionSeenAt: now()
   });
   trace.end("user_context");
+  await repository.clearTelegramUserBotBlocked?.(from.id, {
+    source: "incoming_message",
+    now: now()
+  });
   const language = user.interface_language ?? "en";
   const chatId = message.chat.id;
 
-  const rawText = message.text?.trim() || null;
-  const commandText = normalizeBotCommand(rawText);
   const feedbackCommand = parseFeedbackCommand(rawText);
   const hasVoice = Boolean(message.voice || message.audio);
   const hasPhoto = Boolean(message.photo?.length);
@@ -163,10 +182,10 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
       });
     }
 
-    if (commandText === "/admin_stats") {
+    if (commandText === "/admin_stats" || commandText === "/admin_stats_tech") {
       if (!isAdminTelegramId(from.id, adminTelegramIds)) {
         console.warn("[admin] access denied", {
-          command: "/admin_stats",
+          command: commandText,
           fromId: from.id,
           username: from.username ?? null,
           chatId,
@@ -175,21 +194,31 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
         });
         return sendTelegramResponse(trace, () => sendMessage(token, chatId, "Access denied", null, telegramClient));
       }
-      if (!adminStatsService?.getAdminStats) {
-        return sendTelegramResponse(trace, () => sendMessage(token, chatId, "Admin stats unavailable", null, telegramClient));
-      }
+      const technical = commandText === "/admin_stats_tech";
+      const method = technical ? "getTechnicalStats" : "getAdminStats";
+      const unavailable = technical ? "Technical stats unavailable" : "Product stats unavailable";
+      if (typeof adminStatsService?.[method] !== "function") return sendTelegramResponse(trace, () => sendMessage(token, chatId, unavailable, null, telegramClient));
       try {
-        const stats = await adminStatsService.getAdminStats();
-        return sendTelegramResponse(trace, () => sendMessage(token, chatId, formatAdminStats(stats), null, telegramClient));
+        const stats = await adminStatsService[method]();
+        const sections = technical ? formatTechnicalStatsSections(stats) : formatProductStatsSections(stats);
+        const parts = formatAdminMessageParts(sections);
+        let response;
+        for (const part of parts) {
+          response = await sendMessage(token, chatId, part.html, null, telegramClient, part.plainText);
+        }
+        return response;
       } catch (error) {
         console.error("[telegram] admin stats failed", error);
-        return sendTelegramResponse(trace, () => sendMessage(token, chatId, "Admin stats unavailable", null, telegramClient));
+        return sendTelegramResponse(trace, () => sendMessage(token, chatId, unavailable, null, telegramClient));
       }
     }
 
     if (commandText === "/start") {
+      await safeRecordAppEvent(repository, user.id, "bot_started", { source: acquisitionSource });
       if (isOnboardingActive(user)) {
-        return sendTelegramResponse(trace, () => sendMessage(token, chatId, onboardingPrompt(user), onboardingReplyMarkup(user), telegramClient));
+        const response = await sendTelegramResponse(trace, () => sendMessage(token, chatId, onboardingPrompt(user), onboardingReplyMarkup(user), telegramClient));
+        await safeRecordAppEventOnce(repository, user.id, "onboarding_started", { source: "telegram" });
+        return response;
       }
       return sendTelegramResponse(trace, () => sendMessage(token, chatId, botText(language, "start"), appKeyboard(miniAppUrl, from.id, language), telegramClient));
     }
@@ -760,6 +789,39 @@ async function safeRecordAppEvent(repository, userId, eventName, metadata = {}) 
   }
 }
 
+async function handleMyChatMember({ update, repository, now }) {
+  const memberUpdate = update.my_chat_member;
+  if (memberUpdate?.chat?.type !== "private") return;
+  const oldAvailable = telegramMemberIsAvailable(memberUpdate.old_chat_member);
+  const newAvailable = telegramMemberIsAvailable(memberUpdate.new_chat_member);
+  if (oldAvailable === newAvailable || newAvailable == null) return;
+  await repository.setTelegramUserBotBlocked?.(memberUpdate.chat.id, {
+    blocked: !newAvailable,
+    source: "telegram_status",
+    now: now()
+  });
+}
+
+function telegramMemberIsAvailable(member) {
+  const status = member?.status;
+  if (["creator", "administrator", "member"].includes(status)) return true;
+  if (status === "restricted") return member?.is_member !== false;
+  if (["left", "kicked"].includes(status)) return false;
+  return null;
+}
+
+async function safeRecordAppEventOnce(repository, userId, eventName, metadata = {}) {
+  try {
+    await repository.recordAppEventOnce?.(userId, eventName, metadata);
+  } catch (error) {
+    console.warn("[events] record failed", {
+      userId: userId ?? null,
+      eventName,
+      message: error.message
+    });
+  }
+}
+
 async function safeNotifyAdminError(adminAlertService, error, context) {
   if (typeof adminAlertService?.notifyAdminError !== "function") return;
   try {
@@ -932,6 +994,7 @@ async function handleOnboardingMessage({ text, user, repository, token, chatId, 
       });
     }
     trace.end("db_save");
+    await safeRecordAppEventOnce(repository, user.id, "currency_selected", { currency });
     return sendTelegramResponse(trace, () => sendMessage(token, chatId, onboardingText(language, "monthlyBudget", { currency }), null, telegramClient));
   }
 
@@ -955,9 +1018,14 @@ async function handleOnboardingMessage({ text, user, repository, token, chatId, 
         onboardingStep: nextStep
       });
     }
+    await safeRecordAppEventOnce(repository, user.id, "budget_set", {
+      currency: user.base_currency ?? "THB",
+      budgetType: "monthly"
+    });
     if (nextStep === "completed") {
       await repository.setOnboardingStep?.(telegramUserId, "completed");
       trace.end("db_save");
+      await safeRecordAppEventOnce(repository, user.id, "onboarding_completed");
       return sendTelegramResponse(trace, () => sendMessage(token, chatId, onboardingText(language, "complete"), appKeyboard(miniAppUrl, telegramUserId, language), telegramClient));
     }
     trace.end("db_save");
@@ -969,6 +1037,7 @@ async function handleOnboardingMessage({ text, user, repository, token, chatId, 
       trace.start("db_save");
       await repository.setOnboardingStep?.(telegramUserId, "completed");
       trace.end("db_save");
+      await safeRecordAppEventOnce(repository, user.id, "onboarding_completed");
       return sendTelegramResponse(trace, () => sendMessage(token, chatId, onboardingText(language, "complete"), appKeyboard(miniAppUrl, telegramUserId, language), telegramClient));
     }
     const amount = parseSingleAmount(text, user.base_currency ?? "THB");
@@ -993,12 +1062,14 @@ async function handleOnboardingMessage({ text, user, repository, token, chatId, 
       await repository.setOnboardingStep?.(telegramUserId, "completed");
     }
     trace.end("db_save");
+    await safeRecordAppEventOnce(repository, user.id, "onboarding_completed");
     return sendTelegramResponse(trace, () => sendMessage(token, chatId, onboardingText(language, "complete"), appKeyboard(miniAppUrl, telegramUserId, language), telegramClient));
   }
 
   trace.start("db_save");
   await repository.setOnboardingStep?.(telegramUserId, "completed");
   trace.end("db_save");
+  await safeRecordAppEventOnce(repository, user.id, "onboarding_completed");
   return sendTelegramResponse(trace, () => sendMessage(token, chatId, onboardingText(language, "complete"), appKeyboard(miniAppUrl, telegramUserId, language), telegramClient));
 }
 
@@ -1052,8 +1123,14 @@ async function handleBudgetSetupMessage({ text, user, repository, token, chatId,
     await repository.updateOnboardingData?.(telegramUserId, {});
   }
   trace.end("db_save");
+  await safeRecordAppEventOnce(repository, user.id, "currency_selected", { currency });
+  await safeRecordAppEventOnce(repository, user.id, "budget_set", {
+    currency,
+    budgetType: "monthly"
+  });
 
   if (nextStep === "completed") {
+    await safeRecordAppEventOnce(repository, user.id, "onboarding_completed");
     return sendTelegramResponse(trace, () => sendMessage(token, chatId, onboardingText(language, "complete"), appKeyboard(miniAppUrl, telegramUserId, language), telegramClient));
   }
   return sendTelegramResponse(trace, () => sendMessage(token, chatId, onboardingText(language, "currentMonthBudget", { currency }), null, telegramClient));
@@ -1685,9 +1762,14 @@ function nextLogMessageId() {
   return logMessageIdSequence;
 }
 
-async function sendMessage(token, chatId, text, replyMarkup, telegramClient) {
+async function sendMessage(token, chatId, text, replyMarkup, telegramClient, plainTextFallback = null) {
   if (telegramClient) {
-    return telegramClient.sendMessage({ chatId, text, replyMarkup });
+    try {
+      return await telegramClient.sendMessage({ chatId, text, replyMarkup });
+    } catch (error) {
+      if (!shouldRetryPlainText(error)) throw error;
+      return telegramClient.sendMessage({ chatId, text: plainTextFallback ?? stripTelegramHtml(text), replyMarkup });
+    }
   }
   if (!token) {
     const logMessageId = nextLogMessageId();
@@ -1707,7 +1789,7 @@ async function sendMessage(token, chatId, text, replyMarkup, telegramClient) {
     console.error("[telegram] sendMessage HTML rejected, retrying plain text", error.message);
     return telegramRequest(token, "sendMessage", {
       ...body,
-      text: stripTelegramHtml(text),
+      text: plainTextFallback ?? stripTelegramHtml(text),
       parse_mode: undefined
     });
   }

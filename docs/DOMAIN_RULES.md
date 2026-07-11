@@ -92,3 +92,11 @@ This file records stable product and business rules. Read it before changing bud
 - A draft is confirmed exactly once. Repeated or concurrent confirms never create duplicate expenses.
 - Cancel never deletes an already-saved expense.
 - A draft without a valid category cannot be confirmed (parser-fallback `other` is not valid; a user-chosen category, including `other`, is valid).
+
+## Product Analytics Cohorts
+
+- Acquisition and funnel cohorts include only users whose `users.created_at` is within the reporting window and whose first `bot_started` or `miniapp_opened` event occurred at or after account creation.
+- Activation is the first `expense_saved` after first start. Draft confirmation alone is not activation.
+- D1 return activity uses `[24h, 48h)` after first start; D7 uses `[6d, 8d)`. Users enter each denominator only after that window has matured.
+- Habit requires `expense_saved` activity on at least two local dates in the first seven days. Historical local dates use the current `users.timezone`; changing timezone may therefore change the MVP aggregate.
+- Automatic report delivery is not meaningful activity. A validated report click is meaningful activity.

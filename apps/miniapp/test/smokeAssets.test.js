@@ -23,8 +23,25 @@ test("Mini App keeps app.js and styles.css cache-busters in sync", async () => {
   assert.ok(appVersion, "index.html should version app.js with a ?v= query");
   assert.ok(cssVersion, "index.html should version styles.css with a ?v= query");
   assert.equal(appVersion, cssVersion, "app.js and styles.css cache-busters must stay in sync");
-  assert.equal(appVersion, "20260710-account-deletion-v15");
+  assert.equal(appVersion, "20260711-product-analytics-review-v16");
   assert.notEqual(appVersion, "20260626-dashboard-v12", "app.js must not keep the stale dashboard-v12 cache-buster");
+});
+
+test("Mini App renders onboarding state before dashboard and history", async () => {
+  const html = await readFile(join(miniAppRoot, "index.html"), "utf8");
+  const app = await readFile(join(miniAppRoot, "app.js"), "utf8");
+  const css = await readFile(join(miniAppRoot, "styles.css"), "utf8");
+
+  assert.match(html, /id="onboardingState"/);
+  assert.match(html, /data-i18n="onboarding\.continueInBot"/);
+  assert.match(app, /if \(isOnboardingDashboardResponse\(data\)\)\s*{\s*renderOnboardingState\(data\.user\);\s*return data;/);
+  assert.match(app, /const dashboard = await loadDashboard\(\);\s*if \(isOnboardingDashboardResponse\(dashboard\)\) return;/);
+  assert.match(app, /buildDashboardRequestPath\(telegramUserId, window\.location\.search\)/);
+  assert.match(css, /\.onboarding-state\.hidden\s*{[^}]*display:\s*none/s);
+  for (const language of ["en", "ru"]) {
+    assert.equal(typeof translations[language]["onboarding.continueInBot"], "string");
+    assert.equal(typeof translations[language]["onboarding.openBot"], "string");
+  }
 });
 
 test("settings tab contains account deletion danger zone after settings form", async () => {

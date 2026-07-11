@@ -1,11 +1,25 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { createAdminStatsService, formatAdminStats } from "../src/adminStatsService.js";
+import { createAdminStatsService } from "../src/adminStatsService.js";
+import { createTechnicalStatsService, formatTechnicalStats as formatAdminStats } from "../src/technicalStatsService.js";
+
+test("admin stats facade keeps product and technical dependencies isolated", async () => {
+  const calls = [];
+  const service = createAdminStatsService({
+    productStatsService: { async getProductStats() { calls.push("product"); return { kind: "product" }; } },
+    technicalStatsService: { async getTechnicalStats() { calls.push("technical"); return { kind: "technical" }; } }
+  });
+
+  assert.deepEqual(await service.getAdminStats(), { kind: "product" });
+  assert.deepEqual(calls, ["product"]);
+  assert.deepEqual(await service.getTechnicalStats(), { kind: "technical" });
+  assert.deepEqual(calls, ["product", "technical"]);
+});
 
 test("aggregates admin stats from app events and users", async () => {
   const queries = [];
-  const service = createAdminStatsService({
+  const service = createTechnicalStatsService({
     pool: fakePool((sql, params) => {
       queries.push({ sql: String(sql), params });
       if (String(sql).includes("information_schema.columns")) {
@@ -82,7 +96,7 @@ test("aggregates admin stats from app events and users", async () => {
     now: () => new Date("2026-06-15T10:00:00.000Z")
   });
 
-  const stats = await service.getAdminStats();
+  const stats = await service.getTechnicalStats();
 
   assert.equal(stats.today.activeUsers, 2);
   assert.equal(stats.today.newUsers, 1);
@@ -144,7 +158,7 @@ test("aggregates admin stats from app events and users", async () => {
 });
 
 test("falls back to first app event when users.created_at is unavailable", async () => {
-  const service = createAdminStatsService({
+  const service = createTechnicalStatsService({
     pool: fakePool((sql) => {
       if (String(sql).includes("information_schema.columns")) {
         return { rows: [{ exists: false }] };
@@ -157,7 +171,7 @@ test("falls back to first app event when users.created_at is unavailable", async
     now: () => new Date("2026-06-15T10:00:00.000Z")
   });
 
-  const stats = await service.getAdminStats();
+  const stats = await service.getTechnicalStats();
 
   assert.equal(stats.last7Days.newUsers, 2);
   assert.equal(stats.last7Days.messagesTotal, 0);
@@ -169,7 +183,7 @@ test("falls back to first app event when users.created_at is unavailable", async
 
 test("falls back to historical expense and regular plus planned draft tables", async () => {
   const queries = [];
-  const service = createAdminStatsService({
+  const service = createTechnicalStatsService({
     pool: fakePool((sql) => {
       const query = String(sql);
       queries.push(query);
@@ -244,7 +258,7 @@ test("falls back to historical expense and regular plus planned draft tables", a
     now: () => new Date("2026-06-15T10:00:00.000Z")
   });
 
-  const stats = await service.getAdminStats();
+  const stats = await service.getTechnicalStats();
 
   assert.equal(stats.today.newUsers, 1);
   assert.equal(stats.today.expensesSaved, 4);
@@ -317,8 +331,7 @@ test("formats admin stats as a compact Telegram message", () => {
   assert.match(text, /Shadow: 0\/0 disagreements/);
   assert.match(text, /Rejects: no_amount 2/);
   assert.match(text, /Shadow fields: amount 1/);
-  assert.match(text, /Last 30 days:/);
-  assert.match(text, /Confirm rate: -/);
+  assert.doesNotMatch(text, /Last 30 days:/);
   assert.match(text, /Avg stages text: queue - \/ tg - \/ llm - \/ db -/);
   assert.match(text, /Avg stages voice: queue - \/ dl - \/ asr - \/ llm - \/ tg - \/ db -/);
 });

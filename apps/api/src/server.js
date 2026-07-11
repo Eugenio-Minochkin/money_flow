@@ -14,6 +14,7 @@ import { createExpenseExportService } from "./expenseExportService.js";
 import { createExpenseParser } from "./expenseParser.js";
 import { createJsonReader, createStaticHandler, sendJson } from "./http.js";
 import { handleDevRoute } from "./devRoutes.js";
+import { createMiniAppLaunchService } from "./miniAppLaunchService.js";
 import { createRateLimiter, getRateLimitKey } from "./rateLimit.js";
 import { createReleaseDigestScheduler } from "./releaseDigestScheduler.js";
 import { createReleaseNotesService } from "./releaseNotesService.js";
@@ -69,6 +70,7 @@ const repository = createRepository(pool, {
   defaultMonthlyBudget: config.defaultMonthlyBudget,
   exchangeRates: createExchangeRateProvider({ pool, adminAlertService })
 });
+const miniAppLaunchService = createMiniAppLaunchService({ repository });
 const adminStatsService = createAdminStatsService({ pool });
 const expenseParser = createExpenseParser({
   apiKey: config.openAiApiKey,
@@ -288,6 +290,16 @@ async function route(req, res) {
     if (auth.error) return sendJson(res, 400, { error: auth.error });
     const telegramUserId = auth.telegramUserId;
     const timeZone = req.headers["x-user-timezone"];
+    if (auth.verified) {
+      const dashboard = await miniAppLaunchService.loadDashboard({
+        auth,
+        reportType: url.searchParams.get("reportType"),
+        reportKey: url.searchParams.get("reportKey"),
+        timeZone
+      });
+      if (!dashboard) return sendJson(res, 404, { error: "user_not_found" });
+      return sendJson(res, 200, dashboard);
+    }
     if (timeZone) await repository.syncUserTimezone(telegramUserId, timeZone);
     const dashboard = await repository.dashboard(telegramUserId);
     if (!dashboard) return sendJson(res, 404, { error: "user_not_found" });

@@ -22,3 +22,17 @@ export function createApiClient({
     return response.json();
   };
 }
+
+export function buildDashboardRequestPath(telegramUserId, locationSearch = "") {
+  const launch = new URLSearchParams(locationSearch);
+  const request = new URLSearchParams({ telegramUserId: String(telegramUserId) });
+  for (const key of ["reportType", "reportKey"]) {
+    const value = launch.get(key);
+    if (value) request.set(key, value);
+  }
+  return `/api/dashboard?${request.toString()}`;
+}
+
+export function isOnboardingDashboardResponse(data) {
+  return data?.onboarding === true;
+}

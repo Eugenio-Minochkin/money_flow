@@ -1,4 +1,4 @@
-import { createApiClient } from "./apiClient.js";
+import { buildDashboardRequestPath, createApiClient, isOnboardingDashboardResponse } from "./apiClient.js";
 import { categories, categoryColor, categoryLabel } from "./categories.js";
 import { currencyOptions } from "./currencies.js";
 import { resolveDraftSaveResponse, classifyConfirmOutcome } from "./draftSave.js";
@@ -164,7 +164,8 @@ load().catch(showError);
 async function load() {
   if (!telegramUserId) throw new Error("No Telegram user id. Open Mini App from the bot.");
   renderPlannedForm();
-  await loadDashboard();
+  const dashboard = await loadDashboard();
+  if (isOnboardingDashboardResponse(dashboard)) return;
   await loadHistory();
   if (draftId) await openDraftInline(draftId, {
     returnTab: "dashboard",
@@ -175,8 +176,12 @@ async function load() {
 
 async function loadDashboard() {
   if (accountDeleted) return;
-  const data = await api(`/api/dashboard?telegramUserId=${encodeURIComponent(telegramUserId)}`);
+  const data = await api(buildDashboardRequestPath(telegramUserId, window.location.search));
   if (accountDeleted) return;
+  if (isOnboardingDashboardResponse(data)) {
+    renderOnboardingState(data.user);
+    return data;
+  }
   dashboardState = data;
   setBaseCurrency(data.user?.base_currency ?? data.snapshot?.baseCurrency ?? "THB");
   renderSettings(data.user);
@@ -190,6 +195,19 @@ async function loadDashboard() {
   renderLatest(data.latestExpenses ?? []);
   await renderClosedReserveEvents(data.closedReserveEvents ?? []);
   if (data.recurringReserveBlocked) showToast(t("reserve.blocked"));
+  return data;
+}
+
+function renderOnboardingState(user) {
+  applyLanguage(user?.interface_language ?? "en");
+  document.querySelector("#onboardingState")?.classList.remove("hidden");
+  for (const id of ["dashboardTab", "historyTab", "planTab", "settingsTab"]) {
+    document.getElementById(id)?.classList.add("hidden");
+  }
+  document.querySelector(".bottom-tabs")?.classList.add("hidden");
+  document.querySelector("#onboardingOpenBotButton")?.addEventListener("click", () => {
+    window.Telegram?.WebApp?.close();
+  }, { once: true });
 }
 
 function renderAnalytics(snapshot, analytics) {

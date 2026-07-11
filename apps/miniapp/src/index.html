@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Money Flow</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/styles.css?v=20260710-account-deletion-v15" />
+    <link rel="stylesheet" href="/styles.css?v=20260711-product-analytics-review-v16" />
   </head>
   <body data-theme="light">
     <main class="shell">
@@ -14,6 +14,13 @@
           <p class="eyebrow">Money Flow</p>
         </div>
       </header>
+
+      <section class="onboarding-state hidden" id="onboardingState">
+        <div class="onboarding-state__icon" aria-hidden="true">👋</div>
+        <h1 data-i18n="onboarding.title">Finish setting up Money Flow</h1>
+        <p data-i18n="onboarding.continueInBot">Continue setup in the Telegram bot. Your link source is already saved.</p>
+        <button type="button" id="onboardingOpenBotButton" data-i18n="onboarding.openBot">Continue in bot</button>
+      </section>
 
       <section id="dashboardTab">
         <section class="hero-metric hero-metric--flip" data-flip-card data-state="good">
@@ -424,6 +431,6 @@
     </nav>
 
     <div class="toast hidden" id="toast" role="status" aria-live="polite"></div>
-    <script src="/app.js?v=20260710-account-deletion-v15" type="module"></script>
+    <script src="/app.js?v=20260711-product-analytics-review-v16" type="module"></script>
   </body>
 </html>

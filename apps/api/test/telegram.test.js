@@ -28,6 +28,92 @@ test("exports the Telegram message sender used by the production server", async 
   assert.deepEqual(result, { ok: true, result: { message_id: 42 } });
 });
 
+test("new /start records the entry before showing and recording onboarding", async () => {
+  const calls = [];
+  const repo = fakeRepository();
+  repo.user = {
+    id: 1,
+    interface_language: "en",
+    onboarding_step: "language",
+    is_new: true
+  };
+  repo.upsertTelegramUser = async (input) => {
+    calls.push({ name: "upsert", input });
+    return repo.user;
+  };
+  repo.clearTelegramUserBotBlocked = async (telegramUserId, options) => {
+    calls.push({ name: "clearBlocked", telegramUserId, options });
+    return { changed: false };
+  };
+  repo.recordAppEvent = async (userId, eventName, metadata) => {
+    calls.push({ name: `event:${eventName}`, userId, metadata });
+  };
+  repo.recordAppEventOnce = async (userId, eventName, metadata) => {
+    calls.push({ name: `once:${eventName}`, userId, metadata });
+    return { recorded: true };
+  };
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: repo,
+    telegramClient: {
+      async sendMessage(message) {
+        calls.push({ name: "sendMessage", message });
+        return { ok: true };
+      }
+    }
+  });
+
+  await bot.handleUpdate(textUpdate("/start Friend_Alex", 100));
+
+  assert.deepEqual(calls.map((call) => call.name), [
+    "upsert",
+    "clearBlocked",
+    "event:bot_started",
+    "sendMessage",
+    "once:onboarding_started"
+  ]);
+  assert.equal(calls[0].input.acquisitionSource, "friend_alex");
+  assert.deepEqual(calls[2].metadata, { source: "friend_alex" });
+  assert.deepEqual(calls[4].metadata, { source: "telegram" });
+});
+
+test("private chat member transitions update blocked state without creating a user", async () => {
+  const calls = [];
+  const repo = fakeRepository();
+  repo.setTelegramUserBotBlocked = async (telegramUserId, options) => {
+    calls.push({ telegramUserId, options });
+    return { changed: true };
+  };
+  const bot = createTelegramBot({ token: "test-token", miniAppUrl: "http://localhost:3000", repository: repo });
+
+  await bot.handleUpdate({
+    my_chat_member: {
+      chat: { id: 100, type: "private" },
+      from: { id: 100 },
+      old_chat_member: { status: "member" },
+      new_chat_member: { status: "kicked" }
+    }
+  });
+
+  assert.deepEqual(calls, [{
+    telegramUserId: 100,
+    options: { blocked: true, source: "telegram_status", now: calls[0].options.now }
+  }]);
+});
+
+test("chat member updates ignore groups and repeated availability states", async () => {
+  const calls = [];
+  const repo = fakeRepository();
+  repo.setTelegramUserBotBlocked = async (...args) => calls.push(args);
+  const bot = createTelegramBot({ token: "test-token", miniAppUrl: "http://localhost:3000", repository: repo });
+
+  await bot.handleUpdate({ my_chat_member: { chat: { id: -100, type: "group" }, old_chat_member: { status: "member" }, new_chat_member: { status: "kicked" } } });
+  await bot.handleUpdate({ my_chat_member: { chat: { id: 100, type: "private" }, old_chat_member: { status: "member" }, new_chat_member: { status: "member" } } });
+
+  assert.deepEqual(calls, []);
+});
+
 test("text message creates a pending draft response", async () => {
   const calls = [];
   const originalLog = console.log;
@@ -1015,16 +1101,13 @@ test("admin stats shows non-zero metrics after message draft and confirm flow", 
   const statsService = {
     async getAdminStats() {
       const count = (name) => repo.events.filter((event) => event.eventName === name).length;
-      const period = emptyAdminPeriod({
+      const period = emptyProductPeriod({
         activeUsers: repo.events.length > 0 ? 1 : 0,
-        messagesTotal: count("message_received"),
-        textMessages: repo.events.filter((event) => event.eventName === "message_received" && event.metadata.inputType === "text").length,
         expensesSaved: count("expense_saved"),
         draftsCreated: count("expense_draft_created"),
-        draftsConfirmed: count("expense_draft_confirmed"),
-        avgTextProcessingSeconds: count("message_processing_completed") > 0 ? 0.1 : null
+        draftsConfirmed: count("expense_draft_confirmed")
       });
-      return { today: period, last7Days: period, last30Days: period };
+      return emptyProductAdminStats({ periods: { today: period, last3Days: period, last7Days: period, last30Days: period } });
     }
   };
   const bot = createTelegramBot({
@@ -1060,11 +1143,9 @@ test("admin stats shows non-zero metrics after message draft and confirm flow", 
   });
 
   const statsMessage = messages.at(-1).text;
-  assert.match(statsMessage, /Users: 1 active/);
-  assert.match(statsMessage, /Messages: 1 total \/ 1 text/);
-  assert.match(statsMessage, /Expenses saved: 1/);
-  assert.match(statsMessage, /Drafts: 1 created \/ 1 confirmed/);
-  assert.match(statsMessage, /Avg processing: text 0\.1s/);
+  assert.match(statsMessage, /Active users: <b>1<\/b>/);
+  assert.match(statsMessage, /Expenses saved: <b>1<\/b>/);
+  assert.match(statsMessage, /Drafts: <b>1 created \/ 1 confirmed/);
 });
 
 test("empty parse records a parse failure event", async () => {
@@ -1482,11 +1563,10 @@ test("admin stats command sends stats only to configured admin ids", async () =>
       adminTelegramIds: new Set([100]),
       adminStatsService: {
         async getAdminStats() {
-          return {
-            today: emptyAdminPeriod({ activeUsers: 1 }),
-            last7Days: emptyAdminPeriod(),
-            last30Days: emptyAdminPeriod()
-          };
+          return emptyProductAdminStats({ periods: {
+            today: emptyProductPeriod({ activeUsers: 1 }),
+            last3Days: emptyProductPeriod(), last7Days: emptyProductPeriod(), last30Days: emptyProductPeriod()
+          } });
         }
       }
     });
@@ -1503,9 +1583,9 @@ test("admin stats command sends stats only to configured admin ids", async () =>
   }
 
   assert.equal(calls.length, 1);
-  assert.match(calls[0][1].text, /Admin stats/);
-  assert.match(calls[0][1].text, /Today:/);
-  assert.match(calls[0][1].text, /Users: 1 active \/ 0 new/);
+  assert.match(calls[0][1].text, /Product stats/);
+  assert.match(calls[0][1].text, /Today/);
+  assert.match(calls[0][1].text, /Active users: <b>1<\/b> \/ new users: 0/);
 });
 
 test("admin stats accepts numeric-string ids and bot command suffixes", async () => {
@@ -1519,11 +1599,7 @@ test("admin stats accepts numeric-string ids and bot command suffixes", async ()
     adminStatsService: {
       async getAdminStats() {
         serviceCalls += 1;
-        return {
-          today: emptyAdminPeriod(),
-          last7Days: emptyAdminPeriod(),
-          last30Days: emptyAdminPeriod()
-        };
+        return emptyProductAdminStats();
       }
     },
     telegramClient: captureTelegramClient(messages)
@@ -1538,7 +1614,54 @@ test("admin stats accepts numeric-string ids and bot command suffixes", async ()
   });
 
   assert.equal(serviceCalls, 1);
-  assert.match(messages[0].text, /Admin stats/);
+  assert.match(messages[0].text, /Product stats/);
+});
+
+test("technical admin stats use the separate suffixed command", async () => {
+  const messages = [];
+  let calls = 0;
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: fakeRepository(),
+    adminTelegramIds: new Set([100]),
+    adminStatsService: {
+      async getTechnicalStats() {
+        calls += 1;
+        return { today: emptyAdminPeriod(), last7Days: emptyAdminPeriod() };
+      }
+    },
+    telegramClient: captureTelegramClient(messages)
+  });
+
+  await bot.handleUpdate(textUpdate("/admin_stats_tech@MoneyFlowBot", 100));
+
+  assert.equal(calls, 1);
+  assert.match(messages[0].text, /Technical stats/);
+  assert.match(messages[0].text, /Today — Traffic/);
+  assert.doesNotMatch(messages[0].text, /Last 30 days/);
+});
+
+test("product and technical admin stats fail independently", async () => {
+  const messages = [];
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: fakeRepository(),
+    adminTelegramIds: new Set([100]),
+    adminStatsService: {
+      async getTechnicalStats() { throw new Error("technical down"); }
+    },
+    telegramClient: captureTelegramClient(messages)
+  });
+
+  await bot.handleUpdate(textUpdate("/admin_stats", 100));
+  await bot.handleUpdate(textUpdate("/admin_stats_tech", 100));
+
+  assert.deepEqual(messages.map((message) => message.text), [
+    "Product stats unavailable",
+    "Technical stats unavailable"
+  ]);
 });
 
 test("admin stats command does not reveal stats to non-admin users", async () => {
@@ -1689,6 +1812,21 @@ test("new user chooses language and completes budget setup in one message before
   assert.equal(repo.settings.baseCurrency, "IDR");
   assert.equal(repo.settings.monthlyBudgetAmount, 20000);
   assert.equal(repo.currentMonthBudget, null);
+  assert.deepEqual(
+    repo.events.map((event) => event.eventName),
+    [
+      "bot_started",
+      "onboarding_started",
+      "currency_selected",
+      "budget_set",
+      "onboarding_completed"
+    ]
+  );
+  assert.deepEqual(repo.events.find((event) => event.eventName === "budget_set").metadata, {
+    currency: "IDR",
+    budgetType: "monthly"
+  });
+  assert.doesNotMatch(JSON.stringify(repo.events), /20000/);
 });
 
 test("Russian language callback sends Russian budget setup text", async () => {
@@ -3184,6 +3322,13 @@ function fakeRepository() {
     async recordAppEvent(userId, eventName, metadata = {}) {
       this.events.push({ userId, eventName, metadata });
     },
+    async recordAppEventOnce(userId, eventName, metadata = {}) {
+      if (!this.events.some((event) => event.userId === userId && event.eventName === eventName)) {
+        this.events.push({ userId, eventName, metadata });
+        return { recorded: true };
+      }
+      return { recorded: false };
+    },
     async updateUserSettings(_telegramUserId, settings) {
       this.settings = { ...this.settings, ...settings };
       this.user = {
@@ -3465,6 +3610,31 @@ function emptyAdminPeriod(overrides = {}) {
     avgVoiceProcessingSeconds: null,
     confirmRate: null,
     parseFailedRate: null,
+    ...overrides
+  };
+}
+
+function emptyProductPeriod(overrides = {}) {
+  return {
+    activeUsers: 0, newUsers: 0, expensesSaved: 0, expensesPerActiveUser: null,
+    draftsCreated: 0, draftsConfirmed: 0, confirmRate: null, feedbackSent: 0,
+    newlyBlocked: 0, newlyUnblocked: 0, deletedAccounts: 0, activeTwoDays: 0,
+    activeThreeDays: 0, ...overrides
+  };
+}
+
+function emptyProductAdminStats(overrides = {}) {
+  const period = emptyProductPeriod();
+  return {
+    userBase: { reachableNow: 0, blockedNow: 0, deletedAllTime: 0, allTimeJoined: 0 },
+    periods: { today: period, last3Days: period, last7Days: period, last30Days: period },
+    funnel: { started: 0, onboardingStarted: 0, onboardingCompleted: 0, firstDraftCreated: 0, firstExpenseSaved: 0, dashboardOpened: 0 },
+    activation: { medianHours: null },
+    retention: { d1Eligible: 0, d1Returned: 0, d1Rate: null, d7Eligible: 0, d7Returned: 0, d7Rate: null },
+    habit: { eligible: 0, started: 0, rate: null },
+    reports: { deliveredUsers: 0, clickedUsers: 0, failedAttempts: 0, ctr: null },
+    sources: [],
+    health: { parseFailed: 0, parseFailedRate: null, transcriptionFailed: 0, p95TextSeconds: null, p95VoiceSeconds: null },
     ...overrides
   };
 }
