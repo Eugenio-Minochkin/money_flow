@@ -49,7 +49,7 @@ export function stripAllowedTelegramHtml(value) {
 
 function splitRenderedSection(section, maxLength) {
   const heading = String(section.heading ?? "");
-  const rows = (section.rows ?? []).map(String);
+  const rows = section.rows ?? [];
   const chunks = [];
   let currentRows = [];
   for (const originalRow of rows.length > 0 ? rows : [""]) {
@@ -68,13 +68,30 @@ function splitRenderedSection(section, maxLength) {
 
 function renderSection(heading, rows) {
   const safeHeading = escapeTelegramHtml(heading);
-  const safeRows = rows.filter(Boolean).map(escapeTelegramHtml);
+  const nonEmptyRows = rows.filter(Boolean);
+  const safeRows = nonEmptyRows.map(renderRowHtml);
   return {
     html: [`<b>${safeHeading}</b>`, ...safeRows].join("\n"),
-    plainText: [heading, ...rows.filter(Boolean)].join("\n")
+    plainText: [heading, ...nonEmptyRows.map(renderRowPlainText)].join("\n")
   };
 }
 
 function truncateRow(row, maxLength) {
+  if (typeof row !== "string") return row;
   return row.length <= maxLength ? row : `${row.slice(0, Math.max(0, maxLength - 1))}…`;
+}
+
+function renderRowHtml(row) {
+  if (typeof row === "string") return escapeTelegramHtml(row);
+  return (row.segments ?? []).map((segment) => {
+    const value = escapeTelegramHtml(segment.text);
+    if (segment.style === "bold") return `<b>${value}</b>`;
+    if (segment.style === "code") return `<code>${value}</code>`;
+    return value;
+  }).join("");
+}
+
+function renderRowPlainText(row) {
+  if (typeof row === "string") return row;
+  return (row.segments ?? []).map((segment) => String(segment.text ?? "")).join("");
 }

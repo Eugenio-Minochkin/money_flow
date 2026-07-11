@@ -11,6 +11,7 @@ export function createTechnicalStatsService({ pool, now = () => new Date() }) {
       };
 
       return {
+        generatedAt: current,
         today: await periodStats(pool, periods.today, usersCreatedAtAvailable),
         last7Days: await periodStats(pool, periods.last7Days, usersCreatedAtAvailable)
       };
@@ -29,7 +30,7 @@ export function formatTechnicalStats(stats) {
 }
 
 export function formatTechnicalStatsSections(stats) {
-  const sections = [{ heading: "Technical stats", rows: [] }];
+  const sections = [{ heading: "🛠 Technical stats", rows: [generatedRow(stats.generatedAt)] }];
   for (const [label, period] of [["Today", stats.today], ["Last 7 days", stats.last7Days]]) {
     const lines = formatPeriod(label, period, { includeRates: label !== "Today" }).split("\n").slice(1);
     const groups = [
@@ -45,11 +46,41 @@ export function formatTechnicalStatsSections(stats) {
     ];
     for (const [name, pattern] of groups) {
       const rows = lines.filter((line) => pattern.test(line));
-      if (rows.length > 0) sections.push({ heading: `${label} — ${name}`, rows });
+      if (rows.length > 0) sections.push({ heading: `${technicalSectionEmoji(name)} ${label} — ${name}`, rows: rows.map(highlightTechnicalRow) });
     }
   }
   return sections;
 }
+
+function highlightTechnicalRow(line) {
+  if (line.startsWith("Rejects:") || line.startsWith("Shadow fields:")) {
+    const [label, ...value] = line.split(":");
+    return richRow([plain(`${label}: `), code(value.join(":").trim())]);
+  }
+  const users = line.match(/^Users: (.+? active)(.*)$/);
+  if (users) return richRow([plain("Users: "), bold(users[1]), plain(users[2])]);
+  const separator = line.indexOf(":");
+  if (separator < 0) return line;
+  return richRow([plain(line.slice(0, separator + 2)), bold(line.slice(separator + 2))]);
+}
+
+function technicalSectionEmoji(name) {
+  return ({ Traffic: "📨", Errors: "⚠️", Processing: "⏱", "Processing stages": "🧭", "Parser routing and averages": "🧠", Review: "🔎", Shadow: "👤", Rejects: "🚫", "Shadow fields": "🧩" })[name] ?? "•";
+}
+
+function generatedRow(value) {
+  return richRow([plain("Generated: "), code(formatGeneratedAt(value))]);
+}
+
+function formatGeneratedAt(value) {
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? "—" : `${date.toISOString().slice(0, 16).replace("T", " ")} UTC`;
+}
+
+function richRow(segments) { return { segments }; }
+function plain(text) { return { text, style: "plain" }; }
+function bold(text) { return { text, style: "bold" }; }
+function code(text) { return { text, style: "code" }; }
 
 async function periodStats(pool, period, usersCreatedAtAvailable) {
   const [events, historical, newUsers] = await Promise.all([

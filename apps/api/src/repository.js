@@ -1059,15 +1059,24 @@ export function createRepository(pool, options = {}) {
         await assertReserveBudgetCapacity(pool, user, amount, new Date());
       }
       const result = await pool.query(
-        `UPDATE users
-         SET monthly_budget_amount = $1
-         WHERE telegram_user_id = $2
-         RETURNING *`,
+        `WITH current_user AS MATERIALIZED (
+           SELECT id, monthly_budget_amount
+           FROM users
+           WHERE telegram_user_id = $2
+         ), updated AS (
+           UPDATE users u
+           SET monthly_budget_amount = $1
+           FROM current_user current
+           WHERE u.id = current.id
+           RETURNING u.*, current.monthly_budget_amount IS DISTINCT FROM $1 AS budget_changed
+         )
+         SELECT * FROM updated`,
         [amount, telegramUserId]
       );
       const user = result.rows[0] ?? null;
-      if (user) await invalidateDailyBudgetSnapshot(pool, user.id, now, resolveUserTimeZone(user));
-      if (user) await this.recordAppEvent(user.id, "budget_changed", { source: "settings" });
+      const budgetChanged = user?.budget_changed !== false;
+      if (user && budgetChanged) await invalidateDailyBudgetSnapshot(pool, user.id, now, resolveUserTimeZone(user));
+      if (user && budgetChanged) await this.recordAppEvent(user.id, "budget_changed", { source: "settings" });
       return user;
     },
 

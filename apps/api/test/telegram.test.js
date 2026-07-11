@@ -1143,9 +1143,9 @@ test("admin stats shows non-zero metrics after message draft and confirm flow", 
   });
 
   const statsMessage = messages.at(-1).text;
-  assert.match(statsMessage, /Active users: 1/);
-  assert.match(statsMessage, /Expenses saved: 1/);
-  assert.match(statsMessage, /Drafts: 1 created \/ 1 confirmed/);
+  assert.match(statsMessage, /Active users: <b>1<\/b>/);
+  assert.match(statsMessage, /Expenses saved: <b>1<\/b>/);
+  assert.match(statsMessage, /Drafts: <b>1 created \/ 1 confirmed/);
 });
 
 test("empty parse records a parse failure event", async () => {
@@ -1585,7 +1585,7 @@ test("admin stats command sends stats only to configured admin ids", async () =>
   assert.equal(calls.length, 1);
   assert.match(calls[0][1].text, /Product stats/);
   assert.match(calls[0][1].text, /Today/);
-  assert.match(calls[0][1].text, /Active users: 1 \/ new users: 0/);
+  assert.match(calls[0][1].text, /Active users: <b>1<\/b> \/ new users: 0/);
 });
 
 test("admin stats accepts numeric-string ids and bot command suffixes", async () => {

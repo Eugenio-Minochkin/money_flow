@@ -255,6 +255,12 @@ function handleBudgetReserveQuery(state, sql, params) {
   if (sql.startsWith("SELECT * FROM users WHERE telegram_user_id")) return { rows: [state.user] };
   if (sql.startsWith("SELECT * FROM users WHERE id")) return { rows: [state.user] };
 
+  if (sql.includes("UPDATE users u") && sql.includes("current_user AS MATERIALIZED")) {
+    const budgetChanged = Number(state.user.monthly_budget_amount) !== Number(params[0]);
+    state.user.monthly_budget_amount = String(params[0]);
+    return { rows: [{ ...state.user, budget_changed: budgetChanged }] };
+  }
+
   if (sql.startsWith("UPDATE users") && sql.includes("monthly_budget_amount")) {
     state.user.monthly_budget_amount = String(params[0]);
     return { rows: [state.user] };

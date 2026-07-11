@@ -637,9 +637,9 @@ test("recreates an invalidated daily snapshot from the updated monthly budget", 
   let totalsCall = 0;
   const repo = createRepository(fakePool((sql, params) => {
     const query = String(sql);
-    if (query.startsWith("UPDATE users")) {
+    if (query.includes("WITH current_user AS") && query.includes("UPDATE users u")) {
       monthlyBudget = Number(params[0]);
-      return { rows: [{ id: "1", telegram_user_id: "100", monthly_budget_amount: monthlyBudget }] };
+      return { rows: [{ id: "1", telegram_user_id: "100", monthly_budget_amount: monthlyBudget, budget_changed: true }] };
     }
     if (query.includes("DELETE FROM daily_budget_snapshots")) {
       storedDayBudget = null;
@@ -1539,6 +1539,22 @@ test("records blocked and unblocked events only for real state transitions", asy
   assert.deepEqual(queries[0].params, [1, true, new Date("2026-07-10T10:00:00Z")]);
   assert.deepEqual(queries[1].params, [1, "bot_blocked", JSON.stringify({ source: "telegram_status" })]);
   assert.equal(queries.filter((query) => query.sql.includes("INSERT INTO app_events")).length, 1);
+});
+
+test("saving the same monthly budget does not record meaningful activity", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql: String(sql), params });
+    return { rows: [{ id: 1, monthly_budget_amount: "60000", budget_changed: false }] };
+  }));
+
+  const user = await repo.updateMonthlyBudget(100, 60000);
+
+  assert.equal(Number(user.monthly_budget_amount), 60000);
+  assert.match(queries[0].sql, /current_user AS/);
+  assert.match(queries[0].sql, /IS DISTINCT FROM/);
+  assert.equal(queries.some((query) => query.sql.includes("INSERT INTO app_events")), false);
+  assert.equal(queries.some((query) => query.sql.includes("DELETE FROM daily_budget_snapshots")), false);
 });
 
 test("clears blocked state by Telegram id without creating unknown users", async () => {

@@ -60,6 +60,22 @@ test("report CTR and sources are mapped without click inflation", async () => {
   ]);
 });
 
+test("report metrics use sent delivery cohort and matching report click markers", async () => {
+  const queries = [];
+  await createProductStatsService({
+    pool: fixturePool(queries),
+    now: () => new Date("2026-07-10T10:00:00Z")
+  }).getProductStats();
+
+  const reports = queries.find((query) => query.sql.includes("product_reports"));
+  assert.match(reports.sql, /FROM report_deliveries/);
+  assert.match(reports.sql, /status = 'sent'/);
+  assert.match(reports.sql, /sent_at >= \$1 AND sent_at < \$2/);
+  assert.match(reports.sql, /metadata->>'reportType' = d\.report_type/);
+  assert.match(reports.sql, /metadata->>'reportKey' = d\.period_key/);
+  assert.doesNotMatch(reports.sql, /event_name = 'report_delivered'/);
+});
+
 test("product formatter uses canonical activation wording and escapes sources", () => {
   const stats = productFixture();
   stats.sources = [{ source: "friend_<script>&", started: 2, activated: 1, activationRate: 0.5 }];
@@ -68,9 +84,15 @@ test("product formatter uses canonical activation wording and escapes sources", 
   const html = parts.map((part) => part.html).join("\n");
 
   assert.match(html, /First expense saved/);
-  assert.match(html, /D7: —/);
-  assert.match(html, /friend_&lt;script&gt;&amp;/);
+  assert.match(html, /D7: <b>—<\/b>/);
+  assert.match(html, /<b>📊 Product stats<\/b>/);
+  assert.match(html, /Generated: <code>2026-07-10 10:00 UTC<\/code>/);
+  assert.match(html, /<code>friend_&lt;script&gt;&amp;<\/code>/);
+  assert.match(html, /First expense saved: <b>1<\/b>/);
   assert.doesNotMatch(html, /<script>/);
+  const sections = formatProductStatsSections(stats);
+  assert.equal(sections.find((section) => section.heading.includes("Activation")).rows.some((row) => JSON.stringify(row).includes("Habit")), false);
+  assert.equal(sections.find((section) => section.heading.includes("Retention")).rows.some((row) => JSON.stringify(row).includes("Habit")), true);
 });
 
 test("admin formatter chunks only complete escaped rows under 3900 characters", () => {
@@ -128,6 +150,7 @@ function period(label, overrides = {}) {
 function productFixture() {
   const periodStats = { activeUsers: 1, newUsers: 1, expensesSaved: 1, expensesPerActiveUser: 1, draftsCreated: 1, draftsConfirmed: 1, confirmRate: 1, feedbackSent: 0, newlyBlocked: 0, newlyUnblocked: 0, deletedAccounts: 0, activeTwoDays: 0, activeThreeDays: 0 };
   return {
+    generatedAt: new Date("2026-07-10T10:00:00Z"),
     userBase: { reachableNow: 1, blockedNow: 0, deletedAllTime: 0, allTimeJoined: 1 },
     periods: { today: periodStats, last3Days: periodStats, last7Days: periodStats, last30Days: periodStats },
     funnel: { started: 1, onboardingStarted: 1, onboardingCompleted: 1, firstDraftCreated: 1, firstExpenseSaved: 1, dashboardOpened: 1 },

@@ -49,65 +49,92 @@ export function formatProductStatsSections(stats) {
   const funnel = stats.funnel ?? {};
   const started = number(funnel.started);
   return [
-    { heading: "Product stats", rows: [] },
-    { heading: "User base", rows: [
-      `Reachable now: ${number(stats.userBase?.reachableNow)}`,
-      `Blocked now: ${number(stats.userBase?.blockedNow)}`,
-      `Deleted all time: ${number(stats.userBase?.deletedAllTime)}`,
-      `All time joined: ${number(stats.userBase?.allTimeJoined)}`
+    { heading: "📊 Product stats", rows: [generatedRow(stats.generatedAt)] },
+    { heading: "👥 User base", rows: [
+      metricRow("Reachable now", number(stats.userBase?.reachableNow)),
+      metricRow("Blocked now", number(stats.userBase?.blockedNow)),
+      metricRow("Deleted all time", number(stats.userBase?.deletedAllTime)),
+      metricRow("All time joined", number(stats.userBase?.allTimeJoined))
     ] },
-    periodSection("Today", stats.periods?.today),
-    periodSection("Last 3 days", stats.periods?.last3Days),
-    periodSection("Last 7 days", stats.periods?.last7Days, "activeTwoDays"),
-    periodSection("Last 30 days", stats.periods?.last30Days, "activeThreeDays"),
-    { heading: "Activation", rows: [
+    periodSection("📅 Today", stats.periods?.today),
+    periodSection("📅 Last 3 days", stats.periods?.last3Days),
+    periodSection("📅 Last 7 days", stats.periods?.last7Days, "activeTwoDays"),
+    periodSection("📅 Last 30 days", stats.periods?.last30Days, "activeThreeDays"),
+    { heading: "⚡ Activation", rows: [
       funnelRow("Started", started, started),
       funnelRow("Onboarding started", funnel.onboardingStarted, started),
       funnelRow("Onboarding completed", funnel.onboardingCompleted, started),
       funnelRow("First draft created", funnel.firstDraftCreated, started),
       funnelRow("First expense saved", funnel.firstExpenseSaved, started),
       funnelRow("Dashboard opened", funnel.dashboardOpened, started),
-      `Median time to first expense: ${stats.activation?.medianHours == null ? "—" : `${formatNumber(stats.activation.medianHours)}h`}`,
-      `Habit started in first 7d: ${formatRatio(stats.habit?.rate)} (${number(stats.habit?.started)}/${number(stats.habit?.eligible)})`
+      metricRow("Median time to first expense", stats.activation?.medianHours == null ? "—" : `${formatNumber(stats.activation.medianHours)}h`)
     ] },
-    { heading: "Retention", rows: [
-      `D1: ${formatRatio(stats.retention?.d1Rate)} (${number(stats.retention?.d1Returned)}/${number(stats.retention?.d1Eligible)})`,
-      `D7: ${formatRatio(stats.retention?.d7Rate)} (${number(stats.retention?.d7Returned)}/${number(stats.retention?.d7Eligible)})`
+    { heading: "🔁 Retention", rows: [
+      metricRow("D1", formatRatio(stats.retention?.d1Rate), ` (${number(stats.retention?.d1Returned)}/${number(stats.retention?.d1Eligible)})`),
+      metricRow("D7", formatRatio(stats.retention?.d7Rate), ` (${number(stats.retention?.d7Returned)}/${number(stats.retention?.d7Eligible)})`),
+      metricRow("Habit started in first 7d", formatRatio(stats.habit?.rate), ` (${number(stats.habit?.started)}/${number(stats.habit?.eligible)})`)
     ] },
-    { heading: "Reports", rows: [
-      `Delivered users: ${number(stats.reports?.deliveredUsers)}`,
-      `Clicked users: ${number(stats.reports?.clickedUsers)}`,
-      `Failed attempts: ${number(stats.reports?.failedAttempts)}`,
-      `CTR: ${formatRatio(stats.reports?.ctr)}`
+    { heading: "📬 Reports", rows: [
+      metricRow("Delivered users", number(stats.reports?.deliveredUsers)),
+      metricRow("Clicked users", number(stats.reports?.clickedUsers)),
+      metricRow("Failed attempts", number(stats.reports?.failedAttempts)),
+      metricRow("CTR", formatRatio(stats.reports?.ctr))
     ] },
-    { heading: "Sources", rows: (stats.sources ?? []).length > 0
-      ? stats.sources.map((source) => `${source.source}: ${number(source.started)} started / ${number(source.activated)} activated / ${formatRatio(source.activationRate)}`)
+    { heading: "🧭 Sources", rows: (stats.sources ?? []).length > 0
+      ? stats.sources.map(sourceRow)
       : ["—"] },
-    { heading: "Health — Last 7 days", rows: [
-      `Parse failed: ${number(stats.health?.parseFailed)} (${formatRatio(stats.health?.parseFailedRate)})`,
-      `Transcription failed: ${number(stats.health?.transcriptionFailed)}`,
-      `P95 processing: text ${formatSeconds(stats.health?.p95TextSeconds)} / voice ${formatSeconds(stats.health?.p95VoiceSeconds)}`
+    { heading: "❤️ Health — Last 7 days", rows: [
+      metricRow("Parse failed", number(stats.health?.parseFailed), ` (${formatRatio(stats.health?.parseFailedRate)})`),
+      metricRow("Transcription failed", number(stats.health?.transcriptionFailed)),
+      metricRow("P95 processing", `text ${formatSeconds(stats.health?.p95TextSeconds)} / voice ${formatSeconds(stats.health?.p95VoiceSeconds)}`)
     ] }
   ];
 }
 
 function periodSection(heading, stats = {}, habitField = null) {
   const rows = [
-    `Active users: ${number(stats.activeUsers)} / new users: ${number(stats.newUsers)}`,
-    `Expenses saved: ${number(stats.expensesSaved)} / per active: ${stats.expensesPerActiveUser == null ? "—" : formatNumber(stats.expensesPerActiveUser)}`,
-    `Drafts: ${number(stats.draftsCreated)} created / ${number(stats.draftsConfirmed)} confirmed / ${formatRatio(stats.confirmRate)}`,
-    `Feedback: ${number(stats.feedbackSent)}`,
-    `Reachability: +${number(stats.newlyBlocked)} blocked / +${number(stats.newlyUnblocked)} unblocked`,
-    `Deleted: ${number(stats.deletedAccounts)}`
+    metricRow("Active users", number(stats.activeUsers), ` / new users: ${number(stats.newUsers)}`),
+    metricRow("Expenses saved", number(stats.expensesSaved), ` / per active: ${stats.expensesPerActiveUser == null ? "—" : formatNumber(stats.expensesPerActiveUser)}`),
+    metricRow("Drafts", `${number(stats.draftsCreated)} created / ${number(stats.draftsConfirmed)} confirmed / ${formatRatio(stats.confirmRate)}`),
+    metricRow("Feedback", number(stats.feedbackSent)),
+    metricRow("Reachability", `+${number(stats.newlyBlocked)} blocked / +${number(stats.newlyUnblocked)} unblocked`),
+    metricRow("Deleted", number(stats.deletedAccounts))
   ];
-  if (habitField) rows.push(`Active on ${habitField === "activeTwoDays" ? "2+" : "3+"} days: ${number(stats[habitField])}`);
+  if (habitField) rows.push(metricRow(`Active on ${habitField === "activeTwoDays" ? "2+" : "3+"} days`, number(stats[habitField])));
   return { heading, rows };
 }
 
 function funnelRow(label, value, started) {
   const count = number(value);
-  return `${label}: ${count} (${formatRatio(ratio(count, started))})`;
+  return metricRow(label, count, ` (${formatRatio(ratio(count, started))})`);
 }
+
+function metricRow(label, value, suffix = "") {
+  return richRow([plain(`${label}: `), bold(String(value)), plain(suffix)]);
+}
+
+function sourceRow(source) {
+  return richRow([
+    code(source.source),
+    plain(": "),
+    bold(String(number(source.started))),
+    plain(` started / ${number(source.activated)} activated / ${formatRatio(source.activationRate)}`)
+  ]);
+}
+
+function generatedRow(value) {
+  return richRow([plain("Generated: "), code(formatGeneratedAt(value))]);
+}
+
+function formatGeneratedAt(value) {
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? "—" : `${date.toISOString().slice(0, 16).replace("T", " ")} UTC`;
+}
+
+function richRow(segments) { return { segments }; }
+function plain(text) { return { text, style: "plain" }; }
+function bold(text) { return { text, style: "bold" }; }
+function code(text) { return { text, style: "code" }; }
 
 function formatRatio(value) { return value == null ? "—" : `${Math.round(Number(value) * 100)}%`; }
 function formatNumber(value) { return Number(value).toFixed(1).replace(/\.0$/, ""); }
@@ -219,12 +246,26 @@ FROM cohort_metrics`;
 
 const REPORTS_SQL = `
 /* product_reports */
+WITH delivered AS (
+  SELECT DISTINCT user_id, report_type, period_key
+  FROM report_deliveries
+  WHERE status = 'sent'
+    AND sent_at >= $1 AND sent_at < $2
+), clicked AS (
+  SELECT DISTINCT d.user_id
+  FROM delivered d
+  JOIN app_events e ON e.user_id = d.user_id
+    AND e.event_name = 'report_app_clicked'
+    AND e.metadata->>'reportType' = d.report_type
+    AND e.metadata->>'reportKey' = d.period_key
+    AND e.created_at >= $1 AND e.created_at < $2
+)
 SELECT
-  COUNT(DISTINCT user_id) FILTER (WHERE event_name = 'report_delivered')::int AS delivered_users,
-  COUNT(DISTINCT user_id) FILTER (WHERE event_name = 'report_app_clicked')::int AS clicked_users,
-  COUNT(*) FILTER (WHERE event_name = 'report_delivery_failed')::int AS failed_attempts
-FROM app_events
-WHERE created_at >= $1 AND created_at < $2`;
+  (SELECT COUNT(DISTINCT user_id)::int FROM delivered) AS delivered_users,
+  (SELECT COUNT(DISTINCT user_id)::int FROM clicked) AS clicked_users,
+  (SELECT COUNT(*)::int FROM app_events
+   WHERE event_name = 'report_delivery_failed'
+     AND created_at >= $1 AND created_at < $2) AS failed_attempts`;
 
 const SOURCES_SQL = `
 /* product_sources */

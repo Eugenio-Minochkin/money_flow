@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { createMiniAppLaunchService } from "../src/miniAppLaunchService.js";
+import { buildDashboardRequestPath } from "../../miniapp/src/apiClient.js";
 
 test("creates an authenticated startapp user and records entry before onboarding", async () => {
   const calls = [];
@@ -80,6 +81,36 @@ test("records a report click only for a matching successful delivery", async () 
     reportType: "weekly",
     reportKey: "2026-W28"
   });
+  assert.deepEqual(calls.find((call) => call.name === "recordAppEvent:report_app_clicked").metadata, {
+    reportType: "weekly",
+    reportKey: "2026-W28"
+  });
+  assert.deepEqual(calls.find((call) => call.name === "recordAppEvent:dashboard_opened").metadata, {
+    source: "report"
+  });
+});
+
+test("preserves Mini App report launch markers through the dashboard boundary", async () => {
+  const calls = [];
+  const user = { id: 7, telegram_user_id: 100, onboarding_step: "completed", is_new: false };
+  const service = createMiniAppLaunchService({
+    repository: fakeRepository(calls, {
+      user,
+      dashboard: { user, snapshot: {} },
+      hasReportDelivery: true
+    })
+  });
+  const requestUrl = new URL(
+    buildDashboardRequestPath(100, "?reportType=weekly&reportKey=2026-W28"),
+    "https://miniapp.example"
+  );
+
+  await service.loadDashboard({
+    auth: verifiedAuth(),
+    reportType: requestUrl.searchParams.get("reportType"),
+    reportKey: requestUrl.searchParams.get("reportKey")
+  });
+
   assert.deepEqual(calls.find((call) => call.name === "recordAppEvent:report_app_clicked").metadata, {
     reportType: "weekly",
     reportKey: "2026-W28"
