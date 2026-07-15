@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
 import { createExchangeRateProvider } from "../src/exchangeRates.js";
-import { createRepository } from "../src/repository.js";
+import { createRepository, shouldInvalidateExpenseSnapshot } from "../src/repository.js";
 import { formatSavedSummary } from "../src/telegramFormat.js";
 
 test("records app events with JSON metadata", async () => {
@@ -2352,6 +2352,35 @@ test("listExpenseExportRowsForTelegramUser all-time export has no period bounds"
   const listCall = calls.at(-1);
   assert.doesNotMatch(listCall.sql, /spent_at >=/);
   assert.deepEqual(listCall.params, ["7", 25, 0]);
+});
+
+test("invalidates the current opening snapshot only when its baseline changes", () => {
+  const context = { now: new Date("2026-07-15T12:00:00.000Z"), timeZone: "Asia/Bangkok" };
+  const todayRegular = { amount_original: 10, currency_original: "THB", spent_at: "2026-07-15T05:00:00.000Z", budget_impact: "regular" };
+  const yesterdayRegular = { ...todayRegular, spent_at: "2026-07-14T05:00:00.000Z" };
+  const large = { ...todayRegular, budget_impact: "large_oneoff" };
+
+  assert.equal(shouldInvalidateExpenseSnapshot(todayRegular, { ...todayRegular, amount_original: 20 }, context), false);
+  assert.equal(shouldInvalidateExpenseSnapshot(yesterdayRegular, { ...yesterdayRegular, amount_original: 20 }, context), true);
+  assert.equal(shouldInvalidateExpenseSnapshot(large, { ...large, amount_original: 20 }, context), false);
+  assert.equal(shouldInvalidateExpenseSnapshot(todayRegular, { ...todayRegular, description: "renamed" }, context), false);
+  assert.equal(shouldInvalidateExpenseSnapshot(todayRegular, large, context), true);
+  assert.equal(shouldInvalidateExpenseSnapshot(yesterdayRegular, { ...yesterdayRegular, spent_at: "2026-07-15T05:00:00.000Z" }, context), true);
+});
+
+test("returns the latest editable expense by creation order and excludes planned", async () => {
+  let query;
+  const repo = createRepository(fakePool((sql) => {
+    query = String(sql);
+    return { rows: [{ id: 9, created_at: "2026-07-15T12:00:00.000Z" }] };
+  }));
+
+  const expense = await repo.getLatestEditableExpenseForTelegramUser(100);
+
+  assert.equal(expense.id, 9);
+  assert.match(query, /budget_impact <> 'planned'/);
+  assert.match(query, /ORDER BY expenses\.created_at DESC, expenses\.id DESC/);
+  assert.doesNotMatch(query, /updated_at DESC/);
 });
 
 test("updates an expense owned by a Telegram user", async () => {

@@ -360,6 +360,42 @@ test("uses user timezone boundaries for day and month expense queries", async ()
   assert.equal(dashboard.snapshot.month, 700);
 });
 
+test("allows metadata-only correction but blocks financial changes in a closed reserve month", async () => {
+  const telegramUserId = 990009;
+  const user = await createSmokeUser(telegramUserId);
+  const expense = await saveExpense(user.id, telegramUserId, {
+    amount: 100,
+    description: "old name",
+    category_slug: "food_cafe",
+    spent_at: "2026-06-15T05:00:00.000Z"
+  });
+  await pool.query(
+    `INSERT INTO monthly_reserve_instances (
+       user_id, period, timezone, currency, budget_amount, reserve_amount, status, closed_at
+     ) VALUES ($1, '2026-06', 'Asia/Bangkok', 'THB', 45000, 1000, 'closed', now())`,
+    [user.id]
+  );
+
+  const metadata = await repo.updateExpenseForTelegramUser(
+    expense.id,
+    telegramUserId,
+    { description: "corrected name", category_slug: "home", tags: ["fixed"] },
+    new Date("2026-07-15T12:00:00.000Z")
+  );
+  assert.equal(metadata.description, "corrected name");
+  assert.equal(metadata.category_slug, "home");
+  assert.deepEqual(metadata.tags, ["fixed"]);
+
+  await assert.rejects(
+    () => repo.updateExpenseForTelegramUser(expense.id, telegramUserId, { amount: 200 }, new Date("2026-07-15T12:00:00.000Z")),
+    { code: "expense_source_month_closed" }
+  );
+  await assert.rejects(
+    () => repo.deleteExpenseForTelegramUser(expense.id, telegramUserId, new Date("2026-07-15T12:00:00.000Z")),
+    { code: "expense_delete_blocked" }
+  );
+});
+
 test("consumes Telegram input sessions atomically and preserves an active session after rollback", async () => {
   const telegramUserId = 990008;
   const user = await createSmokeUser(telegramUserId);
