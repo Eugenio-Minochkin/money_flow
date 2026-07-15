@@ -1,4 +1,5 @@
 import { CATEGORIES, categoryName } from "../../../packages/shared/src/categories.js";
+import { SUPPORTED_CURRENCY_CODES } from "../../../packages/shared/src/currencies.js";
 
 const FIELD_CODES = { a: "amount", d: "description", s: "spent_at", g: "tags" };
 const FIELD_TO_CODE = Object.fromEntries(Object.entries(FIELD_CODES).map(([code, field]) => [field, code]));
@@ -202,6 +203,33 @@ export function editorMessageForCode(code, language = "ru") {
   return (language === "en" ? en : ru)[code] ?? (language === "en" ? "Could not update this expense." : "Не удалось изменить расход.");
 }
 
+export async function applyDraftEditorChange({
+  repository,
+  telegramUserId,
+  target,
+  field,
+  value,
+  expectedVersion,
+  client,
+  now = new Date()
+} = {}) {
+  if (!repository?.updateDraftItemForTelegramUser || target?.type !== "draft") {
+    throw editorError("expense_not_found");
+  }
+  const draftId = Number(target.id);
+  const itemIndex = Number(target.itemIndex);
+  if (!Number.isSafeInteger(draftId) || draftId <= 0 || !Number.isInteger(itemIndex) || itemIndex < 0) {
+    throw editorError("expense_not_found");
+  }
+
+  const patch = draftPatch(field, value, now);
+  const options = {};
+  if (expectedVersion != null) options.expectedVersion = expectedVersion;
+  if (client) options.client = client;
+  const updated = await repository.updateDraftItemForTelegramUser(draftId, itemIndex, telegramUserId, patch, options);
+  return { target: updated, item: updated?.items?.[itemIndex] ?? null };
+}
+
 function itemFromTarget(target) {
   return target?.item ?? target?.expense ?? target ?? {};
 }
@@ -236,4 +264,45 @@ function isPositiveId(value) {
 
 function isNonNegativeIndex(value) {
   return /^\d+$/u.test(String(value)) && Number.isSafeInteger(Number(value));
+}
+
+function draftPatch(field, value, now) {
+  if (field === "amount") {
+    const amount = Number(value?.amount);
+    const currency = String(value?.currency ?? "").toUpperCase();
+    if (!Number.isFinite(amount) || amount <= 0 || amount > 1_000_000) throw editorError("expense_invalid_amount");
+    if (!SUPPORTED_CURRENCY_CODES.includes(currency)) throw editorError("expense_invalid_currency");
+    return { amount, currency };
+  }
+  if (field === "description") {
+    const description = String(value ?? "").trim();
+    if (!description || description.length > 500) throw editorError("expense_invalid_description");
+    return { description };
+  }
+  if (field === "tags") {
+    if (!Array.isArray(value) || value.length > 20 || value.some((tag) => !String(tag).trim() || String(tag).length > 64)) {
+      throw editorError("expense_invalid_tags");
+    }
+    return { tags: value.map((tag) => String(tag).trim()) };
+  }
+  if (field === "spent_at") {
+    const spentAt = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(spentAt.getTime())) throw editorError("expense_invalid_date");
+    if (spentAt > new Date(now)) throw editorError("expense_future_date");
+    return { spent_at: spentAt.toISOString() };
+  }
+  if (field === "category") {
+    const category = String(value ?? "");
+    if (!CATEGORIES.some((candidate) => candidate.slug === category)) throw editorError("expense_not_found");
+    return { category_slug: category, category_source: "user", needs_review: false, confidence: 0.9 };
+  }
+  if (field === "budget_impact") {
+    if (!["regular", "large_oneoff"].includes(value)) throw editorError("expense_not_found");
+    return { budget_impact: value };
+  }
+  throw editorError("expense_not_found");
+}
+
+function editorError(code) {
+  return Object.assign(new Error(code), { code });
 }

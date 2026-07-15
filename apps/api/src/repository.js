@@ -2108,6 +2108,58 @@ export function createRepository(pool, options = {}) {
       return normalizeDraft(result.rows[0] ?? null);
     },
 
+    async updateDraftItemForTelegramUser(draftId, itemIndex, telegramUserId, patch, options = {}) {
+      const expectedVersion = options.expectedVersion;
+      const client = options.client ?? await pool.connect();
+      const ownsTransaction = !options.client;
+      try {
+        if (ownsTransaction) await client.query("BEGIN");
+        const draftResult = await client.query(
+          `SELECT drafts.*
+           FROM drafts
+           JOIN users ON users.id = drafts.user_id
+           WHERE drafts.id = $1
+             AND users.telegram_user_id = $2
+             AND drafts.status IN ('pending', 'inbox')
+           FOR UPDATE`,
+          [draftId, telegramUserId]
+        );
+        const draft = normalizeDraft(draftResult.rows[0] ?? null);
+        if (!draft) throw codedError("Draft not found", "expense_not_found");
+        if (expectedVersion != null && Number(draft.version) !== Number(expectedVersion)) {
+          throw codedError("Draft version conflict", "expense_edit_conflict");
+        }
+        const index = Number(itemIndex);
+        if (!Number.isInteger(index) || index < 0 || !draft.items[index]) {
+          throw codedError("Draft item not found", "expense_not_found");
+        }
+
+        const items = draft.items.map((item, currentIndex) => currentIndex === index
+          ? normalizeDraftItem({ ...item, ...patch })
+          : normalizeDraftItem(item));
+        const updatedResult = await client.query(
+          `UPDATE drafts
+           SET items = $1, version = version + 1
+           WHERE id = $2
+             AND status IN ('pending', 'inbox')
+             AND version = $3
+           RETURNING *`,
+          [JSON.stringify(items), draft.id, draft.version]
+        );
+        const updated = normalizeDraft(updatedResult.rows[0] ?? null);
+        if (!updated) throw codedError("Draft version conflict", "expense_edit_conflict");
+        if (ownsTransaction) await client.query("COMMIT");
+        return updated;
+      } catch (error) {
+        if (ownsTransaction) {
+          try { await client.query("ROLLBACK"); } catch { /* preserve original transaction error */ }
+        }
+        throw error;
+      } finally {
+        if (ownsTransaction) client.release();
+      }
+    },
+
     async listDraftsForTelegramUser(telegramUserId, options = {}) {
       const status = ["pending", "inbox"].includes(options.status) ? options.status : "inbox";
       await moveExpiredPendingDraftsToInbox(pool, telegramUserId, options.expireAfterMinutes ?? 30);

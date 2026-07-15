@@ -4580,6 +4580,63 @@ test("cleans up only terminal Telegram input sessions after the retention window
   assert.deepEqual(received.params, [new Date("2026-07-15T12:00:00.000Z")]);
 });
 
+test("updates exactly one owned open draft item without changing source text", async () => {
+  const queries = [];
+  const draft = {
+    id: 42,
+    user_id: 7,
+    status: "pending",
+    version: 3,
+    source_text: "coffee 10, lunch 20",
+    items: [
+      { amount: 10, currency: "THB", description: "coffee", category_slug: "food_cafe" },
+      { amount: 20, currency: "THB", description: "lunch", category_slug: "food_cafe" }
+    ]
+  };
+  const client = {
+    async query(sql, params = []) {
+      const query = String(sql);
+      queries.push({ query, params });
+      if (query === "BEGIN" || query === "COMMIT" || query === "ROLLBACK") return { rows: [] };
+      if (query.includes("FROM drafts") && query.includes("FOR UPDATE")) return { rows: [draft] };
+      if (query.includes("UPDATE drafts")) return { rows: [{ ...draft, version: 4, items: params[0] }] };
+      throw new Error(`Unexpected SQL: ${query}`);
+    },
+    release() {}
+  };
+  const repo = createRepository({ async connect() { return client; } });
+
+  const result = await repo.updateDraftItemForTelegramUser(42, 1, 100, { amount: 15, currency: "USD" }, { expectedVersion: 3 });
+
+  assert.equal(result.items[0].amount, 10);
+  assert.equal(result.items[1].amount, 15);
+  assert.equal(result.items[1].currency, "USD");
+  assert.equal(result.source_text, "coffee 10, lunch 20");
+  const update = queries.find(({ query }) => query.includes("UPDATE drafts"));
+  assert.doesNotMatch(update.query, /source_text/);
+  assert.equal(JSON.parse(update.params[0])[0].amount, 10);
+  assert.equal(JSON.parse(update.params[0])[1].amount, 15);
+});
+
+test("rejects stale or invalid draft item updates with stable domain codes", async () => {
+  const draft = { id: 42, user_id: 7, status: "pending", version: 4, items: [] };
+  const client = {
+    async query(sql) {
+      const query = String(sql);
+      if (query === "BEGIN" || query === "COMMIT" || query === "ROLLBACK") return { rows: [] };
+      if (query.includes("FROM drafts") && query.includes("FOR UPDATE")) return { rows: [draft] };
+      throw new Error(`Unexpected SQL: ${query}`);
+    },
+    release() {}
+  };
+  const repo = createRepository({ async connect() { return client; } });
+
+  await assert.rejects(
+    () => repo.updateDraftItemForTelegramUser(42, 0, 100, { amount: 15 }, { expectedVersion: 3 }),
+    { code: "expense_edit_conflict" }
+  );
+});
+
 function fakePool(handler) {
   return {
     async query(sql, params = []) {
