@@ -8,7 +8,8 @@ import {
   budgetTopupSuccessKeyboard,
   budgetTopupUndoKeyboard,
   dailyReminderKeyboard,
-  draftKeyboard
+  draftKeyboard,
+  savedExpenseKeyboard
 } from "../src/telegramKeyboards.js";
 
 test("single-item draft keyboard uses d: scheme, radio type and checkbox category, no planned", () => {
@@ -18,6 +19,7 @@ test("single-item draft keyboard uses d: scheme, radio type and checkbox categor
   const buttons = keyboard.inline_keyboard.flat();
 
   assert.equal(buttons[0].callback_data, "d:42:confirm");
+  assert.equal(buttons[0].text, "✅ Сохранить");
   assert.ok(buttons.some((b) => b.callback_data === "d:42:cancel"));
   assert.ok(buttons.some((b) => b.callback_data === "d:42:review"));
   assert.ok(buttons.some((b) => b.callback_data === "d:42:t:r"));
@@ -25,13 +27,11 @@ test("single-item draft keyboard uses d: scheme, radio type and checkbox categor
   assert.ok(buttons.some((b) => b.callback_data === "d:42:c:food"));
   assert.ok(buttons.some((b) => b.callback_data === "d:42:c:other"));
   assert.ok(buttons.every((b) => !/planned/i.test(b.callback_data)));
-  assert.ok(buttons.some((b) => b.text.startsWith("🔘")));
-  assert.ok(buttons.some((b) => b.text.startsWith("⚪")));
+  assert.ok(buttons.some((b) => b.text === "◉ Учесть сегодня"));
+  assert.ok(buttons.some((b) => b.text === "○ Распределить до конца месяца"));
   assert.ok(buttons.some((b) => b.text.startsWith("⬜") && b.text.includes("Еда")));
   assert.ok(buttons.some((b) => b.text.startsWith("⬜")));
-  assert.ok(buttons.some((b) => b.text.includes("Обычная")));
-  assert.ok(buttons.some((b) => b.text.includes("Крупная")));
-  assert.ok(buttons.some((b) => b.web_app?.url === "http://localhost:3000?telegramUserId=100&draftId=42"));
+  assert.ok(buttons.some((b) => b.callback_data === "ee:d:42:0:o" && b.text.includes("Исправить")));
 });
 
 test("resolved confident category hides the category quick buttons", () => {
@@ -64,6 +64,14 @@ test("app keyboard opens Mini App for the user", () => {
   const keyboard = appKeyboard("http://localhost:3000", 100);
 
   assert.equal(keyboard.inline_keyboard[0][0].web_app.url, "http://localhost:3000?telegramUserId=100");
+});
+
+test("saved expense keyboard keeps editor actions and the final Mini App row", () => {
+  const keyboard = savedExpenseKeyboard(91, "http://localhost:3000", 100, "en");
+
+  assert.deepEqual(keyboard.inline_keyboard[0].map((button) => button.callback_data), ["ee:x:91:o", "ee:x:91:del"]);
+  assert.equal(keyboard.inline_keyboard.at(-1)[0].text, "📱 Open Mini App");
+  assert.equal(keyboard.inline_keyboard.at(-1)[0].web_app.url, "http://localhost:3000?telegramUserId=100");
 });
 
 test("daily reminder keyboard includes lean MVP actions", () => {

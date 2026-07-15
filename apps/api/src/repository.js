@@ -461,6 +461,7 @@ export function createRepository(pool, options = {}) {
            FOR UPDATE`,
           [user.id, currentPeriod]
         );
+        await lockFinancialMonths(client, user.id, [...pastResult.rows.map((instance) => instance.period), currentPeriod]);
         for (const instance of pastResult.rows) {
           await closeReserveInstance(client, user, instance, now);
         }
@@ -1517,6 +1518,246 @@ export function createRepository(pool, options = {}) {
       return result.rows[0];
     },
 
+    async consumeTelegramInputSession(telegramUserId, { sessionId, now = new Date(), apply } = {}) {
+      const currentNow = normalizeNow(now);
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        const userResult = await client.query(
+          "SELECT id FROM users WHERE telegram_user_id = $1 FOR UPDATE",
+          [telegramUserId]
+        );
+        const user = userResult.rows[0] ?? null;
+        if (!user) {
+          await client.query("COMMIT");
+          return { outcome: "none" };
+        }
+
+        const sessionResult = await client.query(
+          `SELECT *
+           FROM telegram_input_sessions
+           WHERE id = $1 AND user_id = $2
+           FOR UPDATE`,
+          [sessionId, user.id]
+        );
+        const session = sessionResult.rows[0] ?? null;
+        if (!session) {
+          await client.query("COMMIT");
+          return { outcome: "already_consumed" };
+        }
+        if (session.status === "completed" || session.status === "cancelled" || session.status === "expired_consumed") {
+          await client.query("COMMIT");
+          return { outcome: "already_consumed", session };
+        }
+        if (session.status === "processing") {
+          await client.query("COMMIT");
+          return { outcome: "session_not_claimable", session };
+        }
+        if (session.status === "expired_unconsumed") {
+          const consumed = await client.query(
+            `UPDATE telegram_input_sessions
+             SET status = 'expired_consumed', late_input_consumed_at = $2, updated_at = $2
+             WHERE id = $1
+             RETURNING *`,
+            [session.id, currentNow]
+          );
+          await client.query("COMMIT");
+          return { outcome: "expired", session: consumed.rows[0] ?? { ...session, status: "expired_consumed" } };
+        }
+        if (new Date(session.expires_at) <= currentNow) {
+          const expired = await client.query(
+            `UPDATE telegram_input_sessions
+             SET status = 'expired_consumed', late_input_consumed_at = $2, updated_at = $2
+             WHERE id = $1
+             RETURNING *`,
+            [session.id, currentNow]
+          );
+          await client.query("COMMIT");
+          return { outcome: "expired", session: expired.rows[0] ?? { ...session, status: "expired_consumed" } };
+        }
+        if (session.status !== "active") {
+          await client.query("COMMIT");
+          return { outcome: "session_not_claimable", session };
+        }
+
+        const processing = await client.query(
+          `UPDATE telegram_input_sessions
+           SET status = 'processing', updated_at = $2
+           WHERE id = $1 AND status = 'active'
+           RETURNING *`,
+          [session.id, currentNow]
+        );
+        const claimed = processing.rows[0] ?? null;
+        if (!claimed) {
+          await client.query("COMMIT");
+          return { outcome: "already_consumed" };
+        }
+
+        await apply({ session: claimed, user, client, now: currentNow });
+        await client.query(
+          `UPDATE telegram_input_sessions
+           SET status = 'completed', updated_at = $2
+           WHERE id = $1 AND status = 'processing'`,
+          [claimed.id, currentNow]
+        );
+        await client.query("COMMIT");
+        return { outcome: "completed", session: { ...claimed, status: "completed" } };
+      } catch (error) {
+        try { await client.query("ROLLBACK"); } catch { /* preserve original transaction error */ }
+        throw error;
+      } finally {
+        client.release();
+      }
+    },
+
+    async startTelegramInputSession(telegramUserId, input, now = new Date()) {
+      const currentNow = normalizeNow(now);
+      const expiresAt = new Date(currentNow.getTime() + 15 * 60_000);
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        const userResult = await client.query(
+          "SELECT id FROM users WHERE telegram_user_id = $1 FOR UPDATE",
+          [telegramUserId]
+        );
+        const user = userResult.rows[0] ?? null;
+        if (!user) {
+          await client.query("COMMIT");
+          return { outcome: "none" };
+        }
+        const busyResult = await client.query(
+          `SELECT id, status
+           FROM telegram_input_sessions
+           WHERE user_id = $1 AND status IN ('active', 'processing')
+           ORDER BY updated_at DESC, id DESC
+           LIMIT 1
+           FOR UPDATE`,
+          [user.id]
+        );
+        const busy = busyResult.rows[0] ?? null;
+        if (busy?.status === "processing") {
+          await client.query("COMMIT");
+          return { outcome: "input_in_progress" };
+        }
+        if (busy?.status === "active") {
+          await client.query(
+            `UPDATE telegram_input_sessions
+             SET status = 'cancelled', updated_at = $2
+             WHERE id = $1 AND status = 'active'`,
+            [busy.id, currentNow]
+          );
+        }
+        const inserted = await client.query(
+          `INSERT INTO telegram_input_sessions (
+             user_id, target_type, target_id, item_index, field,
+             chat_id, message_id, language, status, expires_at, created_at, updated_at
+           )
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'active', $9, $10, $10)
+           RETURNING *`,
+          [
+            user.id,
+            input.targetType,
+            input.targetId,
+            input.itemIndex ?? null,
+            input.field,
+            input.chatId,
+            input.messageId,
+            input.language,
+            expiresAt,
+            currentNow
+          ]
+        );
+        await client.query("COMMIT");
+        return { outcome: "started", session: inserted.rows[0] ?? null };
+      } catch (error) {
+        try { await client.query("ROLLBACK"); } catch { /* preserve original transaction error */ }
+        throw error;
+      } finally {
+        client.release();
+      }
+    },
+
+    async getRoutableTelegramInputSession(telegramUserId) {
+      const result = await pool.query(
+        `SELECT sessions.*
+         FROM telegram_input_sessions sessions
+         JOIN users ON users.id = sessions.user_id
+         WHERE users.telegram_user_id = $1
+           AND sessions.status IN ('active', 'expired_unconsumed')
+         ORDER BY sessions.updated_at DESC, sessions.id DESC
+         LIMIT 1`,
+        [telegramUserId]
+      );
+      return result.rows[0] ?? null;
+    },
+
+    async cancelTelegramInputSession(telegramUserId, now = new Date(), expectedTarget = null) {
+      const currentNow = normalizeNow(now);
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        const userResult = await client.query(
+          "SELECT id FROM users WHERE telegram_user_id = $1 FOR UPDATE",
+          [telegramUserId]
+        );
+        const user = userResult.rows[0] ?? null;
+        if (!user) {
+          await client.query("COMMIT");
+          return { outcome: "none" };
+        }
+        const sessionResult = await client.query(
+          `SELECT id, status, target_type, target_id, item_index
+           FROM telegram_input_sessions
+           WHERE user_id = $1 AND status IN ('active', 'processing')
+           ORDER BY updated_at DESC, id DESC
+           LIMIT 1
+           FOR UPDATE`,
+          [user.id]
+        );
+        const session = sessionResult.rows[0] ?? null;
+        if (!session) {
+          await client.query("COMMIT");
+          return { outcome: "none" };
+        }
+        if (expectedTarget && (
+          session.target_type !== expectedTarget.targetType
+          || Number(session.target_id) !== Number(expectedTarget.targetId)
+          || Number(session.item_index ?? -1) !== Number(expectedTarget.itemIndex ?? -1)
+        )) {
+          await client.query("COMMIT");
+          return { outcome: "none" };
+        }
+        if (session.status === "processing") {
+          await client.query("COMMIT");
+          return { outcome: "input_in_progress" };
+        }
+        await client.query(
+          `UPDATE telegram_input_sessions
+           SET status = 'cancelled', updated_at = $2
+           WHERE id = $1 AND status = 'active'`,
+          [session.id, currentNow]
+        );
+        await client.query("COMMIT");
+        return { outcome: "cancelled" };
+      } catch (error) {
+        try { await client.query("ROLLBACK"); } catch { /* preserve original transaction error */ }
+        throw error;
+      } finally {
+        client.release();
+      }
+    },
+
+    async deleteOldTelegramInputSessions(now = new Date()) {
+      const retentionCutoff = new Date(normalizeNow(now).getTime() - 24 * 60 * 60_000);
+      const result = await pool.query(
+        `DELETE FROM telegram_input_sessions
+         WHERE status IN ('completed', 'cancelled', 'expired_consumed')
+           AND updated_at < $1`,
+        [retentionCutoff]
+      );
+      return result.rowCount;
+    },
+
     async createPlannedDraft(userId, sourceText, item) {
       const planned = normalizePlannedExpense(item);
       const result = await pool.query(
@@ -1876,6 +2117,58 @@ export function createRepository(pool, options = {}) {
       return normalizeDraft(result.rows[0] ?? null);
     },
 
+    async updateDraftItemForTelegramUser(draftId, itemIndex, telegramUserId, patch, options = {}) {
+      const expectedVersion = options.expectedVersion;
+      const client = options.client ?? await pool.connect();
+      const ownsTransaction = !options.client;
+      try {
+        if (ownsTransaction) await client.query("BEGIN");
+        const draftResult = await client.query(
+          `SELECT drafts.*
+           FROM drafts
+           JOIN users ON users.id = drafts.user_id
+           WHERE drafts.id = $1
+             AND users.telegram_user_id = $2
+             AND drafts.status IN ('pending', 'inbox')
+           FOR UPDATE`,
+          [draftId, telegramUserId]
+        );
+        const draft = normalizeDraft(draftResult.rows[0] ?? null);
+        if (!draft) throw codedError("Draft not found", "expense_not_found");
+        if (expectedVersion != null && Number(draft.version) !== Number(expectedVersion)) {
+          throw codedError("Draft version conflict", "expense_edit_conflict");
+        }
+        const index = Number(itemIndex);
+        if (!Number.isInteger(index) || index < 0 || !draft.items[index]) {
+          throw codedError("Draft item not found", "expense_not_found");
+        }
+
+        const items = draft.items.map((item, currentIndex) => currentIndex === index
+          ? normalizeDraftItem({ ...item, ...patch })
+          : normalizeDraftItem(item));
+        const updatedResult = await client.query(
+          `UPDATE drafts
+           SET items = $1, version = version + 1
+           WHERE id = $2
+             AND status IN ('pending', 'inbox')
+             AND version = $3
+           RETURNING *`,
+          [JSON.stringify(items), draft.id, draft.version]
+        );
+        const updated = normalizeDraft(updatedResult.rows[0] ?? null);
+        if (!updated) throw codedError("Draft version conflict", "expense_edit_conflict");
+        if (ownsTransaction) await client.query("COMMIT");
+        return updated;
+      } catch (error) {
+        if (ownsTransaction) {
+          try { await client.query("ROLLBACK"); } catch { /* preserve original transaction error */ }
+        }
+        throw error;
+      } finally {
+        if (ownsTransaction) client.release();
+      }
+    },
+
     async listDraftsForTelegramUser(telegramUserId, options = {}) {
       const status = ["pending", "inbox"].includes(options.status) ? options.status : "inbox";
       await moveExpiredPendingDraftsToInbox(pool, telegramUserId, options.expireAfterMinutes ?? 30);
@@ -2021,56 +2314,189 @@ export function createRepository(pool, options = {}) {
       );
     },
 
-    async updateExpenseForTelegramUser(expenseId, telegramUserId, patch) {
-      const item = normalizeDraftItem(patch);
-      const spentAt = new Date(item.spent_at);
-      const user = await this.getUserByTelegramId(telegramUserId);
-      const baseCurrency = user?.base_currency ?? "THB";
-      const moneyAmounts = await buildMoneyAmounts(exchangeRates, item.amount, item.currency, spentAt, user);
+    async getLatestEditableExpenseForTelegramUser(telegramUserId) {
       const result = await pool.query(
-        `UPDATE expenses
-         SET amount_original = $1,
-             currency_original = $2,
-             amount_base = $3,
-             converted_amounts = $4,
-             exchange_rate_date = $5,
-             exchange_rate_source = $6,
-             description = $7,
-             category_slug = $8,
-             tags = $9,
-             spent_at = $10,
-             budget_impact = $11
-         WHERE id = $12
-           AND user_id = (SELECT id FROM users WHERE telegram_user_id = $13)
-         RETURNING id, amount_original, currency_original, description, category_slug, tags, spent_at, budget_impact`,
-        [
-          item.amount,
-          item.currency,
-          moneyAmounts.amountBase,
-          JSON.stringify(moneyAmounts.convertedAmounts),
-          spentAt.toISOString().slice(0, 10),
-          moneyAmounts.source,
-          item.description,
-          item.category_slug,
-          item.tags,
-          spentAt,
-          item.budget_impact,
-          expenseId,
-          telegramUserId
-        ]
+        `SELECT expenses.*
+         FROM expenses
+         JOIN users ON users.id = expenses.user_id
+         WHERE users.telegram_user_id = $1
+           AND expenses.budget_impact <> 'planned'
+         ORDER BY expenses.created_at DESC, expenses.id DESC
+         LIMIT 1`,
+        [telegramUserId]
       );
       return result.rows[0] ?? null;
     },
 
-    async deleteExpenseForTelegramUser(expenseId, telegramUserId) {
+    async getExpenseForTelegramUser(expenseId, telegramUserId) {
       const result = await pool.query(
-        `DELETE FROM expenses
-         WHERE id = $1
-           AND user_id = (SELECT id FROM users WHERE telegram_user_id = $2)
-         RETURNING *`,
+        `SELECT expenses.*
+         FROM expenses
+         JOIN users ON users.id = expenses.user_id
+         WHERE expenses.id = $1 AND users.telegram_user_id = $2`,
         [expenseId, telegramUserId]
       );
       return result.rows[0] ?? null;
+    },
+
+    async prepareExpenseUpdateForTelegramUser(expenseId, telegramUserId, patch, now = new Date()) {
+      const currentNow = normalizeNow(now);
+      const financialPatch = Object.keys(patch ?? {}).some((key) => ["amount", "currency", "spent_at", "budget_impact"].includes(key));
+      if (!financialPatch) return null;
+      const user = await this.getUserByTelegramId(telegramUserId);
+      const expense = await this.getExpenseForTelegramUser(expenseId, telegramUserId);
+      if (!user || !expense) throw codedError("Expense not found", "expense_not_found");
+      const item = normalizeExpensePatch(expense, patch);
+      const spentAt = new Date(item.spent_at);
+      if (Number.isNaN(spentAt.getTime()) || spentAt > currentNow) {
+        throw codedError("Future expense date", "expense_future_date");
+      }
+      return {
+        item,
+        moneyAmounts: await buildMoneyAmounts(exchangeRates, item.amount, item.currency, spentAt, user)
+      };
+    },
+
+    async updateExpenseForTelegramUser(expenseId, telegramUserId, patch, now = new Date(), options = {}) {
+      if (typeof pool.connect !== "function") {
+        return updateExpenseWithoutTransaction(pool, exchangeRates, expenseId, telegramUserId, patch);
+      }
+      const currentNow = normalizeNow(now);
+      const financialPatch = Object.keys(patch ?? {}).some((key) => ["amount", "currency", "spent_at", "budget_impact"].includes(key));
+      const prepared = financialPatch
+        ? (options.prepared ?? await this.prepareExpenseUpdateForTelegramUser(expenseId, telegramUserId, patch, currentNow))
+        : null;
+      const preflightItem = prepared?.item ?? null;
+      const preflightMoneyAmounts = prepared?.moneyAmounts ?? null;
+      const client = options.client ?? await pool.connect();
+      const ownsTransaction = !options.client;
+      try {
+        if (ownsTransaction) await client.query("BEGIN");
+        const userResult = await client.query(
+          "SELECT * FROM users WHERE telegram_user_id = $1 FOR UPDATE",
+          [telegramUserId]
+        );
+        const user = userResult.rows[0] ?? null;
+        if (!user) throw codedError("Expense not found", "expense_not_found");
+        const expenseResult = await client.query(
+          "SELECT * FROM expenses WHERE id = $1 AND user_id = $2 FOR UPDATE",
+          [expenseId, user.id]
+        );
+        const before = expenseResult.rows[0] ?? null;
+        if (!before) throw codedError("Expense not found", "expense_not_found");
+        const item = normalizeExpensePatch(before, patch);
+        const spentAt = new Date(item.spent_at);
+        if (Number.isNaN(spentAt.getTime()) || spentAt > currentNow) {
+          throw codedError("Future expense date", "expense_future_date");
+        }
+        if (financialPatch && !sameExpenseFinancialInputs(preflightItem, item)) {
+          throw codedError("Expense changed", "expense_edit_conflict");
+        }
+        const timeZone = userTimezone(user);
+        const sourceMonth = timeZoneMonthKey(new Date(before.spent_at), timeZone);
+        const targetMonth = timeZoneMonthKey(spentAt, timeZone);
+        await lockFinancialMonths(client, user.id, [sourceMonth, targetMonth]);
+        const closedMonths = await closedReserveMonths(client, user.id, [sourceMonth, targetMonth]);
+        const changedKeys = Object.keys(patch ?? {});
+        const metadataOnly = changedKeys.every((key) => ["description", "category_slug", "tags"].includes(key));
+        if (closedMonths.has(sourceMonth) && !metadataOnly) {
+          throw codedError("Source month closed", "expense_source_month_closed");
+        }
+        if (targetMonth !== sourceMonth && closedMonths.has(targetMonth)) {
+          throw codedError("Target month closed", "expense_target_month_closed");
+        }
+
+        const moneyAmounts = financialPatch ? preflightMoneyAmounts : {
+          amountBase: Number(before.amount_base),
+          convertedAmounts: before.converted_amounts,
+          source: before.exchange_rate_source
+        };
+        const updatedResult = await client.query(
+          `UPDATE expenses
+           SET amount_original = $1,
+               currency_original = $2,
+               amount_base = $3,
+               converted_amounts = $4,
+               exchange_rate_date = $5,
+               exchange_rate_source = $6,
+               description = $7,
+               category_slug = $8,
+               tags = $9,
+               spent_at = $10,
+               budget_impact = $11,
+               updated_at = $12
+           WHERE id = $13 AND user_id = $14
+           RETURNING *`,
+          [
+            item.amount, item.currency, moneyAmounts.amountBase, JSON.stringify(moneyAmounts.convertedAmounts),
+            spentAt.toISOString().slice(0, 10), moneyAmounts.source, item.description, item.category_slug,
+            item.tags, spentAt, item.budget_impact, currentNow, before.id, user.id
+          ]
+        );
+        const updated = updatedResult.rows[0] ?? null;
+        if (!updated) throw codedError("Expense not found", "expense_not_found");
+        if (shouldInvalidateExpenseSnapshot(before, updated, { now: currentNow, timeZone })) {
+          await client.query(
+            `DELETE FROM daily_budget_snapshots
+             WHERE user_id = $1 AND day_key = $2`,
+            [user.id, timeZoneDayKey(currentNow, timeZone)]
+          );
+        }
+        if (ownsTransaction) await client.query("COMMIT");
+        return updated;
+      } catch (error) {
+        if (ownsTransaction) {
+          try { await client.query("ROLLBACK"); } catch { /* preserve original transaction error */ }
+        }
+        throw error;
+      } finally {
+        if (ownsTransaction) client.release();
+      }
+    },
+
+    async deleteExpenseForTelegramUser(expenseId, telegramUserId, now = new Date(), options = {}) {
+      if (typeof pool.connect !== "function") {
+        const result = await pool.query(
+          `DELETE FROM expenses
+           WHERE id = $1 AND user_id = (SELECT id FROM users WHERE telegram_user_id = $2)
+           RETURNING *`,
+          [expenseId, telegramUserId]
+        );
+        return result.rows[0] ?? null;
+      }
+      const currentNow = normalizeNow(now);
+      const client = options.client ?? await pool.connect();
+      const ownsTransaction = !options.client;
+      try {
+        if (ownsTransaction) await client.query("BEGIN");
+        const userResult = await client.query("SELECT * FROM users WHERE telegram_user_id = $1 FOR UPDATE", [telegramUserId]);
+        const user = userResult.rows[0] ?? null;
+        if (!user) throw codedError("Expense not found", "expense_not_found");
+        const expenseResult = await client.query("SELECT * FROM expenses WHERE id = $1 AND user_id = $2 FOR UPDATE", [expenseId, user.id]);
+        const expense = expenseResult.rows[0] ?? null;
+        if (!expense) throw codedError("Expense not found", "expense_not_found");
+        const timeZone = userTimezone(user);
+        const month = timeZoneMonthKey(new Date(expense.spent_at), timeZone);
+        await lockFinancialMonths(client, user.id, [month]);
+        if ((await closedReserveMonths(client, user.id, [month])).has(month)) {
+          throw codedError("Expense delete blocked", "expense_delete_blocked");
+        }
+        const deletedResult = await client.query("DELETE FROM expenses WHERE id = $1 AND user_id = $2 RETURNING *", [expense.id, user.id]);
+        const deleted = deletedResult.rows[0] ?? null;
+        if (!deleted) throw codedError("Expense not found", "expense_not_found");
+        if (shouldInvalidateExpenseSnapshot(expense, { ...expense, amount_original: 0 }, { now: currentNow, timeZone })) {
+          await client.query("DELETE FROM daily_budget_snapshots WHERE user_id = $1 AND day_key = $2", [user.id, timeZoneDayKey(currentNow, timeZone)]);
+        }
+        if (ownsTransaction) await client.query("COMMIT");
+        return deleted;
+      } catch (error) {
+        if (ownsTransaction) {
+          try { await client.query("ROLLBACK"); } catch { /* preserve original transaction error */ }
+        }
+        throw error;
+      } finally {
+        if (ownsTransaction) client.release();
+      }
     },
 
     async listExpensesByDraftId(draftId) {
@@ -2729,12 +3155,115 @@ export function draftHasValidCategories(items) {
   return Array.isArray(items) && items.length > 0 && items.every(isCategoryValid);
 }
 
+async function updateExpenseWithoutTransaction(pool, exchangeRates, expenseId, telegramUserId, patch) {
+  const item = normalizeDraftItem(patch);
+  const spentAt = new Date(item.spent_at);
+  const userResult = await pool.query("SELECT * FROM users WHERE telegram_user_id = $1", [telegramUserId]);
+  const user = userResult.rows[0] ?? null;
+  const moneyAmounts = await buildMoneyAmounts(exchangeRates, item.amount, item.currency, spentAt, user);
+  const result = await pool.query(
+    `UPDATE expenses
+     SET amount_original = $1, currency_original = $2, amount_base = $3,
+         converted_amounts = $4, exchange_rate_date = $5, exchange_rate_source = $6,
+         description = $7, category_slug = $8, tags = $9, spent_at = $10,
+         budget_impact = $11, updated_at = now()
+     WHERE id = $12 AND user_id = (SELECT id FROM users WHERE telegram_user_id = $13)
+     RETURNING *`,
+    [
+      item.amount, item.currency, moneyAmounts.amountBase, JSON.stringify(moneyAmounts.convertedAmounts),
+      spentAt.toISOString().slice(0, 10), moneyAmounts.source, item.description, item.category_slug,
+      item.tags, spentAt, item.budget_impact, expenseId, telegramUserId
+    ]
+  );
+  return result.rows[0] ?? null;
+}
+
+function normalizeExpensePatch(before, patch) {
+  return normalizeDraftItem({
+    amount: patch?.amount ?? before.amount_original,
+    currency: patch?.currency ?? before.currency_original,
+    description: patch?.description ?? before.description,
+    category_slug: patch?.category_slug ?? before.category_slug,
+    category_source: patch?.category_source ?? before.category_source,
+    tags: patch?.tags ?? before.tags,
+    spent_at: patch?.spent_at ?? before.spent_at,
+    budget_impact: patch?.budget_impact ?? before.budget_impact,
+    confidence: patch?.confidence ?? before.confidence,
+    needs_review: patch?.needs_review ?? before.needs_review
+  });
+}
+
+function sameExpenseFinancialInputs(left, right) {
+  return Number(left.amount) === Number(right.amount)
+    && String(left.currency) === String(right.currency)
+    && new Date(left.spent_at).getTime() === new Date(right.spent_at).getTime()
+    && String(left.budget_impact) === String(right.budget_impact);
+}
+
+async function lockFinancialMonths(client, userId, monthKeys) {
+  for (const monthKey of [...new Set(monthKeys.filter(Boolean))].sort()) {
+    await client.query(
+      "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+      [`money-flow:${userId}:${monthKey}`]
+    );
+  }
+}
+
+async function closedReserveMonths(client, userId, monthKeys) {
+  const keys = [...new Set(monthKeys.filter(Boolean))];
+  if (!keys.length) return new Set();
+  const result = await client.query(
+    `SELECT period
+     FROM monthly_reserve_instances
+     WHERE user_id = $1 AND period = ANY($2) AND status = 'closed'
+     FOR UPDATE`,
+    [userId, keys]
+  );
+  return new Set(result.rows.map((row) => row.period));
+}
+
+export function shouldInvalidateExpenseSnapshot(before, after, { now = new Date(), timeZone = "Asia/Bangkok" } = {}) {
+  if (!before || !after || !expenseFinancialInputsChanged(before, after)) return false;
+  const currentMonth = timeZoneMonthKey(now, timeZone);
+  const beforeMonth = expenseMonthKey(before, timeZone);
+  const afterMonth = expenseMonthKey(after, timeZone);
+  if (beforeMonth !== currentMonth && afterMonth !== currentMonth) return false;
+
+  const beforeImpact = before.budget_impact ?? "regular";
+  const afterImpact = after.budget_impact ?? "regular";
+  if (beforeImpact !== afterImpact) return true;
+  if (beforeImpact === "large_oneoff") return true;
+  if (beforeImpact !== "regular") return false;
+
+  const today = timeZoneDayKey(now, timeZone);
+  const beforeDay = expenseDayKey(before, timeZone);
+  const afterDay = expenseDayKey(after, timeZone);
+  return !(beforeDay === today && afterDay === today);
+}
+
 function normalizeDraft(draft) {
   if (!draft) return null;
   return {
     ...draft,
     items: Array.isArray(draft.items) ? draft.items : JSON.parse(draft.items)
   };
+}
+
+function expenseFinancialInputsChanged(before, after) {
+  return Number(before.amount_original ?? before.amount) !== Number(after.amount_original ?? after.amount)
+    || String(before.currency_original ?? before.currency ?? "") !== String(after.currency_original ?? after.currency ?? "")
+    || String(before.spent_at ?? "") !== String(after.spent_at ?? "")
+    || String(before.budget_impact ?? "regular") !== String(after.budget_impact ?? "regular");
+}
+
+function expenseMonthKey(expense, timeZone) {
+  const spentAt = new Date(expense?.spent_at);
+  return Number.isNaN(spentAt.getTime()) ? null : timeZoneMonthKey(spentAt, timeZone);
+}
+
+function expenseDayKey(expense, timeZone) {
+  const spentAt = new Date(expense?.spent_at);
+  return Number.isNaN(spentAt.getTime()) ? null : timeZoneDayKey(spentAt, timeZone);
 }
 
 function normalizePlannedDraft(draft) {

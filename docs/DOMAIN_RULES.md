@@ -93,6 +93,20 @@ This file records stable product and business rules. Read it before changing bud
 - Cancel never deletes an already-saved expense.
 - A draft without a valid category cannot be confirmed (parser-fallback `other` is not valid; a user-chosen category, including `other`, is valid).
 
+## Telegram Expense Editor
+
+- The Telegram editor shares presentation and input parsing for drafts and saved expenses, but applies changes through separate repository targets.
+- A text-input session belongs to one internal user, expires after 15 minutes, and is only a routing record; ownership, value validation, closed-month rules, and financial integrity are rechecked by the repository.
+- Claiming a session, changing its target, conditionally invalidating a snapshot, and completing the session are one database transaction. `processing` is never a durable intermediate state.
+- A failed validation or domain check leaves the active session and target unchanged. A late expired-session input is consumed once and never falls through to the normal expense parser.
+- Voice and photo messages do not complete a text-input session.
+- A date without a year is resolved as the closest past local calendar occurrence in `users.timezone`. A later time today is rejected, rather than silently moving to the previous year. Explicit future dates are rejected.
+- `/last` selects the latest non-planned, non-deleted expense by `created_at DESC, id DESC`; `spent_at` and `updated_at` never change this order.
+- Moving a saved expense to any past local month is allowed when both months are open. The source and target month locks are acquired in sorted order within one transaction.
+- A month with a closed reserve allows only description, category, and tags corrections. Amount, currency, date, budget impact, deletion, and moves into or out of that month are rejected.
+- `created_at` and a linked draft's `source_text` are immutable during expense editing; successful edits change `updated_at`.
+- The daily snapshot is an opening-baseline record. Metadata-only changes and a same-day regular amount correction do not recreate it. Corrections that alter the current-month opening baseline, including a prior-day correction, a day move, or `regular`/`large_oneoff` change, invalidate it transactionally.
+
 ## Product Analytics Cohorts
 
 - Acquisition and funnel cohorts include only users whose `users.created_at` is within the reporting window and whose first `bot_started` or `miniapp_opened` event occurred at or after account creation.

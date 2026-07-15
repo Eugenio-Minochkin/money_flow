@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
 import { createExchangeRateProvider } from "../src/exchangeRates.js";
-import { createRepository } from "../src/repository.js";
+import { createRepository, shouldInvalidateExpenseSnapshot } from "../src/repository.js";
 import { formatSavedSummary } from "../src/telegramFormat.js";
 
 test("records app events with JSON metadata", async () => {
@@ -2354,6 +2354,35 @@ test("listExpenseExportRowsForTelegramUser all-time export has no period bounds"
   assert.deepEqual(listCall.params, ["7", 25, 0]);
 });
 
+test("invalidates the current opening snapshot only when its baseline changes", () => {
+  const context = { now: new Date("2026-07-15T12:00:00.000Z"), timeZone: "Asia/Bangkok" };
+  const todayRegular = { amount_original: 10, currency_original: "THB", spent_at: "2026-07-15T05:00:00.000Z", budget_impact: "regular" };
+  const yesterdayRegular = { ...todayRegular, spent_at: "2026-07-14T05:00:00.000Z" };
+  const large = { ...todayRegular, budget_impact: "large_oneoff" };
+
+  assert.equal(shouldInvalidateExpenseSnapshot(todayRegular, { ...todayRegular, amount_original: 20 }, context), false);
+  assert.equal(shouldInvalidateExpenseSnapshot(yesterdayRegular, { ...yesterdayRegular, amount_original: 20 }, context), true);
+  assert.equal(shouldInvalidateExpenseSnapshot(large, { ...large, amount_original: 20 }, context), true);
+  assert.equal(shouldInvalidateExpenseSnapshot(todayRegular, { ...todayRegular, description: "renamed" }, context), false);
+  assert.equal(shouldInvalidateExpenseSnapshot(todayRegular, large, context), true);
+  assert.equal(shouldInvalidateExpenseSnapshot(yesterdayRegular, { ...yesterdayRegular, spent_at: "2026-07-15T05:00:00.000Z" }, context), true);
+});
+
+test("returns the latest editable expense by creation order and excludes planned", async () => {
+  let query;
+  const repo = createRepository(fakePool((sql) => {
+    query = String(sql);
+    return { rows: [{ id: 9, created_at: "2026-07-15T12:00:00.000Z" }] };
+  }));
+
+  const expense = await repo.getLatestEditableExpenseForTelegramUser(100);
+
+  assert.equal(expense.id, 9);
+  assert.match(query, /budget_impact <> 'planned'/);
+  assert.match(query, /ORDER BY expenses\.created_at DESC, expenses\.id DESC/);
+  assert.doesNotMatch(query, /updated_at DESC/);
+});
+
 test("updates an expense owned by a Telegram user", async () => {
   const queries = [];
   const repo = createRepository(fakePool((sql, params) => {
@@ -4425,6 +4454,241 @@ function assertSummary(snapshot, todaySpent, budgetDisplay, remainingDisplay) {
   assert.doesNotMatch(text, /1 563 THB/);
   assert.doesNotMatch(text, /423 THB/);
 }
+
+test("consumes a Telegram input session and target mutation in one transaction", async () => {
+  const now = new Date("2026-07-15T12:00:00.000Z");
+  const queries = [];
+  const session = {
+    id: 8,
+    user_id: 7,
+    status: "active",
+    target_type: "draft",
+    target_id: 42,
+    item_index: 0,
+    field: "amount",
+    expires_at: new Date("2026-07-15T12:15:00.000Z")
+  };
+  const client = {
+    async query(sql, params = []) {
+      const query = String(sql);
+      queries.push(query);
+      if (query === "BEGIN" || query === "COMMIT" || query === "ROLLBACK") return { rows: [] };
+      if (query.includes("FROM users") && query.includes("FOR UPDATE")) return { rows: [{ id: 7 }] };
+      if (query.includes("FROM telegram_input_sessions") && query.includes("FOR UPDATE")) return { rows: [session] };
+      if (query.includes("SET status = 'processing'")) return { rows: [{ ...session, status: "processing" }] };
+      if (query.includes("UPDATE draft_target")) return { rows: [] };
+      if (query.includes("SET status = 'completed'")) return { rows: [] };
+      throw new Error(`Unexpected SQL: ${query}`);
+    },
+    release() {}
+  };
+  const repo = createRepository({ async connect() { return client; } });
+
+  const result = await repo.consumeTelegramInputSession(100, {
+    sessionId: 8,
+    now,
+    async apply({ session: claimed, client: transactionClient }) {
+      assert.equal(claimed.status, "processing");
+      await transactionClient.query("UPDATE draft_target SET amount = 120");
+    }
+  });
+
+  assert.deepEqual(result, { outcome: "completed", session: { ...session, status: "completed" } });
+  assert.ok(queries.indexOf("UPDATE draft_target SET amount = 120") < queries.indexOf("COMMIT"));
+  assert.ok(queries.findIndex((query) => query.includes("SET status = 'completed'")) < queries.indexOf("COMMIT"));
+  assert.equal(queries.filter((query) => query === "COMMIT").length, 1);
+});
+
+test("rolls back processing and target changes when session application fails", async () => {
+  const queries = [];
+  const client = {
+    async query(sql) {
+      const query = String(sql);
+      queries.push(query);
+      if (query === "BEGIN" || query === "COMMIT" || query === "ROLLBACK") return { rows: [] };
+      if (query.includes("FROM users") && query.includes("FOR UPDATE")) return { rows: [{ id: 7 }] };
+      if (query.includes("FROM telegram_input_sessions") && query.includes("FOR UPDATE")) {
+        return { rows: [{ id: 8, user_id: 7, status: "active", expires_at: new Date("2026-07-15T12:15:00.000Z") }] };
+      }
+      if (query.includes("SET status = 'processing'")) return { rows: [{ id: 8, user_id: 7, status: "processing" }] };
+      throw new Error(`Unexpected SQL: ${query}`);
+    },
+    release() {}
+  };
+  const repo = createRepository({ async connect() { return client; } });
+  const validationError = Object.assign(new Error("invalid amount"), { code: "expense_invalid_amount" });
+
+  await assert.rejects(
+    () => repo.consumeTelegramInputSession(100, {
+      sessionId: 8,
+      now: new Date("2026-07-15T12:00:00.000Z"),
+      async apply() { throw validationError; }
+    }),
+    { code: "expense_invalid_amount" }
+  );
+  assert.ok(queries.includes("ROLLBACK"));
+  assert.ok(!queries.some((query) => query.includes("SET status = 'completed'")));
+});
+
+test("consumes the first late input for an expired active Telegram session", async () => {
+  const queries = [];
+  const session = { id: 8, user_id: 7, status: "active", expires_at: new Date("2026-07-15T12:00:00.000Z") };
+  const client = {
+    async query(sql) {
+      const query = String(sql);
+      queries.push(query);
+      if (query === "BEGIN" || query === "COMMIT" || query === "ROLLBACK") return { rows: [] };
+      if (query.includes("FROM users") && query.includes("FOR UPDATE")) return { rows: [{ id: 7 }] };
+      if (query.includes("FROM telegram_input_sessions") && query.includes("FOR UPDATE")) return { rows: [session] };
+      if (query.includes("SET status = 'expired_consumed'")) return { rows: [{ ...session, status: "expired_consumed" }] };
+      throw new Error(`Unexpected SQL: ${query}`);
+    },
+    release() {}
+  };
+  const repo = createRepository({ async connect() { return client; } });
+
+  const result = await repo.consumeTelegramInputSession(100, { sessionId: 8, now: new Date("2026-07-15T12:01:00.000Z") });
+
+  assert.equal(result.outcome, "expired");
+  assert.ok(queries.some((query) => query.includes("SET status = 'expired_consumed'")));
+  assert.ok(!queries.some((query) => query.includes("SET status = 'expired_unconsumed'")));
+});
+
+test("does not replace a processing Telegram input session with a new edit intent", async () => {
+  const queries = [];
+  const client = {
+    async query(sql) {
+      const query = String(sql);
+      queries.push(query);
+      if (query === "BEGIN" || query === "COMMIT" || query === "ROLLBACK") return { rows: [] };
+      if (query.includes("FROM users") && query.includes("FOR UPDATE")) return { rows: [{ id: 7 }] };
+      if (query.includes("FROM telegram_input_sessions") && query.includes("FOR UPDATE")) {
+        return { rows: [{ id: 8, status: "processing" }] };
+      }
+      throw new Error(`Unexpected SQL: ${query}`);
+    },
+    release() {}
+  };
+  const repo = createRepository({ async connect() { return client; } });
+
+  const result = await repo.startTelegramInputSession(100, {
+    targetType: "draft", targetId: 42, itemIndex: 0, field: "amount", chatId: 100, messageId: 200, language: "ru"
+  }, new Date("2026-07-15T12:00:00.000Z"));
+
+  assert.deepEqual(result, { outcome: "input_in_progress" });
+  assert.ok(!queries.some((query) => query.includes("INSERT INTO telegram_input_sessions")));
+  assert.ok(!queries.some((query) => query.includes("SET status = 'cancelled'")));
+});
+
+test("routes only active or unconsumed-expired Telegram input sessions", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool(async (sql) => {
+    const query = String(sql);
+    queries.push(query);
+    return { rows: [{ id: 8, status: "active" }] };
+  }));
+
+  const session = await repo.getRoutableTelegramInputSession(100);
+
+  assert.deepEqual(session, { id: 8, status: "active" });
+  assert.match(queries[0], /status IN \('active', 'expired_unconsumed'\)/);
+  assert.doesNotMatch(queries[0], /completed/);
+});
+
+test("does not cancel a processing Telegram input session", async () => {
+  const queries = [];
+  const client = {
+    async query(sql) {
+      const query = String(sql);
+      queries.push(query);
+      if (query === "BEGIN" || query === "COMMIT" || query === "ROLLBACK") return { rows: [] };
+      if (query.includes("FROM users") && query.includes("FOR UPDATE")) return { rows: [{ id: 7 }] };
+      if (query.includes("FROM telegram_input_sessions") && query.includes("FOR UPDATE")) {
+        return { rows: [{ id: 8, status: "processing" }] };
+      }
+      throw new Error(`Unexpected SQL: ${query}`);
+    },
+    release() {}
+  };
+  const repo = createRepository({ async connect() { return client; } });
+
+  const result = await repo.cancelTelegramInputSession(100, new Date("2026-07-15T12:00:00.000Z"));
+
+  assert.deepEqual(result, { outcome: "input_in_progress" });
+  assert.ok(!queries.some((query) => query.includes("SET status = 'cancelled'")));
+});
+
+test("cleans up only terminal Telegram input sessions after the retention window", async () => {
+  let received;
+  const repo = createRepository(fakePool(async (sql, params) => {
+    received = { sql: String(sql), params };
+    return { rowCount: 3, rows: [] };
+  }));
+
+  const deleted = await repo.deleteOldTelegramInputSessions(new Date("2026-07-16T12:00:00.000Z"));
+
+  assert.equal(deleted, 3);
+  assert.match(received.sql, /status IN \('completed', 'cancelled', 'expired_consumed'\)/);
+  assert.doesNotMatch(received.sql, /'active'/);
+  assert.deepEqual(received.params, [new Date("2026-07-15T12:00:00.000Z")]);
+});
+
+test("updates exactly one owned open draft item without changing source text", async () => {
+  const queries = [];
+  const draft = {
+    id: 42,
+    user_id: 7,
+    status: "pending",
+    version: 3,
+    source_text: "coffee 10, lunch 20",
+    items: [
+      { amount: 10, currency: "THB", description: "coffee", category_slug: "food_cafe" },
+      { amount: 20, currency: "THB", description: "lunch", category_slug: "food_cafe" }
+    ]
+  };
+  const client = {
+    async query(sql, params = []) {
+      const query = String(sql);
+      queries.push({ query, params });
+      if (query === "BEGIN" || query === "COMMIT" || query === "ROLLBACK") return { rows: [] };
+      if (query.includes("FROM drafts") && query.includes("FOR UPDATE")) return { rows: [draft] };
+      if (query.includes("UPDATE drafts")) return { rows: [{ ...draft, version: 4, items: params[0] }] };
+      throw new Error(`Unexpected SQL: ${query}`);
+    },
+    release() {}
+  };
+  const repo = createRepository({ async connect() { return client; } });
+
+  const result = await repo.updateDraftItemForTelegramUser(42, 1, 100, { amount: 15, currency: "USD" }, { expectedVersion: 3 });
+
+  assert.equal(result.items[0].amount, 10);
+  assert.equal(result.items[1].amount, 15);
+  assert.equal(result.items[1].currency, "USD");
+  assert.equal(result.source_text, "coffee 10, lunch 20");
+  const update = queries.find(({ query }) => query.includes("UPDATE drafts"));
+  assert.doesNotMatch(update.query, /source_text/);
+  assert.equal(JSON.parse(update.params[0])[0].amount, 10);
+  assert.equal(JSON.parse(update.params[0])[1].amount, 15);
+});
+
+test("rejects stale or invalid draft item updates with stable domain codes", async () => {
+  const draft = { id: 42, user_id: 7, status: "pending", version: 4, items: [] };
+  const client = {
+    async query(sql) {
+      const query = String(sql);
+      if (query === "BEGIN" || query === "COMMIT" || query === "ROLLBACK") return { rows: [] };
+      if (query.includes("FROM drafts") && query.includes("FOR UPDATE")) return { rows: [draft] };
+      throw new Error(`Unexpected SQL: ${query}`);
+    },
+    release() {}
+  };
+  const repo = createRepository({ async connect() { return client; } });
+
+  await assert.rejects(
+    () => repo.updateDraftItemForTelegramUser(42, 0, 100, { amount: 15 }, { expectedVersion: 3 }),
+    { code: "expense_edit_conflict" }
+  );
+});
 
 function fakePool(handler) {
   return {

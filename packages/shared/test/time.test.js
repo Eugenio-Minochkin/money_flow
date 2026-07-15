@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   DEFAULT_TIMEZONE,
+  localDateTimeToUtc,
   localDateKey,
   localDateRangeBounds,
   localHour,
@@ -17,6 +18,28 @@ import {
   timeZoneMonthState,
   toZonedIso
 } from "../src/time.js";
+
+test("converts validated local date-time components to UTC", () => {
+  assert.equal(
+    localDateTimeToUtc({ year: 2026, month: 7, day: 15, hour: 19, minute: 30 }, "Asia/Bangkok").toISOString(),
+    "2026-07-15T12:30:00.000Z"
+  );
+  assert.equal(
+    localDateTimeToUtc({ year: 2026, month: 3, day: 8, hour: 1, minute: 30 }, "America/New_York").toISOString(),
+    "2026-03-08T06:30:00.000Z"
+  );
+});
+
+test("rejects invalid local calendar and DST-gap times", () => {
+  assert.throws(
+    () => localDateTimeToUtc({ year: 2026, month: 2, day: 29, hour: 10, minute: 0 }, "Asia/Bangkok"),
+    { message: "invalid_local_date_time" }
+  );
+  assert.throws(
+    () => localDateTimeToUtc({ year: 2026, month: 3, day: 8, hour: 2, minute: 30 }, "America/New_York"),
+    { message: "invalid_local_date_time" }
+  );
+});
 
 test("returns current week bounds from Monday in local timezone", () => {
   const bounds = localPeriodBounds(new Date("2026-06-07T10:00:00+07:00"), "week");

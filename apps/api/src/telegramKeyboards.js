@@ -1,3 +1,5 @@
+import { treatmentLabels } from "./telegramExpenseEditor.js";
+
 const QUICK_CATEGORY_CODES = [
   { code: "food", slug: "food_cafe", label: "food" },
   { code: "home", slug: "home", label: "home" },
@@ -73,14 +75,15 @@ export function budgetTopupMiniAppKeyboard(miniAppUrl, telegramUserId, language 
 
 export function draftKeyboard(draftId, items = [], miniAppUrl, telegramUserId, language = "ru") {
   const text = keyboardText(language);
-  const rows = [[{ text: `✅ ${text.confirm}`, callback_data: `d:${draftId}:confirm` }]];
+  const rows = [[{ text: `✅ ${text.draftSave ?? text.confirm}`, callback_data: `d:${draftId}:confirm` }]];
 
   if (Array.isArray(items) && items.length === 1) {
     const item = items[0];
     const impact = item.budget_impact;
+    const [regularLabel, largeLabel] = treatmentLabels(impact, language);
     rows.push([
-      typeButton(text.regular, impact === "regular", draftId, "r"),
-      typeButton(text.large, impact === "large_oneoff", draftId, "l")
+      typeButton(regularLabel, draftId, "r"),
+      typeButton(largeLabel, draftId, "l")
     ]);
     const categoryIsResolved =
       item.category_source === "user" ||
@@ -94,7 +97,7 @@ export function draftKeyboard(draftId, items = [], miniAppUrl, telegramUserId, l
   }
 
   rows.push([
-    { text: `✏️ ${text.edit}`, web_app: { url: `${miniAppUrl}?telegramUserId=${telegramUserId}&draftId=${draftId}` } },
+    { text: `✏️ ${text.editorEdit ?? text.edit}`, callback_data: items.length === 1 ? `ee:d:${draftId}:0:o` : `ee:d:${draftId}:m` },
     { text: `🗑 ${text.cancel}`, callback_data: `d:${draftId}:cancel` }
   ]);
   rows.push([{ text: `📥 ${text.later}`, callback_data: `d:${draftId}:review` }]);
@@ -102,8 +105,8 @@ export function draftKeyboard(draftId, items = [], miniAppUrl, telegramUserId, l
   return { inline_keyboard: rows };
 }
 
-function typeButton(label, selected, draftId, code) {
-  return { text: `${selected ? "🔘" : "⚪"} ${label}`, callback_data: `d:${draftId}:t:${code}` };
+function typeButton(label, draftId, code) {
+  return { text: label, callback_data: `d:${draftId}:t:${code}` };
 }
 
 function categoryButton(label, selected, draftId, code) {
@@ -128,6 +131,19 @@ export function appKeyboard(miniAppUrl, telegramUserId, language = "ru") {
   const text = keyboardText(language);
   return {
     inline_keyboard: [[{ text: `📱 ${text.openApp}`, web_app: { url: `${miniAppUrl}?telegramUserId=${telegramUserId}` } }]]
+  };
+}
+
+export function savedExpenseKeyboard(expenseId, miniAppUrl, telegramUserId, language = "ru") {
+  const text = keyboardText(language);
+  return {
+    inline_keyboard: [
+      [
+        { text: `✏️ ${text.editorEdit ?? text.edit}`, callback_data: `ee:x:${expenseId}:o` },
+        { text: `🗑 ${text.deleteExpense ?? text.cancel}`, callback_data: `ee:x:${expenseId}:del` }
+      ],
+      [miniAppButton(miniAppUrl, telegramUserId, language)]
+    ]
   };
 }
 
@@ -171,7 +187,10 @@ function keyboardText(language) {
       budgetTopupUndo: "\u21a9\ufe0f Undo top-up",
       cancel: "Cancel",
       confirm: "Confirm",
+      draftSave: "Save",
+      deleteExpense: "Delete",
       edit: "Edit",
+      editorEdit: "Edit",
       food: "Food",
       health: "Health",
       home: "Home",
@@ -190,7 +209,10 @@ function keyboardText(language) {
     addPlanned: "Добавить плановую",
     cancel: "Отменить",
     confirm: "Подтвердить",
+    draftSave: "Сохранить",
+    deleteExpense: "Удалить",
     edit: "Изменить",
+    editorEdit: "Исправить",
     food: "Еда",
     health: "Здоровье",
     home: "Дом",

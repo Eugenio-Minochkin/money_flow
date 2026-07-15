@@ -25,8 +25,34 @@ test.before(async () => {
   const applied = await pool.query("SELECT filename FROM schema_migrations ORDER BY filename");
   assert.deepEqual(
     applied.rows.map((row) => row.filename),
-    ["001_initial.sql", "002_draft_confirm_flow.sql", "003_budget_topups.sql", "004_report_deliveries.sql", "005_exchange_rates.sql", "006_feedback.sql", "007_account_deletion.sql", "008_product_analytics.sql"]
+    ["001_initial.sql", "002_draft_confirm_flow.sql", "003_budget_topups.sql", "004_report_deliveries.sql", "005_exchange_rates.sql", "006_feedback.sql", "007_account_deletion.sql", "008_product_analytics.sql", "009_telegram_expense_editor.sql"]
   );
+
+  const sessions = await pool.query(`
+    SELECT user_id, target_type, target_id, item_index, field, status,
+           chat_id, message_id, language, expires_at, late_input_consumed_at
+    FROM telegram_input_sessions WHERE false
+  `);
+  assert.equal(sessions.fields.length, 11);
+
+  const sessionConstraint = await pool.query(`
+    SELECT pg_get_constraintdef(oid) AS definition
+    FROM pg_constraint
+    WHERE conrelid = 'telegram_input_sessions'::regclass
+      AND contype = 'c'
+      AND pg_get_constraintdef(oid) LIKE '%status%'
+  `);
+  assert.ok(sessionConstraint.rows.some((row) => row.definition.includes("processing")));
+  const busyIndex = await pool.query(`
+    SELECT indexdef
+    FROM pg_indexes
+    WHERE tablename = 'telegram_input_sessions'
+      AND indexname = 'telegram_input_sessions_one_busy_user_idx'
+  `);
+  assert.match(busyIndex.rows[0]?.indexdef ?? "", /processing/);
+
+  const expenses = await pool.query("SELECT updated_at FROM expenses WHERE false");
+  assert.equal(expenses.fields.length, 1);
 });
 
 test.beforeEach(async () => {
@@ -332,6 +358,114 @@ test("uses user timezone boundaries for day and month expense queries", async ()
   const dashboard = await repo.dashboard(990007, new Date("2026-07-01T12:00:00+07:00"));
   assert.equal(dashboard.snapshot.today, 700);
   assert.equal(dashboard.snapshot.month, 700);
+});
+
+test("allows metadata-only correction but blocks financial changes in a closed reserve month", async () => {
+  const telegramUserId = 990009;
+  const user = await createSmokeUser(telegramUserId);
+  const expense = await saveExpense(user.id, telegramUserId, {
+    amount: 100,
+    description: "old name",
+    category_slug: "food_cafe",
+    spent_at: "2026-06-15T05:00:00.000Z"
+  });
+  await pool.query(
+    `INSERT INTO monthly_reserve_instances (
+       user_id, period, timezone, currency, budget_amount, reserve_amount, status, closed_at
+     ) VALUES ($1, '2026-06', 'Asia/Bangkok', 'THB', 45000, 1000, 'closed', now())`,
+    [user.id]
+  );
+
+  const metadata = await repo.updateExpenseForTelegramUser(
+    expense.id,
+    telegramUserId,
+    { description: "corrected name", category_slug: "home", tags: ["fixed"] },
+    new Date("2026-07-15T12:00:00.000Z")
+  );
+  assert.equal(metadata.description, "corrected name");
+  assert.equal(metadata.category_slug, "home");
+  assert.deepEqual(metadata.tags, ["fixed"]);
+
+  await assert.rejects(
+    () => repo.updateExpenseForTelegramUser(expense.id, telegramUserId, { amount: 200 }, new Date("2026-07-15T12:00:00.000Z")),
+    { code: "expense_source_month_closed" }
+  );
+  await assert.rejects(
+    () => repo.deleteExpenseForTelegramUser(expense.id, telegramUserId, new Date("2026-07-15T12:00:00.000Z")),
+    { code: "expense_delete_blocked" }
+  );
+});
+
+test("consumes Telegram input sessions atomically and preserves an active session after rollback", async () => {
+  const telegramUserId = 990008;
+  const user = await createSmokeUser(telegramUserId);
+  const now = new Date("2026-07-15T12:00:00.000Z");
+  const input = {
+    targetType: "draft",
+    targetId: 999,
+    itemIndex: 0,
+    field: "description",
+    chatId: telegramUserId,
+    messageId: 11,
+    language: "en"
+  };
+  const started = await repo.startTelegramInputSession(telegramUserId, input, now);
+  assert.equal(started.outcome, "started");
+
+  const completed = await repo.consumeTelegramInputSession(telegramUserId, {
+    sessionId: started.session.id,
+    now,
+    async apply({ client }) {
+      await client.query("UPDATE users SET first_name = $2 WHERE id = $1", [user.id, "Updated"]);
+    }
+  });
+  assert.equal(completed.outcome, "completed");
+
+  const afterCommit = await pool.query("SELECT first_name FROM users WHERE id = $1", [user.id]);
+  assert.equal(afterCommit.rows[0].first_name, "Updated");
+  const completedSession = await pool.query(
+    "SELECT status FROM telegram_input_sessions WHERE id = $1",
+    [started.session.id]
+  );
+  assert.equal(completedSession.rows[0].status, "completed");
+  assert.equal(await repo.getRoutableTelegramInputSession(telegramUserId), null);
+
+  const second = await repo.startTelegramInputSession(telegramUserId, { ...input, messageId: 12 }, now);
+  await assert.rejects(
+    () => repo.consumeTelegramInputSession(telegramUserId, {
+      sessionId: second.session.id,
+      now,
+      async apply({ client }) {
+        await client.query("UPDATE users SET first_name = $2 WHERE id = $1", [user.id, "Must rollback"]);
+        throw Object.assign(new Error("invalid description"), { code: "expense_invalid_description" });
+      }
+    }),
+    { code: "expense_invalid_description" }
+  );
+  const afterRollback = await pool.query("SELECT first_name FROM users WHERE id = $1", [user.id]);
+  assert.equal(afterRollback.rows[0].first_name, "Updated");
+  const activeSession = await pool.query(
+    "SELECT status FROM telegram_input_sessions WHERE id = $1",
+    [second.session.id]
+  );
+  assert.equal(activeSession.rows[0].status, "active");
+
+  const concurrent = await repo.startTelegramInputSession(telegramUserId, { ...input, messageId: 13 }, now);
+  let applyCount = 0;
+  const outcomes = await Promise.all([
+    repo.consumeTelegramInputSession(telegramUserId, {
+      sessionId: concurrent.session.id,
+      now,
+      async apply() { applyCount += 1; }
+    }),
+    repo.consumeTelegramInputSession(telegramUserId, {
+      sessionId: concurrent.session.id,
+      now,
+      async apply() { applyCount += 1; }
+    })
+  ]);
+  assert.equal(applyCount, 1);
+  assert.deepEqual(outcomes.map((result) => result.outcome).sort(), ["already_consumed", "completed"]);
 });
 
 async function createSmokeUser(telegramUserId) {

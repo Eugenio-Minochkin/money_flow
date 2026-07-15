@@ -339,6 +339,105 @@ test("/export shows expense export period choices", async () => {
   });
 });
 
+test("/last shows the saved expense card with edit and delete actions", async () => {
+  const calls = [];
+  const repo = fakeRepository();
+  repo.getLatestEditableExpenseForTelegramUser = async () => ({
+    id: 91,
+    amount_base: 120,
+    amount_original: 120,
+    currency_original: "THB",
+    description: "coffee",
+    category_slug: "food_cafe",
+    tags: [],
+    spent_at: "2026-07-15T10:00:00.000Z"
+  });
+  const bot = createTelegramBot({
+    token: "test-token", miniAppUrl: "http://localhost:3000", repository: repo, telegramClient: capturingClient(calls)
+  });
+
+  await bot.handleUpdate(textUpdate("/last", 100));
+
+  const message = calls.find((call) => call.method === "sendMessage");
+  assert.ok(message);
+  assert.match(message.text, /Записал|Saved/);
+  assert.deepEqual(message.replyMarkup.inline_keyboard.map((row) => row.map((button) => button.callback_data ?? button.web_app?.url)), [
+    ["ee:x:91:o", "ee:x:91:del"],
+    ["http://localhost:3000?telegramUserId=100"]
+  ]);
+});
+
+test("editor Done returns a saved expense to its summary card", async () => {
+  const calls = [];
+  const repo = fakeRepository();
+  repo.getExpenseForTelegramUser = async () => ({
+    id: 91,
+    amount_base: 120,
+    amount_original: 120,
+    currency_original: "THB",
+    description: "coffee",
+    category_slug: "food_cafe",
+    tags: [],
+    spent_at: "2026-07-15T10:00:00.000Z",
+    budget_impact: "regular"
+  });
+  const bot = createTelegramBot({
+    token: "test-token", miniAppUrl: "http://localhost:3000", repository: repo, telegramClient: capturingClient(calls)
+  });
+
+  await bot.handleUpdate(callbackUpdate("ee:x:91:back", 100));
+
+  const edit = calls.find((call) => call.method === "editMessageText");
+  assert.ok(edit);
+  assert.match(edit.text, /Записал|Saved/);
+  assert.deepEqual(edit.replyMarkup.inline_keyboard.map((row) => row.map((button) => button.callback_data ?? button.web_app?.url)), [
+    ["ee:x:91:o", "ee:x:91:del"],
+    ["http://localhost:3000?telegramUserId=100"]
+  ]);
+});
+
+test("saved-expense text edit prepares rates before claiming the input session transaction", async () => {
+  const calls = [];
+  const order = [];
+  const repo = fakeRepository();
+  const expense = {
+    id: 91,
+    amount_original: 10,
+    currency_original: "THB",
+    amount_base: 10,
+    description: "coffee",
+    category_slug: "food_cafe",
+    tags: [],
+    spent_at: "2026-07-15T10:00:00.000Z",
+    budget_impact: "regular"
+  };
+  repo.getRoutableTelegramInputSession = async () => ({
+    id: 7, target_type: "expense", target_id: 91, item_index: null, field: "amount", chat_id: 10, message_id: 20
+  });
+  repo.getExpenseForTelegramUser = async () => expense;
+  repo.prepareExpenseUpdateForTelegramUser = async (_id, _telegramUserId, patch) => {
+    order.push("prepare");
+    return { item: { ...expense, amount: patch.amount, currency: patch.currency }, moneyAmounts: { amountBase: patch.amount, convertedAmounts: {}, source: "test" } };
+  };
+  repo.consumeTelegramInputSession = async (_telegramUserId, { apply }) => {
+    order.push("consume");
+    await apply({ client: {} });
+    return { outcome: "completed" };
+  };
+  repo.updateExpenseForTelegramUser = async (_id, _telegramUserId, _patch, _now, options) => {
+    order.push("update");
+    assert.ok(options.prepared);
+    return { ...expense, amount_original: 20, amount_base: 20 };
+  };
+  const bot = createTelegramBot({
+    token: "test-token", miniAppUrl: "http://localhost:3000", repository: repo, telegramClient: capturingClient(calls)
+  });
+
+  await bot.handleUpdate(textUpdate("20", 100));
+
+  assert.deepEqual(order, ["prepare", "consume", "update"]);
+});
+
 test("export callback sends CSV document through Telegram", async () => {
   const calls = [];
   const repo = fakeRepository();
@@ -786,9 +885,14 @@ test("confirm callback saves draft and returns an informative summary", async ()
   }
 });
 
-test("confirm callback edits the original draft message into saved summary and replaces draft keyboard with Mini App", async () => {
+test("confirm callback edits the original draft message into saved summary with expense actions", async () => {
   const calls = [];
   const repo = fakeRepository();
+  repo.saveDraftAsExpense = async () => ({
+    expenses: [{ id: 1, amount_base: 75 }],
+    dashboardSnapshot: (await repo.dashboard()).snapshot,
+    alreadySaved: false
+  });
   const bot = createTelegramBot({
     token: "test-token",
     miniAppUrl: "http://localhost:3000",
@@ -827,12 +931,10 @@ test("confirm callback edits the original draft message into saved summary and r
   assert.equal(edit.chatId, 10);
   assert.equal(edit.messageId, 55);
   assert.match(edit.text, /Записал|Saved/);
-  assert.deepEqual(edit.replyMarkup, {
-    inline_keyboard: [[{
-      text: "📱 Открыть Mini App",
-      web_app: { url: "http://localhost:3000?telegramUserId=100" }
-    }]]
-  });
+  assert.deepEqual(edit.replyMarkup.inline_keyboard.map((row) => row.map((button) => button.callback_data ?? button.web_app?.url)), [
+    ["ee:x:1:o", "ee:x:1:del"],
+    ["http://localhost:3000?telegramUserId=100"]
+  ]);
   assert.ok(calls.some((call) => call.method === "answerCallbackQuery"));
   assert.equal(calls.some((call) => call.method === "sendMessage" && /Записал|Saved/.test(call.text)), false);
 });
@@ -2346,7 +2448,6 @@ test("impact callback updates the draft item and edits the existing Telegram mes
     assert.ok(edit);
     assert.equal(edit.body.chat_id, 10);
     assert.equal(edit.body.message_id, 99);
-    assert.ok(edit.body.reply_markup.inline_keyboard.flat().some((button) => button.text === "🔘 Крупная"));
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -2413,6 +2514,25 @@ test("draft type callback (d: scheme) updates budget impact and edits in place",
   const edit = calls.find((call) => call.method === "editMessageText");
   assert.ok(edit);
   assert.equal(edit.messageId, 72);
+});
+
+test("draft type callback (d: scheme) only toasts when the selected impact is unchanged", async () => {
+  const calls = [];
+  const repo = fakeRepository();
+  repo.getDraftForTelegramUser = async () => ({
+    id: 42,
+    status: "pending",
+    items: [{ amount: 70, currency: "THB", description: "coffee", category_slug: "food_cafe", tags: [], budget_impact: "regular" }]
+  });
+  const bot = createTelegramBot({
+    token: "test-token", miniAppUrl: "http://localhost:3000", repository: repo, telegramClient: capturingClient(calls)
+  });
+
+  await bot.handleUpdate(callbackUpdate("d:42:t:r", 100));
+
+  assert.equal(repo.updatedItems, null);
+  assert.equal(calls.some((call) => call.method === "editMessageText"), false);
+  assert.ok(calls.some((call) => call.method === "answerCallbackQuery" && /Уже выбрано|Already selected/.test(call.text)));
 });
 
 test("draft confirm callback (d: scheme) shows already-saved toast and skips save events when alreadySaved", async () => {
