@@ -1342,6 +1342,21 @@ async function handleExpenseEditorCallback({ callback, parsed, repository, token
   if (parsed.action === "category_menu") return redraw(target, expenseCategoryKeyboard(target, undefined, { language }));
   if (parsed.action === "category_page") return redraw(target, expenseCategoryKeyboard(target, undefined, { language, page: parsed.page }));
   if (parsed.action === "budget_menu") return redraw(target, expenseTreatmentKeyboard(target, language));
+  if (parsed.action === "category" || parsed.action === "budget_impact" || (parsed.action === "date" && parsed.value !== "custom")) {
+    const field = parsed.action === "category" ? "category" : (parsed.action === "budget_impact" ? "budget_impact" : "spent_at");
+    const value = parsed.action === "date"
+      ? new Date(now().getTime() - (parsed.value === "yesterday" ? 24 * 60 * 60_000 : 0))
+      : parsed.value;
+    try {
+      if (parsed.type === "draft") await applyDraftEditorChange({ repository, telegramUserId, target, field, value, now: now() });
+      else await applySavedExpenseEditorChange({ repository, telegramUserId, target, field, value, now: now() });
+      const refreshed = await editorTargetForSession(repository, { target_type: parsed.type, target_id: parsed.id, item_index: parsed.itemIndex }, telegramUserId);
+      await answerCallback(token, callback.id, language === "ru" ? "Изменено." : "Updated.", telegramClient);
+      return redraw(refreshed);
+    } catch (error) {
+      return answerCallback(token, callback.id, editorMessageForCode(error.code ?? "expense_not_found", language), telegramClient);
+    }
+  }
   if (parsed.action === "date" && parsed.value === "custom") {
     const started = await repository.startTelegramInputSession(telegramUserId, {
       targetType: parsed.type, targetId: parsed.id, itemIndex: parsed.itemIndex ?? null, field: "spent_at",
