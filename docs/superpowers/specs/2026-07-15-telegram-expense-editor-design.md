@@ -58,7 +58,7 @@ A month with a closed reserve is financially closed:
 
 - Allowed: description, category, and tags only.
 - Blocked: amount, currency, `spent_at`, budget treatment, deleting, moving within the month, moving out of it, and moving another expense into it.
-- The repository returns the approved RU/EN validation errors and keeps the edit session active.
+- The repository returns stable domain error codes. Telegram and Mini App map them to the approved RU/EN validation messages and keep the edit session active when the error is recoverable.
 
 Closed reserve snapshots and close events remain immutable. Reopening or recalculating a closed month is explicitly out of scope.
 
