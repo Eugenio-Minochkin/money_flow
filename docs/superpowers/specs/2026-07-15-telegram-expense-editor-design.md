@@ -11,15 +11,15 @@ Let a user correct an expense directly in Telegram before and after saving, whil
 The parsed single-expense card shows the current budget treatment and a short explanation:
 
 - `✅ Сохранить` / `✅ Save` stays the primary action.
-- `◉ Учесть сегодня` / `◉ Count today` is selected for `regular`.
-- `○ Распределить до конца месяца` / `○ Spread across remaining days` is selected for `large_oneoff`.
+- `regular` renders `◉ Учесть сегодня` / `◉ Count today` and `○ Распределить до конца месяца` / `○ Spread across remaining days`.
+- `large_oneoff` renders `○ Учесть сегодня` / `○ Count today` and `◉ Распределить до конца месяца` / `◉ Spread across remaining days`.
 - The card explains that the first option reduces today's limit, while the second keeps the whole expense in the month without subtracting it in full today.
 - `✏️ Исправить` opens the Telegram editor; it never opens Mini App.
 - `🗑 Отменить`, review-later, and Mini App remain separate actions.
 
 The selected treatment persists in `draft.items[itemIndex].budget_impact`. Selecting the already selected treatment answers a callback toast without attempting a Telegram message edit.
 
-For a multi-item draft, Edit first shows an item selector. No action silently changes item zero.
+For a multi-item draft, Edit first shows an item selector. The shared draft card has no budget-treatment radio buttons; they appear only after an item is selected. No action silently changes item zero.
 
 ### Editor
 
@@ -46,13 +46,13 @@ Delete is two-step. A stale, repeated, foreign, or already deleted callback prod
 
 Add `telegram_input_sessions` as repository-backed routing state, not as a business-rule store. It has an internal `user_id` FK; target type/id; nullable draft `item_index`; expected field; chat/message references; language; expiry; status; and timestamps. A partial unique index permits only one active session per user.
 
-An active session lasts 15 minutes. Creating a new edit intent atomically finishes the previous active session. A session consumer locks the row, validates TTL, parses the input, invokes the target adapter, and completes the session only after a successful update. Validation failures retain it. Expired and completed rows remain briefly so the next delayed input is consumed with an expiry message rather than reaching the expense parser or LLM; later cleanup may remove them. Voice and photo during a pending text session prompt for text and retain the session.
+An active session lasts 15 minutes. Creating a new edit intent atomically finishes the previous active session. A session consumer locks the row, validates TTL, parses the input, invokes the target adapter, and completes the session only after a successful update. Validation failures retain it. Completed rows remain only for cleanup/debug and never route a new message. An expired-unconsumed session intercepts at most one later text message, marks itself consumed (for example with `late_input_consumed_at`), and returns the expiry message instead of reaching the expense parser or LLM; later cleanup may remove it. Voice and photo during a pending text session prompt for text and retain the session.
 
-Callback payloads remain below Telegram's 64-byte limit. They carry compact target/action data only and are never authorization. Every callback and input application re-checks ownership, target state, and closed-month rules at the repository boundary.
+Callback payloads remain below Telegram's 64-byte limit. They carry compact target/action data only and are never authorization. Every callback and input application re-checks ownership, target state, and closed-month rules at the repository boundary. Missing, deleted, stale, and non-owned targets return the same generic localized alert without revealing whether an expense exists; for example, `Расход больше недоступен. Открой последний расход через /last.`
 
 ## Financial Integrity
 
-All saved-expense update/delete paths are repository transactions. They lock the owned expense with `FOR UPDATE`, derive source and target local months in `users.timezone`, take a compatible per-user/per-month reserve lock, enforce both months' state, apply the change, conditionally invalidate the daily snapshot, and commit together. Currency-rate resolution should occur before this transaction where possible, with ownership and closed-state checks repeated before writing.
+All saved-expense update/delete paths are repository transactions. They lock the owned expense with `FOR UPDATE`, derive source and target local months in `users.timezone`, acquire compatible per-user/per-month reserve locks in deterministic sorted `month_key` order, enforce both months' state, apply the change, conditionally invalidate the daily snapshot, and commit together. Currency-rate resolution should occur before this transaction where possible, with ownership and closed-state checks repeated before writing. Repository failures are stable domain codes (for example `expense_source_month_closed`, `expense_target_month_closed`, `expense_future_date`, `expense_not_found`, and `expense_delete_blocked`); Telegram and Mini App map codes to localized text.
 
 A month with a closed reserve is financially closed:
 
