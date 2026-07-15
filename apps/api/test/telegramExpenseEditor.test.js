@@ -47,6 +47,12 @@ test("parses compact expense editor callbacks without accepting malformed data",
   assert.deepEqual(parseExpenseEditorCallback("ee:d:42:0:p:1"), {
     type: "draft", id: 42, itemIndex: 0, action: "category_page", page: 1
   });
+  assert.deepEqual(parseExpenseEditorCallback("ee:x:91:dm"), {
+    type: "expense", id: 91, action: "date_menu"
+  });
+  assert.deepEqual(parseExpenseEditorCallback("ee:x:91:cancel"), {
+    type: "expense", id: 91, action: "cancel"
+  });
   assert.equal(parseExpenseEditorCallback("ee:d:42:o"), null);
   assert.equal(parseExpenseEditorCallback("ee:x:not-id:o"), null);
 });
@@ -65,6 +71,7 @@ test("renders escaped editor text and compact callback keyboards", () => {
   assert.match(text, /Amount/);
   assert.match(text, /Count today/);
   assert.equal(editorTargetKey(draftTarget), "d:42:0");
+  assert.ok(keyboard.inline_keyboard.flat().some((button) => button.callback_data === "ee:d:42:0:dm"));
   assert.ok(!keyboard.inline_keyboard.flat().some((button) => button.callback_data?.endsWith(":del")));
   for (const button of keyboard.inline_keyboard.flat()) {
     if (button.callback_data) assert.ok(Buffer.byteLength(button.callback_data, "utf8") <= 64);
@@ -186,4 +193,24 @@ test("applies saved-expense changes through the shared editor validator", async 
 
   assert.equal(result.target.id, 91);
   assert.deepEqual(received, [91, 100, { amount: 20, currency: "USD" }, now, undefined]);
+});
+
+test("saved-expense category change keeps only the financial-snapshot-safe patch", async () => {
+  let received;
+  const repository = {
+    async updateExpenseForTelegramUser(...args) {
+      received = args;
+      return { id: 91, category_slug: "food_cafe" };
+    }
+  };
+
+  await applySavedExpenseEditorChange({
+    repository,
+    telegramUserId: 100,
+    target: { type: "expense", id: 91 },
+    field: "category",
+    value: "food_cafe"
+  });
+
+  assert.deepEqual(received[2], { category_slug: "food_cafe" });
 });

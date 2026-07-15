@@ -54,10 +54,12 @@ export function parseExpenseEditorCallback(data) {
     return { ...target, action: "category_page", page: Number(value) };
   }
   if (parts.length === offset + 1 && action === "cm") return { ...target, action: "category_menu" };
+  if (parts.length === offset + 1 && action === "dm") return { ...target, action: "date_menu" };
   if (parts.length === offset + 1 && action === "bm") return { ...target, action: "budget_menu" };
   if (parts.length === offset + 1 && action === "del") return { ...target, action: "delete" };
   if (parts.length === offset + 1 && action === "delok") return { ...target, action: "delete_confirm" };
   if (parts.length === offset + 1 && action === "back") return { ...target, action: "back" };
+  if (parts.length === offset + 1 && action === "cancel") return { ...target, action: "cancel" };
   return null;
 }
 
@@ -101,7 +103,7 @@ export function expenseEditorKeyboard(target, { language = "ru" } = {}) {
   const en = language === "en";
   const rows = [
     [button(en ? "💰 Amount" : "💰 Сумма", `ee:${key}:f:${FIELD_TO_CODE.amount}`), button(en ? "✏️ Description" : "✏️ Название", `ee:${key}:f:${FIELD_TO_CODE.description}`)],
-    [button(en ? "🏷 Category" : "🏷 Категория", `ee:${key}:cm`), button(en ? "🗓 Date and time" : "🗓 Дата и время", `ee:${key}:dt:c`)],
+    [button(en ? "🏷 Category" : "🏷 Категория", `ee:${key}:cm`), button(en ? "🗓 Date and time" : "🗓 Дата и время", `ee:${key}:dm`)],
     [button(en ? "🏷 Tags" : "🏷 Теги", `ee:${key}:f:${FIELD_TO_CODE.tags}`), button(en ? "◉ Budget impact" : "◉ Учёт в бюджете", `ee:${key}:bm`)]
   ];
   if (target?.type === "expense") rows.push([button(en ? "🗑 Delete" : "🗑 Удалить", `ee:${key}:del`)]);
@@ -238,15 +240,36 @@ export async function applySavedExpenseEditorChange({
   field,
   value,
   client,
+  prepared,
   now = new Date()
 } = {}) {
   if (!repository?.updateExpenseForTelegramUser || target?.type !== "expense") throw editorError("expense_not_found");
   const expenseId = Number(target.id);
   if (!Number.isSafeInteger(expenseId) || expenseId <= 0) throw editorError("expense_not_found");
-  const patch = draftPatch(field, value, now);
-  const options = client ? { client } : undefined;
+  const patch = savedExpensePatch(field, value, now);
+  const options = client || prepared ? { ...(client ? { client } : {}), ...(prepared ? { prepared } : {}) } : undefined;
   const updated = await repository.updateExpenseForTelegramUser(expenseId, telegramUserId, patch, now, options);
   return { target: updated, item: updated };
+}
+
+export async function prepareSavedExpenseEditorChange({
+  repository,
+  telegramUserId,
+  target,
+  field,
+  value,
+  now = new Date()
+} = {}) {
+  if (!repository?.prepareExpenseUpdateForTelegramUser || target?.type !== "expense") return null;
+  const expenseId = Number(target.id);
+  if (!Number.isSafeInteger(expenseId) || expenseId <= 0) throw editorError("expense_not_found");
+  const patch = savedExpensePatch(field, value, now);
+  return repository.prepareExpenseUpdateForTelegramUser(expenseId, telegramUserId, patch, now);
+}
+
+function savedExpensePatch(field, value, now) {
+  const rawPatch = draftPatch(field, value, now);
+  return field === "category" ? { category_slug: rawPatch.category_slug } : rawPatch;
 }
 
 function itemFromTarget(target) {

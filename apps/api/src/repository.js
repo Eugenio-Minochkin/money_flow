@@ -1691,7 +1691,7 @@ export function createRepository(pool, options = {}) {
       return result.rows[0] ?? null;
     },
 
-    async cancelTelegramInputSession(telegramUserId, now = new Date()) {
+    async cancelTelegramInputSession(telegramUserId, now = new Date(), expectedTarget = null) {
       const currentNow = normalizeNow(now);
       const client = await pool.connect();
       try {
@@ -1706,7 +1706,7 @@ export function createRepository(pool, options = {}) {
           return { outcome: "none" };
         }
         const sessionResult = await client.query(
-          `SELECT id, status
+          `SELECT id, status, target_type, target_id, item_index
            FROM telegram_input_sessions
            WHERE user_id = $1 AND status IN ('active', 'processing')
            ORDER BY updated_at DESC, id DESC
@@ -1716,6 +1716,14 @@ export function createRepository(pool, options = {}) {
         );
         const session = sessionResult.rows[0] ?? null;
         if (!session) {
+          await client.query("COMMIT");
+          return { outcome: "none" };
+        }
+        if (expectedTarget && (
+          session.target_type !== expectedTarget.targetType
+          || Number(session.target_id) !== Number(expectedTarget.targetId)
+          || Number(session.item_index ?? -1) !== Number(expectedTarget.itemIndex ?? -1)
+        )) {
           await client.query("COMMIT");
           return { outcome: "none" };
         }
@@ -2331,23 +2339,35 @@ export function createRepository(pool, options = {}) {
       return result.rows[0] ?? null;
     },
 
+    async prepareExpenseUpdateForTelegramUser(expenseId, telegramUserId, patch, now = new Date()) {
+      const currentNow = normalizeNow(now);
+      const financialPatch = Object.keys(patch ?? {}).some((key) => ["amount", "currency", "spent_at", "budget_impact"].includes(key));
+      if (!financialPatch) return null;
+      const user = await this.getUserByTelegramId(telegramUserId);
+      const expense = await this.getExpenseForTelegramUser(expenseId, telegramUserId);
+      if (!user || !expense) throw codedError("Expense not found", "expense_not_found");
+      const item = normalizeExpensePatch(expense, patch);
+      const spentAt = new Date(item.spent_at);
+      if (Number.isNaN(spentAt.getTime()) || spentAt > currentNow) {
+        throw codedError("Future expense date", "expense_future_date");
+      }
+      return {
+        item,
+        moneyAmounts: await buildMoneyAmounts(exchangeRates, item.amount, item.currency, spentAt, user)
+      };
+    },
+
     async updateExpenseForTelegramUser(expenseId, telegramUserId, patch, now = new Date(), options = {}) {
       if (typeof pool.connect !== "function") {
         return updateExpenseWithoutTransaction(pool, exchangeRates, expenseId, telegramUserId, patch);
       }
       const currentNow = normalizeNow(now);
       const financialPatch = Object.keys(patch ?? {}).some((key) => ["amount", "currency", "spent_at", "budget_impact"].includes(key));
-      const preflightUser = financialPatch ? await this.getUserByTelegramId(telegramUserId) : null;
-      const preflightExpense = financialPatch ? await this.getExpenseForTelegramUser(expenseId, telegramUserId) : null;
-      if (financialPatch && (!preflightUser || !preflightExpense)) throw codedError("Expense not found", "expense_not_found");
-      const preflightItem = financialPatch ? normalizeExpensePatch(preflightExpense, patch) : null;
-      const preflightSpentAt = financialPatch ? new Date(preflightItem.spent_at) : null;
-      if (financialPatch && (Number.isNaN(preflightSpentAt.getTime()) || preflightSpentAt > currentNow)) {
-        throw codedError("Future expense date", "expense_future_date");
-      }
-      const preflightMoneyAmounts = financialPatch
-        ? await buildMoneyAmounts(exchangeRates, preflightItem.amount, preflightItem.currency, preflightSpentAt, preflightUser)
+      const prepared = financialPatch
+        ? (options.prepared ?? await this.prepareExpenseUpdateForTelegramUser(expenseId, telegramUserId, patch, currentNow))
         : null;
+      const preflightItem = prepared?.item ?? null;
+      const preflightMoneyAmounts = prepared?.moneyAmounts ?? null;
       const client = options.client ?? await pool.connect();
       const ownsTransaction = !options.client;
       try {
