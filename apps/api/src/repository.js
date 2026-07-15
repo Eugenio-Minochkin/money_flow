@@ -1567,13 +1567,13 @@ export function createRepository(pool, options = {}) {
         if (new Date(session.expires_at) <= currentNow) {
           const expired = await client.query(
             `UPDATE telegram_input_sessions
-             SET status = 'expired_unconsumed', updated_at = $2
+             SET status = 'expired_consumed', late_input_consumed_at = $2, updated_at = $2
              WHERE id = $1
              RETURNING *`,
             [session.id, currentNow]
           );
           await client.query("COMMIT");
-          return { outcome: "expired", session: expired.rows[0] ?? { ...session, status: "expired_unconsumed" } };
+          return { outcome: "expired", session: expired.rows[0] ?? { ...session, status: "expired_consumed" } };
         }
         if (session.status !== "active") {
           await client.query("COMMIT");

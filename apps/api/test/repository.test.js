@@ -4530,6 +4530,30 @@ test("rolls back processing and target changes when session application fails", 
   assert.ok(!queries.some((query) => query.includes("SET status = 'completed'")));
 });
 
+test("consumes the first late input for an expired active Telegram session", async () => {
+  const queries = [];
+  const session = { id: 8, user_id: 7, status: "active", expires_at: new Date("2026-07-15T12:00:00.000Z") };
+  const client = {
+    async query(sql) {
+      const query = String(sql);
+      queries.push(query);
+      if (query === "BEGIN" || query === "COMMIT" || query === "ROLLBACK") return { rows: [] };
+      if (query.includes("FROM users") && query.includes("FOR UPDATE")) return { rows: [{ id: 7 }] };
+      if (query.includes("FROM telegram_input_sessions") && query.includes("FOR UPDATE")) return { rows: [session] };
+      if (query.includes("SET status = 'expired_consumed'")) return { rows: [{ ...session, status: "expired_consumed" }] };
+      throw new Error(`Unexpected SQL: ${query}`);
+    },
+    release() {}
+  };
+  const repo = createRepository({ async connect() { return client; } });
+
+  const result = await repo.consumeTelegramInputSession(100, { sessionId: 8, now: new Date("2026-07-15T12:01:00.000Z") });
+
+  assert.equal(result.outcome, "expired");
+  assert.ok(queries.some((query) => query.includes("SET status = 'expired_consumed'")));
+  assert.ok(!queries.some((query) => query.includes("SET status = 'expired_unconsumed'")));
+});
+
 test("does not replace a processing Telegram input session with a new edit intent", async () => {
   const queries = [];
   const client = {
