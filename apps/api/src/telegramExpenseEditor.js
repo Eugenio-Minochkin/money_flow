@@ -230,6 +230,24 @@ export async function applyDraftEditorChange({
   return { target: updated, item: updated?.items?.[itemIndex] ?? null };
 }
 
+export async function applySavedExpenseEditorChange({
+  repository,
+  telegramUserId,
+  target,
+  field,
+  value,
+  client,
+  now = new Date()
+} = {}) {
+  if (!repository?.updateExpenseForTelegramUser || target?.type !== "expense") throw editorError("expense_not_found");
+  const expenseId = Number(target.id);
+  if (!Number.isSafeInteger(expenseId) || expenseId <= 0) throw editorError("expense_not_found");
+  const patch = draftPatch(field, value, now);
+  const options = client ? { client } : undefined;
+  const updated = await repository.updateExpenseForTelegramUser(expenseId, telegramUserId, patch, now, options);
+  return { target: updated, item: updated };
+}
+
 function itemFromTarget(target) {
   return target?.item ?? target?.expense ?? target ?? {};
 }

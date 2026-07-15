@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   applyDraftEditorChange,
+  applySavedExpenseEditorChange,
   editorMessageForCode,
   editorTargetKey,
   expenseDateKeyboard,
@@ -162,4 +163,26 @@ test("maps every non-amount draft editor field to the draft item shape", async (
     { spent_at: "2026-07-14T12:00:00.000Z" },
     { budget_impact: "large_oneoff" }
   ]);
+});
+
+test("applies saved-expense changes through the shared editor validator", async () => {
+  let received;
+  const repository = {
+    async updateExpenseForTelegramUser(...args) {
+      received = args;
+      return { id: 91, amount_original: 20, currency_original: "USD" };
+    }
+  };
+  const now = new Date("2026-07-15T12:00:00.000Z");
+  const result = await applySavedExpenseEditorChange({
+    repository,
+    telegramUserId: 100,
+    target: { type: "expense", id: 91 },
+    field: "amount",
+    value: { amount: 20, currency: "USD" },
+    now
+  });
+
+  assert.equal(result.target.id, 91);
+  assert.deepEqual(received, [91, 100, { amount: 20, currency: "USD" }, now, undefined]);
 });
