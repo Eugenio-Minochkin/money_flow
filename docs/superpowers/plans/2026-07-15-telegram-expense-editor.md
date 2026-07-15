@@ -76,7 +76,7 @@ CREATE TABLE IF NOT EXISTS telegram_input_sessions (
   message_id BIGINT NOT NULL,
   language TEXT NOT NULL CHECK (language IN ('ru', 'en')),
   status TEXT NOT NULL CHECK (status IN (
-    'active', 'completed', 'cancelled', 'expired_unconsumed', 'expired_consumed'
+    'active', 'processing', 'completed', 'cancelled', 'expired_unconsumed', 'expired_consumed'
   )),
   expires_at TIMESTAMPTZ NOT NULL,
   late_input_consumed_at TIMESTAMPTZ,
@@ -88,8 +88,8 @@ CREATE TABLE IF NOT EXISTS telegram_input_sessions (
   )
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS telegram_input_sessions_one_active_user_idx
-  ON telegram_input_sessions(user_id) WHERE status = 'active';
+CREATE UNIQUE INDEX IF NOT EXISTS telegram_input_sessions_one_busy_user_idx
+  ON telegram_input_sessions(user_id) WHERE status IN ('active', 'processing');
 CREATE INDEX IF NOT EXISTS telegram_input_sessions_cleanup_idx
   ON telegram_input_sessions(status, expires_at);
 ```
@@ -300,10 +300,11 @@ const created = await repo.startTelegramInputSession(telegramUserId, {
 }, now);
 assert.equal(created.status, "active");
 
-const claimed = await repo.claimTelegramInputSession(telegramUserId, now);
-assert.equal(claimed.outcome, "active");
-await repo.completeTelegramInputSession(claimed.session.id, telegramUserId, now);
-assert.equal((await repo.claimTelegramInputSession(telegramUserId, now)).outcome, "none");
+const result = await repo.consumeTelegramInputSession(telegramUserId, now, async ({ session, client }) => {
+  assert.equal(session.status, "processing");
+  await updateTargetWithSameClient(client);
+});
+assert.equal(result.outcome, "completed");
 ```
 
 Add tests for atomic replacement, cancellation, validation retry, expired-unconsumed interception, one-time late consumption, completed rows never routing, ownership, and 24-hour cleanup eligibility.
@@ -320,21 +321,21 @@ Add:
 
 ```js
 startTelegramInputSession(telegramUserId, input, now)
-claimTelegramInputSession(telegramUserId, now)
-completeTelegramInputSession(sessionId, telegramUserId, now)
+consumeTelegramInputSession(telegramUserId, now, applyWithClient)
 cancelTelegramInputSession(telegramUserId, now)
 consumeExpiredTelegramInputSession(sessionId, telegramUserId, now)
 deleteOldTelegramInputSessions(now, retentionHours = 24)
 ```
 
-`start` uses one transaction to lock the user, mark the previous active row `cancelled`, and insert the new active row. `claim` uses `FOR UPDATE`; it returns `active`, transitions overdue active rows to `expired_unconsumed`, or returns one `expired_unconsumed` row for late-input consumption. Do not expose completed rows to routing.
+`start` uses one transaction to lock the user, mark the previous active row `cancelled`, and insert the new active row; it must not replace a `processing` row and instead returns `input_in_progress`. `consume` holds one transaction and one DB client across row locking, the temporary `processing` transition, parser/adapter mutation, conditional snapshot invalidation, and completion. `processing` is never committed independently. Any validation or system error rolls back to the still-active session and unchanged target. A second consumer returns a non-mutating `already_consumed`/`session_not_claimable` outcome and is never passed to parser/LLM. Expired active rows become `expired_unconsumed`; that state still intercepts exactly one late input. Do not expose completed rows to routing.
 
 - [ ] **Step 4: Add real Postgres concurrency tests**
 
 Use two clients and `Promise.all` to prove:
 
-- two simultaneous starts leave exactly one active row;
-- two consumers cannot apply the same session twice;
+- two simultaneous starts leave exactly one busy row;
+- two consumers cannot apply the same session twice, and the second returns a non-mutating outcome;
+- validation and system errors leave the session active and roll back the target mutation;
 - an expired row intercepts one text input only;
 - a completed session never intercepts the next expense.
 

@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS telegram_input_sessions (
   message_id BIGINT NOT NULL,
   language TEXT NOT NULL CHECK (language IN ('ru', 'en')),
   status TEXT NOT NULL CHECK (status IN (
-    'active', 'completed', 'cancelled', 'expired_unconsumed', 'expired_consumed'
+    'active', 'processing', 'completed', 'cancelled', 'expired_unconsumed', 'expired_consumed'
   )),
   expires_at TIMESTAMPTZ NOT NULL,
   late_input_consumed_at TIMESTAMPTZ,
@@ -24,9 +24,9 @@ CREATE TABLE IF NOT EXISTS telegram_input_sessions (
   )
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS telegram_input_sessions_one_active_user_idx
+CREATE UNIQUE INDEX IF NOT EXISTS telegram_input_sessions_one_busy_user_idx
   ON telegram_input_sessions(user_id)
-  WHERE status = 'active';
+  WHERE status IN ('active', 'processing');
 
 CREATE INDEX IF NOT EXISTS telegram_input_sessions_cleanup_idx
   ON telegram_input_sessions(status, expires_at);

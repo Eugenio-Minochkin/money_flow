@@ -35,6 +35,22 @@ test.before(async () => {
   `);
   assert.equal(sessions.fields.length, 11);
 
+  const sessionConstraint = await pool.query(`
+    SELECT pg_get_constraintdef(oid) AS definition
+    FROM pg_constraint
+    WHERE conrelid = 'telegram_input_sessions'::regclass
+      AND contype = 'c'
+      AND pg_get_constraintdef(oid) LIKE '%status%'
+  `);
+  assert.ok(sessionConstraint.rows.some((row) => row.definition.includes("processing")));
+  const busyIndex = await pool.query(`
+    SELECT indexdef
+    FROM pg_indexes
+    WHERE tablename = 'telegram_input_sessions'
+      AND indexname = 'telegram_input_sessions_one_busy_user_idx'
+  `);
+  assert.match(busyIndex.rows[0]?.indexdef ?? "", /processing/);
+
   const expenses = await pool.query("SELECT updated_at FROM expenses WHERE false");
   assert.equal(expenses.fields.length, 1);
 });
@@ -342,6 +358,78 @@ test("uses user timezone boundaries for day and month expense queries", async ()
   const dashboard = await repo.dashboard(990007, new Date("2026-07-01T12:00:00+07:00"));
   assert.equal(dashboard.snapshot.today, 700);
   assert.equal(dashboard.snapshot.month, 700);
+});
+
+test("consumes Telegram input sessions atomically and preserves an active session after rollback", async () => {
+  const telegramUserId = 990008;
+  const user = await createSmokeUser(telegramUserId);
+  const now = new Date("2026-07-15T12:00:00.000Z");
+  const input = {
+    targetType: "draft",
+    targetId: 999,
+    itemIndex: 0,
+    field: "description",
+    chatId: telegramUserId,
+    messageId: 11,
+    language: "en"
+  };
+  const started = await repo.startTelegramInputSession(telegramUserId, input, now);
+  assert.equal(started.outcome, "started");
+
+  const completed = await repo.consumeTelegramInputSession(telegramUserId, {
+    sessionId: started.session.id,
+    now,
+    async apply({ client }) {
+      await client.query("UPDATE users SET first_name = $2 WHERE id = $1", [user.id, "Updated"]);
+    }
+  });
+  assert.equal(completed.outcome, "completed");
+
+  const afterCommit = await pool.query("SELECT first_name FROM users WHERE id = $1", [user.id]);
+  assert.equal(afterCommit.rows[0].first_name, "Updated");
+  const completedSession = await pool.query(
+    "SELECT status FROM telegram_input_sessions WHERE id = $1",
+    [started.session.id]
+  );
+  assert.equal(completedSession.rows[0].status, "completed");
+  assert.equal(await repo.getRoutableTelegramInputSession(telegramUserId), null);
+
+  const second = await repo.startTelegramInputSession(telegramUserId, { ...input, messageId: 12 }, now);
+  await assert.rejects(
+    () => repo.consumeTelegramInputSession(telegramUserId, {
+      sessionId: second.session.id,
+      now,
+      async apply({ client }) {
+        await client.query("UPDATE users SET first_name = $2 WHERE id = $1", [user.id, "Must rollback"]);
+        throw Object.assign(new Error("invalid description"), { code: "expense_invalid_description" });
+      }
+    }),
+    { code: "expense_invalid_description" }
+  );
+  const afterRollback = await pool.query("SELECT first_name FROM users WHERE id = $1", [user.id]);
+  assert.equal(afterRollback.rows[0].first_name, "Updated");
+  const activeSession = await pool.query(
+    "SELECT status FROM telegram_input_sessions WHERE id = $1",
+    [second.session.id]
+  );
+  assert.equal(activeSession.rows[0].status, "active");
+
+  const concurrent = await repo.startTelegramInputSession(telegramUserId, { ...input, messageId: 13 }, now);
+  let applyCount = 0;
+  const outcomes = await Promise.all([
+    repo.consumeTelegramInputSession(telegramUserId, {
+      sessionId: concurrent.session.id,
+      now,
+      async apply() { applyCount += 1; }
+    }),
+    repo.consumeTelegramInputSession(telegramUserId, {
+      sessionId: concurrent.session.id,
+      now,
+      async apply() { applyCount += 1; }
+    })
+  ]);
+  assert.equal(applyCount, 1);
+  assert.deepEqual(outcomes.map((result) => result.outcome).sort(), ["already_consumed", "completed"]);
 });
 
 async function createSmokeUser(telegramUserId) {

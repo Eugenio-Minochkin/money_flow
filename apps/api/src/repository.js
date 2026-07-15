@@ -1517,6 +1517,238 @@ export function createRepository(pool, options = {}) {
       return result.rows[0];
     },
 
+    async consumeTelegramInputSession(telegramUserId, { sessionId, now = new Date(), apply } = {}) {
+      const currentNow = normalizeNow(now);
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        const userResult = await client.query(
+          "SELECT id FROM users WHERE telegram_user_id = $1 FOR UPDATE",
+          [telegramUserId]
+        );
+        const user = userResult.rows[0] ?? null;
+        if (!user) {
+          await client.query("COMMIT");
+          return { outcome: "none" };
+        }
+
+        const sessionResult = await client.query(
+          `SELECT *
+           FROM telegram_input_sessions
+           WHERE id = $1 AND user_id = $2
+           FOR UPDATE`,
+          [sessionId, user.id]
+        );
+        const session = sessionResult.rows[0] ?? null;
+        if (!session) {
+          await client.query("COMMIT");
+          return { outcome: "already_consumed" };
+        }
+        if (session.status === "completed" || session.status === "cancelled" || session.status === "expired_consumed") {
+          await client.query("COMMIT");
+          return { outcome: "already_consumed", session };
+        }
+        if (session.status === "processing") {
+          await client.query("COMMIT");
+          return { outcome: "session_not_claimable", session };
+        }
+        if (session.status === "expired_unconsumed") {
+          const consumed = await client.query(
+            `UPDATE telegram_input_sessions
+             SET status = 'expired_consumed', late_input_consumed_at = $2, updated_at = $2
+             WHERE id = $1
+             RETURNING *`,
+            [session.id, currentNow]
+          );
+          await client.query("COMMIT");
+          return { outcome: "expired", session: consumed.rows[0] ?? { ...session, status: "expired_consumed" } };
+        }
+        if (new Date(session.expires_at) <= currentNow) {
+          const expired = await client.query(
+            `UPDATE telegram_input_sessions
+             SET status = 'expired_unconsumed', updated_at = $2
+             WHERE id = $1
+             RETURNING *`,
+            [session.id, currentNow]
+          );
+          await client.query("COMMIT");
+          return { outcome: "expired", session: expired.rows[0] ?? { ...session, status: "expired_unconsumed" } };
+        }
+        if (session.status !== "active") {
+          await client.query("COMMIT");
+          return { outcome: "session_not_claimable", session };
+        }
+
+        const processing = await client.query(
+          `UPDATE telegram_input_sessions
+           SET status = 'processing', updated_at = $2
+           WHERE id = $1 AND status = 'active'
+           RETURNING *`,
+          [session.id, currentNow]
+        );
+        const claimed = processing.rows[0] ?? null;
+        if (!claimed) {
+          await client.query("COMMIT");
+          return { outcome: "already_consumed" };
+        }
+
+        await apply({ session: claimed, user, client, now: currentNow });
+        await client.query(
+          `UPDATE telegram_input_sessions
+           SET status = 'completed', updated_at = $2
+           WHERE id = $1 AND status = 'processing'`,
+          [claimed.id, currentNow]
+        );
+        await client.query("COMMIT");
+        return { outcome: "completed", session: { ...claimed, status: "completed" } };
+      } catch (error) {
+        try { await client.query("ROLLBACK"); } catch { /* preserve original transaction error */ }
+        throw error;
+      } finally {
+        client.release();
+      }
+    },
+
+    async startTelegramInputSession(telegramUserId, input, now = new Date()) {
+      const currentNow = normalizeNow(now);
+      const expiresAt = new Date(currentNow.getTime() + 15 * 60_000);
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        const userResult = await client.query(
+          "SELECT id FROM users WHERE telegram_user_id = $1 FOR UPDATE",
+          [telegramUserId]
+        );
+        const user = userResult.rows[0] ?? null;
+        if (!user) {
+          await client.query("COMMIT");
+          return { outcome: "none" };
+        }
+        const busyResult = await client.query(
+          `SELECT id, status
+           FROM telegram_input_sessions
+           WHERE user_id = $1 AND status IN ('active', 'processing')
+           ORDER BY updated_at DESC, id DESC
+           LIMIT 1
+           FOR UPDATE`,
+          [user.id]
+        );
+        const busy = busyResult.rows[0] ?? null;
+        if (busy?.status === "processing") {
+          await client.query("COMMIT");
+          return { outcome: "input_in_progress" };
+        }
+        if (busy?.status === "active") {
+          await client.query(
+            `UPDATE telegram_input_sessions
+             SET status = 'cancelled', updated_at = $2
+             WHERE id = $1 AND status = 'active'`,
+            [busy.id, currentNow]
+          );
+        }
+        const inserted = await client.query(
+          `INSERT INTO telegram_input_sessions (
+             user_id, target_type, target_id, item_index, field,
+             chat_id, message_id, language, status, expires_at, created_at, updated_at
+           )
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'active', $9, $10, $10)
+           RETURNING *`,
+          [
+            user.id,
+            input.targetType,
+            input.targetId,
+            input.itemIndex ?? null,
+            input.field,
+            input.chatId,
+            input.messageId,
+            input.language,
+            expiresAt,
+            currentNow
+          ]
+        );
+        await client.query("COMMIT");
+        return { outcome: "started", session: inserted.rows[0] ?? null };
+      } catch (error) {
+        try { await client.query("ROLLBACK"); } catch { /* preserve original transaction error */ }
+        throw error;
+      } finally {
+        client.release();
+      }
+    },
+
+    async getRoutableTelegramInputSession(telegramUserId) {
+      const result = await pool.query(
+        `SELECT sessions.*
+         FROM telegram_input_sessions sessions
+         JOIN users ON users.id = sessions.user_id
+         WHERE users.telegram_user_id = $1
+           AND sessions.status IN ('active', 'expired_unconsumed')
+         ORDER BY sessions.updated_at DESC, sessions.id DESC
+         LIMIT 1`,
+        [telegramUserId]
+      );
+      return result.rows[0] ?? null;
+    },
+
+    async cancelTelegramInputSession(telegramUserId, now = new Date()) {
+      const currentNow = normalizeNow(now);
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        const userResult = await client.query(
+          "SELECT id FROM users WHERE telegram_user_id = $1 FOR UPDATE",
+          [telegramUserId]
+        );
+        const user = userResult.rows[0] ?? null;
+        if (!user) {
+          await client.query("COMMIT");
+          return { outcome: "none" };
+        }
+        const sessionResult = await client.query(
+          `SELECT id, status
+           FROM telegram_input_sessions
+           WHERE user_id = $1 AND status IN ('active', 'processing')
+           ORDER BY updated_at DESC, id DESC
+           LIMIT 1
+           FOR UPDATE`,
+          [user.id]
+        );
+        const session = sessionResult.rows[0] ?? null;
+        if (!session) {
+          await client.query("COMMIT");
+          return { outcome: "none" };
+        }
+        if (session.status === "processing") {
+          await client.query("COMMIT");
+          return { outcome: "input_in_progress" };
+        }
+        await client.query(
+          `UPDATE telegram_input_sessions
+           SET status = 'cancelled', updated_at = $2
+           WHERE id = $1 AND status = 'active'`,
+          [session.id, currentNow]
+        );
+        await client.query("COMMIT");
+        return { outcome: "cancelled" };
+      } catch (error) {
+        try { await client.query("ROLLBACK"); } catch { /* preserve original transaction error */ }
+        throw error;
+      } finally {
+        client.release();
+      }
+    },
+
+    async deleteOldTelegramInputSessions(now = new Date()) {
+      const retentionCutoff = new Date(normalizeNow(now).getTime() - 24 * 60 * 60_000);
+      const result = await pool.query(
+        `DELETE FROM telegram_input_sessions
+         WHERE status IN ('completed', 'cancelled', 'expired_consumed')
+           AND updated_at < $1`,
+        [retentionCutoff]
+      );
+      return result.rowCount;
+    },
+
     async createPlannedDraft(userId, sourceText, item) {
       const planned = normalizePlannedExpense(item);
       const result = await pool.query(
