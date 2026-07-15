@@ -1626,7 +1626,7 @@ export function createRepository(pool, options = {}) {
           return { outcome: "none" };
         }
         const busyResult = await client.query(
-          `SELECT id, status
+          `SELECT *
            FROM telegram_input_sessions
            WHERE user_id = $1 AND status IN ('active', 'processing')
            ORDER BY updated_at DESC, id DESC
@@ -1639,13 +1639,16 @@ export function createRepository(pool, options = {}) {
           await client.query("COMMIT");
           return { outcome: "input_in_progress" };
         }
+        let replacedSession = null;
         if (busy?.status === "active") {
-          await client.query(
+          const cancelled = await client.query(
             `UPDATE telegram_input_sessions
              SET status = 'cancelled', updated_at = $2
-             WHERE id = $1 AND status = 'active'`,
+             WHERE id = $1 AND status = 'active'
+             RETURNING *`,
             [busy.id, currentNow]
           );
+          replacedSession = cancelled.rows[0] ?? { ...busy, status: "cancelled" };
         }
         const inserted = await client.query(
           `INSERT INTO telegram_input_sessions (
@@ -1668,7 +1671,50 @@ export function createRepository(pool, options = {}) {
           ]
         );
         await client.query("COMMIT");
-        return { outcome: "started", session: inserted.rows[0] ?? null };
+        return { outcome: "started", session: inserted.rows[0] ?? null, replacedSession };
+      } catch (error) {
+        try { await client.query("ROLLBACK"); } catch { /* preserve original transaction error */ }
+        throw error;
+      } finally {
+        client.release();
+      }
+    },
+
+    async setTelegramInputSessionPrompt(telegramUserId, sessionId, expectedTarget, now = new Date()) {
+      const currentNow = normalizeNow(now);
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        const userResult = await client.query(
+          "SELECT id FROM users WHERE telegram_user_id = $1 FOR UPDATE",
+          [telegramUserId]
+        );
+        const user = userResult.rows[0] ?? null;
+        if (!user) {
+          await client.query("COMMIT");
+          return { outcome: "none" };
+        }
+        const sessionResult = await client.query(
+          `SELECT *
+           FROM telegram_input_sessions
+           WHERE id = $1 AND user_id = $2
+           FOR UPDATE`,
+          [sessionId, user.id]
+        );
+        const session = sessionResult.rows[0] ?? null;
+        if (!session || session.status !== "active" || !sameTelegramEditorTarget(session, expectedTarget)) {
+          await client.query("COMMIT");
+          return { outcome: "none" };
+        }
+        const updated = await client.query(
+          `UPDATE telegram_input_sessions
+           SET prompt_message_id = $2, updated_at = $3
+           WHERE id = $1 AND status = 'active'
+           RETURNING *`,
+          [session.id, expectedTarget.promptMessageId, currentNow]
+        );
+        await client.query("COMMIT");
+        return { outcome: "stored", session: updated.rows[0] ?? { ...session, prompt_message_id: expectedTarget.promptMessageId } };
       } catch (error) {
         try { await client.query("ROLLBACK"); } catch { /* preserve original transaction error */ }
         throw error;
@@ -1706,7 +1752,7 @@ export function createRepository(pool, options = {}) {
           return { outcome: "none" };
         }
         const sessionResult = await client.query(
-          `SELECT id, status, target_type, target_id, item_index
+          `SELECT *
            FROM telegram_input_sessions
            WHERE user_id = $1 AND status IN ('active', 'processing')
            ORDER BY updated_at DESC, id DESC
@@ -1731,14 +1777,64 @@ export function createRepository(pool, options = {}) {
           await client.query("COMMIT");
           return { outcome: "input_in_progress" };
         }
-        await client.query(
+        const updated = await client.query(
           `UPDATE telegram_input_sessions
            SET status = 'cancelled', updated_at = $2
-           WHERE id = $1 AND status = 'active'`,
+           WHERE id = $1 AND status = 'active'
+           RETURNING *`,
           [session.id, currentNow]
         );
         await client.query("COMMIT");
-        return { outcome: "cancelled" };
+        return { outcome: "cancelled", session: updated.rows[0] ?? { ...session, status: "cancelled" } };
+      } catch (error) {
+        try { await client.query("ROLLBACK"); } catch { /* preserve original transaction error */ }
+        throw error;
+      } finally {
+        client.release();
+      }
+    },
+
+    async closeTelegramInputSessionForTarget(telegramUserId, expectedTarget, now = new Date()) {
+      const currentNow = normalizeNow(now);
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        const userResult = await client.query(
+          "SELECT id FROM users WHERE telegram_user_id = $1 FOR UPDATE",
+          [telegramUserId]
+        );
+        const user = userResult.rows[0] ?? null;
+        if (!user) {
+          await client.query("COMMIT");
+          return { outcome: "none" };
+        }
+        const sessionResult = await client.query(
+          `SELECT *
+           FROM telegram_input_sessions
+           WHERE user_id = $1 AND status IN ('active', 'processing')
+           ORDER BY updated_at DESC, id DESC
+           LIMIT 1
+           FOR UPDATE`,
+          [user.id]
+        );
+        const session = sessionResult.rows[0] ?? null;
+        if (!session || !sameTelegramEditorTarget(session, expectedTarget)) {
+          await client.query("COMMIT");
+          return { outcome: "none" };
+        }
+        if (session.status === "processing") {
+          await client.query("COMMIT");
+          return { outcome: "input_in_progress", session };
+        }
+        const updated = await client.query(
+          `UPDATE telegram_input_sessions
+           SET status = 'cancelled', updated_at = $2
+           WHERE id = $1 AND status = 'active'
+           RETURNING *`,
+          [session.id, currentNow]
+        );
+        await client.query("COMMIT");
+        return { outcome: "cancelled", session: updated.rows[0] ?? { ...session, status: "cancelled" } };
       } catch (error) {
         try { await client.query("ROLLBACK"); } catch { /* preserve original transaction error */ }
         throw error;
@@ -4224,6 +4320,14 @@ function normalizeNow(now) {
   const value = now instanceof Date ? now : new Date(now);
   if (Number.isNaN(value.getTime())) return new Date();
   return value;
+}
+
+function sameTelegramEditorTarget(session, target) {
+  return Boolean(target)
+    && session.target_type === target.targetType
+    && Number(session.target_id) === Number(target.targetId)
+    && (target.itemIndex === undefined || Number(session.item_index ?? -1) === Number(target.itemIndex ?? -1))
+    && (target.sessionId == null || Number(session.id) === Number(target.sessionId));
 }
 
 function mapAccountDeletionRequest(row) {

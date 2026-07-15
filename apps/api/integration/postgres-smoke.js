@@ -25,7 +25,7 @@ test.before(async () => {
   const applied = await pool.query("SELECT filename FROM schema_migrations ORDER BY filename");
   assert.deepEqual(
     applied.rows.map((row) => row.filename),
-    ["001_initial.sql", "002_draft_confirm_flow.sql", "003_budget_topups.sql", "004_report_deliveries.sql", "005_exchange_rates.sql", "006_feedback.sql", "007_account_deletion.sql", "008_product_analytics.sql", "009_telegram_expense_editor.sql"]
+    ["001_initial.sql", "002_draft_confirm_flow.sql", "003_budget_topups.sql", "004_report_deliveries.sql", "005_exchange_rates.sql", "006_feedback.sql", "007_account_deletion.sql", "008_product_analytics.sql", "009_telegram_expense_editor.sql", "010_telegram_editor_prompt_message.sql"]
   );
 
   const sessions = await pool.query(`
@@ -449,6 +449,17 @@ test("consumes Telegram input sessions atomically and preserves an active sessio
     [second.session.id]
   );
   assert.equal(activeSession.rows[0].status, "active");
+
+  const promptStored = await repo.setTelegramInputSessionPrompt(telegramUserId, second.session.id, {
+    targetType: "draft", targetId: 999, itemIndex: 0, promptMessageId: 99
+  }, now);
+  assert.equal(promptStored.outcome, "stored");
+  const closed = await repo.closeTelegramInputSessionForTarget(telegramUserId, {
+    targetType: "draft", targetId: 999, itemIndex: 0
+  }, now);
+  assert.equal(closed.outcome, "cancelled");
+  assert.equal(Number(closed.session.prompt_message_id), 99);
+  assert.equal(await repo.getRoutableTelegramInputSession(telegramUserId), null);
 
   const concurrent = await repo.startTelegramInputSession(telegramUserId, { ...input, messageId: 13 }, now);
   let applyCount = 0;

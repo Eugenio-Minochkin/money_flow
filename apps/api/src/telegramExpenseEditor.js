@@ -59,7 +59,10 @@ export function parseExpenseEditorCallback(data) {
   if (parts.length === offset + 1 && action === "del") return { ...target, action: "delete" };
   if (parts.length === offset + 1 && action === "delok") return { ...target, action: "delete_confirm" };
   if (parts.length === offset + 1 && action === "back") return { ...target, action: "back" };
-  if (parts.length === offset + 1 && action === "cancel") return { ...target, action: "cancel" };
+  if (parts.length === offset + 2 && action === "cancel" && isPositiveId(value)) {
+    return { ...target, action: "cancel", sessionId: Number(value) };
+  }
+  if (parts.length === offset + 1 && action === "cancel") return { ...target, action: "cancel", sessionId: null };
   return null;
 }
 
@@ -107,7 +110,7 @@ export function expenseEditorKeyboard(target, { language = "ru" } = {}) {
     [button(en ? "🏷 Tags" : "🏷 Теги", `ee:${key}:f:${FIELD_TO_CODE.tags}`), button(en ? "◉ Budget impact" : "◉ Учёт в бюджете", `ee:${key}:bm`)]
   ];
   if (target?.type === "expense") rows.push([button(en ? "🗑 Delete" : "🗑 Удалить", `ee:${key}:del`)]);
-  rows.push([button(en ? "← Done" : "← Готово", `ee:${key}:back`)]);
+  rows.push([button(en ? "💾 Save" : "💾 Сохранить", `ee:${key}:back`)]);
   return keyboard(rows);
 }
 

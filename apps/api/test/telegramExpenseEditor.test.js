@@ -50,8 +50,8 @@ test("parses compact expense editor callbacks without accepting malformed data",
   assert.deepEqual(parseExpenseEditorCallback("ee:x:91:dm"), {
     type: "expense", id: 91, action: "date_menu"
   });
-  assert.deepEqual(parseExpenseEditorCallback("ee:x:91:cancel"), {
-    type: "expense", id: 91, action: "cancel"
+  assert.deepEqual(parseExpenseEditorCallback("ee:x:91:cancel:8"), {
+    type: "expense", id: 91, action: "cancel", sessionId: 8
   });
   assert.equal(parseExpenseEditorCallback("ee:d:42:o"), null);
   assert.equal(parseExpenseEditorCallback("ee:x:not-id:o"), null);
@@ -72,6 +72,7 @@ test("renders escaped editor text and compact callback keyboards", () => {
   assert.match(text, /Count today/);
   assert.equal(editorTargetKey(draftTarget), "d:42:0");
   assert.ok(keyboard.inline_keyboard.flat().some((button) => button.callback_data === "ee:d:42:0:dm"));
+  assert.ok(keyboard.inline_keyboard.flat().some((button) => button.text === "💾 Save"));
   assert.ok(!keyboard.inline_keyboard.flat().some((button) => button.callback_data?.endsWith(":del")));
   for (const button of keyboard.inline_keyboard.flat()) {
     if (button.callback_data) assert.ok(Buffer.byteLength(button.callback_data, "utf8") <= 64);

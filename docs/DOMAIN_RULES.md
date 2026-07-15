@@ -100,6 +100,8 @@ This file records stable product and business rules. Read it before changing bud
 - Claiming a session, changing its target, conditionally invalidating a snapshot, and completing the session are one database transaction. `processing` is never a durable intermediate state.
 - A failed validation or domain check leaves the active session and target unchanged. A late expired-session input is consumed once and never falls through to the normal expense parser.
 - Voice and photo messages do not complete a text-input session.
+- Text prompts are scoped to their editor session. On successful text input or an inline Cancel, the prompt and stale editor are removed or deactivated best-effort, then exactly one fresh card is sent at the bottom of the chat.
+- Save/exit, draft confirm/cancel, expense delete, and target-not-found close only the matching input session. Save changes no financial data; it only exits to the current saved-expense or draft card.
 - A date without a year is resolved as the closest past local calendar occurrence in `users.timezone`. A later time today is rejected, rather than silently moving to the previous year. Explicit future dates are rejected.
 - `/last` selects the latest non-planned, non-deleted expense by `created_at DESC, id DESC`; `spent_at` and `updated_at` never change this order.
 - Moving a saved expense to any past local month is allowed when both months are open. The source and target month locks are acquired in sorted order within one transaction.
