@@ -31,6 +31,30 @@ test("formats a draft with total and review warning", () => {
   assert.match(text, /<b>/);
 });
 
+test("explains the selected budget treatment for a single draft expense", () => {
+  const regular = formatDraft([{
+    amount: 120,
+    currency: "THB",
+    description: "coffee",
+    category_slug: "food_cafe",
+    spent_at: "2026-07-12T12:30:00.000Z",
+    budget_impact: "regular"
+  }], { language: "ru" });
+  const large = formatDraft([{
+    amount: 120,
+    currency: "THB",
+    description: "coffee",
+    category_slug: "food_cafe",
+    spent_at: "2026-07-12T12:30:00.000Z",
+    budget_impact: "large_oneoff"
+  }], { language: "en" });
+
+  assert.match(regular, /Как учесть расход/);
+  assert.match(regular, /Учесть сегодня/);
+  assert.match(large, /How should this expense affect the budget/);
+  assert.match(large, /Spread across remaining days/);
+});
+
 test("formats draft dates in Bangkok timezone", () => {
   const text = formatDraft([{
     amount: 40000,

@@ -13,15 +13,30 @@ export function formatDraft(expenses, options = {}) {
   const review = expenses.some((expense) => expense.needs_review)
     ? `\n\n⚠️ ${t(language, "draftReview")}`
     : "";
+  const treatment = expenses.length === 1
+    ? `\n\n${formatDraftTreatmentExplanation(expenses[0]?.budget_impact, language)}`
+    : "";
   return [
     `🧾 <b>${t(language, "draftTitle")}</b>`,
     "",
     lines.join("\n\n"),
     "",
-    `<b>${t(language, "total")}:</b> ${formatMoney(total, totalCurrency, language)}.${review}`,
+    `<b>${t(language, "total")}:</b> ${formatMoney(total, totalCurrency, language)}.${review}${treatment}`,
     "",
     t(language, "isCorrect")
   ].join("\n");
+}
+
+function formatDraftTreatmentExplanation(impact, language) {
+  const en = language === "en";
+  const regular = impact !== "large_oneoff";
+  const title = en ? "How should this expense affect the budget?" : "Как учесть расход?";
+  const regularLabel = `${regular ? "◉" : "○"} ${en ? "Count today" : "Учесть сегодня"}`;
+  const largeLabel = `${regular ? "○" : "◉"} ${en ? "Spread across remaining days" : "Распределить до конца месяца"}`;
+  const detail = regular
+    ? (en ? "This reduces today's limit." : "Этот расход уменьшает лимит на сегодня.")
+    : (en ? "This stays in the month total without reducing today's limit in full." : "Этот расход остаётся в сумме месяца и не уменьшает сегодняшний лимит целиком.");
+  return `<b>${title}</b>\n${regularLabel}\n${largeLabel}\n${detail}`;
 }
 
 function formatBudgetImpactMarker(value, language) {
