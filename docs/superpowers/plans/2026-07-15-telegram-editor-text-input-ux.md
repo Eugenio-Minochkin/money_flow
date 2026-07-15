@@ -121,6 +121,6 @@ State that prompts are session-scoped, fresh cards appear at the chat bottom aft
 
 Run focused repository/Telegram tests, local Postgres integration with `money_flow_test`, `npm.cmd test`, and `git diff --check`. Expected: all pass and diff check is empty.
 
-- [ ] **Step 3: Publish the separate draft PR**
+- [x] **Step 3: Publish the separate draft PR**
 
 Commit documentation, push `codex/telegram-editor-text-input-ux`, and open a draft PR to `master` with `Closes #109`, additive migration impact, forward-fix-only rollback, exact test results, and `## User Release Notes`. Do not merge or deploy.
