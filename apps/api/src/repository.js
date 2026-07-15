@@ -1626,7 +1626,7 @@ export function createRepository(pool, options = {}) {
           return { outcome: "none" };
         }
         const busyResult = await client.query(
-          `SELECT id, status
+          `SELECT *
            FROM telegram_input_sessions
            WHERE user_id = $1 AND status IN ('active', 'processing')
            ORDER BY updated_at DESC, id DESC
@@ -1639,13 +1639,16 @@ export function createRepository(pool, options = {}) {
           await client.query("COMMIT");
           return { outcome: "input_in_progress" };
         }
+        let replacedSession = null;
         if (busy?.status === "active") {
-          await client.query(
+          const cancelled = await client.query(
             `UPDATE telegram_input_sessions
              SET status = 'cancelled', updated_at = $2
-             WHERE id = $1 AND status = 'active'`,
+             WHERE id = $1 AND status = 'active'
+             RETURNING *`,
             [busy.id, currentNow]
           );
+          replacedSession = cancelled.rows[0] ?? { ...busy, status: "cancelled" };
         }
         const inserted = await client.query(
           `INSERT INTO telegram_input_sessions (
@@ -1668,7 +1671,7 @@ export function createRepository(pool, options = {}) {
           ]
         );
         await client.query("COMMIT");
-        return { outcome: "started", session: inserted.rows[0] ?? null };
+        return { outcome: "started", session: inserted.rows[0] ?? null, replacedSession };
       } catch (error) {
         try { await client.query("ROLLBACK"); } catch { /* preserve original transaction error */ }
         throw error;
@@ -1749,7 +1752,7 @@ export function createRepository(pool, options = {}) {
           return { outcome: "none" };
         }
         const sessionResult = await client.query(
-          `SELECT id, status, target_type, target_id, item_index
+          `SELECT *
            FROM telegram_input_sessions
            WHERE user_id = $1 AND status IN ('active', 'processing')
            ORDER BY updated_at DESC, id DESC
@@ -1774,14 +1777,15 @@ export function createRepository(pool, options = {}) {
           await client.query("COMMIT");
           return { outcome: "input_in_progress" };
         }
-        await client.query(
+        const updated = await client.query(
           `UPDATE telegram_input_sessions
            SET status = 'cancelled', updated_at = $2
-           WHERE id = $1 AND status = 'active'`,
+           WHERE id = $1 AND status = 'active'
+           RETURNING *`,
           [session.id, currentNow]
         );
         await client.query("COMMIT");
-        return { outcome: "cancelled" };
+        return { outcome: "cancelled", session: updated.rows[0] ?? { ...session, status: "cancelled" } };
       } catch (error) {
         try { await client.query("ROLLBACK"); } catch { /* preserve original transaction error */ }
         throw error;

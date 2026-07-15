@@ -1329,6 +1329,13 @@ async function startTelegramEditorTextInput({ repository, telegramUserId, target
     language
   }, now());
   if (started?.outcome !== "started") return started;
+  await deactivateTelegramEditorMessages({
+    session: started.replacedSession,
+    fallbackChatId: callback.message.chat.id,
+    includeEditor: false,
+    token,
+    telegramClient
+  });
   const sessionId = Number(started.session?.id);
   let promptMessageId = null;
   try {
@@ -1380,6 +1387,15 @@ async function routeTelegramExpenseInput({ message, rawText, hasVoice, hasPhoto,
   if (!session) return null;
   if (commandText === "/cancel") {
     const cancelled = await repository.cancelTelegramInputSession?.(telegramUserId, now);
+    if (cancelled?.outcome === "cancelled") {
+      await deactivateTelegramEditorMessages({
+        session: cancelled.session ?? session,
+        fallbackChatId: message.chat.id,
+        includeEditor: false,
+        token,
+        telegramClient
+      });
+    }
     return sendMessage(token, message.chat.id, cancelled?.outcome === "input_in_progress"
       ? (language === "ru" ? "Изменение уже обрабатывается." : "An edit is already being processed.")
       : (language === "ru" ? "Редактирование отменено." : "Editing cancelled."), null, telegramClient);

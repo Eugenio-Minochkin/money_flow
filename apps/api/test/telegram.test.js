@@ -518,7 +518,11 @@ test("starting every text field stores its prompt message reference", async () =
   });
   repo.startTelegramInputSession = async (_telegramUserId, input) => {
     starts.push(input);
-    return { outcome: "started", session: { id: starts.length } };
+    return {
+      outcome: "started",
+      session: { id: starts.length },
+      replacedSession: starts.length > 1 ? { chat_id: 10, prompt_message_id: 300 + starts.length - 1 } : null
+    };
   };
   repo.setTelegramInputSessionPrompt = async (...args) => { stored.push(args); return { outcome: "stored" }; };
   const telegramClient = capturingClient(calls);
@@ -538,6 +542,26 @@ test("starting every text field stores its prompt message reference", async () =
   assert.deepEqual(calls.filter((call) => call.method === "sendMessage").map((call) => call.replyMarkup.inline_keyboard[0][0].callback_data), [
     "ee:x:91:cancel:1", "ee:x:91:cancel:2", "ee:x:91:cancel:3", "ee:x:91:cancel:4"
   ]);
+  assert.deepEqual(calls.filter((call) => call.method === "deleteMessage").map((call) => call.messageId), [301, 302, 303]);
+});
+
+test("text /cancel deactivates the active editor prompt", async () => {
+  const calls = [];
+  const repo = fakeRepository();
+  const activeSession = {
+    id: 7, target_type: "expense", target_id: 91, item_index: null, field: "amount",
+    chat_id: 10, message_id: 20, prompt_message_id: 301
+  };
+  repo.getRoutableTelegramInputSession = async () => activeSession;
+  repo.cancelTelegramInputSession = async () => ({ outcome: "cancelled", session: activeSession });
+  const bot = createTelegramBot({
+    token: "test-token", miniAppUrl: "http://localhost:3000", repository: repo, telegramClient: capturingClient(calls)
+  });
+
+  await bot.handleUpdate(textUpdate("/cancel", 100));
+
+  assert.deepEqual(calls.filter((call) => call.method === "deleteMessage").map((call) => call.messageId), [301]);
+  assert.equal(repo.events.some((event) => event.eventName === "expense_draft_created"), false);
 });
 
 test("failed text-input prompt delivery closes the exact new session", async () => {
