@@ -166,6 +166,41 @@ export function localDateKey(date, timeZone = DEFAULT_TIMEZONE) {
   return `${parts.year}-${pad2(parts.month)}-${pad2(parts.day)}`;
 }
 
+export function localDateTimeToUtc(parts, timeZone = DEFAULT_TIMEZONE) {
+  const values = [parts?.year, parts?.month, parts?.day, parts?.hour, parts?.minute ?? 0];
+  if (!values.every(Number.isInteger)) throw new Error("invalid_local_date_time");
+
+  const [year, month, day, hour, minute] = values;
+  if (
+    month < 1 || month > 12 || day < 1 ||
+    hour < 0 || hour > 23 || minute < 0 || minute > 59 ||
+    new Date(Date.UTC(year, month, 0)).getUTCDate() < day
+  ) {
+    throw new Error("invalid_local_date_time");
+  }
+
+  const zone = timeZoneValue(timeZone, DEFAULT_TIMEZONE);
+  const targetMs = Date.UTC(year, month - 1, day, hour, minute, 0, 0);
+  let guessMs = targetMs;
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const actual = zonedParts(new Date(guessMs), zone);
+    const actualMs = Date.UTC(actual.year, actual.month - 1, actual.day, actual.hour, actual.minute, 0, 0);
+    const delta = targetMs - actualMs;
+    if (delta === 0) break;
+    guessMs += delta;
+  }
+
+  const result = new Date(guessMs);
+  const roundTrip = zonedParts(result, zone);
+  if (
+    roundTrip.year !== year || roundTrip.month !== month || roundTrip.day !== day ||
+    roundTrip.hour !== hour || roundTrip.minute !== minute
+  ) {
+    throw new Error("invalid_local_date_time");
+  }
+  return result;
+}
+
 export function localMonthKey(date, timeZone = DEFAULT_TIMEZONE) {
   const parts = zonedParts(date, timeZoneValue(timeZone, DEFAULT_TIMEZONE));
   return `${parts.year}-${pad2(parts.month)}`;
