@@ -27,6 +27,7 @@ Use this guide when changing business logic or UI around the main Money Flow sur
 - Planned payment behavior is spread across shared parsing, API repository logic, Telegram callbacks, Mini App planned UI, and related tests.
 - Timezone helpers live in `packages/shared/src/time.js` and are covered by `packages/shared/test/time.test.js`.
 - Daily reminder behavior is covered by `apps/api/test/dailyReminderService.test.js`, repository tests, and Telegram callback tests.
+- Telegram editor text-input changes must cover prompt persistence, retry after validation errors, session cleanup on Cancel/Save/terminal actions, and a fresh editor card after successful input.
 - Report behavior is covered by `apps/api/test/reportPeriods.test.js`, `apps/api/test/reportService.test.js`, `apps/api/test/reportFormat.test.js`, `apps/api/test/reportKeyboards.test.js`, `apps/api/test/reportScheduler.test.js`, and repository delivery tests.
 - Dashboard presentation is covered by Mini App dashboard and smoke asset tests.
 - Settings behavior, including current-month budget display and timezone controls, is covered by Mini App settings tests.
@@ -66,6 +67,7 @@ The suite refuses to run unless `DATABASE_URL` points at localhost/127.0.0.1 and
 - expense edit/delete and recalculated totals;
 - transactional account deletion, privacy-sensitive row cleanup, safe audit metadata, and global exchange-rate preservation;
 - timezone day/month boundaries with fixed dates.
+- Telegram input-session atomic completion, rollback, prompt persistence, and target-specific terminal cleanup.
 
 GitHub Actions runs the same command in the `Postgres integration smoke` job with a disposable `postgres` service and this test-only URL:
 

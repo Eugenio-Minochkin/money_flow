@@ -72,6 +72,7 @@ test("renders escaped editor text and compact callback keyboards", () => {
   assert.match(text, /Count today/);
   assert.equal(editorTargetKey(draftTarget), "d:42:0");
   assert.ok(keyboard.inline_keyboard.flat().some((button) => button.callback_data === "ee:d:42:0:dm"));
+  assert.ok(keyboard.inline_keyboard.flat().some((button) => button.text === "💾 Save"));
   assert.ok(!keyboard.inline_keyboard.flat().some((button) => button.callback_data?.endsWith(":del")));
   for (const button of keyboard.inline_keyboard.flat()) {
     if (button.callback_data) assert.ok(Buffer.byteLength(button.callback_data, "utf8") <= 64);

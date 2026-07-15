@@ -367,7 +367,7 @@ test("/last shows the saved expense card with edit and delete actions", async ()
   ]);
 });
 
-test("editor Done returns a saved expense to its summary card", async () => {
+test("editor Save returns a saved expense to its summary card", async () => {
   const calls = [];
   const repo = fakeRepository();
   repo.getExpenseForTelegramUser = async () => ({
@@ -387,10 +387,11 @@ test("editor Done returns a saved expense to its summary card", async () => {
 
   await bot.handleUpdate(callbackUpdate("ee:x:91:back", 100));
 
-  const edit = calls.find((call) => call.method === "editMessageText");
-  assert.ok(edit);
-  assert.match(edit.text, /Записал|Saved/);
-  assert.deepEqual(edit.replyMarkup.inline_keyboard.map((row) => row.map((button) => button.callback_data ?? button.web_app?.url)), [
+  assert.equal(calls.some((call) => call.method === "editMessageText"), false);
+  const message = calls.find((call) => call.method === "sendMessage");
+  assert.ok(message);
+  assert.match(message.text, /Записал|Saved/);
+  assert.deepEqual(message.replyMarkup.inline_keyboard.map((row) => row.map((button) => button.callback_data ?? button.web_app?.url)), [
     ["ee:x:91:o", "ee:x:91:del"],
     ["http://localhost:3000?telegramUserId=100"]
   ]);
@@ -436,6 +437,158 @@ test("saved-expense text edit prepares rates before claiming the input session t
   await bot.handleUpdate(textUpdate("20", 100));
 
   assert.deepEqual(order, ["prepare", "consume", "update"]);
+});
+
+test("text edit removes prompt and stale editor before posting one fresh editor card", async () => {
+  const calls = [];
+  const repo = fakeRepository();
+  const expense = {
+    id: 91, amount_original: 10, currency_original: "THB", amount_base: 10,
+    description: "coffee", category_slug: "food_cafe", tags: [],
+    spent_at: "2026-07-15T10:00:00.000Z", budget_impact: "regular"
+  };
+  repo.getRoutableTelegramInputSession = async () => ({
+    id: 7, target_type: "expense", target_id: 91, item_index: null, field: "amount",
+    chat_id: 10, message_id: 20, prompt_message_id: 301
+  });
+  repo.getExpenseForTelegramUser = async () => expense;
+  repo.prepareExpenseUpdateForTelegramUser = async () => null;
+  repo.consumeTelegramInputSession = async (_telegramUserId, { apply }) => {
+    await apply({ client: {} });
+    return { outcome: "completed" };
+  };
+  repo.updateExpenseForTelegramUser = async () => ({ ...expense, amount_original: 20, amount_base: 20 });
+  const bot = createTelegramBot({
+    token: "test-token", miniAppUrl: "http://localhost:3000", repository: repo, telegramClient: capturingClient(calls)
+  });
+
+  await bot.handleUpdate(textUpdate("20", 100));
+
+  assert.deepEqual(calls.filter((call) => call.method === "deleteMessage").map((call) => call.messageId), [301, 20]);
+  assert.equal(calls.some((call) => call.method === "editMessageText"), false);
+  const fresh = calls.filter((call) => call.method === "sendMessage").at(-1);
+  assert.ok(fresh?.replyMarkup?.inline_keyboard?.length);
+});
+
+test("starting every text field stores its prompt message reference", async () => {
+  const calls = [];
+  const repo = fakeRepository();
+  const stored = [];
+  const starts = [];
+  repo.getExpenseForTelegramUser = async () => ({
+    id: 91, amount_original: 10, currency_original: "THB", amount_base: 10, description: "coffee",
+    category_slug: "food_cafe", tags: [], spent_at: "2026-07-15T10:00:00.000Z", budget_impact: "regular"
+  });
+  repo.startTelegramInputSession = async (_telegramUserId, input) => {
+    starts.push(input);
+    return { outcome: "started", session: { id: starts.length } };
+  };
+  repo.setTelegramInputSessionPrompt = async (...args) => { stored.push(args); return { outcome: "stored" }; };
+  const telegramClient = capturingClient(calls);
+  telegramClient.sendMessage = async (message) => {
+    calls.push({ method: "sendMessage", ...message });
+    return { ok: true, result: { message_id: 300 + starts.length } };
+  };
+  const bot = createTelegramBot({ token: "test-token", miniAppUrl: "http://localhost:3000", repository: repo, telegramClient });
+
+  for (const callbackData of ["ee:x:91:f:a", "ee:x:91:f:d", "ee:x:91:f:g", "ee:x:91:dt:c"]) {
+    await bot.handleUpdate(callbackUpdate(callbackData, 100));
+  }
+
+  assert.deepEqual(starts.map((input) => input.field), ["amount", "description", "tags", "spent_at"]);
+  assert.deepEqual(stored.map((args) => args[2].promptMessageId), [301, 302, 303, 304]);
+  assert.deepEqual(stored.map((args) => args[0]), [100, 100, 100, 100]);
+});
+
+test("inline input Cancel closes only its target and restores a fresh editor card", async () => {
+  const calls = [];
+  const repo = fakeRepository();
+  const closed = [];
+  repo.getExpenseForTelegramUser = async () => ({
+    id: 91, amount_original: 10, currency_original: "THB", amount_base: 10, description: "coffee",
+    category_slug: "food_cafe", tags: [], spent_at: "2026-07-15T10:00:00.000Z", budget_impact: "regular"
+  });
+  repo.closeTelegramInputSessionForTarget = async (...args) => {
+    closed.push(args);
+    return { outcome: "cancelled", session: { chat_id: 10, message_id: 20, prompt_message_id: 301 } };
+  };
+  const bot = createTelegramBot({
+    token: "test-token", miniAppUrl: "http://localhost:3000", repository: repo, telegramClient: capturingClient(calls)
+  });
+
+  await bot.handleUpdate(callbackUpdate("ee:x:91:cancel", 100));
+
+  assert.equal(closed.length, 1);
+  assert.deepEqual(closed[0].slice(0, 2), [100, { targetType: "expense", targetId: 91, itemIndex: null }]);
+  assert.deepEqual(calls.filter((call) => call.method === "deleteMessage").map((call) => call.messageId), [301, 20]);
+  assert.equal(calls.some((call) => call.method === "editMessageText"), false);
+  assert.ok(calls.some((call) => call.method === "sendMessage" && call.replyMarkup?.inline_keyboard));
+});
+
+test("plain text after inline input Cancel reaches the normal expense parser", async () => {
+  const calls = [];
+  const repo = fakeRepository();
+  let active = true;
+  repo.getExpenseForTelegramUser = async () => ({
+    id: 91, amount_original: 10, currency_original: "THB", amount_base: 10, description: "coffee",
+    category_slug: "food_cafe", tags: [], spent_at: "2026-07-15T10:00:00.000Z", budget_impact: "regular"
+  });
+  repo.getRoutableTelegramInputSession = async () => active ? {
+    id: 7, target_type: "expense", target_id: 91, item_index: null, field: "amount", chat_id: 10, message_id: 20, prompt_message_id: 301
+  } : null;
+  repo.closeTelegramInputSessionForTarget = async () => {
+    active = false;
+    return { outcome: "cancelled", session: { chat_id: 10, message_id: 20, prompt_message_id: 301 } };
+  };
+  const bot = createTelegramBot({
+    token: "test-token", miniAppUrl: "http://localhost:3000", repository: repo, telegramClient: capturingClient(calls)
+  });
+
+  await bot.handleUpdate(callbackUpdate("ee:x:91:cancel", 100));
+  await bot.handleUpdate(textUpdate("coffee 20", 100));
+
+  assert.ok(repo.events.some((event) => event.eventName === "expense_draft_created"));
+});
+
+test("draft cancellation closes a matching active editor input session", async () => {
+  const calls = [];
+  const repo = fakeRepository();
+  const closed = [];
+  repo.closeTelegramInputSessionForTarget = async (...args) => {
+    closed.push(args);
+    return { outcome: "cancelled", session: { chat_id: 10, prompt_message_id: 301 } };
+  };
+  const bot = createTelegramBot({
+    token: "test-token", miniAppUrl: "http://localhost:3000", repository: repo, telegramClient: capturingClient(calls)
+  });
+
+  await bot.handleUpdate(callbackUpdate("cancel:42", 100));
+
+  assert.deepEqual(closed[0].slice(0, 2), [100, { targetType: "draft", targetId: 42, itemIndex: undefined }]);
+  assert.deepEqual(calls.filter((call) => call.method === "deleteMessage").map((call) => call.messageId), [301]);
+});
+
+test("saved expense deletion closes its matching active editor input session", async () => {
+  const calls = [];
+  const repo = fakeRepository();
+  const closed = [];
+  repo.getExpenseForTelegramUser = async () => ({
+    id: 91, amount_original: 10, currency_original: "THB", amount_base: 10, description: "coffee",
+    category_slug: "food_cafe", tags: [], spent_at: "2026-07-15T10:00:00.000Z", budget_impact: "regular"
+  });
+  repo.deleteExpenseForTelegramUser = async () => ({ id: 91 });
+  repo.closeTelegramInputSessionForTarget = async (...args) => {
+    closed.push(args);
+    return { outcome: "cancelled", session: { chat_id: 10, prompt_message_id: 301 } };
+  };
+  const bot = createTelegramBot({
+    token: "test-token", miniAppUrl: "http://localhost:3000", repository: repo, telegramClient: capturingClient(calls)
+  });
+
+  await bot.handleUpdate(callbackUpdate("ee:x:91:delok", 100));
+
+  assert.deepEqual(closed[0].slice(0, 2), [100, { targetType: "expense", targetId: 91, itemIndex: null }]);
+  assert.deepEqual(calls.filter((call) => call.method === "deleteMessage").map((call) => call.messageId), [301]);
 });
 
 test("export callback sends CSV document through Telegram", async () => {
@@ -4883,6 +5036,6 @@ function capturingClient(calls) {
     async editMessageText(message) { calls.push({ method: "editMessageText", ...message }); return { ok: true }; },
     async answerCallbackQuery(message) { calls.push({ method: "answerCallbackQuery", ...message }); return { ok: true }; },
     async editMessageReplyMarkup(message) { calls.push({ method: "editMessageReplyMarkup", ...message }); return { ok: true }; },
-    async deleteMessage() { return { ok: true }; }
+    async deleteMessage(message) { calls.push({ method: "deleteMessage", ...message }); return { ok: true }; }
   };
 }

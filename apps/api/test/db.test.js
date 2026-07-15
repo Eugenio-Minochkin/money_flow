@@ -23,13 +23,22 @@ test("retries transient startup failures before succeeding", async () => {
   assert.equal(attempts, 3);
 });
 
-test("migration files are listed in lexical order and include the product analytics migration", async () => {
+test("migration files are listed in lexical order and include the Telegram editor prompt migration", async () => {
   const dir = resolve(dirname(fileURLToPath(import.meta.url)), "..", "migrations");
   const files = await listMigrationFiles(dir);
   assert.ok(files.includes("001_initial.sql"));
   assert.ok(files.includes("002_draft_confirm_flow.sql"));
   assert.ok(files.includes("008_product_analytics.sql"));
+  assert.ok(files.includes("010_telegram_editor_prompt_message.sql"));
   assert.deepEqual(files, [...files].sort());
+});
+
+test("Telegram editor prompt migration adds a nullable prompt message reference", async () => {
+  const dir = resolve(dirname(fileURLToPath(import.meta.url)), "..", "migrations");
+  const sql = await readFile(resolve(dir, "010_telegram_editor_prompt_message.sql"), "utf8");
+
+  assert.match(sql, /ALTER TABLE\s+telegram_input_sessions\s+ADD COLUMN IF NOT EXISTS prompt_message_id BIGINT/i);
+  assert.doesNotMatch(sql, /NOT NULL/i);
 });
 
 test("budget top-up migration creates drafts, topups, idempotency index, and explicit FX source", async () => {

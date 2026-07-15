@@ -107,7 +107,7 @@ export function expenseEditorKeyboard(target, { language = "ru" } = {}) {
     [button(en ? "🏷 Tags" : "🏷 Теги", `ee:${key}:f:${FIELD_TO_CODE.tags}`), button(en ? "◉ Budget impact" : "◉ Учёт в бюджете", `ee:${key}:bm`)]
   ];
   if (target?.type === "expense") rows.push([button(en ? "🗑 Delete" : "🗑 Удалить", `ee:${key}:del`)]);
-  rows.push([button(en ? "← Done" : "← Готово", `ee:${key}:back`)]);
+  rows.push([button(en ? "💾 Save" : "💾 Сохранить", `ee:${key}:back`)]);
   return keyboard(rows);
 }
 
