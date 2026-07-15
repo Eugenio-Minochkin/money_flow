@@ -11,6 +11,7 @@ import {
   localWeekday as timezoneLocalWeekday,
   normalizeTimeZone
 } from "../../../packages/shared/src/time.js";
+import { localDateTimeToUtc } from "../../../packages/shared/src/time.js";
 import { formatAdminMessageParts } from "./adminStatsService.js";
 import { formatProductStatsSections } from "./productStatsService.js";
 import { formatTechnicalStatsSections } from "./technicalStatsService.js";
@@ -1258,6 +1259,20 @@ function localMonthDay(now) {
   return timezoneLocalMonthDay(now);
 }
 
+function editorCalendarDate(now, timeZone, dayOffset) {
+  const parts = {};
+  const safeTimeZone = normalizeTimeZone(timeZone).timeZone;
+  for (const part of new Intl.DateTimeFormat("en-US", {
+    timeZone: safeTimeZone, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23"
+  }).formatToParts(now)) {
+    if (part.type !== "literal") parts[part.type] = Number(part.value);
+  }
+  const date = new Date(Date.UTC(parts.year, parts.month - 1, parts.day + dayOffset));
+  return localDateTimeToUtc({
+    year: date.getUTCFullYear(), month: date.getUTCMonth() + 1, day: date.getUTCDate(), hour: parts.hour, minute: parts.minute
+  }, safeTimeZone);
+}
+
 async function routeTelegramExpenseInput({ message, rawText, hasVoice, hasPhoto, commandText, user, repository, telegramUserId, language, now, token, telegramClient }) {
   if (!repository.getRoutableTelegramInputSession || (!rawText && !hasVoice && !hasPhoto)) return null;
   const session = await repository.getRoutableTelegramInputSession(telegramUserId);
@@ -1343,9 +1358,12 @@ async function handleExpenseEditorCallback({ callback, parsed, repository, token
   if (parsed.action === "category_page") return redraw(target, expenseCategoryKeyboard(target, undefined, { language, page: parsed.page }));
   if (parsed.action === "budget_menu") return redraw(target, expenseTreatmentKeyboard(target, language));
   if (parsed.action === "category" || parsed.action === "budget_impact" || (parsed.action === "date" && parsed.value !== "custom")) {
+    if (parsed.action === "budget_impact" && (target.item ?? target.expense)?.budget_impact === parsed.value) {
+      return answerCallback(token, callback.id, language === "ru" ? "Уже выбрано." : "Already selected.", telegramClient);
+    }
     const field = parsed.action === "category" ? "category" : (parsed.action === "budget_impact" ? "budget_impact" : "spent_at");
     const value = parsed.action === "date"
-      ? new Date(now().getTime() - (parsed.value === "yesterday" ? 24 * 60 * 60_000 : 0))
+      ? editorCalendarDate(now(), user?.timezone, parsed.value === "yesterday" ? -1 : 0)
       : parsed.value;
     try {
       if (parsed.type === "draft") await applyDraftEditorChange({ repository, telegramUserId, target, field, value, now: now() });

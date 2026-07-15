@@ -2362,7 +2362,7 @@ test("invalidates the current opening snapshot only when its baseline changes", 
 
   assert.equal(shouldInvalidateExpenseSnapshot(todayRegular, { ...todayRegular, amount_original: 20 }, context), false);
   assert.equal(shouldInvalidateExpenseSnapshot(yesterdayRegular, { ...yesterdayRegular, amount_original: 20 }, context), true);
-  assert.equal(shouldInvalidateExpenseSnapshot(large, { ...large, amount_original: 20 }, context), false);
+  assert.equal(shouldInvalidateExpenseSnapshot(large, { ...large, amount_original: 20 }, context), true);
   assert.equal(shouldInvalidateExpenseSnapshot(todayRegular, { ...todayRegular, description: "renamed" }, context), false);
   assert.equal(shouldInvalidateExpenseSnapshot(todayRegular, large, context), true);
   assert.equal(shouldInvalidateExpenseSnapshot(yesterdayRegular, { ...yesterdayRegular, spent_at: "2026-07-15T05:00:00.000Z" }, context), true);

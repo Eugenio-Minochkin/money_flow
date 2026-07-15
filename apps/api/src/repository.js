@@ -2336,6 +2336,18 @@ export function createRepository(pool, options = {}) {
         return updateExpenseWithoutTransaction(pool, exchangeRates, expenseId, telegramUserId, patch);
       }
       const currentNow = normalizeNow(now);
+      const financialPatch = Object.keys(patch ?? {}).some((key) => ["amount", "currency", "spent_at", "budget_impact"].includes(key));
+      const preflightUser = financialPatch ? await this.getUserByTelegramId(telegramUserId) : null;
+      const preflightExpense = financialPatch ? await this.getExpenseForTelegramUser(expenseId, telegramUserId) : null;
+      if (financialPatch && (!preflightUser || !preflightExpense)) throw codedError("Expense not found", "expense_not_found");
+      const preflightItem = financialPatch ? normalizeExpensePatch(preflightExpense, patch) : null;
+      const preflightSpentAt = financialPatch ? new Date(preflightItem.spent_at) : null;
+      if (financialPatch && (Number.isNaN(preflightSpentAt.getTime()) || preflightSpentAt > currentNow)) {
+        throw codedError("Future expense date", "expense_future_date");
+      }
+      const preflightMoneyAmounts = financialPatch
+        ? await buildMoneyAmounts(exchangeRates, preflightItem.amount, preflightItem.currency, preflightSpentAt, preflightUser)
+        : null;
       const client = options.client ?? await pool.connect();
       const ownsTransaction = !options.client;
       try {
@@ -2357,6 +2369,9 @@ export function createRepository(pool, options = {}) {
         if (Number.isNaN(spentAt.getTime()) || spentAt > currentNow) {
           throw codedError("Future expense date", "expense_future_date");
         }
+        if (financialPatch && !sameExpenseFinancialInputs(preflightItem, item)) {
+          throw codedError("Expense changed", "expense_edit_conflict");
+        }
         const timeZone = userTimezone(user);
         const sourceMonth = timeZoneMonthKey(new Date(before.spent_at), timeZone);
         const targetMonth = timeZoneMonthKey(spentAt, timeZone);
@@ -2371,7 +2386,11 @@ export function createRepository(pool, options = {}) {
           throw codedError("Target month closed", "expense_target_month_closed");
         }
 
-        const moneyAmounts = await buildMoneyAmounts(exchangeRates, item.amount, item.currency, spentAt, user);
+        const moneyAmounts = financialPatch ? preflightMoneyAmounts : {
+          amountBase: Number(before.amount_base),
+          convertedAmounts: before.converted_amounts,
+          source: before.exchange_rate_source
+        };
         const updatedResult = await client.query(
           `UPDATE expenses
            SET amount_original = $1,
@@ -3154,6 +3173,13 @@ function normalizeExpensePatch(before, patch) {
   });
 }
 
+function sameExpenseFinancialInputs(left, right) {
+  return Number(left.amount) === Number(right.amount)
+    && String(left.currency) === String(right.currency)
+    && new Date(left.spent_at).getTime() === new Date(right.spent_at).getTime()
+    && String(left.budget_impact) === String(right.budget_impact);
+}
+
 async function lockFinancialMonths(client, userId, monthKeys) {
   for (const monthKey of [...new Set(monthKeys.filter(Boolean))].sort()) {
     await client.query(
@@ -3186,6 +3212,7 @@ export function shouldInvalidateExpenseSnapshot(before, after, { now = new Date(
   const beforeImpact = before.budget_impact ?? "regular";
   const afterImpact = after.budget_impact ?? "regular";
   if (beforeImpact !== afterImpact) return true;
+  if (beforeImpact === "large_oneoff") return true;
   if (beforeImpact !== "regular") return false;
 
   const today = timeZoneDayKey(now, timeZone);

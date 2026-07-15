@@ -99,13 +99,14 @@ export function formatExpenseEditor(target, { language = "ru", timeZone = "Asia/
 export function expenseEditorKeyboard(target, { language = "ru" } = {}) {
   const key = editorTargetKey(target);
   const en = language === "en";
-  return keyboard([
+  const rows = [
     [button(en ? "💰 Amount" : "💰 Сумма", `ee:${key}:f:${FIELD_TO_CODE.amount}`), button(en ? "✏️ Description" : "✏️ Название", `ee:${key}:f:${FIELD_TO_CODE.description}`)],
     [button(en ? "🏷 Category" : "🏷 Категория", `ee:${key}:cm`), button(en ? "🗓 Date and time" : "🗓 Дата и время", `ee:${key}:dt:c`)],
-    [button(en ? "🏷 Tags" : "🏷 Теги", `ee:${key}:f:${FIELD_TO_CODE.tags}`), button(en ? "◉ Budget impact" : "◉ Учёт в бюджете", `ee:${key}:bm`)],
-    [button(en ? "🗑 Delete" : "🗑 Удалить", `ee:${key}:del`)],
-    [button(en ? "← Done" : "← Готово", `ee:${key}:back`)]
-  ]);
+    [button(en ? "🏷 Tags" : "🏷 Теги", `ee:${key}:f:${FIELD_TO_CODE.tags}`), button(en ? "◉ Budget impact" : "◉ Учёт в бюджете", `ee:${key}:bm`)]
+  ];
+  if (target?.type === "expense") rows.push([button(en ? "🗑 Delete" : "🗑 Удалить", `ee:${key}:del`)]);
+  rows.push([button(en ? "← Done" : "← Готово", `ee:${key}:back`)]);
+  return keyboard(rows);
 }
 
 export function expenseInputPrompt(field, { language = "ru" } = {}) {
