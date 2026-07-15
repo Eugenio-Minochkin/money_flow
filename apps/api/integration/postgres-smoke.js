@@ -25,8 +25,18 @@ test.before(async () => {
   const applied = await pool.query("SELECT filename FROM schema_migrations ORDER BY filename");
   assert.deepEqual(
     applied.rows.map((row) => row.filename),
-    ["001_initial.sql", "002_draft_confirm_flow.sql", "003_budget_topups.sql", "004_report_deliveries.sql", "005_exchange_rates.sql", "006_feedback.sql", "007_account_deletion.sql", "008_product_analytics.sql"]
+    ["001_initial.sql", "002_draft_confirm_flow.sql", "003_budget_topups.sql", "004_report_deliveries.sql", "005_exchange_rates.sql", "006_feedback.sql", "007_account_deletion.sql", "008_product_analytics.sql", "009_telegram_expense_editor.sql"]
   );
+
+  const sessions = await pool.query(`
+    SELECT user_id, target_type, target_id, item_index, field, status,
+           chat_id, message_id, language, expires_at, late_input_consumed_at
+    FROM telegram_input_sessions WHERE false
+  `);
+  assert.equal(sessions.fields.length, 11);
+
+  const expenses = await pool.query("SELECT updated_at FROM expenses WHERE false");
+  assert.equal(expenses.fields.length, 1);
 });
 
 test.beforeEach(async () => {
