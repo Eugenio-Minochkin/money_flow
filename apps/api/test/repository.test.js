@@ -4686,6 +4686,37 @@ test("closes only the active Telegram input session for the terminal target", as
   assert.ok(queries.some(({ query, params }) => query.includes("SET status = 'cancelled'") && params.includes(8)));
 });
 
+test("does not close a newer Telegram input session from a stale prompt callback", async () => {
+  const queries = [];
+  const active = {
+    id: 8,
+    user_id: 7,
+    status: "active",
+    target_type: "expense",
+    target_id: 42,
+    item_index: null
+  };
+  const client = {
+    async query(sql, params = []) {
+      const query = String(sql);
+      queries.push({ query, params });
+      if (query === "BEGIN" || query === "COMMIT" || query === "ROLLBACK") return { rows: [] };
+      if (query.includes("FROM users") && query.includes("FOR UPDATE")) return { rows: [{ id: 7 }] };
+      if (query.includes("FROM telegram_input_sessions") && query.includes("FOR UPDATE")) return { rows: [active] };
+      throw new Error(`Unexpected SQL: ${query}`);
+    },
+    release() {}
+  };
+  const repo = createRepository({ async connect() { return client; } });
+
+  const result = await repo.closeTelegramInputSessionForTarget(100, {
+    targetType: "expense", targetId: 42, itemIndex: null, sessionId: 7
+  }, new Date("2026-07-15T12:00:00.000Z"));
+
+  assert.deepEqual(result, { outcome: "none" });
+  assert.equal(queries.some(({ query }) => query.includes("SET status = 'cancelled'")), false);
+});
+
 test("cleans up only terminal Telegram input sessions after the retention window", async () => {
   let received;
   const repo = createRepository(fakePool(async (sql, params) => {

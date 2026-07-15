@@ -4322,7 +4322,8 @@ function sameTelegramEditorTarget(session, target) {
   return Boolean(target)
     && session.target_type === target.targetType
     && Number(session.target_id) === Number(target.targetId)
-    && (target.itemIndex === undefined || Number(session.item_index ?? -1) === Number(target.itemIndex ?? -1));
+    && (target.itemIndex === undefined || Number(session.item_index ?? -1) === Number(target.itemIndex ?? -1))
+    && (target.sessionId == null || Number(session.id) === Number(target.sessionId));
 }
 
 function mapAccountDeletionRequest(row) {

@@ -1276,21 +1276,23 @@ function editorCalendarDate(now, timeZone, dayOffset) {
   }, safeTimeZone);
 }
 
-function inlineEditorCancelKeyboard(target, language) {
+function inlineEditorCancelKeyboard(target, language, sessionId) {
   return {
     inline_keyboard: [[{
       text: language === "ru" ? "↩ Отмена" : "↩ Cancel",
-      callback_data: `ee:${editorTargetKey(target)}:cancel`
+      callback_data: `ee:${editorTargetKey(target)}:cancel:${sessionId}`
     }]]
   };
 }
 
-function editorTargetRef(target) {
-  return {
+function editorTargetRef(target, sessionId = null) {
+  const reference = {
     targetType: target.type,
     targetId: target.id,
     itemIndex: target.type === "draft" ? target.itemIndex : null
   };
+  if (sessionId != null) reference.sessionId = Number(sessionId);
+  return reference;
 }
 
 function telegramMessageId(result) {
@@ -1298,10 +1300,10 @@ function telegramMessageId(result) {
   return Number.isSafeInteger(Number(value)) && Number(value) > 0 ? Number(value) : null;
 }
 
-async function deactivateTelegramEditorMessages({ session, fallbackChatId, fallbackMessageId, includeEditor = true, token, telegramClient }) {
+async function deactivateTelegramEditorMessages({ session, fallbackChatId, fallbackMessageId, fallbackPromptMessageId, includeEditor = true, token, telegramClient }) {
   const chatId = session?.chat_id ?? fallbackChatId;
   const messageIds = [
-    session?.prompt_message_id,
+    session?.prompt_message_id ?? fallbackPromptMessageId,
     includeEditor ? (session?.message_id ?? fallbackMessageId) : null
   ].filter((id, index, all) => Number.isSafeInteger(Number(id)) && Number(id) > 0 && all.indexOf(id) === index);
 
@@ -1327,27 +1329,49 @@ async function startTelegramEditorTextInput({ repository, telegramUserId, target
     language
   }, now());
   if (started?.outcome !== "started") return started;
-
-  const prompt = await sendMessage(
-    token,
-    callback.message.chat.id,
-    expenseInputPrompt(field, { language }),
-    inlineEditorCancelKeyboard(target, language),
-    telegramClient
-  );
-  const promptMessageId = telegramMessageId(prompt);
-  if (promptMessageId && started.session?.id && repository.setTelegramInputSessionPrompt) {
-    await repository.setTelegramInputSessionPrompt(telegramUserId, started.session.id, {
-      ...editorTargetRef(target),
+  const sessionId = Number(started.session?.id);
+  let promptMessageId = null;
+  try {
+    if (!Number.isSafeInteger(sessionId) || sessionId <= 0 || !repository.setTelegramInputSessionPrompt) {
+      throw new Error("telegram_editor_session_setup_failed");
+    }
+    const prompt = await sendMessage(
+      token,
+      callback.message.chat.id,
+      expenseInputPrompt(field, { language }),
+      inlineEditorCancelKeyboard(target, language, sessionId),
+      telegramClient
+    );
+    promptMessageId = telegramMessageId(prompt);
+    if (!promptMessageId) throw new Error("telegram_editor_prompt_missing_message_id");
+    const stored = await repository.setTelegramInputSessionPrompt(telegramUserId, sessionId, {
+      ...editorTargetRef(target, sessionId),
       promptMessageId
     }, now());
+    if (stored?.outcome !== "stored") throw new Error("telegram_editor_prompt_not_stored");
+    return started;
+  } catch (error) {
+    const closed = await closeTelegramEditorInput({ repository, telegramUserId, target, now, sessionId })
+      .catch((closeError) => {
+        console.error("[telegram] editor input cleanup failed", closeError.message);
+        return { outcome: "none" };
+      });
+    await deactivateTelegramEditorMessages({
+      session: closed?.session,
+      fallbackChatId: callback.message.chat.id,
+      fallbackPromptMessageId: promptMessageId,
+      includeEditor: false,
+      token,
+      telegramClient
+    });
+    console.error("[telegram] editor input prompt setup failed", error.message);
+    return { outcome: "start_failed" };
   }
-  return started;
 }
 
-async function closeTelegramEditorInput({ repository, telegramUserId, target, now }) {
+async function closeTelegramEditorInput({ repository, telegramUserId, target, now, sessionId = null }) {
   if (!repository.closeTelegramInputSessionForTarget) return { outcome: "none" };
-  return repository.closeTelegramInputSessionForTarget(telegramUserId, editorTargetRef(target), now());
+  return repository.closeTelegramInputSessionForTarget(telegramUserId, editorTargetRef(target, sessionId), now());
 }
 
 async function routeTelegramExpenseInput({ message, rawText, hasVoice, hasPhoto, commandText, user, repository, telegramUserId, language, now, token, telegramClient }) {
@@ -1422,24 +1446,34 @@ async function editorTargetForSession(repository, session, telegramUserId) {
 
 async function handleExpenseEditorCallback({ callback, parsed, repository, token, miniAppUrl, telegramClient, language, user, telegramUserId, now }) {
   if (parsed.action === "cancel") {
+    if (!parsed.sessionId) {
+      return answerCallback(token, callback.id, editorMessageForCode("expense_not_found", language), telegramClient);
+    }
+    const cancelled = await closeTelegramEditorInput({
+      repository,
+      telegramUserId,
+      target: parsed,
+      now,
+      sessionId: parsed.sessionId
+    });
     const target = await editorTargetForSession(repository, {
       target_type: parsed.type, target_id: parsed.id, item_index: parsed.itemIndex
     }, telegramUserId);
-    const cancelled = target
-      ? await closeTelegramEditorInput({ repository, telegramUserId, target, now })
-      : { outcome: "none" };
     const message = cancelled?.outcome === "input_in_progress"
       ? (language === "ru" ? "Изменение уже обрабатывается." : "An edit is already being processed.")
       : (language === "ru" ? "Редактирование отменено." : "Editing cancelled.");
-    await answerCallback(token, callback.id, target ? message : editorMessageForCode("expense_not_found", language), telegramClient);
+    if (cancelled?.outcome === "cancelled") {
+      await deactivateTelegramEditorMessages({
+        session: cancelled.session,
+        fallbackChatId: callback.message.chat.id,
+        fallbackMessageId: callback.message.message_id,
+        includeEditor: Boolean(target),
+        token,
+        telegramClient
+      });
+    }
+    await answerCallback(token, callback.id, target && cancelled?.outcome === "cancelled" ? message : editorMessageForCode("expense_not_found", language), telegramClient);
     if (!target || cancelled?.outcome !== "cancelled") return { ok: true };
-    await deactivateTelegramEditorMessages({
-      session: cancelled.session,
-      fallbackChatId: callback.message.chat.id,
-      fallbackMessageId: callback.message.message_id,
-      token,
-      telegramClient
-    });
     return sendMessage(
       token,
       callback.message.chat.id,
@@ -1509,7 +1543,9 @@ async function handleExpenseEditorCallback({ callback, parsed, repository, token
     const started = await startTelegramEditorTextInput({
       repository, telegramUserId, target, field: parsed.field, callback, language, now, token, telegramClient
     });
-    if (started?.outcome !== "started") return answerCallback(token, callback.id, language === "ru" ? "Изменение уже обрабатывается." : "An edit is already being processed.", telegramClient);
+    if (started?.outcome !== "started") return answerCallback(token, callback.id, started?.outcome === "input_in_progress"
+      ? (language === "ru" ? "Изменение уже обрабатывается." : "An edit is already being processed.")
+      : (language === "ru" ? "Не удалось начать редактирование. Попробуй ещё раз." : "Could not start editing. Please try again."), telegramClient);
     await answerCallback(token, callback.id, language === "ru" ? "Жду текстовое значение." : "Waiting for a text value.", telegramClient);
     return { ok: true };
   }
@@ -1539,7 +1575,9 @@ async function handleExpenseEditorCallback({ callback, parsed, repository, token
     const started = await startTelegramEditorTextInput({
       repository, telegramUserId, target, field: "spent_at", callback, language, now, token, telegramClient
     });
-    if (started.outcome !== "started") return answerCallback(token, callback.id, language === "ru" ? "Изменение уже обрабатывается." : "An edit is already being processed.", telegramClient);
+    if (started?.outcome !== "started") return answerCallback(token, callback.id, started?.outcome === "input_in_progress"
+      ? (language === "ru" ? "Изменение уже обрабатывается." : "An edit is already being processed.")
+      : (language === "ru" ? "Не удалось начать редактирование. Попробуй ещё раз." : "Could not start editing. Please try again."), telegramClient);
     await answerCallback(token, callback.id, language === "ru" ? "Жду текстовое значение." : "Waiting for a text value.", telegramClient);
     return { ok: true };
   }
@@ -1622,7 +1660,7 @@ export async function handleCallback({ update, repository, token, miniAppUrl, te
 
   const draftCallback = parseDraftCallback(callback.data);
   if (draftCallback) {
-    return handleDraftCallback({ callback, parsed: draftCallback, repository, token, miniAppUrl, telegramClient, language, user, trace });
+    return handleDraftCallback({ callback, parsed: draftCallback, repository, token, miniAppUrl, telegramClient, language, user, trace, now });
   }
 
   if (action === "export") {
@@ -1841,13 +1879,13 @@ async function handleBudgetTopupCallback({ callback, parsed, repository, token, 
   });
 }
 
-async function handleDraftCallback({ callback, parsed, repository, token, miniAppUrl, telegramClient, language, user, trace }) {
+async function handleDraftCallback({ callback, parsed, repository, token, miniAppUrl, telegramClient, language, user, trace, now }) {
   const telegramUserId = callback.from.id;
   if (parsed.action === "confirm") {
-    return handleConfirmDraft(trace, token, telegramClient, callback, parsed.draftId, telegramUserId, language, miniAppUrl, repository, user);
+    return handleConfirmDraft(trace, token, telegramClient, callback, parsed.draftId, telegramUserId, language, miniAppUrl, repository, user, now);
   }
   if (parsed.action === "cancel") {
-    return handleCancelDraft(trace, token, telegramClient, callback, parsed.draftId, telegramUserId, language, repository, user);
+    return handleCancelDraft(trace, token, telegramClient, callback, parsed.draftId, telegramUserId, language, repository, user, now);
   }
   if (parsed.action === "review") {
     trace.start("db_save");

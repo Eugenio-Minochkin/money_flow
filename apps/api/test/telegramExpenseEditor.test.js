@@ -50,8 +50,8 @@ test("parses compact expense editor callbacks without accepting malformed data",
   assert.deepEqual(parseExpenseEditorCallback("ee:x:91:dm"), {
     type: "expense", id: 91, action: "date_menu"
   });
-  assert.deepEqual(parseExpenseEditorCallback("ee:x:91:cancel"), {
-    type: "expense", id: 91, action: "cancel"
+  assert.deepEqual(parseExpenseEditorCallback("ee:x:91:cancel:8"), {
+    type: "expense", id: 91, action: "cancel", sessionId: 8
   });
   assert.equal(parseExpenseEditorCallback("ee:d:42:o"), null);
   assert.equal(parseExpenseEditorCallback("ee:x:not-id:o"), null);

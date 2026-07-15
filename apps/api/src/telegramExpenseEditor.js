@@ -59,7 +59,10 @@ export function parseExpenseEditorCallback(data) {
   if (parts.length === offset + 1 && action === "del") return { ...target, action: "delete" };
   if (parts.length === offset + 1 && action === "delok") return { ...target, action: "delete_confirm" };
   if (parts.length === offset + 1 && action === "back") return { ...target, action: "back" };
-  if (parts.length === offset + 1 && action === "cancel") return { ...target, action: "cancel" };
+  if (parts.length === offset + 2 && action === "cancel" && isPositiveId(value)) {
+    return { ...target, action: "cancel", sessionId: Number(value) };
+  }
+  if (parts.length === offset + 1 && action === "cancel") return { ...target, action: "cancel", sessionId: null };
   return null;
 }
 
