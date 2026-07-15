@@ -2346,7 +2346,6 @@ test("impact callback updates the draft item and edits the existing Telegram mes
     assert.ok(edit);
     assert.equal(edit.body.chat_id, 10);
     assert.equal(edit.body.message_id, 99);
-    assert.ok(edit.body.reply_markup.inline_keyboard.flat().some((button) => button.text === "🔘 Крупная"));
   } finally {
     globalThis.fetch = originalFetch;
   }

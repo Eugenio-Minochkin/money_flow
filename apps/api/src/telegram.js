@@ -20,6 +20,20 @@ import { formatBudgetTopupDraft, formatBudgetTopupSuccess, formatBudgetTopupUndo
 import { appKeyboard, budgetTopupDraftKeyboard, budgetTopupMiniAppKeyboard, budgetTopupSuccessKeyboard, draftKeyboard, inboxDraftKeyboard, plannedDraftKeyboard, parseBudgetTopupCallback, parseDraftCallback, categorySlugFromCode } from "./telegramKeyboards.js";
 import { DraftCanceledError, CategoryRequiredError } from "./repository.js";
 import { normalizeAcquisitionSource } from "./productAnalytics.js";
+import { parseEditorText } from "./telegramExpenseInput.js";
+import {
+  applyDraftEditorChange,
+  applySavedExpenseEditorChange,
+  editorMessageForCode,
+  expenseCategoryKeyboard,
+  expenseDateKeyboard,
+  expenseDeleteKeyboard,
+  expenseEditorKeyboard,
+  expenseInputPrompt,
+  expenseTreatmentKeyboard,
+  formatExpenseEditor,
+  parseExpenseEditorCallback
+} from "./telegramExpenseEditor.js";
 
 // budget_setup is the primary onboarding path; base_currency/monthly_budget/month_opening_spend are legacy fallback states.
 const ONBOARDING_STEPS = ["language", "budget_setup", "base_currency", "monthly_budget", "current_month_budget", "month_opening_spend"];
@@ -120,6 +134,12 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
   });
   const language = user.interface_language ?? "en";
   const chatId = message.chat.id;
+
+  const editorRoute = await routeTelegramExpenseInput({
+    message, rawText, hasVoice: Boolean(message.voice || message.audio), hasPhoto: Boolean(message.photo?.length),
+    commandText, user, repository, telegramUserId: from.id, language, now: now(), token, telegramClient
+  });
+  if (editorRoute) return sendTelegramResponse(trace, () => editorRoute);
 
   const feedbackCommand = parseFeedbackCommand(rawText);
   const hasVoice = Boolean(message.voice || message.audio);
@@ -251,6 +271,15 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
 
     if (commandText === "/export") {
       return sendTelegramResponse(trace, () => sendMessage(token, chatId, botText(language, "exportChoosePeriod"), exportPeriodKeyboard(language), telegramClient));
+    }
+
+    if (commandText === "/last") {
+      const expense = await repository.getLatestEditableExpenseForTelegramUser?.(from.id);
+      if (!expense) return sendTelegramResponse(trace, () => sendMessage(token, chatId, language === "ru" ? "Сохранённых расходов пока нет." : "No saved expenses yet.", null, telegramClient));
+      return sendTelegramResponse(trace, () => sendMessage(
+        token, chatId, formatExpenseEditor({ type: "expense", id: expense.id, expense }, { language, timeZone: user.timezone }),
+        expenseEditorKeyboard({ type: "expense", id: expense.id, expense }, { language }), telegramClient
+      ));
     }
 
     if (commandText === "/today" || commandText === "/week" || commandText === "/month" || commandText === "/budget") {
@@ -1229,6 +1258,111 @@ function localMonthDay(now) {
   return timezoneLocalMonthDay(now);
 }
 
+async function routeTelegramExpenseInput({ message, rawText, hasVoice, hasPhoto, commandText, user, repository, telegramUserId, language, now, token, telegramClient }) {
+  if (!repository.getRoutableTelegramInputSession || (!rawText && !hasVoice && !hasPhoto)) return null;
+  const session = await repository.getRoutableTelegramInputSession(telegramUserId);
+  if (!session) return null;
+  if (commandText === "/cancel") {
+    const cancelled = await repository.cancelTelegramInputSession?.(telegramUserId, now);
+    return sendMessage(token, message.chat.id, cancelled?.outcome === "input_in_progress"
+      ? (language === "ru" ? "Изменение уже обрабатывается." : "An edit is already being processed.")
+      : (language === "ru" ? "Редактирование отменено." : "Editing cancelled."), null, telegramClient);
+  }
+  if (commandText) return null;
+  if (hasVoice || hasPhoto) {
+    return sendMessage(token, message.chat.id, language === "ru"
+      ? "Сейчас я жду текст для изменения. Отправь значение текстом или нажми «Отмена»."
+      : "I am waiting for text for this edit. Send a text value or tap Cancel.", null, telegramClient);
+  }
+
+  try {
+    const target = await editorTargetForSession(repository, session, telegramUserId);
+    if (!target) return sendMessage(token, message.chat.id, editorMessageForCode("expense_not_found", language), null, telegramClient);
+    const currentCurrency = target.item?.currency ?? target.expense?.currency_original ?? "THB";
+    const value = parseEditorText(session.field, rawText, { currentCurrency, now, timeZone: user.timezone, language });
+    const consumed = await repository.consumeTelegramInputSession(telegramUserId, {
+      sessionId: session.id,
+      now,
+      apply: async ({ client }) => {
+        if (session.target_type === "draft") {
+          await applyDraftEditorChange({ repository, telegramUserId, target, field: session.field, value, client, now });
+        } else {
+          await applySavedExpenseEditorChange({ repository, telegramUserId, target, field: session.field, value, client, now });
+        }
+      }
+    });
+    if (consumed.outcome === "expired") return sendMessage(token, message.chat.id, editorMessageForCode("session_expired", language), null, telegramClient);
+    if (consumed.outcome !== "completed") return { ok: true };
+    const refreshed = await editorTargetForSession(repository, session, telegramUserId);
+    const text = formatExpenseEditor(refreshed, { language, timeZone: user.timezone });
+    const keyboard = expenseEditorKeyboard(refreshed, { language });
+    if (session.chat_id && session.message_id) return editMessageText(token, session.chat_id, session.message_id, text, keyboard, telegramClient);
+    return sendMessage(token, message.chat.id, text, keyboard, telegramClient);
+  } catch (error) {
+    if (error?.code) return sendMessage(token, message.chat.id, editorMessageForCode(error.code, language), null, telegramClient);
+    throw error;
+  }
+}
+
+async function editorTargetForSession(repository, session, telegramUserId) {
+  if (session.target_type === "draft") {
+    const draft = await repository.getDraftForTelegramUser(session.target_id, telegramUserId);
+    const item = draft?.items?.[Number(session.item_index)];
+    return item ? { type: "draft", id: draft.id, itemIndex: Number(session.item_index), item, draft } : null;
+  }
+  const expense = await repository.getExpenseForTelegramUser?.(session.target_id, telegramUserId);
+  return expense ? { type: "expense", id: expense.id, expense } : null;
+}
+
+async function handleExpenseEditorCallback({ callback, parsed, repository, token, telegramClient, language, user, telegramUserId, now }) {
+  const target = parsed.action === "multi_item_selector" ? null : await editorTargetForSession(repository, {
+    target_type: parsed.type, target_id: parsed.id, item_index: parsed.itemIndex
+  }, telegramUserId);
+  if (parsed.action === "multi_item_selector") {
+    const draft = await repository.getDraftForTelegramUser(parsed.id, telegramUserId);
+    if (!draft) return answerCallback(token, callback.id, editorMessageForCode("expense_not_found", language), telegramClient);
+    const keyboard = { inline_keyboard: draft.items.map((item, index) => [{ text: `${index + 1}. ${item.description}`, callback_data: `ee:d:${draft.id}:${index}:o` }]) };
+    return editMessageText(token, callback.message.chat.id, callback.message.message_id, language === "ru" ? "Выбери расход для редактирования." : "Choose an expense to edit.", keyboard, telegramClient);
+  }
+  if (!target) return answerCallback(token, callback.id, editorMessageForCode("expense_not_found", language), telegramClient);
+  const redraw = (nextTarget = target, keyboard = expenseEditorKeyboard(target, { language })) => editMessageText(
+    token, callback.message.chat.id, callback.message.message_id,
+    formatExpenseEditor(nextTarget, { language, timeZone: user?.timezone }), keyboard, telegramClient
+  );
+  if (parsed.action === "open" || parsed.action === "back") return redraw();
+  if (parsed.action === "field") {
+    const started = await repository.startTelegramInputSession(telegramUserId, {
+      targetType: parsed.type, targetId: parsed.id, itemIndex: parsed.itemIndex ?? null, field: parsed.field,
+      chatId: callback.message.chat.id, messageId: callback.message.message_id, language
+    }, now());
+    if (started.outcome === "input_in_progress") return answerCallback(token, callback.id, language === "ru" ? "Изменение уже обрабатывается." : "An edit is already being processed.", telegramClient);
+    await answerCallback(token, callback.id, language === "ru" ? "Жду текстовое значение." : "Waiting for a text value.", telegramClient);
+    return sendMessage(token, callback.message.chat.id, expenseInputPrompt(parsed.field, { language }), null, telegramClient);
+  }
+  if (parsed.action === "category_menu") return redraw(target, expenseCategoryKeyboard(target, undefined, { language }));
+  if (parsed.action === "category_page") return redraw(target, expenseCategoryKeyboard(target, undefined, { language, page: parsed.page }));
+  if (parsed.action === "budget_menu") return redraw(target, expenseTreatmentKeyboard(target, language));
+  if (parsed.action === "date" && parsed.value === "custom") {
+    const started = await repository.startTelegramInputSession(telegramUserId, {
+      targetType: parsed.type, targetId: parsed.id, itemIndex: parsed.itemIndex ?? null, field: "spent_at",
+      chatId: callback.message.chat.id, messageId: callback.message.message_id, language
+    }, now());
+    if (started.outcome !== "started") return answerCallback(token, callback.id, language === "ru" ? "Изменение уже обрабатывается." : "An edit is already being processed.", telegramClient);
+    return sendMessage(token, callback.message.chat.id, expenseInputPrompt("spent_at", { language }), null, telegramClient);
+  }
+  if (parsed.action === "delete") return redraw(target, expenseDeleteKeyboard(target, language));
+  if (parsed.action === "delete_confirm" && parsed.type === "expense") {
+    try {
+      await repository.deleteExpenseForTelegramUser(parsed.id, telegramUserId, now());
+      await answerCallback(token, callback.id, language === "ru" ? "Расход удалён." : "Expense deleted.", telegramClient);
+      return editMessageText(token, callback.message.chat.id, callback.message.message_id, language === "ru" ? "Расход удалён." : "Expense deleted.", null, telegramClient);
+    } catch (error) {
+      return answerCallback(token, callback.id, editorMessageForCode(error.code ?? "expense_not_found", language), telegramClient);
+    }
+  }
+  return answerCallback(token, callback.id, language === "ru" ? "Недоступно." : "Unavailable.", telegramClient);
+}
+
 export async function handleCallback({ update, repository, token, miniAppUrl, telegramClient, expenseExportService, trace, now = () => new Date() }) {
   const callback = update.callback_query;
   const [action, draftId, itemIndex, value] = callback.data.split(":");
@@ -1237,6 +1371,11 @@ export async function handleCallback({ update, repository, token, miniAppUrl, te
   const user = await repository.getUserByTelegramId?.(telegramUserId);
   trace.end("user_context");
   const language = user?.interface_language ?? "en";
+
+  const expenseEditorCallback = parseExpenseEditorCallback(callback.data);
+  if (expenseEditorCallback) {
+    return handleExpenseEditorCallback({ callback, parsed: expenseEditorCallback, repository, token, telegramClient, language, user, telegramUserId, now });
+  }
 
   if (action === "delete_me") {
     if (draftId === "cancel") {
