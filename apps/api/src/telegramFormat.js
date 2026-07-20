@@ -2,14 +2,25 @@ import { categoryName } from "../../../packages/shared/src/categories.js";
 
 export function formatDraft(expenses, options = {}) {
   const language = normalizeLanguage(options.language);
-  const totalCurrency = expenses.every((expense) => expense.currency === expenses[0]?.currency)
-    ? expenses[0]?.currency
+  const currencies = [...new Set(expenses.map((expense) => expense.currency))];
+  const singleCurrency = currencies.length <= 1;
+  const totalCurrency = singleCurrency
+    ? (currencies[0] ?? options.baseCurrency ?? "THB")
     : (options.baseCurrency ?? "THB");
   let lines = expenses.map((expense, index) =>
     `${index + 1}. <b>${escapeHtml(categoryName(expense.category_slug))}</b>\n   🗓 ${formatSpentAt(expense.spent_at, language)}\n   ${escapeHtml(expense.description)} · <b>${formatMoney(expense.amount, expense.currency, language)}</b>`
   );
   lines = lines.map((line, index) => line.replace("</b>", `</b>${formatBudgetImpactMarker(expenses[index]?.budget_impact, language)}`));
-  const total = expenses.reduce((sum, expense) => sum + Number(expense.amount), 0);
+  const total = expenses.reduce((sum, expense) => sum + safeMoneyNumber(expense.amount), 0);
+  const convertedPreview = isConvertedDraftPreview(options.preview, totalCurrency);
+  const totalText = singleCurrency
+    ? formatMoney(total, totalCurrency, language)
+    : convertedPreview
+      ? formatMoney(convertedPreview.total, totalCurrency, language)
+      : formatDraftCurrencySubtotals(expenses, language);
+  const unavailableTotalWarning = !singleCurrency && !convertedPreview
+    ? `\n\n⚠️ ${formatDraftUnavailableTotalWarning(totalCurrency, language)}`
+    : "";
   const review = expenses.some((expense) => expense.needs_review)
     ? `\n\n⚠️ ${t(language, "draftReview")}`
     : "";
@@ -21,10 +32,32 @@ export function formatDraft(expenses, options = {}) {
     "",
     lines.join("\n\n"),
     "",
-    `<b>${t(language, "total")}:</b> ${formatMoney(total, totalCurrency, language)}.${review}${treatment}`,
+    `<b>${t(language, "total")}:</b> ${totalText}.${unavailableTotalWarning}${review}${treatment}`,
     "",
     t(language, "isCorrect")
   ].join("\n");
+}
+
+function isConvertedDraftPreview(preview, baseCurrency) {
+  if (!preview || typeof preview !== "object") return null;
+  if (preview.kind !== "converted" || preview.baseCurrency !== baseCurrency) return null;
+  if (typeof preview.total !== "number" || !Number.isFinite(preview.total)) return null;
+  return preview;
+}
+
+function formatDraftCurrencySubtotals(expenses, language) {
+  const subtotals = new Map();
+  for (const expense of expenses) {
+    const currency = expense.currency;
+    subtotals.set(currency, (subtotals.get(currency) ?? 0) + safeMoneyNumber(expense.amount));
+  }
+  return [...subtotals].map(([currency, amount]) => formatMoney(amount, currency, language)).join(" + ");
+}
+
+function formatDraftUnavailableTotalWarning(baseCurrency, language) {
+  return language === "en"
+    ? `A reliable total in ${baseCurrency} is unavailable. Amounts are shown by currency.`
+    : `Надежная общая сумма в ${baseCurrency} недоступна. Суммы показаны по валютам.`;
 }
 
 function formatDraftTreatmentExplanation(impact, language) {
