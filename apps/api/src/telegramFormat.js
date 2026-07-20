@@ -11,10 +11,9 @@ export function formatDraft(expenses, options = {}) {
     `${index + 1}. <b>${escapeHtml(categoryName(expense.category_slug))}</b>\n   🗓 ${formatSpentAt(expense.spent_at, language)}\n   ${escapeHtml(expense.description)} · <b>${formatMoney(expense.amount, expense.currency, language)}</b>`
   );
   lines = lines.map((line, index) => line.replace("</b>", `</b>${formatBudgetImpactMarker(expenses[index]?.budget_impact, language)}`));
-  const total = expenses.reduce((sum, expense) => sum + safeMoneyNumber(expense.amount), 0);
   const convertedPreview = isConvertedDraftPreview(options.preview, totalCurrency);
   const totalText = singleCurrency
-    ? formatMoney(total, totalCurrency, language)
+    ? formatMoney(expenses.reduce((sum, expense) => sum + safeMoneyNumber(expense.amount), 0), totalCurrency, language)
     : convertedPreview
       ? formatMoney(convertedPreview.total, totalCurrency, language)
       : formatDraftCurrencySubtotals(expenses, language);

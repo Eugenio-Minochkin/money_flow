@@ -53,6 +53,17 @@ test("never labels a raw mixed-currency numeric sum as any base currency without
   }
 });
 
+test("does not reduce mixed-currency amounts before grouping their subtotals", () => {
+  const conversions = { count: 0 };
+  const text = formatDraft([
+    draftExpense(countedAmount(127000, conversions), "IDR"),
+    draftExpense(countedAmount(25000, conversions), "RUB")
+  ], { language: "en", baseCurrency: "USD" });
+
+  assert.match(text, /127,000 IDR \+ 25,000 RUB/);
+  assert.equal(conversions.count, 4);
+});
+
 test("formats a draft with total and review warning", () => {
   const text = formatDraft([
     {
@@ -442,6 +453,15 @@ function draftExpense(amount, currency) {
     description: "expense",
     category_slug: "other",
     spent_at: "2026-06-02T09:30:00+07:00"
+  };
+}
+
+function countedAmount(value, conversions) {
+  return {
+    valueOf() {
+      conversions.count += 1;
+      return value;
+    }
   };
 }
 
