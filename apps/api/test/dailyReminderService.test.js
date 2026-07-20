@@ -1,12 +1,26 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { createDailyReminderService, isInRollout } from "../src/dailyReminderService.js";
+import { createDailyReminderService } from "../src/dailyReminderService.js";
 
-test("rollout cohort is stable for the same user", () => {
-  assert.equal(isInRollout(100, "daily_empty_day", 0), false);
-  assert.equal(isInRollout(100, "daily_empty_day", 100), true);
-  assert.equal(isInRollout(100, "daily_empty_day", 20), isInRollout(100, "daily_empty_day", 20));
+test("checks every reminder candidate without rollout cohort filtering", async () => {
+  const sent = [];
+  const users = [
+    { id: 1, telegram_user_id: 100, timezone: "Asia/Bangkok", interface_language: "en", created_at: "2026-06-20T00:00:00Z" },
+    { id: 2, telegram_user_id: 101, timezone: "Asia/Bangkok", interface_language: "ru", created_at: "2026-06-20T00:00:00Z" }
+  ];
+  const service = createDailyReminderService({
+    repository: fakeRepo(users),
+    sendMessage: async (message) => sent.push(message),
+    globalEnabled: true,
+    now: () => new Date("2026-06-25T15:30:00Z")
+  });
+
+  const result = await service.runOnce();
+
+  assert.equal(result.checked, 2);
+  assert.equal(result.sent, 2);
+  assert.deepEqual(sent.map((message) => message.chatId), [100, 101]);
 });
 
 test("sends reminder after 22:00 local time when no activity exists", async () => {
@@ -16,7 +30,6 @@ test("sends reminder after 22:00 local time when no activity exists", async () =
     repository: repo,
     sendMessage: async (message) => sent.push(message),
     globalEnabled: true,
-    rolloutPercent: 100,
     now: () => new Date("2026-06-25T15:30:00Z")
   });
 
@@ -35,14 +48,12 @@ test("does not send before 22:00 local time or when global kill switch is disabl
     repository: fakeRepo([user]),
     sendMessage: async () => {},
     globalEnabled: true,
-    rolloutPercent: 100,
     now: () => new Date("2026-06-25T14:30:00Z")
   }).runOnce();
   const killed = await createDailyReminderService({
     repository: fakeRepo([user]),
     sendMessage: async () => {},
     globalEnabled: false,
-    rolloutPercent: 100,
     now: () => new Date("2026-06-25T15:30:00Z")
   }).runOnce();
 
@@ -62,7 +73,6 @@ test("skips activity, no-spending marks, duplicate delivery, recent delivery and
     repository: fakeRepo(users),
     sendMessage: async () => {},
     globalEnabled: true,
-    rolloutPercent: 100,
     now: () => new Date("2026-06-25T15:30:00Z")
   }).runOnce();
 
@@ -76,7 +86,6 @@ test("logs timezone fallback events and blocked Telegram errors", async () => {
     repository: repo,
     sendMessage: async () => { throw blocked; },
     globalEnabled: true,
-    rolloutPercent: 100,
     now: () => new Date("2026-06-25T15:30:00Z")
   });
 
