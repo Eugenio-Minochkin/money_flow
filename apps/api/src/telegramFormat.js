@@ -13,7 +13,7 @@ export function formatDraft(expenses, options = {}) {
   lines = lines.map((line, index) => line.replace("</b>", `</b>${formatBudgetImpactMarker(expenses[index]?.budget_impact, language)}`));
   const convertedPreview = isConvertedDraftPreview(options.preview, totalCurrency);
   const totalText = singleCurrency
-    ? formatMoney(expenses.reduce((sum, expense) => sum + safeMoneyNumber(expense.amount), 0), totalCurrency, language)
+    ? formatDraftAggregateMoney(expenses.reduce((sum, expense) => sum + safeMoneyNumber(expense.amount), 0), totalCurrency, language)
     : convertedPreview
       ? formatMoney(convertedPreview.total, totalCurrency, language)
       : formatDraftCurrencySubtotals(expenses, language);
@@ -50,7 +50,14 @@ function formatDraftCurrencySubtotals(expenses, language) {
     const currency = expense.currency;
     subtotals.set(currency, (subtotals.get(currency) ?? 0) + safeMoneyNumber(expense.amount));
   }
-  return [...subtotals].map(([currency, amount]) => formatMoney(amount, currency, language)).join(" + ");
+  return [...subtotals].map(([currency, amount]) => formatDraftAggregateMoney(amount, currency, language)).join(" + ");
+}
+
+function formatDraftAggregateMoney(amount, currency, language) {
+  if (!Number.isFinite(amount)) {
+    return language === "en" ? `unavailable ${currency}` : `недоступно ${currency}`;
+  }
+  return formatMoney(amount, currency, language);
 }
 
 function formatDraftUnavailableTotalWarning(baseCurrency, language) {

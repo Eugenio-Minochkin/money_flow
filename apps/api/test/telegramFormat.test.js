@@ -61,7 +61,25 @@ test("does not reduce mixed-currency amounts before grouping their subtotals", (
   ], { language: "en", baseCurrency: "USD" });
 
   assert.match(text, /127,000 IDR \+ 25,000 RUB/);
-  assert.equal(conversions.count, 4);
+  assert.ok(conversions.count < 6, "mixed drafts must not perform an extra raw-total reduction");
+});
+
+test("marks overflowed draft totals unavailable instead of rendering them as zero", () => {
+  const mixed = formatDraft([
+    draftExpense(1e308, "USD"),
+    draftExpense(1e308, "USD"),
+    draftExpense(100, "RUB")
+  ], { language: "en", baseCurrency: "USD" });
+  const singleCurrency = formatDraft([
+    draftExpense(1e308, "USD"),
+    draftExpense(1e308, "USD")
+  ], { language: "en", baseCurrency: "USD" });
+
+  assert.match(mixed, /unavailable USD \+ 100 RUB/);
+  assert.match(mixed, /A reliable total in USD is unavailable/);
+  assert.doesNotMatch(mixed, /<b>Total:<\/b> 0\.00 USD/);
+  assert.match(singleCurrency, /<b>Total:<\/b> unavailable USD/);
+  assert.doesNotMatch(singleCurrency, /<b>Total:<\/b> 0\.00 USD/);
 });
 
 test("formats a draft with total and review warning", () => {
