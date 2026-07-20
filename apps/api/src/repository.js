@@ -2286,6 +2286,29 @@ export function createRepository(pool, options = {}) {
       return result.expenses;
     },
 
+    async prepareDraftPreview(items, user = {}) {
+      const baseCurrency = normalizeCurrency(user.base_currency, "THB");
+      try {
+        let total = 0;
+        for (const item of items) {
+          const moneyAmounts = await buildMoneyAmounts(
+            exchangeRates,
+            item.amount,
+            item.currency,
+            new Date(item.spent_at),
+            { ...user, base_currency: baseCurrency }
+          );
+          total += moneyAmounts.amountBase;
+        }
+        return { kind: "converted", baseCurrency, total: roundMoney(total) };
+      } catch (error) {
+        if (error?.code === "exchange_rate_unavailable") {
+          return { kind: "unavailable", baseCurrency };
+        }
+        throw error;
+      }
+    },
+
     async saveDraftAsExpense(draftId, telegramUserId) {
       const client = await pool.connect();
       try {
@@ -3791,6 +3814,10 @@ function displayThbRate(user) {
 
 function roundMoney(value) {
   return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
+}
+
+export function normalizeMoneyForCurrency(value, currency) {
+  return roundForDisplayCurrency(value, currency);
 }
 
 const ZERO_DECIMAL_DISPLAY_CURRENCIES = ["THB", "RUB", "IDR", "BYN"];

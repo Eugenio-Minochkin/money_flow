@@ -629,7 +629,8 @@ async function route(req, res) {
           miniAppUrl: config.miniAppUrl,
           telegramUserId: auth.telegramUserId,
           language: user.interface_language ?? "en",
-          baseCurrency: user.base_currency ?? "THB",
+          repository,
+          user,
           telegramClient: null
         }).catch((error) => console.error("[server] draft preview update failed", error.message));
       }

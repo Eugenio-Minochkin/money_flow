@@ -92,6 +92,7 @@ This file records stable product and business rules. Read it before changing bud
 - A draft is confirmed exactly once. Repeated or concurrent confirms never create duplicate expenses.
 - Cancel never deletes an already-saved expense.
 - A draft without a valid category cannot be confirmed (parser-fallback `other` is not valid; a user-chosen category, including `other`, is valid).
+- A mixed-currency draft confirmation never adds original amounts across currencies. It shows a total only after each item is converted to the user's base currency through the same date-aware conversion and fallback chain used at confirmation; otherwise it shows per-currency subtotals and no aggregate.
 
 ## Telegram Expense Editor
 

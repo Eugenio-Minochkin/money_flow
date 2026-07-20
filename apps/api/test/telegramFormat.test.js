@@ -12,6 +12,75 @@ import {
   formatWeeklyReport
 } from "../src/telegramFormat.js";
 import { categoryName } from "../../../packages/shared/src/categories.js";
+import { SUPPORTED_CURRENCY_CODES } from "../../../packages/shared/src/currencies.js";
+
+test("shows mixed-currency draft subtotals with an unavailable-total warning", () => {
+  const text = normalizeSpaces(formatDraft(mixedCurrencyExpenses(), {
+    language: "en",
+    baseCurrency: "USD"
+  }));
+
+  assert.doesNotMatch(text, /152,000 USD/);
+  assert.match(text, /127,000 IDR \+ 25,000 RUB/);
+  assert.match(text, /A reliable total in USD is unavailable\. Amounts are shown by currency\./);
+});
+
+test("shows a converted mixed-currency draft preview in the selected locale", () => {
+  const options = {
+    baseCurrency: "GEL",
+    preview: { kind: "converted", baseCurrency: "GEL", total: 245.5 }
+  };
+
+  assert.match(formatDraft(mixedCurrencyExpenses(), { ...options, language: "ru" }), /245,50 GEL/);
+  assert.match(formatDraft(mixedCurrencyExpenses(), { ...options, language: "en" }), /245\.50 GEL/);
+});
+
+test("never labels a raw mixed-currency numeric sum as any base currency without a preview", () => {
+  for (const baseCurrency of SUPPORTED_CURRENCY_CODES) {
+    for (const firstCurrency of SUPPORTED_CURRENCY_CODES) {
+      for (const secondCurrency of SUPPORTED_CURRENCY_CODES) {
+        if (firstCurrency === secondCurrency) continue;
+        const text = normalizeSpaces(formatDraft([
+          draftExpense(127000, firstCurrency),
+          draftExpense(25000, secondCurrency)
+        ], { language: "en", baseCurrency }));
+
+        assert.doesNotMatch(text, new RegExp(`152,000(?:\\.00)? ${baseCurrency}`), `${firstCurrency} + ${secondCurrency} as ${baseCurrency}`);
+        assert.match(text, new RegExp(`\\b${firstCurrency}\\b`));
+        assert.match(text, new RegExp(`\\b${secondCurrency}\\b`));
+      }
+    }
+  }
+});
+
+test("does not reduce mixed-currency amounts before grouping their subtotals", () => {
+  const conversions = { count: 0 };
+  const text = formatDraft([
+    draftExpense(countedAmount(127000, conversions), "IDR"),
+    draftExpense(countedAmount(25000, conversions), "RUB")
+  ], { language: "en", baseCurrency: "USD" });
+
+  assert.match(text, /127,000 IDR \+ 25,000 RUB/);
+  assert.ok(conversions.count < 6, "mixed drafts must not perform an extra raw-total reduction");
+});
+
+test("marks overflowed draft totals unavailable instead of rendering them as zero", () => {
+  const mixed = formatDraft([
+    draftExpense(1e308, "USD"),
+    draftExpense(1e308, "USD"),
+    draftExpense(100, "RUB")
+  ], { language: "en", baseCurrency: "USD" });
+  const singleCurrency = formatDraft([
+    draftExpense(1e308, "USD"),
+    draftExpense(1e308, "USD")
+  ], { language: "en", baseCurrency: "USD" });
+
+  assert.match(mixed, /unavailable USD \+ 100 RUB/);
+  assert.match(mixed, /A reliable total in USD is unavailable/);
+  assert.doesNotMatch(mixed, /<b>Total:<\/b> 0\.00 USD/);
+  assert.match(singleCurrency, /<b>Total:<\/b> unavailable USD/);
+  assert.doesNotMatch(singleCurrency, /<b>Total:<\/b> 0\.00 USD/);
+});
 
 test("formats a draft with total and review warning", () => {
   const text = formatDraft([
@@ -386,6 +455,32 @@ test("food_cafe saved summary shows the food label and never the gifts label", (
 
 function escapeRegExp(text) {
   return String(text ?? "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function mixedCurrencyExpenses() {
+  return [
+    draftExpense(127000, "IDR"),
+    draftExpense(25000, "RUB")
+  ];
+}
+
+function draftExpense(amount, currency) {
+  return {
+    amount,
+    currency,
+    description: "expense",
+    category_slug: "other",
+    spent_at: "2026-06-02T09:30:00+07:00"
+  };
+}
+
+function countedAmount(value, conversions) {
+  return {
+    valueOf() {
+      conversions.count += 1;
+      return value;
+    }
+  };
 }
 
 function normalizeSpaces(value) {
