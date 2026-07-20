@@ -17,7 +17,7 @@
 - Modify: `apps/api/src/telegramFormat.js:3-27`
 - Modify: `apps/api/test/telegramFormat.test.js:14-31`
 
-- [ ] **Step 1: Write failing formatter regressions**
+- [x] **Step 1: Write failing formatter regressions**
 
 Add tests immediately after the basic draft-format test:
 
@@ -49,13 +49,13 @@ test("formats an explicit converted mixed-currency preview in RU and EN", () => 
 
 Import `SUPPORTED_CURRENCY_CODES` from `packages/shared/src/currencies.js` and add one table test for the global contract. For each `baseCurrency` and each distinct pair of supported currencies, call `formatDraft()` without a preview and assert that the text contains both original currencies and does not contain their raw numeric sum followed by the base-currency code. This test deliberately covers `RUB + USD`, `THB + EUR`, `IDR + BYN`, and every other supported pair without duplicating pair-specific fixtures.
 
-- [ ] **Step 2: Run the test and verify RED**
+- [x] **Step 2: Run the test and verify RED**
 
 Run: `node --test apps/api/test/telegramFormat.test.js`
 
 Expected: FAIL because the current formatter emits the raw `152000 USD` sum and ignores `preview`.
 
-- [ ] **Step 3: Implement the explicit formatter contract**
+- [x] **Step 3: Implement the explicit formatter contract**
 
 Replace the unconditional total calculation in `formatDraft()` with this helper. Keep existing escaping and `formatMoney()` unchanged.
 
@@ -85,13 +85,13 @@ function formatDraftTotal(expenses, { language, baseCurrency, preview }) {
 
 Use `const totalLine = formatDraftTotal(...)` in the total row. Only `preview.kind === "converted"` may render a mixed aggregate; `unavailable`, missing, malformed, or wrong-base preview values take the safe subtotal branch.
 
-- [ ] **Step 4: Run formatter tests and verify GREEN**
+- [x] **Step 4: Run formatter tests and verify GREEN**
 
 Run: `node --test apps/api/test/telegramFormat.test.js`
 
 Expected: PASS, including existing single-currency formatting and new RU/EN regressions.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add apps/api/src/telegramFormat.js apps/api/test/telegramFormat.test.js
@@ -105,7 +105,7 @@ git commit -m "fix: prevent raw mixed-currency draft totals"
 - Modify: `apps/api/src/repository.js:39-43,2289-2354,3703-3734`
 - Modify: `apps/api/test/repository.test.js`
 
-- [ ] **Step 1: Write failing deterministic-rate tests**
+- [x] **Step 1: Write failing deterministic-rate tests**
 
 Add a test that injects this rate provider, records every rate date, and calls the new repository method:
 
@@ -130,13 +130,13 @@ assert.deepEqual(preview, { kind: "converted", baseCurrency: "THB", total: 4338 
 
 Add a second test where `ratesFor()` throws an error whose `code` is `exchange_rate_unavailable`; expect exactly `{ kind: "unavailable", baseCurrency: "EUR" }`. Add a third confirmation test with the same rate fake: capture the inserted `amount_base` parameters from `saveDraftAsExpense()` and compare the sum with `preview.total` after normalizing both values to the base currency precision. Import `normalizeMoneyForCurrency` from `repository.js` and use `assert.equal(normalizeMoneyForCurrency(preview.total, "THB"), normalizeMoneyForCurrency(savedTotal, "THB"))`; do not use raw JavaScript-number equality. Repeat the deterministic preview assertion for every supported base currency using an all-supported-currencies rate map.
 
-- [ ] **Step 2: Run the test and verify RED**
+- [x] **Step 2: Run the test and verify RED**
 
 Run: `node --test apps/api/test/repository.test.js`
 
 Expected: FAIL because `prepareDraftPreview` and the precision-normalization helper do not exist.
 
-- [ ] **Step 3: Implement preview preparation beside `saveDraftAsExpense()`**
+- [x] **Step 3: Implement preview preparation beside `saveDraftAsExpense()`**
 
 Add this repository method before `saveDraftAsExpense()`. It deliberately calls the existing `buildMoneyAmounts()` in the same sequential item order and does not invent rates.
 
@@ -167,13 +167,13 @@ async prepareDraftPreview(items, user = {}) {
 
 Export `normalizeMoneyForCurrency(value, currency)` near `roundMoney()`: THB/RUB/IDR/BYN normalize to zero decimals; USD/EUR/GEL normalize to two. Use it only for equality/acceptance assertions and presentation-boundary comparison; keep `amount_base` and `buildMoneyAmounts()` at their current two-decimal storage precision.
 
-- [ ] **Step 4: Run repository tests and verify GREEN**
+- [x] **Step 4: Run repository tests and verify GREEN**
 
 Run: `node --test apps/api/test/repository.test.js`
 
 Expected: PASS. The test proves per-item date use, explicit unavailable behavior, and equality with saved base amounts at currency precision.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add apps/api/src/repository.js apps/api/test/repository.test.js
@@ -190,7 +190,7 @@ git commit -m "feat: prepare draft preview totals through repository"
 - Modify: `apps/api/src/server.js:21-35,623-638`
 - Modify: `apps/api/test/telegram.test.js:3732-3865,4972-5020`
 
-- [ ] **Step 1: Write failing render-helper and redraw tests**
+- [x] **Step 1: Write failing render-helper and redraw tests**
 
 Create `apps/api/test/draftPreview.test.js` with these core tests:
 
@@ -229,13 +229,13 @@ test("does not request conversion for a same-currency draft", async () => {
 
 Extend `telegram.test.js` with a mixed parser result and fake `prepareDraftPreview()`, asserting initial delivery uses its base total. Extend the Mini App draft-message synchronization tests to change amount, currency, and date over three updates; make the fake return a new total each time and assert the Telegram-card edit contains the latest amount.
 
-- [ ] **Step 2: Run focused tests and verify RED**
+- [x] **Step 2: Run focused tests and verify RED**
 
 Run: `node --test apps/api/test/draftPreview.test.js apps/api/test/telegram.test.js`
 
 Expected: FAIL because the helper does not exist and callers still call `formatDraft()` directly.
 
-- [ ] **Step 3: Create the dependency-light renderer**
+- [x] **Step 3: Create the dependency-light renderer**
 
 Create `apps/api/src/draftPreview.js` exactly as follows. It imports the formatter only, never `telegram.js`, `server.js`, or Mini App code.
 
@@ -255,19 +255,19 @@ export async function renderDraftPreview({ repository, user, items = [], languag
 }
 ```
 
-- [ ] **Step 4: Route every draft card through the renderer**
+- [x] **Step 4: Route every draft card through the renderer**
 
 In `telegram.js`, import `renderDraftPreview` and replace every draft-card `formatDraft(...)` use with `await renderDraftPreview({ repository, user, items, language })`. Preserve keyboards, Telegram API calls, and saved-expense formatting. Change `redrawDraft()` to accept `user` rather than only `baseCurrency`.
 
 In `updateDraftMessageToDraftState()`, accept `repository` and `user`, then call the helper before editing Telegram. In `server.js`, pass its already-fetched repository/user to that function after Mini App PATCH. Do not add imports from `server.js` or Mini App modules into `telegram.js` or `draftPreview.js`.
 
-- [ ] **Step 5: Run focused tests and verify GREEN**
+- [x] **Step 5: Run focused tests and verify GREEN**
 
 Run: `node --test apps/api/test/draftPreview.test.js apps/api/test/telegram.test.js apps/api/test/telegramFormat.test.js apps/api/test/repository.test.js`
 
 Expected: PASS. Tests demonstrate initial delivery, callback redraw, editor return, and Mini App synchronization refresh the prepared total; resolver unavailability displays subtotals and warning.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```powershell
 git add apps/api/src/draftPreview.js apps/api/test/draftPreview.test.js apps/api/src/telegram.js apps/api/src/server.js apps/api/test/telegram.test.js
@@ -281,7 +281,7 @@ git commit -m "fix: refresh mixed-currency draft previews"
 - Modify: `docs/DOMAIN_RULES.md:Drafts`
 - Modify: `docs/superpowers/plans/2026-07-20-mixed-currency-draft-preview.md`
 
-- [ ] **Step 1: Add the durable rule**
+- [x] **Step 1: Add the durable rule**
 
 Append this bullet to the `## Drafts` section:
 
@@ -289,13 +289,13 @@ Append this bullet to the `## Drafts` section:
 - A mixed-currency draft confirmation never adds original amounts across currencies. It shows a total only after each item is converted to the user's base currency through the same date-aware conversion and fallback chain used at confirmation; otherwise it shows per-currency subtotals and no aggregate.
 ```
 
-- [ ] **Step 2: Run focused tests**
+- [x] **Step 2: Run focused tests**
 
 Run: `node --test apps/api/test/telegramFormat.test.js apps/api/test/repository.test.js apps/api/test/draftPreview.test.js apps/api/test/telegram.test.js`
 
 Expected: PASS with no live provider request.
 
-- [ ] **Step 3: Run full verification**
+- [x] **Step 3: Run full verification**
 
 Run: `npm.cmd test`
 
@@ -305,7 +305,7 @@ Run: `git diff --check`
 
 Expected: no output and exit code 0.
 
-- [ ] **Step 4: Review scope and PR body**
+- [x] **Step 4: Review scope and PR body**
 
 Confirm the diff contains no migration, backfill, provider-specific rate table, raw mixed-currency sum, or unrelated refactor. The eventual draft PR body must include `Closes #111`, test evidence, no-DB-impact statement, and:
 
