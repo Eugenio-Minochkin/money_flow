@@ -1,25 +1,13 @@
-import { createHash } from "node:crypto";
-
 import { localDateKey, localHour, localPeriodBounds, normalizeTimeZone } from "../../../packages/shared/src/time.js";
 import { isBotBlockedError } from "./releaseNotesService.js";
 import { dailyReminderKeyboard } from "./telegramKeyboards.js";
 
 const REMINDER_TYPE = "daily_empty_day";
 
-export function isInRollout(userId, featureName, percent) {
-  const rolloutPercent = Math.max(0, Math.min(100, Number(percent ?? 0)));
-  if (rolloutPercent <= 0) return false;
-  if (rolloutPercent >= 100) return true;
-  const hash = createHash("sha256").update(`${userId}:${featureName}`).digest();
-  const bucket = hash.readUInt32BE(0) % 100;
-  return bucket < rolloutPercent;
-}
-
 export function createDailyReminderService({
   repository,
   sendMessage,
   globalEnabled = false,
-  rolloutPercent = 0,
   now = () => new Date()
 } = {}) {
   return {
@@ -38,7 +26,6 @@ export function createDailyReminderService({
   };
 
   async function evaluateAndSend(user, current) {
-    if (!isInRollout(user.id, REMINDER_TYPE, rolloutPercent)) return "skipped";
     if (current.getTime() - new Date(user.created_at).getTime() < 24 * 60 * 60_000) return "skipped";
 
     const normalized = normalizeTimeZone(user.timezone);
