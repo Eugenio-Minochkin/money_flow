@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 
 import { parseAdminTelegramIds } from "../src/adminAccess.js";
 import { createExpenseParser } from "../src/expenseParser.js";
@@ -139,6 +140,74 @@ test("text message creates a pending draft response", async () => {
     assert.equal(calls[1][1].replyMarkup.inline_keyboard[0][0].callback_data, "d:42:confirm");
   } finally {
     console.log = originalLog;
+  }
+});
+
+test("initial mixed text and voice drafts use the prepared converted preview", async (t) => {
+  for (const inputType of ["text", "voice"]) {
+    await t.test(inputType, async () => {
+      const calls = [];
+      const previewCalls = [];
+      const repo = fakeRepository();
+      repo.user = { ...repo.user, interface_language: "en", base_currency: "USD" };
+      repo.prepareDraftPreview = async (items, user) => {
+        previewCalls.push({ items, user });
+        return { kind: "converted", baseCurrency: "USD", total: inputType === "text" ? 31.25 : 32.5 };
+      };
+      const expenses = [
+        {
+          amount: 10,
+          currency: "USD",
+          description: "coffee",
+          category_slug: "food_cafe",
+          spent_at: "2026-07-20T08:00:00.000Z",
+          budget_impact: "regular"
+        },
+        {
+          amount: 20,
+          currency: "EUR",
+          description: "lunch",
+          category_slug: "food_cafe",
+          spent_at: "2026-07-20T12:00:00.000Z",
+          budget_impact: "regular"
+        }
+      ];
+      const bot = createTelegramBot({
+        token: "test-token",
+        miniAppUrl: "http://localhost:3000",
+        repository: repo,
+        expenseParser: {
+          async parse() {
+            return { expenses, notes: [] };
+          }
+        },
+        voiceTranscriber: {
+          isConfigured: () => true,
+          async transcribeTelegramVoice() {
+            return "coffee 10 dollars and lunch 20 euros";
+          }
+        },
+        telegramClient: capturingClient(calls)
+      });
+
+      await bot.handleUpdate({
+        message: {
+          chat: { id: 10 },
+          from: { id: 100, first_name: "M" },
+          ...(inputType === "text"
+            ? { text: "coffee 10 dollars and lunch 20 euros" }
+            : { voice: { file_id: "voice-file-id", mime_type: "audio/ogg" } })
+        }
+      });
+
+      assert.equal(previewCalls.length, 1);
+      assert.equal(previewCalls[0].items, expenses);
+      assert.equal(previewCalls[0].user, repo.user);
+      const card = calls.find((call) => /<b>Total:<\/b>/.test(call.text ?? ""));
+      assert.ok(card, "expected a delivered draft card");
+      assert.match(card.text, inputType === "text" ? /31\.25 USD/ : /32\.50 USD/);
+      assert.doesNotMatch(card.text, /reliable total.*unavailable/i);
+    });
   }
 });
 
@@ -2803,6 +2872,78 @@ test("draft category callback (d: scheme) maps quick code to slug, marks user so
   assert.ok(calls.some((call) => call.method === "answerCallbackQuery"));
 });
 
+test("draft callback redraw prepares a fresh mixed-currency total after the update", async () => {
+  const calls = [];
+  const previewItems = [];
+  const repo = fakeRepository();
+  repo.user = { ...repo.user, interface_language: "en", base_currency: "USD" };
+  repo.getDraftForTelegramUser = async () => ({
+    id: 42,
+    status: "pending",
+    items: [
+      { amount: 10, currency: "USD", description: "coffee", category_slug: "other", spent_at: "2026-07-20T08:00:00.000Z" },
+      { amount: 20, currency: "EUR", description: "lunch", category_slug: "other", spent_at: "2026-07-20T12:00:00.000Z" }
+    ]
+  });
+  repo.prepareDraftPreview = async (items) => {
+    previewItems.push(items);
+    return { kind: "converted", baseCurrency: "USD", total: 33.75 };
+  };
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: repo,
+    telegramClient: capturingClient(calls)
+  });
+
+  await bot.handleUpdate(callbackUpdate("d:42:c:food", 100));
+
+  assert.equal(previewItems.length, 1);
+  assert.equal(previewItems[0][0].category_slug, "food_cafe");
+  const edit = calls.find((call) => call.method === "editMessageText");
+  assert.ok(edit);
+  assert.match(edit.text, /<b>Total:<\/b> 33\.75 USD/);
+});
+
+test("returning from the draft editor previews the latest amount, currency, and date data", async (t) => {
+  const baseItems = [
+    { amount: 10, currency: "USD", description: "coffee", category_slug: "food_cafe", spent_at: "2026-07-20T08:00:00.000Z" },
+    { amount: 20, currency: "EUR", description: "lunch", category_slug: "food_cafe", spent_at: "2026-07-20T12:00:00.000Z" }
+  ];
+  const cases = [
+    { name: "amount", items: [{ ...baseItems[0], amount: 15 }, baseItems[1]], total: 35.1 },
+    { name: "currency", items: [baseItems[0], { ...baseItems[1], currency: "RUB" }], total: 36.2 },
+    { name: "date", items: [baseItems[0], { ...baseItems[1], spent_at: "2026-07-19T12:00:00.000Z" }], total: 37.3 }
+  ];
+
+  for (const scenario of cases) {
+    await t.test(scenario.name, async () => {
+      const calls = [];
+      const previewCalls = [];
+      const repo = fakeRepository();
+      repo.user = { ...repo.user, interface_language: "en", base_currency: "USD" };
+      repo.getDraftForTelegramUser = async () => ({ id: 42, status: "pending", items: scenario.items });
+      repo.prepareDraftPreview = async (items, user) => {
+        previewCalls.push({ items, user });
+        return { kind: "converted", baseCurrency: "USD", total: scenario.total };
+      };
+      const bot = createTelegramBot({
+        token: "test-token",
+        miniAppUrl: "http://localhost:3000",
+        repository: repo,
+        telegramClient: capturingClient(calls)
+      });
+
+      await bot.handleUpdate(callbackUpdate("ee:d:42:0:back", 100));
+
+      assert.deepEqual(previewCalls, [{ items: scenario.items, user: repo.user }]);
+      const card = calls.find((call) => call.method === "sendMessage" && /<b>Total:<\/b>/.test(call.text));
+      assert.ok(card);
+      assert.match(card.text, new RegExp(`${scenario.total.toFixed(2).replace(".", "\\.")} USD`));
+    });
+  }
+});
+
 test("draft type callback (d: scheme) updates budget impact and edits in place", async () => {
   const calls = [];
   const repo = fakeRepository();
@@ -4987,6 +5128,102 @@ test("updateDraftMessageToDraftState edits the stored draft preview with the cur
   assert.equal(edit[1].messageId, 9);
   assert.match(edit[1].text, /Еда и кафе/);
   assert.ok(Array.isArray(edit[1].replyMarkup?.inline_keyboard), "expected a draft keyboard");
+});
+
+test("Mini App draft synchronization prepares the latest total after amount, currency, and date changes", async () => {
+  const { updateDraftMessageToDraftState } = await import("../src/telegram.js");
+  const calls = [];
+  const previewCalls = [];
+  const user = { id: 1, base_currency: "USD", interface_language: "en" };
+  const repository = {
+    async prepareDraftPreview(items, passedUser) {
+      previewCalls.push({ items, user: passedUser });
+      const dateBonus = items[1].spent_at.startsWith("2026-07-19") ? 3 : 0;
+      const currencyBonus = items[1].currency === "RUB" ? 2 : 0;
+      return {
+        kind: "converted",
+        baseCurrency: "USD",
+        total: items[0].amount + items[1].amount + dateBonus + currencyBonus
+      };
+    }
+  };
+  const telegramClient = {
+    editMessageText: async (args) => { calls.push(args); return { ok: true }; },
+    sendMessage: async () => { throw new Error("sendMessage should not be called"); },
+    editMessageReplyMarkup: async () => { throw new Error("editMessageReplyMarkup should not be called"); }
+  };
+  const original = [
+    { amount: 10, currency: "USD", category_slug: "food_cafe", description: "coffee", spent_at: "2026-07-20T08:00:00.000Z" },
+    { amount: 20, currency: "EUR", category_slug: "food_cafe", description: "lunch", spent_at: "2026-07-20T12:00:00.000Z" }
+  ];
+  const revisions = [
+    [{ ...original[0], amount: 15 }, original[1]],
+    [{ ...original[0], amount: 15 }, { ...original[1], currency: "RUB" }],
+    [{ ...original[0], amount: 15 }, { ...original[1], currency: "RUB", spent_at: "2026-07-19T12:00:00.000Z" }]
+  ];
+
+  for (const items of revisions) {
+    await updateDraftMessageToDraftState({
+      token: null,
+      draft: { id: 7, tg_chat_id: 5, tg_message_id: 9 },
+      items,
+      miniAppUrl: "http://x",
+      telegramUserId: 100,
+      language: "en",
+      repository,
+      user,
+      telegramClient
+    });
+  }
+
+  assert.deepEqual(previewCalls, revisions.map((items) => ({ items, user })));
+  assert.match(calls[0].text, /<b>Total:<\/b> 35\.00 USD/);
+  assert.match(calls[1].text, /<b>Total:<\/b> 37\.00 USD/);
+  assert.match(calls[2].text, /<b>Total:<\/b> 40\.00 USD/);
+});
+
+test("Mini App mixed-draft synchronization safely renders unavailable subtotals", async () => {
+  const { updateDraftMessageToDraftState } = await import("../src/telegram.js");
+  const calls = [];
+  const repository = {
+    async prepareDraftPreview() {
+      return { kind: "unavailable", baseCurrency: "USD" };
+    }
+  };
+  const items = [
+    { amount: 10, currency: "USD", category_slug: "food_cafe", description: "coffee", spent_at: "2026-07-20T08:00:00.000Z" },
+    { amount: 20, currency: "EUR", category_slug: "food_cafe", description: "lunch", spent_at: "2026-07-20T12:00:00.000Z" }
+  ];
+  const telegramClient = {
+    editMessageText: async (args) => { calls.push(args); return { ok: true }; },
+    sendMessage: async () => { throw new Error("sendMessage should not be called"); },
+    editMessageReplyMarkup: async () => { throw new Error("editMessageReplyMarkup should not be called"); }
+  };
+
+  await updateDraftMessageToDraftState({
+    token: null,
+    draft: { id: 7, tg_chat_id: 5, tg_message_id: 9 },
+    items,
+    miniAppUrl: "http://x",
+    telegramUserId: 100,
+    language: "en",
+    repository,
+    user: { base_currency: "USD" },
+    telegramClient
+  });
+
+  assert.match(calls[0].text, /10\.00 USD \+ 20\.00 EUR/);
+  assert.match(calls[0].text, /A reliable total in USD is unavailable/);
+  assert.doesNotMatch(calls[0].text, /<b>Total:<\/b> 30\.00 USD/);
+});
+
+test("Mini App PATCH wiring passes the fetched repository and user to draft synchronization", async () => {
+  const source = await readFile(new URL("../src/server.js", import.meta.url), "utf8");
+  const callStart = source.indexOf("await updateDraftMessageToDraftState({");
+
+  assert.notEqual(callStart, -1);
+  const invocation = source.slice(callStart, source.indexOf("});", callStart) + 3);
+  assert.match(invocation, /\brepository,\s*\n\s*user,/);
 });
 
 test("updateDraftMessageToDraftState is a no-op without a stored reference", async () => {

@@ -17,7 +17,8 @@ import { formatProductStatsSections } from "./productStatsService.js";
 import { formatTechnicalStatsSections } from "./technicalStatsService.js";
 import { createExpenseExportService } from "./expenseExportService.js";
 import { createTelegramJobQueue } from "./telegramJobQueue.js";
-import { formatBudgetTopupDraft, formatBudgetTopupSuccess, formatBudgetTopupUndoSuccess, formatDraft, formatPlannedDraft, formatReserveClosedEvent, formatSavedSummary, formatTotals, formatWeeklyReport } from "./telegramFormat.js";
+import { renderDraftPreview } from "./draftPreview.js";
+import { formatBudgetTopupDraft, formatBudgetTopupSuccess, formatBudgetTopupUndoSuccess, formatPlannedDraft, formatReserveClosedEvent, formatSavedSummary, formatTotals, formatWeeklyReport } from "./telegramFormat.js";
 import { appKeyboard, budgetTopupDraftKeyboard, budgetTopupMiniAppKeyboard, budgetTopupSuccessKeyboard, draftKeyboard, inboxDraftKeyboard, plannedDraftKeyboard, savedExpenseKeyboard, parseBudgetTopupCallback, parseDraftCallback, categorySlugFromCode } from "./telegramKeyboards.js";
 import { DraftCanceledError, CategoryRequiredError } from "./repository.js";
 import { normalizeAcquisitionSource } from "./productAnalytics.js";
@@ -617,7 +618,7 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
         token,
         chatId,
         loaderMessageId: loader.messageId,
-        text: formatDraft(parsed.expenses, { language, baseCurrency: user.base_currency ?? "THB" }),
+        text: await renderDraftPreview({ repository, user, items: parsed.expenses, language }),
         replyMarkup: draftKeyboard(draft.id, parsed.expenses, miniAppUrl, from.id, language),
         telegramClient,
         trace
@@ -1548,10 +1549,9 @@ async function handleExpenseEditorCallback({ callback, parsed, repository, token
         savedExpenseKeyboard(target.expense.id, miniAppUrl, telegramUserId, language), telegramClient
       );
     }
-    const baseCurrency = user?.base_currency ?? "THB";
     return sendMessage(
       token, callback.message.chat.id,
-      formatDraft(target.draft.items, { language, baseCurrency }),
+      await renderDraftPreview({ repository, user, items: target.draft.items, language }),
       draftKeyboard(target.draft.id, target.draft.items, miniAppUrl, telegramUserId, language), telegramClient
     );
   }
@@ -1759,7 +1759,7 @@ export async function handleCallback({ update, repository, token, miniAppUrl, te
     trace.end("db_save");
     return sendTelegramResponse(trace, async () => {
       await answerCallback(token, callback.id, botText(language, "categoryUpdatedCallback"), telegramClient);
-      return sendMessage(token, callback.message.chat.id, formatDraft(updated.items, { language, baseCurrency: user?.base_currency ?? "THB" }), draftKeyboard(updated.id, updated.items, miniAppUrl, telegramUserId, language), telegramClient);
+      return sendMessage(token, callback.message.chat.id, await renderDraftPreview({ repository, user, items: updated.items, language }), draftKeyboard(updated.id, updated.items, miniAppUrl, telegramUserId, language), telegramClient);
     });
   }
 
@@ -1773,7 +1773,7 @@ export async function handleCallback({ update, repository, token, miniAppUrl, te
     trace.end("db_save");
     return sendTelegramResponse(trace, async () => {
       await answerCallback(token, callback.id, botText(language, "amountUpdatedCallback"), telegramClient);
-      return sendMessage(token, callback.message.chat.id, formatDraft(updated.items, { language, baseCurrency: user?.base_currency ?? "THB" }), draftKeyboard(updated.id, updated.items, miniAppUrl, telegramUserId, language), telegramClient);
+      return sendMessage(token, callback.message.chat.id, await renderDraftPreview({ repository, user, items: updated.items, language }), draftKeyboard(updated.id, updated.items, miniAppUrl, telegramUserId, language), telegramClient);
     });
   }
 
@@ -1784,7 +1784,7 @@ export async function handleCallback({ update, repository, token, miniAppUrl, te
     const items = updateDraftItem(draft, Number(itemIndex), { budget_impact: impact });
     const updated = await repository.updateDraftItems(draftId, telegramUserId, items);
     trace.end("db_save");
-    const text = formatDraft(updated.items, { language, baseCurrency: user?.base_currency ?? "THB" });
+    const text = await renderDraftPreview({ repository, user, items: updated.items, language });
     const replyMarkup = draftKeyboard(updated.id, updated.items, miniAppUrl, telegramUserId, language);
     return sendTelegramResponse(trace, async () => {
       await answerCallback(token, callback.id, language === "ru" ? "Тип обновлен" : "Type updated", telegramClient);
@@ -1913,7 +1913,6 @@ async function handleDraftCallback({ callback, parsed, repository, token, miniAp
     });
   }
   if (parsed.action === "type" || parsed.action === "category") {
-    const baseCurrency = user?.base_currency ?? "THB";
     const draft = await repository.getDraftForTelegramUser(parsed.draftId, telegramUserId);
     let items;
     let toast;
@@ -1933,12 +1932,12 @@ async function handleDraftCallback({ callback, parsed, repository, token, miniAp
       toast = botText(language, "categoryUpdatedCallback");
     }
     const updated = await repository.updateDraftItems(parsed.draftId, telegramUserId, items);
-    return redrawDraft(trace, token, telegramClient, callback, updated, language, miniAppUrl, telegramUserId, baseCurrency, toast);
+    return redrawDraft(trace, token, telegramClient, callback, updated, language, miniAppUrl, telegramUserId, repository, user, toast);
   }
 }
 
-async function redrawDraft(trace, token, telegramClient, callback, updated, language, miniAppUrl, telegramUserId, baseCurrency, toast) {
-  const text = formatDraft(updated.items, { language, baseCurrency });
+async function redrawDraft(trace, token, telegramClient, callback, updated, language, miniAppUrl, telegramUserId, repository, user, toast) {
+  const text = await renderDraftPreview({ repository, user, items: updated.items, language });
   const replyMarkup = draftKeyboard(updated.id, updated.items, miniAppUrl, telegramUserId, language);
   return sendTelegramResponse(trace, async () => {
     await answerCallback(token, callback.id, toast, telegramClient).catch(() => {});
@@ -2279,14 +2278,14 @@ export async function updateTelegramMessageAfterExpenseDelete({ token, draft, re
   await updateDraftMessageToSaved({ token, draft, text, replyMarkup, telegramClient });
 }
 
-export async function updateDraftMessageToDraftState({ token, draft, items, miniAppUrl, telegramUserId, language, baseCurrency, telegramClient }) {
+export async function updateDraftMessageToDraftState({ token, draft, items, miniAppUrl, telegramUserId, language, repository, user, telegramClient }) {
   const chatId = draft?.tg_chat_id;
   const messageId = draft?.tg_message_id;
   if (!chatId || !messageId) {
     console.log("[telegram] no stored message reference for draft", draft?.id);
     return;
   }
-  const text = formatDraft(items ?? [], { language, baseCurrency: baseCurrency ?? "THB" });
+  const text = await renderDraftPreview({ repository, user, items: items ?? [], language });
   const replyMarkup = draftKeyboard(draft.id, items ?? [], miniAppUrl, telegramUserId, language);
   try {
     await editMessageText(token, chatId, messageId, text, replyMarkup, telegramClient);
