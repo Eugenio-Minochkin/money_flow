@@ -73,6 +73,56 @@ test("same-currency draft does not request repository conversion", async () => {
   assert.match(text, /<b>Total:<\/b> 150 THB/);
 });
 
+test("same currency with different casing renders one normalized total without conversion", async () => {
+  let repositoryCalls = 0;
+  const items = [
+    { ...mixedItems[0], currency: "usd", amount: 10 },
+    { ...mixedItems[1], currency: "USD", amount: 20 }
+  ];
+
+  const text = await renderDraftPreview({
+    repository: {
+      async prepareDraftPreview() {
+        repositoryCalls += 1;
+        throw new Error("normalized same-currency draft must not request conversion");
+      }
+    },
+    user: { base_currency: "USD" },
+    items,
+    language: "en"
+  });
+
+  assert.equal(repositoryCalls, 0);
+  assert.match(text, /<b>Total:<\/b> 30\.00 USD/);
+  assert.doesNotMatch(text, /10\.00 USD \+ 20\.00 USD/);
+  assert.doesNotMatch(text, /reliable total.*unavailable/i);
+});
+
+test("missing draft currency defaults to THB consistently for detection and formatting", async () => {
+  let repositoryCalls = 0;
+  const items = [
+    { ...mixedItems[0], currency: undefined, amount: 10 },
+    { ...mixedItems[1], currency: "THB", amount: 20 }
+  ];
+
+  const text = await renderDraftPreview({
+    repository: {
+      async prepareDraftPreview() {
+        repositoryCalls += 1;
+        throw new Error("default-THB same-currency draft must not request conversion");
+      }
+    },
+    user: { base_currency: "THB" },
+    items,
+    language: "en"
+  });
+
+  assert.equal(repositoryCalls, 0);
+  assert.match(text, /<b>Total:<\/b> 30 THB/);
+  assert.doesNotMatch(text, /10 THB \+ 20 THB/);
+  assert.doesNotMatch(text, /reliable total.*unavailable/i);
+});
+
 test("unavailable mixed preview renders subtotals and warning without an aggregate", async () => {
   const repository = {
     async prepareDraftPreview() {
