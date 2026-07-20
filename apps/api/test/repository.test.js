@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 
 import { createExchangeRateProvider } from "../src/exchangeRates.js";
 import { createRepository, shouldInvalidateExpenseSnapshot } from "../src/repository.js";
+import * as repositoryModule from "../src/repository.js";
 import { formatSavedSummary } from "../src/telegramFormat.js";
 
 test("records app events with JSON metadata", async () => {
@@ -4949,6 +4950,102 @@ function fixedRates() {
     }
   };
 }
+
+test("prepareDraftPreview converts dated items sequentially with their own rates", async () => {
+  const dates = [];
+  const exchangeRates = {
+    async ratesFor(date) {
+      const key = date.toISOString().slice(0, 10);
+      dates.push(key);
+      return key === "2026-06-01"
+        ? { source: "test-rates", THB: { THB: 1 }, USD: { THB: 32 }, RUB: { THB: 0.4 }, IDR: { THB: 0.002 }, BYN: { THB: 10 }, EUR: { THB: 36 }, GEL: { THB: 12 } }
+        : { source: "test-rates", THB: { THB: 1 }, USD: { THB: 33 }, RUB: { THB: 0.4 }, IDR: { THB: 0.002 }, BYN: { THB: 10 }, EUR: { THB: 36 }, GEL: { THB: 12 } };
+    }
+  };
+  const repo = createRepository(fakePool(() => ({ rows: [] })), { exchangeRates });
+
+  const preview = await repo.prepareDraftPreview([
+    { amount: 10, currency: "USD", spent_at: "2026-06-01T10:00:00.000Z" },
+    { amount: 20, currency: "USD", spent_at: "2026-06-02T10:00:00.000Z" }
+  ], { base_currency: "THB" });
+
+  assert.deepEqual(dates, ["2026-06-01", "2026-06-02"]);
+  assert.deepEqual(preview, { kind: "converted", baseCurrency: "THB", total: 980 });
+});
+
+test("prepareDraftPreview supports every currency as its base currency", async () => {
+  const exchangeRates = {
+    async ratesFor() {
+      return { source: "test-rates", THB: { THB: 1 }, USD: { THB: 32 }, RUB: { THB: 0.4 }, IDR: { THB: 0.002 }, BYN: { THB: 10 }, EUR: { THB: 36 }, GEL: { THB: 12 } };
+    }
+  };
+  const repo = createRepository(fakePool(() => ({ rows: [] })), { exchangeRates });
+
+  for (const baseCurrency of ["THB", "USD", "RUB", "IDR", "BYN", "EUR", "GEL"]) {
+    const preview = await repo.prepareDraftPreview([
+      { amount: 12.34, currency: baseCurrency, spent_at: "2026-06-01T10:00:00.000Z" }
+    ], { base_currency: baseCurrency });
+    assert.deepEqual(preview, { kind: "converted", baseCurrency, total: 12.34 });
+  }
+});
+
+test("prepareDraftPreview returns unavailable only for unavailable exchange rates", async () => {
+  const unavailable = Object.assign(new Error("rates unavailable"), { code: "exchange_rate_unavailable" });
+  const unavailableRepo = createRepository(fakePool(() => ({ rows: [] })), {
+    exchangeRates: { async ratesFor() { throw unavailable; } }
+  });
+  const item = { amount: 10, currency: "USD", spent_at: "2026-06-01T10:00:00.000Z" };
+
+  assert.deepEqual(
+    await unavailableRepo.prepareDraftPreview([item], { base_currency: "EUR" }),
+    { kind: "unavailable", baseCurrency: "EUR" }
+  );
+
+  const genericError = new Error("unexpected provider failure");
+  const genericFailureRepo = createRepository(fakePool(() => ({ rows: [] })), {
+    exchangeRates: { async ratesFor() { throw genericError; } }
+  });
+  await assert.rejects(() => genericFailureRepo.prepareDraftPreview([item]), genericError);
+});
+
+test("prepareDraftPreview matches amount_base saved by saveDraftAsExpense at presentation precision", async () => {
+  const rates = { source: "test-rates", THB: { THB: 1 }, USD: { THB: 32.65 }, RUB: { THB: 0.4 }, IDR: { THB: 0.002 }, BYN: { THB: 10 }, EUR: { THB: 36 }, GEL: { THB: 12 } };
+  const exchangeRates = { async ratesFor() { return rates; } };
+  const items = [
+    { amount: 10, currency: "USD", description: "coffee", category_slug: "food_cafe", budget_impact: "regular", needs_review: false, category_source: "parser", tags: [], spent_at: "2026-06-01T10:00:00.000Z" },
+    { amount: 20, currency: "EUR", description: "lunch", category_slug: "food_cafe", budget_impact: "regular", needs_review: false, category_source: "parser", tags: [], spent_at: "2026-06-02T10:00:00.000Z" }
+  ];
+  const insertedAmountBases = [];
+  const client = {
+    async query(sql, params = []) {
+      const query = String(sql);
+      if (query === "BEGIN" || query === "COMMIT" || query === "ROLLBACK") return { rows: [] };
+      if (query.includes("FOR UPDATE")) return { rows: [{ id: 7, user_id: 1, status: "pending", base_currency: "THB", items }] };
+      if (query.includes("INSERT INTO expenses")) {
+        insertedAmountBases.push(params[4]);
+        return { rows: [{ id: insertedAmountBases.length, amount_base: params[4] }] };
+      }
+      if (query.includes("status = 'confirmed'")) return { rows: [] };
+      throw new Error(`Unexpected SQL: ${query}`);
+    },
+    release() {}
+  };
+  const pool = {
+    async connect() { return client; },
+    async query() { return { rows: [] }; }
+  };
+  const repo = createRepository(pool, { exchangeRates });
+  repo.dashboard = async () => ({ snapshot: { baseCurrency: "THB" } });
+
+  const preview = await repo.prepareDraftPreview(items, { base_currency: "THB" });
+  await repo.saveDraftAsExpense(7, 100);
+
+  const savedTotal = insertedAmountBases.reduce((sum, amountBase) => sum + Number(amountBase), 0);
+  assert.equal(
+    repositoryModule.normalizeMoneyForCurrency(preview.total, "THB"),
+    repositoryModule.normalizeMoneyForCurrency(savedTotal, "THB")
+  );
+});
 
 test("normalizeDraftItem preserves category_source parser/user and defaults to null", async () => {
   const { createRepository } = await import("../src/repository.js");
