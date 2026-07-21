@@ -6,6 +6,7 @@ import { parseAdminTelegramIds } from "../src/adminAccess.js";
 import { createExpenseParser } from "../src/expenseParser.js";
 import { createTelegramBot, processQueuedMessage, sendTelegramMessage, sendWeeklyReports } from "../src/telegram.js";
 import { buildTelegramCommandMenu } from "../src/telegramCommands.js";
+import { CategoryRequiredError, DraftCanceledError } from "../src/repository.js";
 
 test("exports the Telegram message sender used by the production server", async () => {
   const calls = [];
@@ -1256,7 +1257,7 @@ test("confirm callback saves draft and returns an informative summary", async ()
     });
 
     assert.equal(repo.confirmedDraftId, "42");
-    assert.deepEqual(repo.events, [
+    assert.deepEqual(repo.events.filter((event) => event.eventName !== "draft_confirm_processing_completed"), [
       { userId: 1, eventName: "expense_draft_confirmed", metadata: { draftType: "regular" } },
       { userId: 1, eventName: "expense_saved", metadata: { draftType: "regular" } }
     ]);
@@ -1269,6 +1270,191 @@ test("confirm callback saves draft and returns an informative summary", async ()
   } finally {
     console.log = originalLog;
   }
+});
+
+test("regular draft confirmation acknowledges before saving, delivers before background work, and records safe diagnostics", async () => {
+  const order = [];
+  const repo = fakeRepository();
+  repo.saveDraftAsExpense = async () => {
+    order.push("save");
+    return { expenses: [{ id: 71, amount_base: 75 }], dashboardSnapshot: null, alreadySaved: false };
+  };
+  repo.closeTelegramInputSessionForTarget = async () => {
+    order.push("cleanup");
+    return { outcome: "closed", session: null };
+  };
+  repo.recordAppEvent = async (userId, eventName, metadata) => {
+    order.push(eventName === "draft_confirm_processing_completed" ? "diagnostic" : `event:${eventName}`);
+    repo.events.push({ userId, eventName, metadata });
+  };
+  const calls = [];
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: repo,
+    telegramClient: {
+      async answerCallbackQuery(message) { order.push("ack"); calls.push({ method: "answerCallbackQuery", ...message }); return { ok: true }; },
+      async editMessageText(message) { order.push("terminal"); calls.push({ method: "editMessageText", ...message }); return { ok: true }; },
+      async sendMessage(message) { order.push("terminal"); calls.push({ method: "sendMessage", ...message }); return { ok: true }; },
+      async deleteMessage() { return { ok: true }; }
+    }
+  });
+
+  await bot.handleUpdate({ callback_query: {
+    id: "callback-latency", data: "confirm:42", from: { id: 100 }, message: { chat: { id: 10 }, message_id: 55 }
+  } });
+
+  assert.equal(calls.filter((call) => call.method === "answerCallbackQuery").length, 1);
+  assert.equal(calls[0].text, "Сохраняю…");
+  assert.ok(order.indexOf("ack") < order.indexOf("save"));
+  assert.ok(order.indexOf("terminal") < order.indexOf("event:expense_draft_confirmed"));
+  assert.ok(order.indexOf("terminal") < order.indexOf("cleanup"));
+  assert.ok(order.indexOf("diagnostic") > order.indexOf("cleanup"));
+  const diagnostic = repo.events.find((event) => event.eventName === "draft_confirm_processing_completed");
+  assert.equal(diagnostic.userId, null);
+  assert.deepEqual(Object.keys(diagnostic.metadata).sort(), [
+    "callbackAckMs", "callbackAckSucceeded", "cleanupMs", "dbSaveMs", "expenseCount", "outcome",
+    "source", "summaryBuildMs", "telegramUpdateMode", "telegramUpdateMs", "telegramUpdateSucceeded", "totalMs", "userResultMs"
+  ]);
+  assert.equal(diagnostic.metadata.outcome, "success");
+  assert.equal(diagnostic.metadata.expenseCount, 1);
+});
+
+test("regular draft confirmation preserves the card for retryable persistence failures", async () => {
+  for (const error of [new CategoryRequiredError(), new Error("database unavailable")]) {
+    const repo = fakeRepository();
+    repo.saveDraftAsExpense = async () => { throw error; };
+    let closed = 0;
+    repo.closeTelegramInputSessionForTarget = async () => { closed += 1; return { outcome: "closed" }; };
+    const calls = [];
+    const bot = createTelegramBot({ token: "test-token", miniAppUrl: "http://localhost:3000", repository: repo, telegramClient: capturingClient(calls) });
+
+    await assert.doesNotReject(() => bot.handleUpdate({ callback_query: {
+      id: `callback-${error.name}`, data: "d:42:confirm", from: { id: 100 }, message: { chat: { id: 10 }, message_id: 55 }
+    } }));
+
+    assert.equal(calls.filter((call) => call.method === "answerCallbackQuery").length, 1);
+    assert.equal(calls.some((call) => call.method === "editMessageText"), false);
+    assert.equal(closed, 0);
+    assert.equal(calls.filter((call) => call.method === "sendMessage").length, 1);
+  }
+});
+
+test("regular draft cancellation gets one early acknowledgement and terminalizes its card", async () => {
+  const repo = fakeRepository();
+  repo.saveDraftAsExpense = async () => { throw new DraftCanceledError(); };
+  const calls = [];
+  const bot = createTelegramBot({ token: "test-token", miniAppUrl: "http://localhost:3000", repository: repo, telegramClient: capturingClient(calls) });
+
+  await bot.handleUpdate({ callback_query: {
+    id: "callback-cancelled-confirm", data: "confirm:42", from: { id: 100 }, message: { chat: { id: 10 }, message_id: 55 }
+  } });
+
+  assert.equal(calls.filter((call) => call.method === "answerCallbackQuery").length, 1);
+  assert.ok(calls.some((call) => call.method === "editMessageText" && /Черновик отменён|Draft canceled/.test(call.text)));
+});
+
+test("a failed early acknowledgement and terminal delivery do not change a committed confirmation outcome", async () => {
+  const repo = fakeRepository();
+  let saveCalls = 0;
+  repo.saveDraftAsExpense = async () => {
+    saveCalls += 1;
+    return { expenses: [{ id: 71, amount_base: 75 }], dashboardSnapshot: null, alreadySaved: false };
+  };
+  const diagnosticEvents = [];
+  repo.recordAppEvent = async (userId, eventName, metadata) => {
+    if (eventName === "draft_confirm_processing_completed") diagnosticEvents.push({ userId, metadata });
+  };
+  const calls = [];
+  const bot = createTelegramBot({
+    token: "test-token", miniAppUrl: "http://localhost:3000", repository: repo,
+    telegramClient: {
+      async answerCallbackQuery(message) { calls.push({ method: "answerCallbackQuery", ...message }); throw new Error("ack unavailable"); },
+      async editMessageText(message) { calls.push({ method: "editMessageText", ...message }); throw new Error("edit unavailable"); },
+      async editMessageReplyMarkup() { throw new Error("markup unavailable"); },
+      async sendMessage(message) { calls.push({ method: "sendMessage", ...message }); throw new Error("send unavailable"); },
+      async deleteMessage() { return { ok: true }; }
+    }
+  });
+
+  await assert.doesNotReject(() => bot.handleUpdate({ callback_query: {
+    id: "callback-delivery-failed", data: "confirm:42", from: { id: 100 }, message: { chat: { id: 10 }, message_id: 55 }
+  } }));
+
+  assert.equal(saveCalls, 1);
+  assert.equal(calls.filter((call) => call.method === "answerCallbackQuery").length, 1);
+  assert.equal(diagnosticEvents.length, 1);
+  assert.equal(diagnosticEvents[0].userId, null);
+  assert.equal(diagnosticEvents[0].metadata.outcome, "success");
+  assert.equal(diagnosticEvents[0].metadata.callbackAckSucceeded, false);
+  assert.equal(diagnosticEvents[0].metadata.telegramUpdateMode, "failed");
+  assert.equal(diagnosticEvents[0].metadata.telegramUpdateSucceeded, false);
+});
+
+test("category-required confirmation leaves the card and editor session available for a successful retry", async () => {
+  const repo = fakeRepository();
+  let attempts = 0;
+  let closed = 0;
+  repo.saveDraftAsExpense = async () => {
+    attempts += 1;
+    if (attempts === 1) throw new CategoryRequiredError();
+    return { expenses: [{ id: 71, amount_base: 75 }], dashboardSnapshot: null, alreadySaved: false };
+  };
+  repo.closeTelegramInputSessionForTarget = async () => {
+    closed += 1;
+    return { outcome: "closed", session: null };
+  };
+  const calls = [];
+  const bot = createTelegramBot({ token: "test-token", miniAppUrl: "http://localhost:3000", repository: repo, telegramClient: capturingClient(calls) });
+  const update = { callback_query: {
+    id: "callback-category-retry", data: "confirm:42", from: { id: 100 }, message: { chat: { id: 10 }, message_id: 55 }
+  } };
+
+  await bot.handleUpdate(update);
+  assert.equal(calls.some((call) => call.method === "editMessageText"), false);
+  assert.equal(closed, 0);
+  await bot.handleUpdate(update);
+
+  assert.equal(attempts, 2);
+  assert.equal(closed, 1);
+  assert.ok(calls.some((call) => call.method === "editMessageText"));
+  assert.equal(calls.filter((call) => call.method === "answerCallbackQuery").length, 2);
+});
+
+test("confirmation absorbs analytics, cleanup, and diagnostic failures without unhandled rejections", async () => {
+  const repo = fakeRepository();
+  repo.saveDraftAsExpense = async () => ({
+    expenses: [{ id: 71, amount_base: 75 }, { id: 72, amount_base: 125 }], dashboardSnapshot: null, alreadySaved: false
+  });
+  let eventAttempts = 0;
+  repo.recordAppEvent = async () => {
+    eventAttempts += 1;
+    throw new Error("event store unavailable");
+  };
+  repo.closeTelegramInputSessionForTarget = async () => { throw new Error("cleanup unavailable"); };
+  const calls = [];
+  const unhandled = [];
+  const onUnhandled = (reason) => unhandled.push(reason);
+  process.on("unhandledRejection", onUnhandled);
+  const originalWarn = console.warn;
+  const originalError = console.error;
+  console.warn = () => {};
+  console.error = () => {};
+  try {
+    const bot = createTelegramBot({ token: "test-token", miniAppUrl: "http://localhost:3000", repository: repo, telegramClient: capturingClient(calls) });
+    await assert.doesNotReject(() => bot.handleUpdate({ callback_query: {
+      id: "callback-background-failures", data: "confirm:42", from: { id: 100 }, message: { chat: { id: 10 }, message_id: 55 }
+    } }));
+    await new Promise((resolve) => setImmediate(resolve));
+  } finally {
+    console.warn = originalWarn;
+    console.error = originalError;
+    process.off("unhandledRejection", onUnhandled);
+  }
+
+  assert.ok(calls.some((call) => call.method === "editMessageText"));
+  assert.equal(eventAttempts, 4);
+  assert.deepEqual(unhandled, []);
 });
 
 test("confirm callback edits the original draft message into saved summary with expense actions", async () => {
@@ -1322,7 +1508,7 @@ test("confirm callback edits the original draft message into saved summary with 
     ["http://localhost:3000?telegramUserId=100"]
   ]);
   const answer = calls.find((call) => call.method === "answerCallbackQuery");
-  assert.equal(answer?.text, "Сохранено");
+  assert.equal(answer?.text, "Сохраняю…");
   assert.equal(calls.some((call) => call.method === "sendMessage" && /Записал|Saved/.test(call.text)), false);
 });
 
@@ -2994,7 +3180,7 @@ test("draft type callback (d: scheme) only toasts when the selected impact is un
   assert.ok(calls.some((call) => call.method === "answerCallbackQuery" && /Уже выбрано|Already selected/.test(call.text)));
 });
 
-test("draft confirm callback (d: scheme) shows already-saved toast and skips save events when alreadySaved", async () => {
+test("draft confirm callback (d: scheme) acknowledges saving and skips save events when alreadySaved", async () => {
   const calls = [];
   const repo = fakeRepository();
   repo.saveDraftAsExpense = async () => {
@@ -3023,7 +3209,7 @@ test("draft confirm callback (d: scheme) shows already-saved toast and skips sav
 
   const answer = calls.find((call) => call.method === "answerCallbackQuery");
   assert.ok(answer);
-  assert.equal(answer.text, "Уже сохранено");
+  assert.equal(answer.text, "Сохраняю…");
   assert.equal(repo.events.some((event) => event.eventName === "expense_saved"), false);
   assert.equal(repo.events.some((event) => event.eventName === "expense_draft_confirmed"), false);
 });
