@@ -56,6 +56,18 @@ const NUMBER_WORD_TOKENS = new Set([
   "тысяча", "тысячи", "тысяч", "миллион", "миллиона", "миллионов", "миллиард", "миллиарда", "миллиардов"
 ]);
 const NUMBER_WORD_CONNECTORS = new Set(["and", "и"]);
+const RU_NUMBER_MORPHOLOGY_PATTERNS = [
+  /^одн(?:а|о|у|ой|ою|е|и|их|им|ими|ого|ому)$/u,
+  /^полтор(?:а|ы|у|ой|ою|ых|ым|ыми)$/u,
+  /^дв(?:а|е|ух|ум|умя|оих|оим|оими)$/u,
+  /^тр(?:и|ех|ёх|ем|ём|емя)$/u,
+  /^четыр(?:е|ех|ёх|ем|ём|ьмя)$/u,
+  /^(?:пят|шест|сем|восем|девят|десят)(?:ь|и|ью)$/u,
+  /^(?:одиннадцат|двенадцат|тринадцат|четырнадцат|пятнадцат|шестнадцат|семнадцат|восемнадцат|девятнадцат|двадцат|тридцат)(?:ь|и|ью)$/u,
+  /^тысяч(?:а|у|и|е|ей|ам|ами|ах)?$/u,
+  /^миллион(?:а|у|ом|е|ы|ов|ам|ами|ах)?$/u,
+  /^миллиард(?:а|у|ом|е|ы|ов|ам|ами|ах)?$/u
+];
 
 export function normalizeAuditThresholds(input = {}) {
   const thresholds = {
@@ -263,27 +275,42 @@ function formatCandidate(aggregate, thresholds, { confirmedQualified, reviewOnly
 function removeNumberWordSequences(tokens) {
   const filtered = [];
   for (let index = 0; index < tokens.length;) {
-    if (!NUMBER_WORD_TOKENS.has(tokens[index])) {
+    if (!isNumberWordToken(tokens[index])) {
       filtered.push(tokens[index]);
       index += 1;
       continue;
     }
 
+    const sequenceStart = index;
+    let numberWordCount = 1;
     index += 1;
     while (index < tokens.length) {
-      if (NUMBER_WORD_TOKENS.has(tokens[index])) {
+      if (isNumberWordToken(tokens[index])) {
+        numberWordCount += 1;
         index += 1;
         continue;
       }
       if (NUMBER_WORD_CONNECTORS.has(tokens[index])
-          && NUMBER_WORD_TOKENS.has(tokens[index + 1])) {
+          && isNumberWordToken(tokens[index + 1])) {
+        numberWordCount += 1;
         index += 2;
         continue;
       }
       break;
     }
+
+    const adjacentToCurrency = FINANCIAL_TOKENS.has(tokens[sequenceStart - 1])
+      || FINANCIAL_TOKENS.has(tokens[index]);
+    if (!adjacentToCurrency && numberWordCount < 2) {
+      filtered.push(...tokens.slice(sequenceStart, index));
+    }
   }
   return filtered;
+}
+
+function isNumberWordToken(token) {
+  return NUMBER_WORD_TOKENS.has(token)
+    || RU_NUMBER_MORPHOLOGY_PATTERNS.some((pattern) => pattern.test(token));
 }
 
 function detectTokenLanguage(token) {

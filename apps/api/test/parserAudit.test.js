@@ -117,6 +117,51 @@ test("audit report removes RU and EN number-word financial values without droppi
   }
 });
 
+test("audit report removes inflected one-thousand RU amount words next to currency", () => {
+  const report = buildParserAuditReport(
+    repeatedConfirmedRows("такси одну тысячу бат", "transport", "ru-one-thousand")
+  );
+  const serialized = JSON.stringify(report);
+
+  assert.ok(report.candidates.ru.some((candidate) => candidate.phrase === "такси"));
+  assert.ok(!serialized.includes("одну"));
+  assert.ok(!serialized.includes("тысячу"));
+});
+
+test("audit report removes inflected one-and-a-half-thousand RU amount words next to currency", () => {
+  const report = buildParserAuditReport(
+    repeatedConfirmedRows("такси полторы тысячи бат", "transport", "ru-one-half-thousand")
+  );
+  const serialized = JSON.stringify(report);
+
+  assert.ok(report.candidates.ru.some((candidate) => candidate.phrase === "такси"));
+  assert.ok(!serialized.includes("полторы"));
+  assert.ok(!serialized.includes("тысячи"));
+});
+
+test("audit report preserves ordinary RU words outside numeric-currency context", () => {
+  const rows = [
+    ...repeatedConfirmedRows("студия одна", "health", "ordinary-one"),
+    ...repeatedConfirmedRows("кафе пятница", "food_cafe", "ordinary-stem")
+  ];
+
+  const report = buildParserAuditReport(rows);
+
+  assert.ok(report.candidates.ru.some((candidate) => candidate.phrase === "студия одна"));
+  assert.ok(report.candidates.ru.some((candidate) => candidate.phrase === "кафе пятница"));
+});
+
+test("audit report still removes clear multiword amounts when default currency is implicit", () => {
+  const report = buildParserAuditReport(
+    repeatedConfirmedRows("taxi one hundred", "transport", "implicit-word-amount")
+  );
+  const serialized = JSON.stringify(report);
+
+  assert.ok(report.candidates.en.some((candidate) => candidate.phrase === "taxi"));
+  assert.ok(!serialized.includes("one"));
+  assert.ok(!serialized.includes("hundred"));
+});
+
 test("category qualification never mixes confirmed and review-only evidence", () => {
   const rows = [
     confirmedRow({ userId: "u1", sourceText: "taxi 10", description: "taxi", category: "transport" }),
