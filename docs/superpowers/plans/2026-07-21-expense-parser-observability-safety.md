@@ -273,4 +273,4 @@ Stage only PR A files, commit with an intentional message, push `codex/issue-115
 - [x] Make explicit invalid timeout values fail fast while preserving the absent-value default of `20000`.
 - [x] Update the domain language, design, decision, runbook, and runbook contract test for the corrected semantics and runtime timeout behavior.
 - [x] Run the focused review suite.
-- [ ] Run the full suite and `git diff --check`, commit, push the existing branch, update PR #118, and post verification results.
+- [x] Run the full suite and `git diff --check`, commit, push the existing branch, update PR #118, and post verification results.
