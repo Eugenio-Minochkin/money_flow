@@ -86,6 +86,18 @@ function formatBudgetImpactMarker(value, language) {
 
 export function formatSavedSummary(total, snapshot, options = {}) {
   const language = normalizeLanguage(options.language);
+  if (!snapshot || typeof snapshot !== "object") {
+    const currency = options.expenses?.[0]?.base_currency
+      ?? options.expenses?.[0]?.currency_original
+      ?? options.expenses?.[0]?.currency
+      ?? "THB";
+    return [
+      `✅ <b>${t(language, "savedExpense")}:</b>`,
+      formatSavedExpenseLines(options.expenses, total, currency, language),
+      "",
+      t(language, "budgetSummaryUnavailable")
+    ].join("\n");
+  }
   const currency = snapshot.baseCurrency ?? "THB";
   const progress = snapshot.budgetProgressPercent == null ? "" : ` (${formatAmount(snapshot.budgetProgressPercent, language)}%)`;
   const todayTotal = Number(snapshot.today ?? 0);
@@ -355,6 +367,7 @@ const messages = {
     aboveBy: "выше на",
     belowBy: "ниже на",
     budget: "Бюджет",
+    budgetSummaryUnavailable: "Сводка по бюджету временно недоступна.",
     day: "день",
     draftReview: "Есть сомнительные строки, проверь перед сохранением.",
     draftTitle: "Я понял так:",
@@ -393,6 +406,7 @@ const messages = {
     aboveBy: "above by",
     belowBy: "below by",
     budget: "Budget",
+    budgetSummaryUnavailable: "Budget summary is temporarily unavailable.",
     day: "day",
     draftReview: "Some lines need review before saving.",
     draftTitle: "I understood this:",

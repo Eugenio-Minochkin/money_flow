@@ -36,7 +36,8 @@ test("fake callback update is processed through bot logic and captures callback 
   await bot.handleUpdate(buildFakeCallbackUpdate({ telegramUserId: 100001, data: "confirm:42" }));
 
   assert.equal(repository.confirmedDraftId, "42");
-  assert.equal(telegramClient.callbackAnswers[0].text, "Saved");
+  assert.equal(telegramClient.callbackAnswers.length, 1);
+  assert.equal(telegramClient.callbackAnswers[0].text, "Saving…");
   assert.match(telegramClient.messages[0].text, /Saved|Recorded|today|month/i);
 });
 

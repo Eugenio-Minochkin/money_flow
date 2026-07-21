@@ -9,6 +9,7 @@ import { createAdminStatsService } from "./adminStatsService.js";
 import { createApiSecurity } from "./apiSecurity.js";
 import { migrate, pool } from "./db.js";
 import { createDailyReminderService } from "./dailyReminderService.js";
+import { confirmDraftForApi } from "./draftConfirmation.js";
 import { createExchangeRateProvider } from "./exchangeRates.js";
 import { createExpenseExportService } from "./expenseExportService.js";
 import { createExpenseParser } from "./expenseParser.js";
@@ -34,7 +35,6 @@ import {
   updateTelegramMessageAfterExpenseDelete
 } from "./telegram.js";
 import { syncTelegramCommandMenu } from "./telegramCommands.js";
-import { formatSavedSummary } from "./telegramFormat.js";
 import { createVoiceTranscriber } from "./voiceTranscriber.js";
 
 const root = resolve(fileURLToPath(new URL("../../..", import.meta.url)));
@@ -658,15 +658,18 @@ async function route(req, res) {
       if (auth.error) return sendJson(res, 400, { error: auth.error });
       const language = body.language ?? "en";
       try {
-        const result = await repository.saveDraftAsExpense(draftId, auth.telegramUserId);
-        const draft = await repository.getDraftForTelegramUser(draftId, auth.telegramUserId);
-        if (draft?.tg_chat_id && draft?.tg_message_id) {
-          const total = result.expenses.reduce((sum, expense) => sum + Number(expense.amount_base), 0);
-          const text = formatSavedSummary(total, result.dashboardSnapshot, { language, expenses: result.expenses });
-          await updateDraftMessageToSaved({ token: config.telegramBotToken, draft, text, replyMarkup: savedSummaryKeyboard(config.miniAppUrl, auth.telegramUserId, language), telegramClient: null })
-            .catch((error) => console.error("[server] confirm message update failed", error.message));
-        }
-        return sendJson(res, 200, { expenses: result.expenses, dashboardSnapshot: result.dashboardSnapshot, alreadySaved: result.alreadySaved });
+        const response = await confirmDraftForApi({
+          repository,
+          draftId,
+          telegramUserId: auth.telegramUserId,
+          language,
+          token: config.telegramBotToken,
+          miniAppUrl: config.miniAppUrl,
+          updateDraftMessageToSaved,
+          savedSummaryKeyboard,
+          telegramClient: null
+        });
+        return sendJson(res, response.statusCode, response.body);
       } catch (error) {
         if (error instanceof DraftCanceledError) return sendJson(res, 409, { error: "draft_canceled" });
         if (error instanceof CategoryRequiredError) return sendJson(res, 422, { error: "category_required" });

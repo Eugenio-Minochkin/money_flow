@@ -10,6 +10,7 @@ const SAFE_CONTEXT_KEYS = new Set([
   "jobName",
   "telegramUserId",
   "userId",
+  "stage",
   "operation",
   "extra"
 ]);
@@ -125,6 +126,7 @@ export function formatAdminAlertMessage(error, context = {}, { now = new Date(),
   const route = routeLine(context);
   if (route) lines.push(`route: ${route}`);
   if (context.jobName) lines.push(`jobName: ${context.jobName}`);
+  if (context.stage) lines.push(`stage: ${context.stage}`);
   if (context.operation) lines.push(`operation: ${context.operation}`);
   if (context.telegramUserId != null) lines.push(`telegramUserId: ${context.telegramUserId}`);
   if (context.userId != null) lines.push(`userId: ${context.userId}`);

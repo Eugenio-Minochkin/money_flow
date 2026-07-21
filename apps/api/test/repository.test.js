@@ -5090,6 +5090,37 @@ test("saveDraftAsExpense confirms an open draft and returns alreadySaved false",
   assert.ok(queries.some((q) => q.includes("status = 'confirmed'") && q.includes("version = version + 1")));
 });
 
+test("saveDraftAsExpense preserves a saved open draft when its dashboard snapshot is unavailable", async () => {
+  const { createRepository } = await import("../src/repository.js");
+  const queries = [];
+  const client = fakeConfirmClient({
+    draftRow: { id: 7, user_id: 1, status: "pending", base_currency: "THB", usd_thb_rate: 32.65,
+      items: [{ amount: 80, currency: "THB", description: "coffee", category_slug: "food_cafe", budget_impact: "regular", needs_review: false, category_source: "parser", tags: [], spent_at: "2026-06-25T10:00:00Z" }] },
+    onQuery: (q) => queries.push(String(q))
+  });
+  const repo = createRepository({ ...fakePool(() => ({ rows: [] })), async connect() { return client; } });
+  repo.dashboard = async () => { throw new Error("snapshot unavailable"); };
+  const originalWarn = console.warn;
+  let warning;
+  console.warn = (...args) => { warning = args; };
+
+  let result;
+  try {
+    result = await repo.saveDraftAsExpense(7, 100);
+  } finally {
+    console.warn = originalWarn;
+  }
+
+  assert.equal(result.alreadySaved, false);
+  assert.equal(result.expenses.length, 1);
+  assert.equal(result.dashboardSnapshot, null);
+  assert.ok(queries.includes("COMMIT"));
+  assert.deepEqual(warning, [
+    "[repository] dashboard snapshot unavailable after draft confirmation",
+    { draftId: 7, error: "snapshot unavailable" }
+  ]);
+});
+
 test("saveDraftAsExpense returns existing expenses when already confirmed", async () => {
   const { createRepository } = await import("../src/repository.js");
   const client = fakeConfirmClient({ draftRow: { id: 7, user_id: 1, status: "confirmed", items: [], base_currency: "THB" } });
@@ -5099,12 +5130,13 @@ test("saveDraftAsExpense returns existing expenses when already confirmed", asyn
     async query(sql) { if (String(sql).includes("FROM expenses WHERE draft_id")) { expensesQueried = true; return { rows: [{ id: 99, draft_id: 7 }] }; } return { rows: [] }; }
   };
   const repo = createRepository(pool);
-  repo.dashboard = async () => ({ snapshot: { baseCurrency: "THB" } });
+  repo.dashboard = async () => { throw new Error("snapshot unavailable"); };
 
   const result = await repo.saveDraftAsExpense(7, 100);
 
   assert.equal(result.alreadySaved, true);
   assert.equal(result.expenses.length, 1);
+  assert.equal(result.dashboardSnapshot, null);
   assert.equal(expensesQueried, true);
 });
 

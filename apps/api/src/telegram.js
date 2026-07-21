@@ -94,7 +94,7 @@ export function createTelegramBot({
       }
       if (update.callback_query) {
         try {
-          const result = await handleCallback({ update, repository, token, miniAppUrl, telegramClient, expenseExportService: sharedExpenseExportService, trace, now });
+          const result = await handleCallback({ update, repository, token, miniAppUrl, telegramClient, adminAlertService, expenseExportService: sharedExpenseExportService, trace, now });
           success = true;
           return result;
         } catch (error) {
@@ -1618,7 +1618,7 @@ async function handleExpenseEditorCallback({ callback, parsed, repository, token
   return answerCallback(token, callback.id, language === "ru" ? "Недоступно." : "Unavailable.", telegramClient);
 }
 
-export async function handleCallback({ update, repository, token, miniAppUrl, telegramClient, expenseExportService, trace, now = () => new Date() }) {
+export async function handleCallback({ update, repository, token, miniAppUrl, telegramClient, adminAlertService, expenseExportService, trace, now = () => new Date() }) {
   const callback = update.callback_query;
   const [action, draftId, itemIndex, value] = callback.data.split(":");
   const telegramUserId = callback.from.id;
@@ -1676,7 +1676,7 @@ export async function handleCallback({ update, repository, token, miniAppUrl, te
 
   const draftCallback = parseDraftCallback(callback.data);
   if (draftCallback) {
-    return handleDraftCallback({ callback, parsed: draftCallback, repository, token, miniAppUrl, telegramClient, language, user, trace, now });
+    return handleDraftCallback({ callback, parsed: draftCallback, repository, token, miniAppUrl, telegramClient, adminAlertService, language, user, trace, now });
   }
 
   if (action === "export") {
@@ -1796,7 +1796,7 @@ export async function handleCallback({ update, repository, token, miniAppUrl, te
   }
 
   if (action === "confirm") {
-    return handleConfirmDraft(trace, token, telegramClient, callback, draftId, telegramUserId, language, miniAppUrl, repository, user, now);
+    return handleConfirmDraft(trace, token, telegramClient, callback, draftId, telegramUserId, language, miniAppUrl, repository, user, adminAlertService, now);
   }
 
   if (action === "cancel") {
@@ -1895,10 +1895,10 @@ async function handleBudgetTopupCallback({ callback, parsed, repository, token, 
   });
 }
 
-async function handleDraftCallback({ callback, parsed, repository, token, miniAppUrl, telegramClient, language, user, trace, now }) {
+async function handleDraftCallback({ callback, parsed, repository, token, miniAppUrl, telegramClient, adminAlertService, language, user, trace, now }) {
   const telegramUserId = callback.from.id;
   if (parsed.action === "confirm") {
-    return handleConfirmDraft(trace, token, telegramClient, callback, parsed.draftId, telegramUserId, language, miniAppUrl, repository, user, now);
+    return handleConfirmDraft(trace, token, telegramClient, callback, parsed.draftId, telegramUserId, language, miniAppUrl, repository, user, adminAlertService, now);
   }
   if (parsed.action === "cancel") {
     return handleCancelDraft(trace, token, telegramClient, callback, parsed.draftId, telegramUserId, language, repository, user, now);
@@ -1948,61 +1948,175 @@ async function redrawDraft(trace, token, telegramClient, callback, updated, lang
   });
 }
 
-async function handleConfirmDraft(trace, token, telegramClient, callback, draftId, telegramUserId, language, miniAppUrl, repository, user, now) {
+async function handleConfirmDraft(trace, token, telegramClient, callback, draftId, telegramUserId, language, miniAppUrl, repository, user, adminAlertService, now) {
+  const startedAt = performance.now();
   const chatId = callback.message?.chat?.id;
   const messageId = callback.message?.message_id;
+  let callbackAckSucceeded = false;
+  try {
+    await answerCallback(token, callback.id, botText(language, "draftSavingCallback"), telegramClient);
+    callbackAckSucceeded = true;
+  } catch (error) {
+    console.error("[telegram] confirming draft callback acknowledgement failed", error.message);
+  }
+  const callbackAckMs = elapsedSince(startedAt);
+
   trace.start("db_save");
   let result;
+  let outcome;
+  let persistenceError = null;
+  const dbSaveStartedAt = performance.now();
+  let dbSaveMs = null;
   try {
     result = await repository.saveDraftAsExpense(draftId, telegramUserId);
+    dbSaveMs = elapsedSince(dbSaveStartedAt);
+    outcome = result.alreadySaved ? "already_saved" : "success";
+    trace.end("db_save");
   } catch (error) {
+    dbSaveMs = elapsedSince(dbSaveStartedAt);
     trace.end("db_save", {}, false, error);
-    if (error instanceof DraftCanceledError) {
-      return sendTelegramResponse(trace, () => answerCallback(token, callback.id, botText(language, "draftCanceledAlert"), telegramClient));
-    }
-    if (error instanceof CategoryRequiredError) {
-      return sendTelegramResponse(trace, () => answerCallback(token, callback.id, botText(language, "chooseCategoryAlert"), telegramClient));
-    }
-    throw error;
-  }
-  trace.end("db_save");
-  if (!result.alreadySaved) {
-    await safeRecordAppEvent(repository, user?.id, "expense_draft_confirmed", { draftType: "regular" });
-    for (const _expense of result.expenses) {
-      await safeRecordAppEvent(repository, user?.id, "expense_saved", { draftType: "regular" });
+    if (error instanceof DraftCanceledError) outcome = "cancelled";
+    else if (error instanceof CategoryRequiredError) outcome = "category_required";
+    else {
+      outcome = "failed";
+      persistenceError = error;
+      console.error("[telegram] saving draft failed", error.message);
     }
   }
-  const closed = await closeTelegramEditorInput({
-    repository,
-    telegramUserId,
-    target: { type: "draft", id: Number(draftId), itemIndex: undefined },
-    now
+
+  const expenses = Array.isArray(result?.expenses) ? result.expenses : [];
+  const successfulSave = outcome === "success" || outcome === "already_saved";
+  let summaryBuildMs = null;
+  let text;
+  let replyMarkup;
+  if (successfulSave) {
+    const summaryStartedAt = performance.now();
+    const total = expenses.reduce((sum, expense) => sum + Number(expense.amount_base), 0);
+    text = formatSavedSummary(total, result.dashboardSnapshot, { language, expenses });
+    replyMarkup = expenses.length === 1
+      ? savedExpenseKeyboard(expenses[0].id, miniAppUrl, telegramUserId, language)
+      : appKeyboard(miniAppUrl, telegramUserId, language);
+    summaryBuildMs = elapsedSince(summaryStartedAt);
+  } else if (outcome === "cancelled") {
+    text = botText(language, "draftCanceledMessage");
+    replyMarkup = { inline_keyboard: [] };
+  } else {
+    text = botText(language, outcome === "category_required" ? "chooseCategoryAlert" : "draftSaveFailed");
+  }
+
+  const terminal = await sendConfirmDraftTerminalResponse({
+    trace, outcome, token, telegramClient, chatId, messageId, text, replyMarkup
   });
-  await deactivateTelegramEditorMessages({
-    session: closed?.session,
-    fallbackChatId: chatId,
-    includeEditor: false,
-    token,
-    telegramClient
+  const userResultMs = elapsedSince(startedAt);
+
+  let cleanupMs = null;
+  const backgroundTasks = [];
+  if (outcome === "failed" && persistenceError) {
+    backgroundTasks.push(safeNotifyAdminError(adminAlertService, persistenceError, {
+      source: "telegram", route: "telegram_confirm", stage: "db_save", userId: user?.id
+    }));
+  }
+  if (terminal.telegramUpdateMode === "failed" && terminal.error) {
+    backgroundTasks.push(safeNotifyAdminError(adminAlertService, terminal.error, {
+      source: "telegram", route: "telegram_confirm", stage: "telegram_update", userId: user?.id
+    }));
+  }
+  if (outcome === "success" && !result.alreadySaved) {
+    backgroundTasks.push(
+      safeRecordAppEvent(repository, user?.id, "expense_draft_confirmed", { draftType: "regular" }),
+      ...expenses.map(() => safeRecordAppEvent(repository, user?.id, "expense_saved", { draftType: "regular" }))
+    );
+  }
+  if (successfulSave || outcome === "cancelled") {
+    const cleanupStartedAt = performance.now();
+    backgroundTasks.push(safeConfirmDraftCleanup({
+      repository, telegramUserId, draftId, now, chatId, messageId,
+      clearOriginalDraftKeyboard: terminal.clearOriginalDraftKeyboard,
+      token, telegramClient
+    }).finally(() => {
+      cleanupMs = elapsedSince(cleanupStartedAt);
+    }));
+  }
+  await Promise.allSettled(backgroundTasks);
+
+  const totalMs = elapsedSince(startedAt);
+  await safeRecordAppEvent(repository, null, "draft_confirm_processing_completed", {
+    outcome,
+    callbackAckMs,
+    callbackAckSucceeded,
+    dbSaveMs,
+    summaryBuildMs,
+    telegramUpdateMs: terminal.telegramUpdateMs,
+    telegramUpdateSucceeded: terminal.telegramUpdateSucceeded,
+    telegramUpdateMode: terminal.telegramUpdateMode,
+    userResultMs,
+    cleanupMs,
+    totalMs,
+    expenseCount: successfulSave ? expenses.length : 0,
+    source: "telegram"
   });
-  const total = result.expenses.reduce((sum, expense) => sum + Number(expense.amount_base), 0);
-  const text = formatSavedSummary(total, result.dashboardSnapshot, { language, expenses: result.expenses });
-  const replyMarkup = result.expenses.length === 1
-    ? savedExpenseKeyboard(result.expenses[0].id, miniAppUrl, telegramUserId, language)
-    : appKeyboard(miniAppUrl, telegramUserId, language);
-  return sendTelegramResponse(trace, async () => {
-    await answerCallback(token, callback.id, result.alreadySaved ? botText(language, "alreadySavedCallback") : botText(language, "savedCallback"), telegramClient);
-    if (messageId) {
-      try {
-        return await editMessageText(token, chatId, messageId, text, replyMarkup, telegramClient);
-      } catch (error) {
-        console.error("[telegram] editing confirmed draft into summary failed, falling back to new message", error.message);
-        await editMessageReplyMarkup(token, chatId, messageId, { inline_keyboard: [] }, telegramClient)
-          .catch((markupError) => console.error("[telegram] could not clear old draft keyboard", markupError.message));
+  return { ok: true };
+}
+
+async function sendConfirmDraftTerminalResponse({ trace, outcome, token, telegramClient, chatId, messageId, text, replyMarkup }) {
+  const startedAt = performance.now();
+  let telegramUpdateMode = outcome === "category_required" || outcome === "failed" ? "send" : "edit";
+  let telegramUpdateSucceeded = false;
+  let terminalError = null;
+  try {
+    await sendTelegramResponse(trace, async () => {
+      if (outcome === "category_required" || outcome === "failed") {
+        await sendMessage(token, chatId, text, null, telegramClient);
+        return;
       }
+      if (messageId) {
+        try {
+          await editMessageText(token, chatId, messageId, text, replyMarkup, telegramClient);
+          return;
+        } catch (error) {
+          console.error("[telegram] editing terminal draft confirmation failed, falling back to new message", error.message);
+        }
+      }
+      telegramUpdateMode = "fallback_send";
+      await sendMessage(token, chatId, text, replyMarkup, telegramClient);
+    });
+    telegramUpdateSucceeded = true;
+  } catch (error) {
+    telegramUpdateMode = "failed";
+    terminalError = error;
+    console.error("[telegram] terminal draft confirmation delivery failed", error.message);
+  }
+  return {
+    telegramUpdateMs: elapsedSince(startedAt),
+    telegramUpdateSucceeded,
+    telegramUpdateMode,
+    error: terminalError,
+    clearOriginalDraftKeyboard: telegramUpdateSucceeded && telegramUpdateMode === "fallback_send" && Boolean(messageId)
+  };
+}
+
+async function safeConfirmDraftCleanup({ repository, telegramUserId, draftId, now, chatId, messageId, clearOriginalDraftKeyboard, token, telegramClient }) {
+  try {
+    const closed = await closeTelegramEditorInput({
+      repository,
+      telegramUserId,
+      target: { type: "draft", id: Number(draftId), itemIndex: undefined },
+      now
+    });
+    await deactivateTelegramEditorMessages({
+      session: closed?.session,
+      fallbackChatId: chatId,
+      includeEditor: false,
+      token,
+      telegramClient
+    });
+    if (clearOriginalDraftKeyboard) {
+      await editMessageReplyMarkup(token, chatId, messageId, { inline_keyboard: [] }, telegramClient)
+        .catch((error) => console.error("[telegram] old draft keyboard cleanup failed", error.message));
     }
-    return sendMessage(token, chatId, text, replyMarkup, telegramClient);
-  });
+  } catch (error) {
+    console.error("[telegram] confirmed draft editor cleanup failed", error.message);
+  }
 }
 
 async function handleCancelDraft(trace, token, telegramClient, callback, draftId, telegramUserId, language, repository, user, now) {
@@ -2752,6 +2866,8 @@ function botText(language, key, values = {}) {
       exportChoosePeriod: "Экспорт расходов в CSV. Выбери период:",
       exportPreparingCallback: "Готовлю экспорт",
       expenseProcessing: "⏳ Заношу расход…",
+      draftSavingCallback: "Сохраняю…",
+      draftSaveFailed: "⚠️ Не удалось сохранить расход. Попробуйте ещё раз.",
       movedCallback: "Перенесено",
       movedToInbox: "Перенес в Inbox. Можно разобрать позже в Mini App.",
       openMiniApp: "Открыть Mini App:",
@@ -2802,6 +2918,8 @@ function botText(language, key, values = {}) {
       exportChoosePeriod: "Export expenses to CSV. Choose a period:",
       exportPreparingCallback: "Preparing export",
       expenseProcessing: "⏳ Adding expense…",
+      draftSavingCallback: "Saving…",
+      draftSaveFailed: "⚠️ Could not save this expense. Please try again.",
       movedCallback: "Moved",
       movedToInbox: "Moved to Inbox. You can review it later in Mini App.",
       openMiniApp: "Open Mini App:",
