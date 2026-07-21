@@ -78,6 +78,6 @@
 - [x] Run focused tests: `node --test apps/api/test/parserAudit.test.js apps/api/test/parserAuditScript.test.js apps/api/test/parserBenchmark.test.js apps/api/test/parserBenchmarkScript.test.js`.
 - [x] Run `npm.cmd test` and confirm zero failures.
 - [x] Run `git diff --check` and review `origin/master...HEAD` for privacy, write queries, production access, model/config changes, and scope.
-- [ ] Commit and push `codex/issue-115c-parser-audit-benchmark`.
-- [ ] Open a draft PR into `master` with tooling/docs summary, test evidence, safe aggregate example, explicit audit blocker, DB/prod impact, no model switch, follow-up list, and `## User Release Notes`.
-- [ ] Do not merge, deploy, access production, change production env/rollout, switch the model, or add real user messages.
+- [x] Commit and push `codex/issue-115c-parser-audit-benchmark`.
+- [x] Open a draft PR into `master` with tooling/docs summary, test evidence, safe aggregate example, explicit audit blocker, DB/prod impact, no model switch, follow-up list, and `## User Release Notes`.
+- [x] Do not merge, deploy, access production, change production env/rollout, switch the model, or add real user messages.
