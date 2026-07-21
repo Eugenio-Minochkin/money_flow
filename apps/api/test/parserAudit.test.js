@@ -233,6 +233,72 @@ test("audit report suppresses case-form quantities fractions and shared currency
   assert.ok(report.candidates.ru.some((candidate) => candidate.phrase === "баксоним кафе"));
 });
 
+test("audit report suppresses anchored RU and EN quantity ordinal and fraction vocabulary", () => {
+  const sensitiveDescriptions = [
+    "taxi third",
+    "taxi thirds",
+    "taxi first",
+    "taxi twentieth",
+    "taxi hundredth",
+    "taxi ninetieth",
+    "taxi trillionths",
+    "taxi both",
+    "taxi couple",
+    "taxi pair",
+    "taxi single",
+    "taxi double",
+    "taxi triple",
+    "taxi twice",
+    "такси дюжина",
+    "такси дюжиной",
+    "такси пара",
+    "такси парой",
+    "такси пол",
+    "такси полтысячи",
+    "такси триллиона",
+    "такси первый",
+    "такси вторую",
+    "такси третьего",
+    "такси двадцатый",
+    "такси сороковой",
+    "такси сотый",
+    "такси двухсотый",
+    "такси тысячный",
+    "такси нулевой",
+    "такси обоих",
+    "такси полтораста"
+  ];
+  const safeDescriptions = [
+    "thirdparty taxi",
+    "couples cafe",
+    "pairing taxi",
+    "singletrack taxi",
+    "doubled cafe",
+    "triplex taxi",
+    "поликлиника такси",
+    "парад кафе",
+    "первичный билет"
+  ];
+  const rows = [
+    ...sensitiveDescriptions.flatMap((description, index) =>
+      repeatedConfirmedRows(description, "transport", `quantity-vocabulary-${index}`)
+    ),
+    ...safeDescriptions.flatMap((description, index) =>
+      repeatedConfirmedRows(description, "transport", `quantity-neighbor-${index}`)
+    )
+  ];
+
+  const report = buildParserAuditReport(rows);
+  const allCandidates = [...report.candidates.ru, ...report.candidates.en];
+
+  for (const description of sensitiveDescriptions) {
+    assert.ok(!allCandidates.some((candidate) => candidate.phrase === description), description);
+  }
+  for (const description of safeDescriptions) {
+    assert.ok(allCandidates.some((candidate) => candidate.phrase === description), description);
+  }
+});
+
 test("audit report suppresses numeric words but preserves anchored prefix-similar ordinary words", () => {
   const rows = [
     ...repeatedConfirmedRows("студия одна", "health", "ordinary-one"),

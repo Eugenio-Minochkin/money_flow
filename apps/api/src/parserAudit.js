@@ -36,24 +36,39 @@ const KNOWN_CATEGORY_SLUGS = new Set(CATEGORIES.map((category) => category.slug)
 const SUPPORTED_ALIASES = new Map(CATEGORIES.flatMap((category) =>
   category.keywords.map((keyword) => [normalizeAlias(keyword), category.slug])
 ));
-const NUMBER_WORD_TOKENS = new Set([
+const QUANTITY_WORD_TOKENS = new Set([
   "zero", "half", "halves", "quarter", "quarters", "dozen", "dozens", "score", "scores",
   "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
   "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen",
   "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety",
   "hundred", "hundreds", "thousand", "thousands", "million", "millions", "billion", "billions",
   "trillion", "trillions",
+  "zeroth", "zeroths", "first", "firsts", "second", "seconds", "third", "thirds",
+  "fourth", "fourths", "fifth", "fifths", "sixth", "sixths", "seventh", "sevenths",
+  "eighth", "eighths", "ninth", "ninths", "tenth", "tenths", "eleventh", "elevenths",
+  "twelfth", "twelfths", "thirteenth", "thirteenths", "fourteenth", "fourteenths",
+  "fifteenth", "fifteenths", "sixteenth", "sixteenths", "seventeenth", "seventeenths",
+  "eighteenth", "eighteenths", "nineteenth", "nineteenths", "twentieth", "twentieths",
+  "thirtieth", "thirtieths", "fortieth", "fortieths", "fiftieth", "fiftieths",
+  "sixtieth", "sixtieths", "seventieth", "seventieths", "eightieth", "eightieths",
+  "ninetieth", "ninetieths", "hundredth", "hundredths", "thousandth", "thousandths",
+  "millionth", "millionths", "billionth", "billionths", "trillionth", "trillionths",
+  "both", "pair", "couple", "single", "double", "triple", "quadruple", "once", "twice", "thrice",
   "ноль", "один", "одна", "одно", "одни", "два", "две", "три", "четыре", "пять",
   "шесть", "семь", "восемь", "девять", "десять", "одиннадцать", "двенадцать", "тринадцать",
   "четырнадцать", "пятнадцать", "шестнадцать", "семнадцать", "восемнадцать", "девятнадцать",
   "двадцать", "тридцать", "сорок", "пятьдесят", "шестьдесят", "семьдесят", "восемьдесят", "девяносто",
   "сто", "двести", "триста", "четыреста", "пятьсот", "шестьсот", "семьсот", "восемьсот", "девятьсот",
   "тысяча", "тысячи", "тысяч", "миллион", "миллиона", "миллионов", "миллиард", "миллиарда", "миллиардов",
+  "триллион", "триллиона", "триллионов", "пол", "полтораста", "полсотни", "полтысячи", "полмиллиона", "полмиллиарда", "полтриллиона",
   "половина", "половины", "половину", "половиной", "половине", "половин", "половинами", "половинах",
   "четверть", "четверти", "четвертью", "четвертей", "четвертям", "четвертями", "четвертях",
-  "треть", "трети", "третью", "третей", "третям", "третями", "третях"
+  "треть", "трети", "третью", "третей", "третям", "третями", "третях",
+  "пара", "пары", "пару", "паре", "парой", "парою", "пар", "парам", "парами", "парах",
+  "дюжина", "дюжины", "дюжину", "дюжине", "дюжиной", "дюжиною", "дюжин", "дюжинам", "дюжинами", "дюжинах",
+  "оба", "обе", "обоих", "обеих", "обоим", "обеим", "обоими", "обеими"
 ]);
-const RU_NUMBER_MORPHOLOGY_PATTERNS = [
+const RU_QUANTITY_MORPHOLOGY_PATTERNS = [
   /^полутора$/u,
   /^(?:двух|трех|четырех|пяти|шести|семи|восьми|девяти)сот$/u,
   /^(?:двум|трем|четырем|пяти|шести|семи|восьми|девяти)стам$/u,
@@ -71,7 +86,14 @@ const RU_NUMBER_MORPHOLOGY_PATTERNS = [
   /^(?:одиннадцат|двенадцат|тринадцат|четырнадцат|пятнадцат|шестнадцат|семнадцат|восемнадцат|девятнадцат|двадцат|тридцат)(?:ь|и|ью)$/u,
   /^тысяч(?:а|у|и|е|ей|ам|ами|ах)?$/u,
   /^миллион(?:а|у|ом|е|ы|ов|ам|ами|ах)?$/u,
-  /^миллиард(?:а|у|ом|е|ы|ов|ам|ами|ах)?$/u
+  /^миллиард(?:а|у|ом|е|ы|ов|ам|ами|ах)?$/u,
+  /^триллион(?:а|у|ом|е|ы|ов|ам|ами|ах)?$/u,
+  /^пол(?:сотни|тысячи|миллиона|миллиарда|триллиона)$/u,
+  /^перв(?:ый|ая|ое|ые|ого|ой|ому|ую|ым|ом|ых|ыми)$/u,
+  /^втор(?:ой|ая|ое|ые|ого|ой|ому|ую|ым|ом|ых|ыми)$/u,
+  /^трет(?:ий|ья|ье|ьи|ьего|ьей|ьему|ью|ьим|ьем|ьих|ьими)$/u,
+  /^(?:нулев|четверт|пят|шест|седьм|восьм|девят|десят|одиннадцат|двенадцат|тринадцат|четырнадцат|пятнадцат|шестнадцат|семнадцат|восемнадцат|девятнадцат|двадцат|тридцат|сороков|пятидесят|шестидесят|семидесят|восьмидесят|девяност|сот|тысячн|миллионн|миллиардн|триллионн)(?:ый|ая|ое|ые|ого|ой|ому|ую|ым|ом|ых|ыми)$/u,
+  /^(?:двух|трех|четырех|пяти|шести|семи|восьми|девяти)сот(?:ый|ая|ое|ые|ого|ой|ому|ую|ым|ом|ых|ыми)$/u
 ];
 
 export function normalizeAuditThresholds(input = {}) {
@@ -297,9 +319,9 @@ function formatCandidate(aggregate, thresholds, { confirmedQualified, reviewOnly
   };
 }
 
-function isNumberWordToken(token) {
-  return NUMBER_WORD_TOKENS.has(token)
-    || RU_NUMBER_MORPHOLOGY_PATTERNS.some((pattern) => pattern.test(token));
+function isSensitiveQuantityToken(token) {
+  return QUANTITY_WORD_TOKENS.has(token)
+    || RU_QUANTITY_MORPHOLOGY_PATTERNS.some((pattern) => pattern.test(token));
 }
 
 function containsSensitiveMarker(value) {
@@ -315,7 +337,7 @@ function containsSensitiveMarker(value) {
   const tokens = value.match(/[\p{L}]+/gu) ?? [];
   return tokens.some((token) => token.length > 20
     || isCurrencyAlias(token)
-    || isNumberWordToken(token));
+    || isSensitiveQuantityToken(token));
 }
 
 function detectSourceLanguage(value) {
