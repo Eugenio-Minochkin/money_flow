@@ -222,7 +222,7 @@ test("confirm-flow summary is optional and omits unavailable percentile values",
   assert.match(text, /Confirm P95: ACK 0\.2s \/ Result 2\.0s/);
   assert.doesNotMatch(text, /Total -|DB -|Telegram -/);
   assert.doesNotMatch(text, /Last 30 days|Confirm flow: 3 attempts/);
-  assert.ok(sections.some((section) => section.heading.includes("Today") && section.heading.endsWith("Confirm flow")));
+  assert.ok(sections.some((section) => section.heading.startsWith("✅ Today") && section.heading.endsWith("Confirm flow")));
 
   const noAttempts = formatAdminStats({ ...stats, today: period(), last7Days: period() });
   assert.doesNotMatch(noAttempts, /Confirm flow:/);

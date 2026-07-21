@@ -66,6 +66,7 @@ function highlightTechnicalRow(line) {
 }
 
 function technicalSectionEmoji(name) {
+  if (name === "Confirm flow") return "✅";
   return ({ Traffic: "📨", Errors: "⚠️", Processing: "⏱", "Processing stages": "🧭", "Parser routing and averages": "🧠", Review: "🔎", Shadow: "👤", Rejects: "🚫", "Shadow fields": "🧩" })[name] ?? "•";
 }
 
