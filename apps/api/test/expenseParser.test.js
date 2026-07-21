@@ -154,10 +154,15 @@ test("local parser uses supplied timezone", async () => {
 
 test("off mode calls OpenAI before local parser", async () => {
   let openAiCalls = 0;
+  let localCalls = 0;
   let trace;
   const parser = createExpenseParser({
     apiKey: "test-key",
     fastPathMode: "off",
+    localParser: () => {
+      localCalls += 1;
+      throw new Error("local parser must not run in off mode");
+    },
     now: () => new Date("2026-06-01T10:00:00+07:00"),
     fetchImpl: async () => {
       openAiCalls += 1;
@@ -188,9 +193,14 @@ test("off mode calls OpenAI before local parser", async () => {
   });
 
   assert.equal(openAiCalls, 1);
+  assert.equal(localCalls, 0);
   assert.equal(parsed.expenses[0].amount, 80);
   assert.equal(trace.parserEngine, "llm");
-  assert.equal(trace.localFastPathAccepted, false);
+  assert.equal("localFastPathAccepted" in trace, false);
+  assert.equal("localAcceptanceLevel" in trace, false);
+  assert.equal("localCandidate" in trace, false);
+  assert.equal("localParseMs" in trace, false);
+  assert.equal("localEvaluateMs" in trace, false);
   assert.equal(trace.fastPathMode, "off");
 });
 

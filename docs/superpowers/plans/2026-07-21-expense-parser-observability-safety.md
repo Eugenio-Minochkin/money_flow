@@ -120,7 +120,7 @@ Expected: all expense parser tests pass.
 
 - [x] **Step 1: Write failing config tests**
 
-Assert missing configuration defaults to `20000`; positive integers are accepted; zero, negative, fractional, non-numeric, and infinite values fall back to `20000`.
+Assert missing configuration defaults to `20000`; explicit base-10 positive integers within the runtime timer range are accepted; and explicitly invalid values fail fast with a fixed safe configuration error.
 
 - [x] **Step 2: Run config tests and verify RED**
 
@@ -130,7 +130,7 @@ Expected: FAIL because the config field does not exist.
 
 - [x] **Step 3: Implement strict config validation and server wiring**
 
-Add `DEFAULT_EXPENSE_PARSER_LLM_TIMEOUT_MS = 20_000`, parse only positive integers, expose `expenseParserLlmTimeoutMs`, and pass it to `createExpenseParser()`.
+Add `DEFAULT_EXPENSE_PARSER_LLM_TIMEOUT_MS = 20_000`, fail fast on explicitly invalid values, expose `expenseParserLlmTimeoutMs`, and pass it to `createExpenseParser()`.
 
 - [x] **Step 4: Write failing AbortController tests**
 
@@ -265,3 +265,12 @@ Expected: no whitespace errors and only PR A files are changed.
 - [x] **Step 4: Commit and publish**
 
 Stage only PR A files, commit with an intentional message, push `codex/issue-115a-parser-observability`, and open a draft PR into `master` containing baseline/result, docs checked, privacy impact, DB/production impact, exact rollback, assumptions, and `## User Release Notes`.
+
+### Review Follow-up: Acceptance Semantics And Strict Timeout Config
+
+- [x] Add a red/green regression proving LLM-only `off` mode omits local acceptance, candidate, accepted, and local timing metadata.
+- [x] Lock the technical-stats predicate so LLM-only events do not increment `localRejectedCount`.
+- [x] Make explicit invalid timeout values fail fast while preserving the absent-value default of `20000`.
+- [x] Update the domain language, design, decision, runbook, and runbook contract test for the corrected semantics and runtime timeout behavior.
+- [x] Run the focused review suite.
+- [ ] Run the full suite and `git diff --check`, commit, push the existing branch, update PR #118, and post verification results.

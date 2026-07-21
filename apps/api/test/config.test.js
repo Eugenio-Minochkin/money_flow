@@ -83,12 +83,16 @@ test("admin alert config defaults and rejects invalid values", () => {
   assert.equal(config.adminAlertMaxMessageLength, 900);
 });
 
-test("expense parser LLM timeout accepts only positive integers and defaults to twenty seconds", () => {
+test("expense parser LLM timeout defaults only when absent and fails fast on explicit invalid values", () => {
   assert.equal(buildConfig({}).expenseParserLlmTimeoutMs, 20000);
   assert.equal(buildConfig({ EXPENSE_PARSER_LLM_TIMEOUT_MS: "15000" }).expenseParserLlmTimeoutMs, 15000);
 
-  for (const value of ["0", "-1", "1.5", "Infinity", "not-a-number"]) {
-    assert.equal(buildConfig({ EXPENSE_PARSER_LLM_TIMEOUT_MS: value }).expenseParserLlmTimeoutMs, 20000, value);
+  for (const value of ["", "0", "-1", "1.5", "1e3", "Infinity", "not-a-number", "2147483648"]) {
+    assert.throws(
+      () => buildConfig({ EXPENSE_PARSER_LLM_TIMEOUT_MS: value }),
+      /Invalid configuration: EXPENSE_PARSER_LLM_TIMEOUT_MS must be a positive integer from 1 to 2147483647 milliseconds/,
+      value
+    );
   }
 });
 

@@ -51,10 +51,15 @@ PR description checks:
 
 Parser rollout is an owner-operated production change. Merging parser code or
 this runbook does not authorize production env edits, deploys, service restarts,
-or rollout changes. `EXPENSE_PARSER_LLM_TIMEOUT_MS` defaults to `20000`; the API
-accepts only a positive integer and otherwise safely falls back to that default.
-An LLM timeout is not retried, and only a `local_safe` result may be used as its
-fallback.
+or rollout changes. `EXPENSE_PARSER_LLM_TIMEOUT_MS` defaults to `20000` only
+when the variable is absent. An explicitly configured value must be a base-10
+positive integer from 1 through 2147483647 milliseconds; any invalid value makes
+startup fail fast with a safe configuration error that does not echo the value.
+
+This timeout is a controlled runtime behavior change. LLM requests running
+longer than the configured parser timeout are aborted even when the overall
+Telegram job timeout is larger. An LLM timeout is not retried, and only a
+`local_safe` result may be used as its fallback.
 
 Advance one stage at a time, only after reviewing `/admin_stats_tech` for the
 whole stage window:

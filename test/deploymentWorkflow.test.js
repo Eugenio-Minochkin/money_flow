@@ -198,6 +198,14 @@ test('deployment runbook documents gated parser rollout and exact env rollback',
   assert.match(runbook, /does not authorize[\s\S]*production/i);
 });
 
+test('deployment runbook documents strict parser timeout runtime behavior', () => {
+  const runbook = readText('docs/deployment-runbook.md');
+
+  assert.match(runbook, /EXPENSE_PARSER_LLM_TIMEOUT_MS[\s\S]*fail fast/i);
+  assert.match(runbook, /LLM requests?[\s\S]*longer than[\s\S]*aborted/i);
+  assert.match(runbook, /Telegram job timeout[\s\S]*larger/i);
+});
+
 test('deployment runbook requires PRs for admin alerts to show a safe sample message', () => {
   const runbook = readText('docs/deployment-runbook.md');
 

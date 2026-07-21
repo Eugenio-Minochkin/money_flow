@@ -6,7 +6,7 @@ This is a lightweight log for product and domain decisions that future agents sh
 
 The regular expense parser distinguishes `local_safe`, `local_reviewable`, and `local_rejected` results. Critical financial fields are expense count, amount, currency, the user's timezone-aware local calendar day, and budget impact. Category and `needs_review` are reviewable fields only after every critical field is unambiguous.
 
-Issue #115 PR A adds this classification, observability, timeout safety, and rollout documentation without introducing a new `local_reviewable` primary route or changing production rollout values. PR B owns any user-visible routing expansion and must preserve the existing rule that a parser-provided `other` category cannot be confirmed until the user explicitly selects a category. LLM timeout or error may use a local fallback only when the result is `local_safe`.
+Issue #115 PR A adds this classification, observability, timeout safety, and rollout documentation without introducing a new `local_reviewable` primary route or changing production rollout values. Acceptance metadata is emitted only after local evaluation completes; LLM-only messages do not count as local candidates, accepted parses, or rejected parses. PR B owns any user-visible routing expansion and must preserve the existing rule that a parser-provided `other` category cannot be confirmed until the user explicitly selects a category. LLM timeout or error may use a local fallback only when the result is `local_safe`.
 
 ## 2026-07-10 - Product Analytics Uses First-touch And Derived Milestones
 

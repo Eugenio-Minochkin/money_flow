@@ -51,10 +51,10 @@ export function createExpenseParser(options = {}) {
       let localFastPath = {
         accepted: false,
         rejectReason: null,
-        categoryResolution: null,
-        localAcceptanceLevel: "local_rejected"
+        categoryResolution: null
       };
       let localParserError = null;
+      let localEvaluationCompleted = false;
       let localParseMs;
       let localEvaluateMs;
       const emitTrace = (metadata) => parseOptions.onLlmTrace?.({
@@ -72,8 +72,7 @@ export function createExpenseParser(options = {}) {
           localFastPath = {
             accepted: false,
             rejectReason: "local_exception",
-            categoryResolution: null,
-            localAcceptanceLevel: "local_rejected"
+            categoryResolution: null
           };
         }
         localParseMs = elapsedMs(performanceNow, localParseStartedAt);
@@ -81,13 +80,13 @@ export function createExpenseParser(options = {}) {
           const localEvaluateStartedAt = performanceNow();
           try {
             localFastPath = evaluateLocalFastPath({ text, localResult });
+            localEvaluationCompleted = true;
           } catch (error) {
             localParserError = error;
             localFastPath = {
               accepted: false,
               rejectReason: "local_exception",
-              categoryResolution: null,
-              localAcceptanceLevel: "local_rejected"
+              categoryResolution: null
             };
           }
           localEvaluateMs = elapsedMs(performanceNow, localEvaluateStartedAt);
@@ -99,11 +98,7 @@ export function createExpenseParser(options = {}) {
         emitTrace({
           parserEngine: "local-fallback",
           parserRoute: "local_no_api_key",
-          localFastPathAccepted: localFastPath.accepted,
-          localFastPathRejectReason: localFastPath.rejectReason,
-          categoryResolution: localFastPath.categoryResolution,
-          localAcceptanceLevel: localFastPath.localAcceptanceLevel,
-          localCandidate: hasLocalCandidate(localResult),
+          ...localEvaluationTraceMetadata({ localEvaluationCompleted, localFastPath, localResult }),
           llmSkipped: true,
           fastPathMode,
           shadowDisagreement: null,
@@ -119,11 +114,7 @@ export function createExpenseParser(options = {}) {
         emitTrace({
           parserEngine: "local-fast-path",
           parserRoute: "local_primary",
-          localFastPathAccepted: true,
-          localFastPathRejectReason: null,
-          categoryResolution: localFastPath.categoryResolution,
-          localAcceptanceLevel: localFastPath.localAcceptanceLevel,
-          localCandidate: hasLocalCandidate(localResult),
+          ...localEvaluationTraceMetadata({ localEvaluationCompleted, localFastPath, localResult }),
           llmSkipped: true,
           fastPathMode,
           shadowDisagreement: null,
@@ -155,11 +146,7 @@ export function createExpenseParser(options = {}) {
           parserEngine: "llm",
           parserRoute,
           fallbackReason: fallbackReasonForRoute(parserRoute, localFastPath),
-          localFastPathAccepted: localFastPath.accepted,
-          localFastPathRejectReason: localFastPath.rejectReason,
-          categoryResolution: localFastPath.categoryResolution,
-          localAcceptanceLevel: localFastPath.localAcceptanceLevel,
-          localCandidate: hasLocalCandidate(localResult),
+          ...localEvaluationTraceMetadata({ localEvaluationCompleted, localFastPath, localResult }),
           llmSkipped: false,
           fastPathMode,
           shadowDisagreement: shouldCompareShadow ? shadowFields.length > 0 : null,
@@ -182,11 +169,7 @@ export function createExpenseParser(options = {}) {
             parserEngine: "local-fallback",
             parserRoute: "llm_error_local_accepted_fallback",
             fallbackReason,
-            localFastPathAccepted: true,
-            localFastPathRejectReason: null,
-            categoryResolution: localFastPath.categoryResolution,
-            localAcceptanceLevel: localFastPath.localAcceptanceLevel,
-            localCandidate: hasLocalCandidate(localResult),
+            ...localEvaluationTraceMetadata({ localEvaluationCompleted, localFastPath, localResult }),
             llmSkipped: false,
             fastPathMode,
             shadowDisagreement: null,
@@ -202,11 +185,7 @@ export function createExpenseParser(options = {}) {
           parserEngine: "llm",
           parserRoute: "llm_error",
           fallbackReason,
-          localFastPathAccepted: localFastPath.accepted,
-          localFastPathRejectReason: localFastPath.rejectReason,
-          categoryResolution: localFastPath.categoryResolution,
-          localAcceptanceLevel: localFastPath.localAcceptanceLevel,
-          localCandidate: hasLocalCandidate(localResult),
+          ...localEvaluationTraceMetadata({ localEvaluationCompleted, localFastPath, localResult }),
           llmSkipped: false,
           fastPathMode,
           shadowDisagreement: null,
@@ -495,6 +474,21 @@ function elapsedMs(performanceNow, startedAt) {
 
 function hasLocalCandidate(result) {
   return Array.isArray(result?.expenses) && result.expenses.length > 0;
+}
+
+function localEvaluationTraceMetadata({ localEvaluationCompleted, localFastPath, localResult }) {
+  if (!localEvaluationCompleted) {
+    return localFastPath.rejectReason
+      ? { localFastPathRejectReason: localFastPath.rejectReason }
+      : {};
+  }
+  return {
+    localFastPathAccepted: localFastPath.accepted,
+    localFastPathRejectReason: localFastPath.rejectReason,
+    categoryResolution: localFastPath.categoryResolution,
+    localAcceptanceLevel: localFastPath.localAcceptanceLevel,
+    localCandidate: hasLocalCandidate(localResult)
+  };
 }
 
 function normalizeFastPathMode(value) {

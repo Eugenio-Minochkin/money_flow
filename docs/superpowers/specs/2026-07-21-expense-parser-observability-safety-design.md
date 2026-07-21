@@ -14,6 +14,8 @@ The parser classifies every local evaluation as one of three safe enums:
 - `local_reviewable`: critical financial fields are unambiguous but category resolution requires explicit user review.
 - `local_rejected`: a critical field or protected intent is unsafe for local use.
 
+If local evaluation does not complete, including LLM-only `off` mode, the trace omits local acceptance, candidate, and accepted fields. This keeps all three acceptance counts limited to completed local evaluations.
+
 PR A records this classification but preserves current routing. In particular, it does not add a new local-primary route. Existing rollout behavior remains unchanged until PR B.
 
 On LLM timeout or error, local fallback is permitted only for `local_safe`. A `local_reviewable` or `local_rejected` result produces the existing controlled parser failure flow.
@@ -49,9 +51,9 @@ The existing Telegram `llm_parse` stage remains temporarily compatible, but `/ad
 
 ## LLM Timeout
 
-`EXPENSE_PARSER_LLM_TIMEOUT_MS` is a strictly validated positive integer with a default of `20000` milliseconds. The value is wired through config and server construction to the parser.
+`EXPENSE_PARSER_LLM_TIMEOUT_MS` defaults to `20000` milliseconds only when it is absent. An explicitly configured value must be a base-10 positive integer from 1 through 2147483647; invalid values fail startup with a fixed safe configuration error. The value is wired through config and server construction to the parser.
 
-Each OpenAI request receives an `AbortController.signal`. The controller is aborted when the timeout expires and is always cleared after the response body is consumed or the request fails. There are no automatic retries. A timeout is normalized to the safe code `expense_parser_llm_timeout` without embedding request text, response text, or credentials.
+Each OpenAI request receives an `AbortController.signal`. The controller is aborted when the timeout expires and is always cleared after the response body is consumed or the request fails. This is a controlled runtime behavior change: an LLM request that exceeds the configured parser timeout is aborted even when the overall Telegram job timeout is larger. There are no automatic retries. A timeout is normalized to the safe code `expense_parser_llm_timeout` without embedding request text, response text, or credentials.
 
 ## Privacy
 

@@ -119,6 +119,31 @@ test("technical stats aggregate parser acceptance timings fallbacks and shadow s
   assert.match(text, /Amount\/currency shadow: 1\/120 \(0\.8%\) \/ 2\/120 \(1\.7%\)/);
 });
 
+test("technical stats do not count LLM-only events as local rejected", async () => {
+  let aggregateSql = "";
+  const service = createTechnicalStatsService({
+    pool: {
+      async query(sql) {
+        const text = String(sql);
+        if (text.includes("information_schema.columns")) return { rows: [{ exists: false }] };
+        if (text.includes("AS local_fast_path_count")) {
+          aggregateSql = text;
+          return { rows: [{ llm_count: 1, local_rejected_count: 0 }] };
+        }
+        return { rows: [{}] };
+      }
+    },
+    now: () => new Date("2026-07-10T10:00:00Z")
+  });
+
+  const stats = await service.getTechnicalStats();
+
+  assert.equal(stats.today.llmCount, 1);
+  assert.equal(stats.today.localRejectedCount, 0);
+  assert.match(aggregateSql, /metadata->>'localAcceptanceLevel' = 'local_rejected'/);
+  assert.doesNotMatch(aggregateSql, /COALESCE\([^)]*localAcceptanceLevel[^)]*local_rejected/i);
+});
+
 test("technical formatter labels shadow rates insufficient below one hundred comparisons", () => {
   const period = {
     activeUsers: 0, newUsers: 0, messagesTotal: 0, textMessages: 0, voiceMessages: 0,
