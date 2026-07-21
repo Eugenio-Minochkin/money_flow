@@ -17,6 +17,27 @@ test("matches categories by whole token or exact phrase only", () => {
   assert.equal(inferCategory("contact improv"), "sport_activities");
 });
 
+test("recognizes conservative Russian and English aliases", () => {
+  const examples = [
+    ["pad thai", "food_cafe"],
+    ["продуктовый магазин", "groceries"],
+    ["condo rent", "home"],
+    ["замена масла", "transport"],
+    ["dentist", "health"],
+    ["боулдеринг", "sport_activities"],
+    ["power bank", "gear"],
+    ["guesthouse", "travel"],
+    ["mobile top-up", "subscriptions"],
+    ["репетитор", "education"],
+    ["charity", "gifts_help"],
+    ["museum", "entertainment"]
+  ];
+
+  for (const [description, category] of examples) {
+    assert.equal(inferCategory(description), category, description);
+  }
+});
+
 test("keeps deliberately ambiguous words as other", () => {
   assert.equal(inferCategory("tea"), "other");
   assert.equal(inferCategory("water"), "other");
@@ -32,13 +53,61 @@ test("keeps deliberately ambiguous words as other", () => {
 test("does not match keywords inside larger words", () => {
   assert.equal(inferCategory("angel"), "other");
   assert.equal(inferCategory("чайник"), "other");
+  assert.equal(inferCategory("powerbanking"), "other");
+  assert.equal(inferCategory("museumify"), "other");
+});
+
+test("routes event tickets to entertainment and travel tickets to travel", () => {
+  const events = [
+    ["билет в кино", "entertainment"],
+    ["билет в театр", "entertainment"],
+    ["билет на концерт", "entertainment"],
+    ["концертный билет", "entertainment"],
+    ["museum ticket", "entertainment"]
+  ];
+  const travel = [
+    ["авиабилет", "travel"],
+    ["билет на самолет", "travel"],
+    ["билет на самолёт", "travel"],
+    ["flight ticket", "travel"],
+    ["plane ticket", "travel"],
+    ["flight to bangkok", "travel"]
+  ];
+
+  for (const [description, category] of events) {
+    assert.equal(inferCategory(description), category, description);
+  }
+  for (const [description, category] of travel) {
+    assert.equal(inferCategory(description), category, description);
+  }
+});
+
+test("keeps a bare ambiguous ticket as other", () => {
+  assert.equal(inferCategory("билет"), "other");
+  assert.equal(inferCategory("ticket"), "other");
 });
 
 test("matches safe Cyrillic morphology stems", () => {
-  assert.equal(inferCategory("аптеку"), "health");
-  assert.equal(inferCategory("аптеке"), "health");
-  assert.equal(inferCategory("массажа"), "health");
-  assert.equal(inferCategory("бензина"), "transport");
-  assert.equal(inferCategory("продуктов"), "groceries");
-  assert.equal(inferCategory("ужина"), "food_cafe");
+  const examples = [
+    ["аптеку", "health"],
+    ["аптеке", "health"],
+    ["массажа", "health"],
+    ["стоматолога", "health"],
+    ["реабилитации", "health"],
+    ["бензина", "transport"],
+    ["парковку", "transport"],
+    ["продуктов", "groceries"],
+    ["ужина", "food_cafe"],
+    ["аренду квартиры", "home"],
+    ["тренировки", "sport_activities"],
+    ["рюкзака", "gear"],
+    ["отеля", "travel"],
+    ["подписку", "subscriptions"],
+    ["подарочный сертификат", "gifts_help"],
+    ["выставки", "entertainment"]
+  ];
+
+  for (const [description, category] of examples) {
+    assert.equal(inferCategory(description), category, description);
+  }
 });
