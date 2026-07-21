@@ -23,19 +23,20 @@ export function formatTechnicalStats(stats) {
   return [
     "Admin stats",
     "",
-    formatPeriod("Today", stats.today, { includeRates: false }),
+    formatPeriod("Today", stats.today, { includeRates: false, includeConfirmFlow: true }),
     "",
-    formatPeriod("Last 7 days", stats.last7Days, { includeRates: true })
+    formatPeriod("Last 7 days", stats.last7Days, { includeRates: true, includeConfirmFlow: true })
   ].join("\n");
 }
 
 export function formatTechnicalStatsSections(stats) {
   const sections = [{ heading: "🛠 Technical stats", rows: [generatedRow(stats.generatedAt)] }];
   for (const [label, period] of [["Today", stats.today], ["Last 7 days", stats.last7Days]]) {
-    const lines = formatPeriod(label, period, { includeRates: label !== "Today" }).split("\n").slice(1);
+    const lines = formatPeriod(label, period, { includeRates: label !== "Today", includeConfirmFlow: true }).split("\n").slice(1);
     const groups = [
       ["Traffic", /^(Users|Messages|Expenses saved|Drafts):/],
       ["Errors", /^(Errors|Confirm rate|Parse failed rate):/],
+      ["Confirm flow", /^Confirm (flow|outcomes|avg|P95):/],
       ["Processing", /^(Avg processing|P95 processing):/],
       ["Processing stages", /^(Avg stages|P95 stages):/],
       ["Parser routing and averages", /^(Parser:|Parser routing:|Parser avg:)/],
@@ -113,6 +114,24 @@ async function periodStats(pool, period, usersCreatedAtAvailable) {
     draftsCancelled,
     parseFailed,
     transcriptionFailed: Number(events.transcriptionFailed),
+    confirmFlow: {
+      attempts: Number(events.confirmAttempts),
+      success: Number(events.confirmSuccessCount),
+      alreadySaved: Number(events.confirmAlreadySavedCount),
+      cancelled: Number(events.confirmCancelledCount),
+      categoryRequired: Number(events.confirmCategoryRequiredCount),
+      failed: Number(events.confirmFailedCount),
+      avgCallbackAckSeconds: secondsOrNull(events.avgConfirmCallbackAckMs),
+      p95CallbackAckSeconds: secondsOrNull(events.p95ConfirmCallbackAckMs),
+      avgUserResultSeconds: secondsOrNull(events.avgConfirmUserResultMs),
+      p95UserResultSeconds: secondsOrNull(events.p95ConfirmUserResultMs),
+      avgTotalSeconds: secondsOrNull(events.avgConfirmTotalMs),
+      p95TotalSeconds: secondsOrNull(events.p95ConfirmTotalMs),
+      avgDbSaveSeconds: secondsOrNull(events.avgConfirmDbSaveMs),
+      p95DbSaveSeconds: secondsOrNull(events.p95ConfirmDbSaveMs),
+      avgTelegramUpdateSeconds: secondsOrNull(events.avgConfirmTelegramUpdateMs),
+      p95TelegramUpdateSeconds: secondsOrNull(events.p95ConfirmTelegramUpdateMs)
+    },
     avgTextProcessingSeconds: secondsOrNull(events.avgTextProcessingMs),
     avgVoiceProcessingSeconds: secondsOrNull(events.avgVoiceProcessingMs),
     p95TextProcessingSeconds: secondsOrNull(events.p95TextProcessingMs),
@@ -220,6 +239,70 @@ async function aggregateEvents(pool, period) {
        COUNT(*) FILTER (WHERE event_name = 'expense_draft_cancelled')::int AS drafts_cancelled,
        COUNT(*) FILTER (WHERE event_name = 'expense_parse_failed')::int AS parse_failed,
        COUNT(*) FILTER (WHERE event_name = 'voice_transcription_failed')::int AS transcription_failed,
+       COUNT(*) FILTER (
+         WHERE event_name = 'draft_confirm_processing_completed'
+           AND metadata->>'outcome' IN ('success', 'already_saved', 'cancelled', 'category_required', 'failed')
+       )::int AS confirm_attempts,
+       COUNT(*) FILTER (
+         WHERE event_name = 'draft_confirm_processing_completed' AND metadata->>'outcome' = 'success'
+       )::int AS confirm_success_count,
+       COUNT(*) FILTER (
+         WHERE event_name = 'draft_confirm_processing_completed' AND metadata->>'outcome' = 'already_saved'
+       )::int AS confirm_already_saved_count,
+       COUNT(*) FILTER (
+         WHERE event_name = 'draft_confirm_processing_completed' AND metadata->>'outcome' = 'cancelled'
+       )::int AS confirm_cancelled_count,
+       COUNT(*) FILTER (
+         WHERE event_name = 'draft_confirm_processing_completed' AND metadata->>'outcome' = 'category_required'
+       )::int AS confirm_category_required_count,
+       COUNT(*) FILTER (
+         WHERE event_name = 'draft_confirm_processing_completed' AND metadata->>'outcome' = 'failed'
+       )::int AS confirm_failed_count,
+       AVG(CASE WHEN metadata->>'callbackAckMs' ~ '^[0-9]+(\\.[0-9]+)?$' THEN (metadata->>'callbackAckMs')::numeric END) FILTER (
+         WHERE event_name = 'draft_confirm_processing_completed'
+       )::float AS avg_confirm_callback_ack_ms,
+       PERCENTILE_CONT(0.95) WITHIN GROUP (
+         ORDER BY CASE WHEN metadata->>'callbackAckMs' ~ '^[0-9]+(\\.[0-9]+)?$' THEN (metadata->>'callbackAckMs')::numeric END
+       ) FILTER (
+         WHERE event_name = 'draft_confirm_processing_completed'
+           AND metadata->>'callbackAckMs' ~ '^[0-9]+(\\.[0-9]+)?$'
+       )::float AS p95_confirm_callback_ack_ms,
+       AVG(CASE WHEN metadata->>'userResultMs' ~ '^[0-9]+(\\.[0-9]+)?$' THEN (metadata->>'userResultMs')::numeric END) FILTER (
+         WHERE event_name = 'draft_confirm_processing_completed'
+       )::float AS avg_confirm_user_result_ms,
+       PERCENTILE_CONT(0.95) WITHIN GROUP (
+         ORDER BY CASE WHEN metadata->>'userResultMs' ~ '^[0-9]+(\\.[0-9]+)?$' THEN (metadata->>'userResultMs')::numeric END
+       ) FILTER (
+         WHERE event_name = 'draft_confirm_processing_completed'
+           AND metadata->>'userResultMs' ~ '^[0-9]+(\\.[0-9]+)?$'
+       )::float AS p95_confirm_user_result_ms,
+       AVG(CASE WHEN metadata->>'totalMs' ~ '^[0-9]+(\\.[0-9]+)?$' THEN (metadata->>'totalMs')::numeric END) FILTER (
+         WHERE event_name = 'draft_confirm_processing_completed'
+       )::float AS avg_confirm_total_ms,
+       PERCENTILE_CONT(0.95) WITHIN GROUP (
+         ORDER BY CASE WHEN metadata->>'totalMs' ~ '^[0-9]+(\\.[0-9]+)?$' THEN (metadata->>'totalMs')::numeric END
+       ) FILTER (
+         WHERE event_name = 'draft_confirm_processing_completed'
+           AND metadata->>'totalMs' ~ '^[0-9]+(\\.[0-9]+)?$'
+       )::float AS p95_confirm_total_ms,
+       AVG(CASE WHEN metadata->>'dbSaveMs' ~ '^[0-9]+(\\.[0-9]+)?$' THEN (metadata->>'dbSaveMs')::numeric END) FILTER (
+         WHERE event_name = 'draft_confirm_processing_completed'
+       )::float AS avg_confirm_db_save_ms,
+       PERCENTILE_CONT(0.95) WITHIN GROUP (
+         ORDER BY CASE WHEN metadata->>'dbSaveMs' ~ '^[0-9]+(\\.[0-9]+)?$' THEN (metadata->>'dbSaveMs')::numeric END
+       ) FILTER (
+         WHERE event_name = 'draft_confirm_processing_completed'
+           AND metadata->>'dbSaveMs' ~ '^[0-9]+(\\.[0-9]+)?$'
+       )::float AS p95_confirm_db_save_ms,
+       AVG(CASE WHEN metadata->>'telegramUpdateMs' ~ '^[0-9]+(\\.[0-9]+)?$' THEN (metadata->>'telegramUpdateMs')::numeric END) FILTER (
+         WHERE event_name = 'draft_confirm_processing_completed'
+       )::float AS avg_confirm_telegram_update_ms,
+       PERCENTILE_CONT(0.95) WITHIN GROUP (
+         ORDER BY CASE WHEN metadata->>'telegramUpdateMs' ~ '^[0-9]+(\\.[0-9]+)?$' THEN (metadata->>'telegramUpdateMs')::numeric END
+       ) FILTER (
+         WHERE event_name = 'draft_confirm_processing_completed'
+           AND metadata->>'telegramUpdateMs' ~ '^[0-9]+(\\.[0-9]+)?$'
+       )::float AS p95_confirm_telegram_update_ms,
        AVG(CASE
          WHEN metadata->>'processingTotalMs' ~ '^[0-9]+(\\.[0-9]+)?$'
          THEN (metadata->>'processingTotalMs')::numeric
@@ -433,6 +516,22 @@ async function aggregateEvents(pool, period) {
     draftsCancelled: numeric(row.drafts_cancelled),
     parseFailed: numeric(row.parse_failed),
     transcriptionFailed: numeric(row.transcription_failed),
+    confirmAttempts: numeric(row.confirm_attempts),
+    confirmSuccessCount: numeric(row.confirm_success_count),
+    confirmAlreadySavedCount: numeric(row.confirm_already_saved_count),
+    confirmCancelledCount: numeric(row.confirm_cancelled_count),
+    confirmCategoryRequiredCount: numeric(row.confirm_category_required_count),
+    confirmFailedCount: numeric(row.confirm_failed_count),
+    avgConfirmCallbackAckMs: nullableNumeric(row.avg_confirm_callback_ack_ms),
+    p95ConfirmCallbackAckMs: nullableNumeric(row.p95_confirm_callback_ack_ms),
+    avgConfirmUserResultMs: nullableNumeric(row.avg_confirm_user_result_ms),
+    p95ConfirmUserResultMs: nullableNumeric(row.p95_confirm_user_result_ms),
+    avgConfirmTotalMs: nullableNumeric(row.avg_confirm_total_ms),
+    p95ConfirmTotalMs: nullableNumeric(row.p95_confirm_total_ms),
+    avgConfirmDbSaveMs: nullableNumeric(row.avg_confirm_db_save_ms),
+    p95ConfirmDbSaveMs: nullableNumeric(row.p95_confirm_db_save_ms),
+    avgConfirmTelegramUpdateMs: nullableNumeric(row.avg_confirm_telegram_update_ms),
+    p95ConfirmTelegramUpdateMs: nullableNumeric(row.p95_confirm_telegram_update_ms),
     avgTextProcessingMs: nullableNumeric(row.avg_text_processing_ms),
     avgVoiceProcessingMs: nullableNumeric(row.avg_voice_processing_ms),
     p95TextProcessingMs: nullableNumeric(row.p95_text_processing_ms),
@@ -520,6 +619,7 @@ function formatPeriod(label, period, options) {
       `Confirm rate: ${formatPercent(period.confirmRate)}`,
       `Parse failed rate: ${formatPercent(period.parseFailedRate)}`
     ] : []),
+    ...(options.includeConfirmFlow ? formatConfirmFlow(period.confirmFlow) : []),
     `Avg processing: text ${formatSeconds(period.avgTextProcessingSeconds)} / voice ${formatSeconds(period.avgVoiceProcessingSeconds)}`,
     `P95 processing: text ${formatSeconds(period.p95TextProcessingSeconds)} / voice ${formatSeconds(period.p95VoiceProcessingSeconds)}`,
     formatTextStages(period.avgTextStageSeconds),
@@ -534,6 +634,36 @@ function formatPeriod(label, period, options) {
     ...formatMapLine("Rejects", period.localFastPathRejectReasons),
     ...formatMapLine("Shadow fields", period.shadowDisagreementFields)
   ].join("\n");
+}
+
+function formatConfirmFlow(flow = {}) {
+  if (numeric(flow.attempts) <= 0) return [];
+  const avg = formatConfirmLatencyLine("Confirm avg", [
+    ["ACK", flow.avgCallbackAckSeconds],
+    ["Result", flow.avgUserResultSeconds],
+    ["Total", flow.avgTotalSeconds],
+    ["DB", flow.avgDbSaveSeconds],
+    ["Telegram", flow.avgTelegramUpdateSeconds]
+  ]);
+  const p95 = formatConfirmLatencyLine("Confirm P95", [
+    ["ACK", flow.p95CallbackAckSeconds],
+    ["Result", flow.p95UserResultSeconds],
+    ["Total", flow.p95TotalSeconds],
+    ["DB", flow.p95DbSaveSeconds],
+    ["Telegram", flow.p95TelegramUpdateSeconds]
+  ]);
+  return [
+    `Confirm flow: ${numeric(flow.attempts)} attempts`,
+    `Confirm outcomes: success ${numeric(flow.success)} / already_saved ${numeric(flow.alreadySaved)} / cancelled ${numeric(flow.cancelled)} / category_required ${numeric(flow.categoryRequired)} / failed ${numeric(flow.failed)}`,
+    ...[avg, p95].filter(Boolean)
+  ];
+}
+
+function formatConfirmLatencyLine(label, metrics) {
+  const values = metrics
+    .filter(([, value]) => value != null)
+    .map(([name, value]) => `${name} ${formatSeconds(value)}`);
+  return values.length > 0 ? `${label}: ${values.join(" / ")}` : null;
 }
 
 function fallbackCount(primary, fallback) {

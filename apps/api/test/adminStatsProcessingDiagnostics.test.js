@@ -1,7 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { createTechnicalStatsService, formatTechnicalStats as formatAdminStats } from "../src/technicalStatsService.js";
+import {
+  createTechnicalStatsService,
+  formatTechnicalStats as formatAdminStats,
+  formatTechnicalStatsSections
+} from "../src/technicalStatsService.js";
 
 test("admin processing diagnostics expose avg and p95 totals plus key stages", async () => {
   const service = createTechnicalStatsService({
@@ -102,6 +106,126 @@ test("formatted admin stats include p95 processing summary", () => {
   assert.match(text, /P95 processing: text 1\.9s \/ voice 8\.1s/);
   assert.match(text, /P95 stages text: llm 1\.3s \/ db 0\.3s/);
   assert.match(text, /P95 stages voice: dl 1\.6s \/ asr 4\.2s \/ llm 1\.5s \/ db 0\.4s/);
+});
+
+test("confirm-flow diagnostics aggregate outcomes and only numeric latency metadata", async () => {
+  const service = createTechnicalStatsService({
+    pool: fakePool((sql) => {
+      const query = String(sql);
+      if (query.includes("information_schema.columns")) return { rows: [{ exists: true }] };
+      if (query.includes("FROM users")) return { rows: [{ new_users: 0 }] };
+      if (query.includes("FROM expenses")) {
+        return { rows: [{ expenses_saved: 0, drafts_created: 0, drafts_confirmed: 0, drafts_cancelled: 0 }] };
+      }
+      assert.match(query, /draft_confirm_processing_completed/);
+      for (const field of ["callbackAckMs", "userResultMs", "totalMs", "dbSaveMs", "telegramUpdateMs"]) {
+        assert.ok(query.includes(`metadata->>'${field}' ~ '^[0-9]+`));
+      }
+      return {
+        rows: [{
+          confirm_attempts: 5,
+          confirm_success_count: 1,
+          confirm_already_saved_count: 1,
+          confirm_cancelled_count: 1,
+          confirm_category_required_count: 1,
+          confirm_failed_count: 1,
+          avg_confirm_callback_ack_ms: 120,
+          p95_confirm_callback_ack_ms: 180,
+          avg_confirm_user_result_ms: 1600,
+          p95_confirm_user_result_ms: 1950,
+          avg_confirm_total_ms: 1900,
+          p95_confirm_total_ms: 2300,
+          avg_confirm_db_save_ms: 1100,
+          p95_confirm_db_save_ms: 1400,
+          avg_confirm_telegram_update_ms: 300,
+          p95_confirm_telegram_update_ms: 450
+        }]
+      };
+    }),
+    now: () => new Date("2026-06-24T10:00:00.000Z")
+  });
+
+  const stats = await service.getTechnicalStats();
+
+  assert.deepEqual(stats.today.confirmFlow, {
+    attempts: 5,
+    success: 1,
+    alreadySaved: 1,
+    cancelled: 1,
+    categoryRequired: 1,
+    failed: 1,
+    avgCallbackAckSeconds: 0.1,
+    p95CallbackAckSeconds: 0.2,
+    avgUserResultSeconds: 1.6,
+    p95UserResultSeconds: 2,
+    avgTotalSeconds: 1.9,
+    p95TotalSeconds: 2.3,
+    avgDbSaveSeconds: 1.1,
+    p95DbSaveSeconds: 1.4,
+    avgTelegramUpdateSeconds: 0.3,
+    p95TelegramUpdateSeconds: 0.5
+  });
+  assert.equal(
+    stats.today.confirmFlow.success
+      + stats.today.confirmFlow.alreadySaved
+      + stats.today.confirmFlow.cancelled
+      + stats.today.confirmFlow.categoryRequired
+      + stats.today.confirmFlow.failed,
+    stats.today.confirmFlow.attempts
+  );
+});
+
+test("confirm-flow summary is optional and omits unavailable percentile values", () => {
+  const stats = {
+    generatedAt: new Date("2026-06-24T10:00:00.000Z"),
+    today: period({
+      confirmFlow: {
+        attempts: 5,
+        success: 1,
+        alreadySaved: 1,
+        cancelled: 1,
+        categoryRequired: 1,
+        failed: 1,
+        avgCallbackAckSeconds: 0.1,
+        p95CallbackAckSeconds: 0.2,
+        avgUserResultSeconds: 1.6,
+        p95UserResultSeconds: 2,
+        avgTotalSeconds: 1.9,
+        p95TotalSeconds: null,
+        avgDbSaveSeconds: 1.1,
+        p95DbSaveSeconds: null,
+        avgTelegramUpdateSeconds: 0.3,
+        p95TelegramUpdateSeconds: null
+      }
+    }),
+    last7Days: period(),
+    last30Days: period({
+      confirmFlow: {
+        attempts: 3,
+        success: 3,
+        alreadySaved: 0,
+        cancelled: 0,
+        categoryRequired: 0,
+        failed: 0,
+        avgCallbackAckSeconds: 0.1,
+        p95CallbackAckSeconds: 0.2
+      }
+    })
+  };
+
+  const text = formatAdminStats(stats);
+  const sections = formatTechnicalStatsSections(stats);
+
+  assert.match(text, /Confirm flow: 5 attempts/);
+  assert.match(text, /Confirm outcomes: success 1 \/ already_saved 1 \/ cancelled 1 \/ category_required 1 \/ failed 1/);
+  assert.match(text, /Confirm avg: ACK 0\.1s \/ Result 1\.6s \/ Total 1\.9s \/ DB 1\.1s \/ Telegram 0\.3s/);
+  assert.match(text, /Confirm P95: ACK 0\.2s \/ Result 2\.0s/);
+  assert.doesNotMatch(text, /Total -|DB -|Telegram -/);
+  assert.doesNotMatch(text, /Last 30 days|Confirm flow: 3 attempts/);
+  assert.ok(sections.some((section) => section.heading.includes("Today") && section.heading.endsWith("Confirm flow")));
+
+  const noAttempts = formatAdminStats({ ...stats, today: period(), last7Days: period() });
+  assert.doesNotMatch(noAttempts, /Confirm flow:/);
 });
 
 function period(overrides = {}) {
