@@ -194,6 +194,24 @@ test("audit report suppresses entire descriptions containing any sensitive marke
   assert.deepEqual(report.candidates, { ru: [], en: [] });
 });
 
+test("audit report suppresses Unicode emails and domains without broad punctuation matches", () => {
+  const sensitiveDescriptions = ["иван@почта.рф", "alice@почта.рф", "почта.рф"];
+  const rows = [
+    ...sensitiveDescriptions.flatMap((description, index) =>
+      repeatedConfirmedRows(description, "transport", `unicode-identifier-${index}`)
+    ),
+    ...repeatedConfirmedRows("кафе т. к. рядом", "food_cafe", "unicode-punctuation-neighbor")
+  ];
+
+  const report = buildParserAuditReport(rows);
+  const tokens = candidateTokens(report);
+
+  for (const forbiddenToken of ["иван", "alice", "почта", "рф"]) {
+    assert.ok(!tokens.has(forbiddenToken), forbiddenToken);
+  }
+  assert.ok(report.candidates.ru.some((candidate) => candidate.phrase === "кафе т к"));
+});
+
 test("audit report suppresses case-form quantities fractions and shared currency aliases", () => {
   const sensitiveDescriptions = [
     "такси около ста",

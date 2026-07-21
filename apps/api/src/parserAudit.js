@@ -32,6 +32,12 @@ ORDER BY d.id
 `;
 
 const LANGUAGES = ["ru", "en"];
+const UNICODE_EMAIL_SOURCE = String.raw`(?<![\p{L}\p{N}._%+-])[\p{L}\p{N}](?:[\p{L}\p{N}._%+-]*[\p{L}\p{N}])?@(?:[\p{L}\p{N}](?:[\p{L}\p{N}-]*[\p{L}\p{N}])?\.)+[\p{L}]{2,}(?![\p{L}\p{N}._%+-])`;
+const UNICODE_DOMAIN_SOURCE = String.raw`(?<![\p{L}\p{N}@_-])(?:[\p{L}\p{N}](?:[\p{L}\p{N}-]*[\p{L}\p{N}])?\.)+[\p{L}]{2,}(?:\/[^\s]*)?(?![\p{L}\p{N}_-])`;
+const UNICODE_EMAIL_PATTERN = new RegExp(UNICODE_EMAIL_SOURCE, "iu");
+const UNICODE_DOMAIN_PATTERN = new RegExp(UNICODE_DOMAIN_SOURCE, "iu");
+const UNICODE_EMAIL_PATTERN_GLOBAL = new RegExp(UNICODE_EMAIL_SOURCE, "giu");
+const UNICODE_DOMAIN_PATTERN_GLOBAL = new RegExp(UNICODE_DOMAIN_SOURCE, "giu");
 const KNOWN_CATEGORY_SLUGS = new Set(CATEGORIES.map((category) => category.slug));
 const SUPPORTED_ALIASES = new Map(CATEGORIES.flatMap((category) =>
   category.keywords.map((keyword) => [normalizeAlias(keyword), category.slug])
@@ -327,9 +333,9 @@ function isSensitiveQuantityToken(token) {
 function containsSensitiveMarker(value) {
   if (/\p{N}|\p{Sc}/u.test(value)
       || /\b(?:https?:\/\/|www\.)\S+/iu.test(value)
-      || /\b\S+@\S+\b/u.test(value)
+      || UNICODE_EMAIL_PATTERN.test(value)
       || /(?<![\p{L}\p{N}_])@[\p{L}\p{N}_.-]+/u.test(value)
-      || /\b(?:[\p{L}\p{N}-]+\.)+[\p{L}]{2,}(?:\/\S*)?/iu.test(value)
+      || UNICODE_DOMAIN_PATTERN.test(value)
       || /\b[\p{L}\p{N}]+_[\p{L}\p{N}_]+\b/u.test(value)) {
     return true;
   }
@@ -344,9 +350,9 @@ function detectSourceLanguage(value) {
   const sanitized = String(value ?? "")
     .normalize("NFKC")
     .replaceAll(/\b(?:https?:\/\/|www\.)\S+/giu, " ")
-    .replaceAll(/\b\S+@\S+\b/gu, " ")
+    .replaceAll(UNICODE_EMAIL_PATTERN_GLOBAL, " ")
     .replaceAll(/(?<![\p{L}\p{N}_])@[\p{L}\p{N}_.-]+/gu, " ")
-    .replaceAll(/\b(?:[\p{L}\p{N}-]+\.)+[\p{L}]{2,}(?:\/\S*)?/giu, " ");
+    .replaceAll(UNICODE_DOMAIN_PATTERN_GLOBAL, " ");
   const hasRu = /\p{Script=Cyrillic}/u.test(sanitized);
   const hasEn = /\p{Script=Latin}/u.test(sanitized);
   if (hasRu && hasEn) return "mixed";
