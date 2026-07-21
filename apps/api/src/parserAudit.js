@@ -168,7 +168,7 @@ function extractSafeCandidates(value) {
     .replaceAll("ё", "е")
     .replaceAll(/\b(?:https?:\/\/|www\.)\S+/giu, " ")
     .replaceAll(/\b\S+@\S+\b/gu, " ")
-    .replaceAll(/(^|\s)@\S+/gu, "$1 ")
+    .replaceAll(/(?<![\p{L}\p{N}_])@[\p{L}\p{N}_.-]+/gu, " ")
     .replaceAll(/\b(?:[\p{L}\p{N}-]+\.)+[a-zа-я]{2,}(?:\/\S*)?/giu, " ")
     .replaceAll(/\b(?=[\p{L}\p{N}_-]*\p{N})[\p{L}\p{N}_-]{2,}\b/gu, " ")
     .replaceAll(/\p{N}+(?:[.,:/-]\p{N}+)*\p{Sc}?/gu, " ");

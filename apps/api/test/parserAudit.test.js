@@ -84,6 +84,22 @@ test("audit report separates RU and EN and never serializes raw fields or identi
   }
 });
 
+test("audit report removes punctuated handles before candidate aggregation", () => {
+  const rows = [
+    confirmedRow({ userId: "u1", sourceText: "taxi (@secretname) 10", description: "taxi", category: "transport" }),
+    confirmedRow({ userId: "u2", sourceText: "taxi (@secretname) 20", description: "taxi", category: "transport" }),
+    confirmedRow({ userId: "u1", sourceText: "taxi (@secretname) 30", description: "taxi", category: "transport" })
+  ];
+
+  const report = buildParserAuditReport(rows);
+  const serialized = JSON.stringify(report);
+  const candidate = findCandidate(report, "en", "taxi");
+
+  assert.equal(candidate.occurrenceCount, 3);
+  assert.equal(candidate.distinctUsers, 2);
+  assert.ok(!serialized.includes("secretname"));
+});
+
 test("confirmed expenses are category truth while unconfirmed item categories stay review-only", () => {
   const rows = [
     confirmedRow({ userId: "u1", sourceText: "harbor shuttle 10", description: "harbor shuttle", itemCategory: "travel", category: "transport" }),
