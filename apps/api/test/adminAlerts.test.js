@@ -35,6 +35,29 @@ test("notifyAdminError sends one compact alert to every configured admin", async
   assert.equal(sent[0].replyMarkup, null);
 });
 
+test("notifyAdminError preserves and renders the allowlisted processing stage", async () => {
+  const sent = [];
+  const service = createAdminAlertService({
+    enabled: true,
+    adminTelegramIds: new Set([100]),
+    now: () => new Date("2026-07-07T14:30:00.000Z"),
+    sendMessage: async (message) => sent.push(message)
+  });
+
+  await service.notifyAdminError(new Error("database unavailable"), {
+    source: "telegram",
+    route: "telegram_confirm",
+    stage: "db_save",
+    userId: 1,
+    draftId: 42
+  });
+
+  assert.equal(sent.length, 1);
+  assert.match(sent[0].text, /route: telegram_confirm/);
+  assert.match(sent[0].text, /stage: db_save/);
+  assert.doesNotMatch(sent[0].text, /draftId/);
+});
+
 test("notifyAdminError skips sending when disabled or no admins are configured", async () => {
   const sent = [];
 

@@ -1340,6 +1340,116 @@ test("regular draft confirmation preserves the card for retryable persistence fa
   }
 });
 
+test("unexpected draft confirmation persistence failures notify admins with safe context", async () => {
+  const repo = fakeRepository();
+  repo.saveDraftAsExpense = async () => { throw new Error("database unavailable"); };
+  const alerts = [];
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: repo,
+    telegramClient: capturingClient([]),
+    adminAlertService: {
+      async notifyAdminError(error, context) {
+        alerts.push({ error, context });
+      }
+    }
+  });
+
+  await assert.doesNotReject(() => bot.handleUpdate({ callback_query: {
+    id: "callback-persistence-alert", data: "confirm:42", from: { id: 100 }, message: { chat: { id: 10 }, message_id: 55 }
+  } }));
+
+  assert.equal(alerts.length, 1);
+  assert.equal(alerts[0].error.message, "database unavailable");
+  assert.deepEqual(alerts[0].context, { source: "telegram", route: "telegram_confirm", stage: "db_save", userId: 1 });
+});
+
+test("cancelled and category-required confirmations do not notify admins", async () => {
+  for (const error of [new DraftCanceledError(), new CategoryRequiredError()]) {
+    const repo = fakeRepository();
+    repo.saveDraftAsExpense = async () => { throw error; };
+    const alerts = [];
+    const bot = createTelegramBot({
+      token: "test-token",
+      miniAppUrl: "http://localhost:3000",
+      repository: repo,
+      telegramClient: capturingClient([]),
+      adminAlertService: { async notifyAdminError(...args) { alerts.push(args); } }
+    });
+
+    await assert.doesNotReject(() => bot.handleUpdate({ callback_query: {
+      id: `callback-no-alert-${error.name}`, data: "confirm:42", from: { id: 100 }, message: { chat: { id: 10 }, message_id: 55 }
+    } }));
+
+    assert.deepEqual(alerts, []);
+  }
+});
+
+test("a terminal confirmation delivery failure after commit notifies admins", async () => {
+  const repo = fakeRepository();
+  repo.saveDraftAsExpense = async () => ({
+    expenses: [{ id: 71, amount_base: 75 }], dashboardSnapshot: null, alreadySaved: false
+  });
+  const alerts = [];
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: repo,
+    telegramClient: {
+      async answerCallbackQuery() { return { ok: true }; },
+      async editMessageText() { throw new Error("edit unavailable"); },
+      async sendMessage() { throw new Error("send unavailable"); },
+      async deleteMessage() { return { ok: true }; }
+    },
+    adminAlertService: {
+      async notifyAdminError(error, context) {
+        alerts.push({ error, context });
+      }
+    }
+  });
+
+  await assert.doesNotReject(() => bot.handleUpdate({ callback_query: {
+    id: "callback-delivery-alert", data: "confirm:42", from: { id: 100 }, message: { chat: { id: 10 }, message_id: 55 }
+  } }));
+
+  assert.equal(alerts.length, 1);
+  assert.equal(alerts[0].error.message, "send unavailable");
+  assert.deepEqual(alerts[0].context, { source: "telegram", route: "telegram_confirm", stage: "telegram_update", userId: 1 });
+});
+
+test("a failed confirm admin alert does not break the user flow", async () => {
+  const repo = fakeRepository();
+  repo.saveDraftAsExpense = async () => { throw new Error("database unavailable"); };
+  const calls = [];
+  let alertAttempts = 0;
+  const originalError = console.error;
+  console.error = () => {};
+  try {
+    const bot = createTelegramBot({
+      token: "test-token",
+      miniAppUrl: "http://localhost:3000",
+      repository: repo,
+      telegramClient: capturingClient(calls),
+      adminAlertService: {
+        async notifyAdminError() {
+          alertAttempts += 1;
+          throw new Error("admin Telegram unavailable");
+        }
+      }
+    });
+
+    await assert.doesNotReject(() => bot.handleUpdate({ callback_query: {
+      id: "callback-alert-failure", data: "confirm:42", from: { id: 100 }, message: { chat: { id: 10 }, message_id: 55 }
+    } }));
+  } finally {
+    console.error = originalError;
+  }
+
+  assert.equal(calls.filter((call) => call.method === "sendMessage").length, 1);
+  assert.equal(alertAttempts, 1);
+});
+
 test("regular draft cancellation gets one early acknowledgement and terminalizes its card", async () => {
   const repo = fakeRepository();
   repo.saveDraftAsExpense = async () => { throw new DraftCanceledError(); };
