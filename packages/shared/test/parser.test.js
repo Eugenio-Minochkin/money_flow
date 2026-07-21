@@ -2,6 +2,37 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { parseExpenseText } from "../src/parser.js";
+import { SYNTHETIC_EXPENSE_PARSER_CORPUS } from "../testFixtures/expense-parser-regression-corpus.js";
+
+test("synthetic RU/EN corpus exposes privacy-safe diagnostic reject reasons", () => {
+  const rejected = SYNTHETIC_EXPENSE_PARSER_CORPUS.filter((fixture) => fixture.route === "local_rejected");
+
+  for (const fixture of rejected) {
+    const result = parseExpenseText(fixture.text, {
+      defaultCurrency: fixture.defaultCurrency ?? "THB",
+      now: new Date("2026-07-21T10:00:00+03:00")
+    });
+
+    assert.equal(result.expenses.length, 0, fixture.id);
+    assert.equal(result.reject_reason, fixture.rejectReason, fixture.id);
+  }
+});
+
+test("synthetic RU/EN corpus parses safe amount currency ASR and multi-expense forms", () => {
+  const accepted = SYNTHETIC_EXPENSE_PARSER_CORPUS.filter((fixture) => fixture.route !== "local_rejected");
+
+  for (const fixture of accepted) {
+    const result = parseExpenseText(fixture.text, {
+      defaultCurrency: fixture.defaultCurrency ?? "THB",
+      now: new Date("2026-07-21T10:00:00+03:00")
+    });
+
+    assert.equal(result.expenses.length, fixture.count ?? 1, fixture.id);
+    if (fixture.amount != null) assert.equal(result.expenses[0].amount, fixture.amount, fixture.id);
+    if (fixture.currency != null) assert.equal(result.expenses[0].currency, fixture.currency, fixture.id);
+    assert.equal(result.reject_reason, undefined, fixture.id);
+  }
+});
 
 test("parses a simple Russian text expense into a draft item", () => {
   const result = parseExpenseText("кофе 70 бат", {
@@ -236,12 +267,12 @@ test("parses Russian amount words only when they look like an amount", () => {
 test("does not turn Russian quantity words or invalid number grammar into amounts", () => {
   const quantity = parseExpenseText("два кофе");
   const invalidRepeated = parseExpenseText("сто сто бат");
-  const outOfRange = parseExpenseText("десять тысяч бат");
+  const supportedThousands = parseExpenseText("десять тысяч бат");
   const embeddedWord = parseExpenseText("стоянка 200");
 
   assert.equal(quantity.expenses.length, 0);
   assert.equal(invalidRepeated.expenses.length, 0);
-  assert.equal(outOfRange.expenses.length, 0);
+  assert.equal(supportedThousands.expenses[0].amount, 10_000);
   assert.equal(embeddedWord.expenses.length, 1);
   assert.equal(embeddedWord.expenses[0].amount, 200);
   assert.equal(embeddedWord.expenses[0].description, "стоянка");

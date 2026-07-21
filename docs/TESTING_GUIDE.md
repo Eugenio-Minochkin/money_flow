@@ -32,6 +32,8 @@ Use this guide when changing business logic or UI around the main Money Flow sur
 - Dashboard presentation is covered by Mini App dashboard and smoke asset tests.
 - Settings behavior, including current-month budget display and timezone controls, is covered by Mini App settings tests.
 - Voice budget top-up coverage should use digit transcriptions for MVP behavior; amount-word parsing needs a dedicated parser or LLM fallback test before being claimed.
+- Regular expense parser changes must run the synthetic RU/EN corpus in `packages/shared/testFixtures/expense-parser-regression-corpus.js`. The corpus contains invented phrases only and must cover `local_safe`, `local_reviewable`, diagnostic `local_rejected`, unambiguous multi-expense input, and protected high-risk intents.
+- Parser routing tests must prove that `local_safe` and `local_reviewable` are local primary only inside the existing enabled rollout, while high-risk intents always use LLM fallback or a controlled reject. Repository and Telegram tests must keep parser-provided `other` unconfirmable until explicit category selection.
 
 ## Postgres Integration Smoke Tests
 

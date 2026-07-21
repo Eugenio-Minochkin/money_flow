@@ -1591,6 +1591,29 @@ test("category-required confirmation leaves the card and editor session availabl
   assert.equal(calls.filter((call) => call.method === "answerCallbackQuery").length, 2);
 });
 
+test("parser-provided other cannot emit a saved event before explicit category selection", async () => {
+  const repo = fakeRepository();
+  repo.saveDraftAsExpense = async () => { throw new CategoryRequiredError(); };
+  const calls = [];
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: repo,
+    telegramClient: capturingClient(calls)
+  });
+
+  await bot.handleUpdate({ callback_query: {
+    id: "callback-parser-other",
+    data: "d:42:confirm",
+    from: { id: 100 },
+    message: { chat: { id: 10 }, message_id: 55 }
+  } });
+
+  assert.equal(repo.events.some((event) => event.eventName === "expense_draft_confirmed"), false);
+  assert.equal(calls.some((call) => call.method === "editMessageText"), false);
+  assert.ok(calls.some((call) => call.method === "sendMessage" && /категор|categor/i.test(call.text)));
+});
+
 test("confirmation absorbs analytics, cleanup, and diagnostic failures without unhandled rejections", async () => {
   const repo = fakeRepository();
   repo.saveDraftAsExpense = async () => ({

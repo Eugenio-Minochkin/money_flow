@@ -2,6 +2,14 @@
 
 This is a lightweight log for product and domain decisions that future agents should preserve unless the user explicitly asks to revisit them.
 
+## 2026-07-21 - Local Parser Quality Routes By Acceptance Enum
+
+Issue #115 PR B enables both `local_safe` and `local_reviewable` as local-primary results only inside the already configured `enabled` rollout cohort. `shadow`, `off`, and rollout-excluded users keep their previous LLM-primary behavior. `local_rejected` always uses LLM fallback when available and otherwise returns the existing controlled parser error. LLM timeout/error fallback remains restricted to `local_safe`.
+
+Local parse failures use privacy-safe diagnostic enums: `no_amount_token`, `multiple_amounts_ambiguous`, `small_bare_integer`, `unsupported_amount_shape`, `amount_over_limit`, `unsafe_split_or_mapping`, `unsupported_number_words`, and `local_exception`. These reasons contain no source text or financial values.
+
+The deterministic parser may accept multiple expenses only when every explicitly separated segment has one unambiguous amount, its own meaningful description after amount/currency/filler cleanup, and safe currency/date/budget semantics. The single-expense amount-only fallback remains unchanged, but a generated placeholder is never sufficient for one segment of a multi-expense parse. A parser-provided `other` remains review-only and cannot be confirmed until the user explicitly chooses a category; an explicit user choice of `other` is valid.
+
 ## 2026-07-21 - Local Parser Acceptance Is Classified Before Routing Expansion
 
 The regular expense parser distinguishes `local_safe`, `local_reviewable`, and `local_rejected` results. Critical financial fields are expense count, amount, currency, the user's timezone-aware local calendar day, and budget impact. Category and `needs_review` are reviewable fields only after every critical field is unambiguous.

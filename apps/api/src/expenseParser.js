@@ -110,7 +110,7 @@ export function createExpenseParser(options = {}) {
         return localResult;
       }
 
-      if (fastPathMode === "enabled" && inRollout && localFastPath.accepted) {
+      if (fastPathMode === "enabled" && inRollout && isLocalPrimaryAcceptance(localFastPath.localAcceptanceLevel)) {
         emitTrace({
           parserEngine: "local-fast-path",
           parserRoute: "local_primary",
@@ -131,7 +131,8 @@ export function createExpenseParser(options = {}) {
           text, apiKey, model, fetchImpl, now: now(), defaultCurrency, timeZone, performanceNow, llmTimeoutMs
         });
         const parserRoute = resolveLlmParserRoute({ fastPathMode, inRollout, localFastPath, localParserError });
-        const shouldCompareShadow = (fastPathMode === "shadow" || parserRoute === "rollout_excluded") && localFastPath.accepted;
+        const shouldCompareShadow = (fastPathMode === "shadow" || parserRoute === "rollout_excluded")
+          && isLocalPrimaryAcceptance(localFastPath.localAcceptanceLevel);
         const shadowFields = shouldCompareShadow
           ? compareParseResults(localResult, parsed.result, timeZone)
           : [];
@@ -231,7 +232,8 @@ export function evaluateLocalFastPath({ text, localResult }) {
   if (!localResult?.expenses?.length) {
     return {
       accepted: false,
-      rejectReason: looksLikeAmountMappingProblem(text) ? "amount_mapping" : "no_amount",
+      rejectReason: localResult?.reject_reason
+        ?? (looksLikeAmountMappingProblem(text) ? "unsafe_split_or_mapping" : "no_amount_token"),
       categoryResolution: null,
       localAcceptanceLevel: "local_rejected"
     };
@@ -243,7 +245,7 @@ export function evaluateLocalFastPath({ text, localResult }) {
   if (hasUnsafeExpense) {
     return {
       accepted: false,
-      rejectReason: "amount_mapping",
+      rejectReason: "unsafe_split_or_mapping",
       categoryResolution: null,
       localAcceptanceLevel: "local_rejected"
     };
@@ -256,6 +258,10 @@ export function evaluateLocalFastPath({ text, localResult }) {
     categoryResolution: needsReview ? "needs_user_review" : "resolved",
     localAcceptanceLevel: needsReview ? "local_reviewable" : "local_safe"
   };
+}
+
+function isLocalPrimaryAcceptance(level) {
+  return level === "local_safe" || level === "local_reviewable";
 }
 
 async function parseWithOpenAI({
@@ -499,7 +505,7 @@ function resolveLlmParserRoute({ fastPathMode, inRollout, localFastPath, localPa
   if (localParserError) return "local_exception_fallback";
   if (fastPathMode !== "enabled") return "llm_primary";
   if (!inRollout) return "rollout_excluded";
-  if (!localFastPath.accepted) return "local_rejected_fallback";
+  if (!isLocalPrimaryAcceptance(localFastPath.localAcceptanceLevel)) return "local_rejected_fallback";
   return "llm_primary";
 }
 
@@ -519,7 +525,7 @@ function localParserErrorMetadata(error) {
 function detectStopPatternReason(text) {
   const normalized = normalizeText(text);
   if (matchesAny(normalized, [
-    "переведи", "перевел", "перевела", "перевести",
+    "переведи", "перевел", "перевела", "перевели", "перевожу", "перевести",
     "перевод денег",
     "пополнение бюджета", "пополни бюджет", "пополнил бюджет", "пополнила бюджет",
     "положил в бюджет", "положила в бюджет", "положить в бюджет",
@@ -528,18 +534,20 @@ function detectStopPatternReason(text) {
     "transfer", "top up the budget", "budget top up", "plan a payment", "planned payment", "set aside", "reserve"
   ])
     || /(?<![\p{L}\p{N}])send(?:\s+money)?\s+\d+(?![\p{L}\p{N}])/iu.test(normalized)
+    || /(?<![\p{L}\p{N}])(?:перевод(?:а|у|ом|ы|ов)?|планов(?:ый|ая|ое|ую|ого|ому|ые|ых))(?![\p{L}\p{N}])/iu.test(normalized)
     || /(?<![\p{L}\p{N}])put\s+\d+(?:[\d\s.,]*)(?:\s+\w+)?\s+into\s+(?:the\s+)?budget(?![\p{L}\p{N}])/iu.test(normalized)) {
     return "unsupported_intent";
   }
 
   if (matchesAny(normalized, [
     "половину", "пополам", "на двоих", "на троих", "за девушку", "за друга",
-    "за меня", "отдельно", "каждый по", "скинулись", "в долг", "вернул",
-    "должен", "занял", "одолжил", "half", "split", "shared", "separately",
+    "за меня", "отдельно", "каждый по", "скинулись", "в долг", "вернул", "вернула", "вернули", "вернуть",
+    "должен", "должна", "должны", "занял", "заняла", "заняли", "одолжил", "одолжила", "одолжили",
+    "half", "split", "shared", "separately",
     "each paid", "for my girlfriend", "for girlfriend", "for my friend",
     "for me", "owe", "owed", "debt", "borrowed", "lent", "paid back",
-    "payback", "refund"
-  ])) {
+    "payback", "refund", "refunded", "reimbursement"
+  ]) || /(?<![\p{L}\p{N}])(?:возврат(?:а|у|ом|ы|ов)?|долг(?:а|у|ом|и|ов)?)(?![\p{L}\p{N}])/iu.test(normalized)) {
     return "split_semantics";
   }
 
@@ -559,13 +567,13 @@ function detectStopPatternReason(text) {
     || /(?<![\p{L}\p{N}])\d{1,2}-?го\s+числа(?![\p{L}\p{N}])/iu.test(normalized)
     || /(?<![\p{L}\p{N}])for the\s+\d{1,2}(?:st|nd|rd|th)?(?![\p{L}\p{N}])/iu.test(normalized)
     || /(?<![\p{L}\p{N}])on the\s+\d{1,2}(?:st|nd|rd|th)?(?![\p{L}\p{N}])/iu.test(normalized)
-    || /\d{1,2}[./]\d{1,2}(?:[./]\d{2,4})?/u.test(normalized)
+    || /(?<![\p{L}\p{N}.])\d{1,2}[./]\d{1,2}(?:[./]\d{2,4})?(?![\p{L}\p{N}.])/u.test(normalized)
     || /\d{4}-\d{2}-\d{2}/u.test(normalized)) {
     return "explicit_date";
   }
 
   if (looksLikeAmountMappingProblem(normalized)) {
-    return "amount_mapping";
+    return "unsafe_split_or_mapping";
   }
 
   return null;
