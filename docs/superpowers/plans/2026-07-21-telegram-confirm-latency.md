@@ -27,7 +27,7 @@
 - Modify: `apps/api/test/repository.test.js:5073-5109`
 - Modify: `apps/api/src/repository.js:2312-2391`
 
-- [ ] **Step 1: Write failing repository tests for the snapshot boundary.**
+- [x] **Step 1: Write failing repository tests for the snapshot boundary.**
 
   Add a test beside `saveDraftAsExpense confirms an open draft` that makes `repo.dashboard` throw after the fake client records `COMMIT`:
 
@@ -51,7 +51,7 @@
 
   Add the same assertion to the existing `already confirmed` test with a throwing `repo.dashboard`, expecting `{ alreadySaved: true, dashboardSnapshot: null }`.
 
-- [ ] **Step 2: Run the focused repository tests and verify the new test fails.**
+- [x] **Step 2: Run the focused repository tests and verify the new test fails.**
 
   Run:
 
@@ -61,7 +61,7 @@
 
   Expected: the new snapshot-failure expectation fails because `saveDraftAsExpense()` currently rethrows from the shared catch.
 
-- [ ] **Step 3: Isolate only the post-persistence dashboard read.**
+- [x] **Step 3: Isolate only the post-persistence dashboard read.**
 
   Add a small helper in `apps/api/src/repository.js` and use it only after the transaction has committed or an existing confirmed draft has been identified:
 
@@ -81,7 +81,7 @@
 
   Replace both post-persistence `await this.dashboard(telegramUserId)` calls with this helper. Do not move `COMMIT`, alter locks, change inserted-expense SQL, or catch any error before persistence finality.
 
-- [ ] **Step 4: Run the focused repository tests and verify they pass.**
+- [x] **Step 4: Run the focused repository tests and verify they pass.**
 
   Run:
 
@@ -91,7 +91,7 @@
 
   Expected: PASS, including the two null-snapshot cases and existing concurrent-confirm coverage.
 
-- [ ] **Step 5: Commit the repository boundary change.**
+- [x] **Step 5: Commit the repository boundary change.**
 
   ```powershell
   git add apps/api/src/repository.js apps/api/test/repository.test.js
@@ -105,7 +105,7 @@
 - Modify: `apps/api/test/telegramFormat.test.js`
 - Modify: `apps/api/src/telegramFormat.js:87-130`
 
-- [ ] **Step 1: Write a failing formatter test for a null snapshot.**
+- [x] **Step 1: Write a failing formatter test for a null snapshot.**
 
   Add a test that calls `formatSavedSummary(75, null, { language: "en", expenses: [{ amount_base: 75, description: "coffee", category_slug: "food_cafe" }] })` and asserts the output has the saved heading and expense line but no `Today` or `Month` dashboard blocks.
 
@@ -115,7 +115,7 @@
   assert.doesNotMatch(text, /Today|Month/);
   ```
 
-- [ ] **Step 2: Run the formatter test and verify it fails.**
+- [x] **Step 2: Run the formatter test and verify it fails.**
 
   Run:
 
@@ -125,7 +125,7 @@
 
   Expected: FAIL because the formatter dereferences `snapshot.baseCurrency`.
 
-- [ ] **Step 3: Make the formatter choose the reduced summary explicitly.**
+- [x] **Step 3: Make the formatter choose the reduced summary explicitly.**
 
   Insert the null branch immediately before the current `const currency = snapshot.baseCurrency ?? "THB";` line; leave the following current full-summary statements in the same function and order:
 
@@ -142,7 +142,7 @@
   }
   ```
 
-- [ ] **Step 4: Run the formatter test and verify it passes.**
+- [x] **Step 4: Run the formatter test and verify it passes.**
 
   Run:
 
@@ -152,7 +152,7 @@
 
   Expected: PASS with all existing full-summary cases unchanged.
 
-- [ ] **Step 5: Commit the formatter fallback.**
+- [x] **Step 5: Commit the formatter fallback.**
 
   ```powershell
   git add apps/api/src/telegramFormat.js apps/api/test/telegramFormat.test.js
@@ -166,7 +166,7 @@
 - Modify: `apps/api/test/telegram.test.js:1237-1326,2996-3028,5395-5431`
 - Modify: `apps/api/src/telegram.js:814-824,1951-2006,2720-2823`
 
-- [ ] **Step 1: Add failing Telegram tests for early acknowledgement and terminal outcomes.**
+- [x] **Step 1: Add failing Telegram tests for early acknowledgement and terminal outcomes.**
 
   Build a `calls` array with a deferred `saveDraftAsExpense` promise. Assert `answerCallbackQuery` with `Сохраняю…` is recorded before resolving the save, and that it is the only ACK after the handler finishes. Add cases for `alreadySaved`, `DraftCanceledError`, `CategoryRequiredError`, a generic DB error, a failed early ACK, and a committed result with `dashboardSnapshot: null`.
 
@@ -187,7 +187,7 @@
 
   For `category_required` and generic failure, assert a direct `sendMessage`, no saved summary, and no `editMessageText` or `deleteMessage` that changes the draft card. Invoke the same callback again after changing the repository result to success and assert it can save.
 
-- [ ] **Step 2: Run the focused Telegram tests and verify they fail.**
+- [x] **Step 2: Run the focused Telegram tests and verify they fail.**
 
   Run:
 
@@ -197,7 +197,7 @@
 
   Expected: FAIL because the current handler saves before ACK and answers the callback a second time on success/error.
 
-- [ ] **Step 3: Add localized copy and explicit delivery helpers.**
+- [x] **Step 3: Add localized copy and explicit delivery helpers.**
 
   Add `confirmSavingCallback` and `saveFailedMessage` to both language maps. Introduce helpers that return delivery metadata rather than throwing delivery errors into persistence classification:
 
@@ -230,7 +230,7 @@
   }
   ```
 
-- [ ] **Step 4: Implement one `handleConfirmDraft` state machine.**
+- [x] **Step 4: Implement one `handleConfirmDraft` state machine.**
 
   At entry capture `startedAt`, attempt exactly one early ACK in `try/catch`, and set `callbackAckMs` from entry through that attempt. Time `saveDraftAsExpense` as `dbSaveMs`; map its result/errors to the five database outcomes. Use the delivery helpers for every terminal operation, calculate `userResultMs` immediately afterward, and never call `answerCallback` again.
 
@@ -257,7 +257,7 @@
 
   `runSafeConfirmCleanup` must measure wall-clock `cleanupMs`, catch and log its own errors, and only close/deactivate sessions for `success`, `already_saved`, and `cancelled`. `category_required` and `failed` deliberately leave the session and card alone. Set `summaryBuildMs: null` and `expenseCount: 0` for all three unsuccessful database outcomes. Compute `totalMs` before attempting the diagnostic event.
 
-- [ ] **Step 5: Add focused non-blocking/failure tests and make the implementation pass them.**
+- [x] **Step 5: Add focused non-blocking/failure tests and make the implementation pass them.**
 
   Use deferred analytics and cleanup promises. Resolve the terminal Telegram operation first and assert the saved summary exists before resolving either deferred task. Make `recordAppEvent`, cleanup, and the final anonymous diagnostic write reject in separate tests; attach `process.once("unhandledRejection", fail)` and assert the handler resolves with its terminal result. Assert the diagnostic event is invoked once with `userId === null`, contains no identifier metadata, and contains `callbackAckMs`, `userResultMs`, `totalMs`, delivery mode/success, nullable summary timing, and the correct outcome.
 
@@ -269,7 +269,7 @@
 
   Expected: PASS, including legacy `confirm:<id>` and `d:<id>:confirm` routes.
 
-- [ ] **Step 6: Commit the confirm-flow refactor.**
+- [x] **Step 6: Commit the confirm-flow refactor.**
 
   ```powershell
   git add apps/api/src/telegram.js apps/api/test/telegram.test.js
@@ -283,7 +283,7 @@
 - Modify: `apps/api/test/adminStatsProcessingDiagnostics.test.js:6-105`
 - Modify: `apps/api/src/technicalStatsService.js:32-52,103-162,206-472,511-536`
 
-- [ ] **Step 1: Write failing stats tests for counts, nullable metrics, and rendering.**
+- [x] **Step 1: Write failing stats tests for counts, nullable metrics, and rendering.**
 
   Extend the fake event row with confirm aliases and assert the SQL includes `draft_confirm_processing_completed`, each outcome, `callbackAckMs`, `userResultMs`, and `telegramUpdateMs`. Assert the mapped period exposes separate success/already-saved/cancelled/category-required/failed values, and assert their sum equals attempts. Add formatter cases for populated and zero-attempt periods.
 
@@ -294,7 +294,7 @@
   assert.doesNotMatch(textWithoutUpdateMetric, /Telegram update/);
   ```
 
-- [ ] **Step 2: Run the focused stats test and verify it fails.**
+- [x] **Step 2: Run the focused stats test and verify it fails.**
 
   Run:
 
@@ -304,7 +304,7 @@
 
   Expected: FAIL because the event aliases and Confirm flow formatter do not yet exist.
 
-- [ ] **Step 3: Extend the JSONB aggregate with explicit numeric guards.**
+- [x] **Step 3: Extend the JSONB aggregate with explicit numeric guards.**
 
   Add `COUNT(*) FILTER` aliases for attempts and every `metadata->>'outcome'` value. For every time metric use the current regex guarded pattern so absent JSON or JSON `null` is excluded:
 
@@ -321,7 +321,7 @@
 
   Add the matching callback ACK, total, DB save, and Telegram update aliases; map every alias through `nullableNumeric`/`secondsOrNull` in `periodStats`.
 
-- [ ] **Step 4: Render one optional Confirm flow group.**
+- [x] **Step 4: Render one optional Confirm flow group.**
 
   Add a `formatConfirmFlow(period)` that returns `[]` when `confirmAttempts === 0`; otherwise return the outcome reconciliation line and only the latency lines whose metrics are non-null. Spread it into `formatPeriod`, add `/^Confirm/` to a distinct `Confirm flow` group in `formatTechnicalStatsSections`, and add its emoji mapping.
 
@@ -338,7 +338,7 @@
   }
   ```
 
-- [ ] **Step 5: Run the focused stats test and verify it passes.**
+- [x] **Step 5: Run the focused stats test and verify it passes.**
 
   Run:
 
@@ -348,7 +348,7 @@
 
   Expected: PASS; no empty Confirm flow section and no fabricated zero P95 metrics.
 
-- [ ] **Step 6: Commit the observability implementation.**
+- [x] **Step 6: Commit the observability implementation.**
 
   ```powershell
   git add apps/api/src/technicalStatsService.js apps/api/test/adminStatsProcessingDiagnostics.test.js
@@ -361,7 +361,7 @@
 
 - Modify: none unless a failing verification identifies a direct regression in Tasks 1-4.
 
-- [ ] **Step 1: Run the three focused suites together.**
+- [x] **Step 1: Run the three focused suites together.**
 
   ```powershell
   npm.cmd test -- apps/api/test/repository.test.js apps/api/test/telegram.test.js apps/api/test/adminStatsProcessingDiagnostics.test.js
@@ -369,7 +369,7 @@
 
   Expected: PASS.
 
-- [ ] **Step 2: Run the complete regression suite and diff checks.**
+- [x] **Step 2: Run the complete regression suite and diff checks.**
 
   ```powershell
   npm.cmd test
@@ -379,7 +379,7 @@
 
   Expected: full suite passes, no whitespace errors, and only the planned source/test/spec/plan files differ from `origin/master`.
 
-- [ ] **Step 3: Prepare PR evidence.**
+- [x] **Step 3: Prepare PR evidence.**
 
   Include the old versus new order (`save → analytics → cleanup → ACK` versus `ACK → save → terminal result → safe background work`), a safe `/admin_stats_tech` sample, the early-ACK order test, no DB migration/prod configuration impact, release rollback as the rollback path, and this user release note:
 
