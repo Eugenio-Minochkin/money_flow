@@ -1,8 +1,17 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { parseExpenseText } from "../src/parser.js";
+import { isCurrencyAlias, parseExpenseText } from "../src/parser.js";
 import { SYNTHETIC_EXPENSE_PARSER_CORPUS } from "../testFixtures/expense-parser-regression-corpus.js";
+
+test("currency alias predicate exposes parser vocabulary with exact-token matching", () => {
+  for (const alias of ["бакс", "บาท", "бел.руб", "$"]) {
+    assert.equal(isCurrencyAlias(alias), true, alias);
+  }
+  for (const ordinaryWord of ["баксоним", "quarterly", "scorecard"]) {
+    assert.equal(isCurrencyAlias(ordinaryWord), false, ordinaryWord);
+  }
+});
 
 test("synthetic RU/EN corpus exposes privacy-safe diagnostic reject reasons", () => {
   const rejected = SYNTHETIC_EXPENSE_PARSER_CORPUS.filter((fixture) => fixture.route === "local_rejected");

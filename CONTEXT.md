@@ -4,6 +4,18 @@ Money Flow помогает пользователю управлять дост
 
 ## Language
 
+**Historical Parser Audit**:
+A read-only, privacy-safe aggregate analysis of regular expense drafts and their confirmed expenses, run only on an approved local production-data copy or read replica. It is evidence collection, not a production operation or automatic parser change.
+_Avoid_: Production audit job, raw-message export, alias generator
+
+**Alias Candidate**:
+A threshold-qualified, cross-user generic RU or EN phrase surfaced for manual review against confirmed expense categories. It is never an approved alias by itself.
+_Avoid_: New alias, merchant label, user phrase
+
+**Parser Benchmark**:
+An explicit comparison of parser correctness and LLM latency on a fixed invented RU/EN corpus. Its results inform a separate decision and never change the configured model automatically.
+_Avoid_: Production experiment, automatic model selection, live traffic test
+
 **Local Safe Parse**:
 A deterministic regular-expense parse whose expense count, amount, currency, local calendar day, and budget impact are unambiguous and whose category is confidently resolved.
 _Avoid_: Any local parse, locally parsed draft, high-confidence text

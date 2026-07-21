@@ -2,6 +2,14 @@
 
 This is a lightweight log for product and domain decisions that future agents should preserve unless the user explicitly asks to revisit them.
 
+## 2026-07-21 - Parser Audit And Benchmark Produce Evidence, Not Automatic Changes
+
+Historical parser audit tooling may run only against an approved loopback-hosted production-data copy or a verified read replica, using a dedicated connection URL, a read-only transaction, a bounded statement timeout, a fixed SELECT, and unconditional rollback. Its output contains only privacy-safe aggregates. Raw source text, descriptions, transcripts, financial values, record identifiers, user identifiers, and Telegram identifiers never belong in stdout, files, CI artifacts, or PRs.
+
+Confirmed expenses joined through `draft_id` are the final category truth; unconfirmed drafts are review-only evidence. RU and EN evidence remains separate. Occurrence, distinct-user, and category-dominance floors suppress rare candidates. Passing those floors never approves a merchant-specific, personal, or context-dependent phrase and never edits the alias dictionary automatically.
+
+Model/prompt benchmarks use a fixed invented corpus and report correctness separately from latency. Real API calls require a separate explicit command and are excluded from ordinary CI. Benchmark tooling does not change the configured model or prompt; every alias, prompt, or model decision requires evidence and a separate reviewed follow-up PR.
+
 ## 2026-07-21 - Local Parser Quality Routes By Acceptance Enum
 
 Issue #115 PR B enables both `local_safe` and `local_reviewable` as local-primary results only inside the already configured `enabled` rollout cohort. `shadow`, `off`, and rollout-excluded users keep their previous LLM-primary behavior. `local_rejected` always uses LLM fallback when available and otherwise returns the existing controlled parser error. LLM timeout/error fallback remains restricted to `local_safe`.
