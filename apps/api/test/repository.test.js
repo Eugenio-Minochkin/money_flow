@@ -5100,13 +5100,25 @@ test("saveDraftAsExpense preserves a saved open draft when its dashboard snapsho
   });
   const repo = createRepository({ ...fakePool(() => ({ rows: [] })), async connect() { return client; } });
   repo.dashboard = async () => { throw new Error("snapshot unavailable"); };
+  const originalWarn = console.warn;
+  let warning;
+  console.warn = (...args) => { warning = args; };
 
-  const result = await repo.saveDraftAsExpense(7, 100);
+  let result;
+  try {
+    result = await repo.saveDraftAsExpense(7, 100);
+  } finally {
+    console.warn = originalWarn;
+  }
 
   assert.equal(result.alreadySaved, false);
   assert.equal(result.expenses.length, 1);
   assert.equal(result.dashboardSnapshot, null);
   assert.ok(queries.includes("COMMIT"));
+  assert.deepEqual(warning, [
+    "[repository] dashboard snapshot unavailable after draft confirmation",
+    { draftId: 7, error: "snapshot unavailable" }
+  ]);
 });
 
 test("saveDraftAsExpense returns existing expenses when already confirmed", async () => {

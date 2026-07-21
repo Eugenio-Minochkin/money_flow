@@ -1276,7 +1276,7 @@ test("confirm callback edits the original draft message into saved summary with 
   const repo = fakeRepository();
   repo.saveDraftAsExpense = async () => ({
     expenses: [{ id: 1, amount_base: 75 }],
-    dashboardSnapshot: (await repo.dashboard()).snapshot,
+    dashboardSnapshot: null,
     alreadySaved: false
   });
   const bot = createTelegramBot({
@@ -1321,7 +1321,8 @@ test("confirm callback edits the original draft message into saved summary with 
     ["ee:x:1:o", "ee:x:1:del"],
     ["http://localhost:3000?telegramUserId=100"]
   ]);
-  assert.ok(calls.some((call) => call.method === "answerCallbackQuery"));
+  const answer = calls.find((call) => call.method === "answerCallbackQuery");
+  assert.equal(answer?.text, "Сохранено");
   assert.equal(calls.some((call) => call.method === "sendMessage" && /Записал|Saved/.test(call.text)), false);
 });
 
@@ -2997,7 +2998,7 @@ test("draft confirm callback (d: scheme) shows already-saved toast and skips sav
   const calls = [];
   const repo = fakeRepository();
   repo.saveDraftAsExpense = async () => {
-    return { expenses: [{ amount_base: 75 }], dashboardSnapshot: (await repo.dashboard()).snapshot, alreadySaved: true };
+    return { expenses: [{ amount_base: 75 }], dashboardSnapshot: null, alreadySaved: true };
   };
   const bot = createTelegramBot({
     token: "test-token",

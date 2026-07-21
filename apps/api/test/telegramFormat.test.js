@@ -196,6 +196,18 @@ test("formats saved summary with budget context", () => {
   assert.match(text, /675 THB/);
 });
 
+test("formats a saved expense without dashboard figures when its snapshot is unavailable", () => {
+  const text = formatSavedSummary(80, null, {
+    language: "en",
+    expenses: [{ amount_original: 80, currency_original: "THB", category_slug: "food_cafe", description: "coffee" }]
+  });
+
+  assert.match(text, /<b>Saved:<\/b>/);
+  assert.match(text, /coffee/);
+  assert.match(text, /Budget summary is temporarily unavailable\./);
+  assert.doesNotMatch(text, /<b>Today<\/b>|<b>Month<\/b>|Forecast|Remaining/);
+});
+
 test("formats saved summary with the fixed daily budget and saved expense details", () => {
   const text = formatSavedSummary(10, {
     ...snapshot(),

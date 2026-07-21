@@ -2314,8 +2314,8 @@ export function createRepository(pool, options = {}) {
       const readDashboardSnapshot = async () => {
         try {
           return (await this.dashboard(telegramUserId)).snapshot;
-        } catch {
-          console.warn("[repository] dashboard snapshot unavailable after draft confirmation", { draftId });
+        } catch (error) {
+          console.warn("[repository] dashboard snapshot unavailable after draft confirmation", { draftId, error: error?.message });
           return null;
         }
       };
