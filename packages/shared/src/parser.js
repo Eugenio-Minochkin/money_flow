@@ -70,7 +70,14 @@ export function parseExpenseText(text, options = {}) {
     const normalizedPart = normalizePartAmountWords(part);
     const rejectReason = diagnosePartRejectReason(part, normalizedPart, maxLocalAmount, defaultCurrency);
     if (rejectReason) return rejectedParse(rejectReason);
-    const parsed = parsePart(normalizedPart, now, defaultCurrency, timeZone, maxLocalAmount);
+    const parsed = parsePart(
+      normalizedPart,
+      now,
+      defaultCurrency,
+      timeZone,
+      maxLocalAmount,
+      parts.length > 1
+    );
     if (!parsed) {
       return rejectedParse(parts.length > 1 ? "unsafe_split_or_mapping" : "unsupported_amount_shape");
     }
@@ -159,7 +166,7 @@ function splitExpensePartsForVoice(text) {
   return merged.map((part) => trimTrailingPunctuation(part.text.trim())).filter(Boolean);
 }
 
-function parsePart(part, now, defaultCurrency, timeZone, maxLocalAmount) {
+function parsePart(part, now, defaultCurrency, timeZone, maxLocalAmount, requireMeaningfulDescription = false) {
   if (hasUnsafeAmountSyntax(part)) return null;
 
   const amountMatches = findAmountMatches(part);
@@ -177,9 +184,11 @@ function parsePart(part, now, defaultCurrency, timeZone, maxLocalAmount) {
 
   const spentAt = resolveRelativeDate(part, now);
   const budgetImpact = detectBudgetImpact(part);
-  const description = cleanDescription(
+  const cleanedDescription = cleanDescription(
     `${part.slice(0, amountMatch.start)} ${part.slice(amountMatch.end)}`
-  ) || "расход";
+  );
+  if (requireMeaningfulDescription && !cleanedDescription) return null;
+  const description = cleanedDescription || "расход";
   const category = inferCategory(description);
   const needsReview = category === "other";
 

@@ -6,8 +6,12 @@ export const SYNTHETIC_EXPENSE_PARSER_CORPUS = Object.freeze([
   { id: "en_asr_currency_punctuation", route: "local_safe", text: "coffee 12, dollars", amount: 12, currency: "USD", defaultCurrency: "THB" },
   { id: "en_amount_first", route: "local_safe", text: "$12 lunch", amount: 12, currency: "USD" },
   { id: "unknown_category", route: "local_reviewable", text: "notebook 120 baht", amount: 120, currency: "THB" },
+  { id: "single_amount_unchanged", route: "local_reviewable", text: "200", amount: 200, currency: "THB" },
   { id: "ru_multi_semicolon", route: "local_safe", text: "кофе 80 бат; такси 120 бат", count: 2 },
   { id: "en_multi_and", route: "local_safe", text: "coffee 80 baht and taxi 120 baht", count: 2 },
+  { id: "ru_multi_bare_and", route: "local_rejected", text: "кофе 100 и 200", rejectReason: "unsafe_split_or_mapping" },
+  { id: "en_multi_bare_semicolon", route: "local_rejected", text: "coffee 80; 120", rejectReason: "unsafe_split_or_mapping" },
+  { id: "ru_multi_bare_currency", route: "local_rejected", text: "такси 300 и 400 бат", rejectReason: "unsafe_split_or_mapping" },
   { id: "no_amount", route: "local_rejected", text: "coffee", rejectReason: "no_amount_token" },
   { id: "ambiguous_amounts", route: "local_rejected", text: "coffee 80 taxi 120", rejectReason: "multiple_amounts_ambiguous" },
   { id: "mixed_word_digit_amounts", route: "local_rejected", text: "кофе сто бат чай 200 бат", rejectReason: "multiple_amounts_ambiguous" },
@@ -23,6 +27,19 @@ export const SYNTHETIC_EXPENSE_PARSER_CORPUS = Object.freeze([
 export const SYNTHETIC_HIGH_RISK_EXPENSES = Object.freeze([
   "transfer 1000",
   "перевод 1000",
+  "мне вернули 800 бат",
+  "она вернула 800",
+  "вернуть 800",
+  "перевели 1000",
+  "перевожу 1000",
+  "одолжила 500",
+  "одолжили 500",
+  "заняла 500",
+  "заняли 500",
+  "должна 500",
+  "должны 500",
+  "refunded 800",
+  "reimbursement 800",
   "пополни бюджет 5000",
   "reserve 500",
   "planned payment 1000",
@@ -36,4 +53,12 @@ export const SYNTHETIC_HIGH_RISK_EXPENSES = Object.freeze([
   "spread insurance 24000 over 12 months",
   "outside budget watch 50000",
   "dinner 900 on 2026-07-20"
+]);
+
+export const SYNTHETIC_HIGH_RISK_FALSE_POSITIVES = Object.freeze([
+  "услуги переводчика 1000",
+  "возвратный билет 800",
+  "должностной курс 500",
+  "refundable ticket 800",
+  "transferable pass 1000"
 ]);

@@ -40,7 +40,9 @@ Status: complete.
 Status: complete.
 
 - Add failing corpus tests for unambiguous RU/EN multi-expense separators.
+- Reject a multi-expense split when any segment lacks its own meaningful description after amount, currency, and filler cleanup; keep single amount-only input unchanged.
 - Add negative routing tests for ambiguous multiple numbers and transfer/top-up/reserve/planned/split/debt/refund/installment/spread/out-of-budget/explicit-date intents.
+- Cover common exact RU/EN transfer, refund, reimbursement, lending, borrowing, and debt forms plus lexical-neighbor false positives without broad substring matching.
 - Ensure high-risk input calls the LLM when available and produces the existing controlled parser error if LLM fails; it must never become local primary.
 - Run focused shared-parser and expense-parser tests.
 

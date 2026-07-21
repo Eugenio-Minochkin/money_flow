@@ -8,7 +8,7 @@ Issue #115 PR B enables both `local_safe` and `local_reviewable` as local-primar
 
 Local parse failures use privacy-safe diagnostic enums: `no_amount_token`, `multiple_amounts_ambiguous`, `small_bare_integer`, `unsupported_amount_shape`, `amount_over_limit`, `unsafe_split_or_mapping`, `unsupported_number_words`, and `local_exception`. These reasons contain no source text or financial values.
 
-The deterministic parser may accept multiple expenses only when every explicitly separated segment has one unambiguous amount and safe currency/date/budget semantics. A parser-provided `other` remains review-only and cannot be confirmed until the user explicitly chooses a category; an explicit user choice of `other` is valid.
+The deterministic parser may accept multiple expenses only when every explicitly separated segment has one unambiguous amount, its own meaningful description after amount/currency/filler cleanup, and safe currency/date/budget semantics. The single-expense amount-only fallback remains unchanged, but a generated placeholder is never sufficient for one segment of a multi-expense parse. A parser-provided `other` remains review-only and cannot be confirmed until the user explicitly chooses a category; an explicit user choice of `other` is valid.
 
 ## 2026-07-21 - Local Parser Acceptance Is Classified Before Routing Expansion
 

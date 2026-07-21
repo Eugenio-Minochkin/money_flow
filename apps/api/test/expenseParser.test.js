@@ -5,7 +5,8 @@ import { createExpenseParser, evaluateLocalFastPath, rolloutBucket } from "../sr
 import { parseExpenseText } from "../../../packages/shared/src/parser.js";
 import {
   SYNTHETIC_EXPENSE_PARSER_CORPUS,
-  SYNTHETIC_HIGH_RISK_EXPENSES
+  SYNTHETIC_HIGH_RISK_EXPENSES,
+  SYNTHETIC_HIGH_RISK_FALSE_POSITIVES
 } from "../../../packages/shared/testFixtures/expense-parser-regression-corpus.js";
 
 test("synthetic corpus maps local rejects to diagnostic trace reasons", () => {
@@ -71,24 +72,48 @@ test("synthetic high-risk intents never become local primary", async () => {
   }
 });
 
-test("high-risk intent becomes a controlled reject when LLM fallback fails", async () => {
-  let trace;
-  const parser = createExpenseParser({
-    apiKey: "test-key",
-    fastPathMode: "enabled",
-    localFirstRolloutPercent: 100,
-    parserTextHashSecret: "test-secret",
-    fetchImpl: async () => jsonResponse({ error: "unavailable" }, { ok: false, status: 503 })
-  });
+test("every synthetic high-risk intent becomes a controlled reject when LLM fallback fails", async () => {
+  for (const text of SYNTHETIC_HIGH_RISK_EXPENSES) {
+    let trace;
+    const parser = createExpenseParser({
+      apiKey: "test-key",
+      fastPathMode: "enabled",
+      localFirstRolloutPercent: 100,
+      parserTextHashSecret: "test-secret",
+      fetchImpl: async () => jsonResponse({ error: "unavailable" }, { ok: false, status: 503 })
+    });
 
-  await assert.rejects(
-    () => parser.parse("transfer 1000", { userId: 42, onLlmTrace(metadata) { trace = metadata; } }),
-    /OpenAI Responses API failed/
-  );
+    await assert.rejects(
+      () => parser.parse(text, { userId: 42, onLlmTrace(metadata) { trace = metadata; } }),
+      /OpenAI Responses API failed/,
+      text
+    );
 
-  assert.equal(trace.localAcceptanceLevel, "local_rejected");
-  assert.equal(trace.parserRoute, "llm_error");
-  assert.equal(trace.fallbackReason, "llm_error");
+    assert.equal(trace.localAcceptanceLevel, "local_rejected", text);
+    assert.equal(trace.parserRoute, "llm_error", text);
+    assert.equal(trace.fallbackReason, "llm_error", text);
+  }
+});
+
+test("nearby high-risk words in ordinary expenses do not block local primary", async () => {
+  for (const text of SYNTHETIC_HIGH_RISK_FALSE_POSITIVES) {
+    let trace;
+    const parser = createExpenseParser({
+      apiKey: "test-key",
+      fastPathMode: "enabled",
+      localFirstRolloutPercent: 100,
+      parserTextHashSecret: "test-secret",
+      fetchImpl: async () => {
+        throw new Error("OpenAI must not be called for a safe lexical neighbor");
+      }
+    });
+
+    const result = await parser.parse(text, { userId: 42, onLlmTrace(metadata) { trace = metadata; } });
+
+    assert.equal(result.expenses.length, 1, text);
+    assert.match(trace.localAcceptanceLevel, /^local_(safe|reviewable)$/, text);
+    assert.equal(trace.parserRoute, "local_primary", text);
+  }
 });
 
 test("uses OpenAI structured output when API key is configured", async () => {

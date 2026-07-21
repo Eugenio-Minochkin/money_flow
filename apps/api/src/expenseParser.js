@@ -525,7 +525,7 @@ function localParserErrorMetadata(error) {
 function detectStopPatternReason(text) {
   const normalized = normalizeText(text);
   if (matchesAny(normalized, [
-    "переведи", "перевел", "перевела", "перевести",
+    "переведи", "перевел", "перевела", "перевели", "перевожу", "перевести",
     "перевод денег",
     "пополнение бюджета", "пополни бюджет", "пополнил бюджет", "пополнила бюджет",
     "положил в бюджет", "положила в бюджет", "положить в бюджет",
@@ -541,11 +541,12 @@ function detectStopPatternReason(text) {
 
   if (matchesAny(normalized, [
     "половину", "пополам", "на двоих", "на троих", "за девушку", "за друга",
-    "за меня", "отдельно", "каждый по", "скинулись", "в долг", "вернул",
-    "должен", "занял", "одолжил", "half", "split", "shared", "separately",
+    "за меня", "отдельно", "каждый по", "скинулись", "в долг", "вернул", "вернула", "вернули", "вернуть",
+    "должен", "должна", "должны", "занял", "заняла", "заняли", "одолжил", "одолжила", "одолжили",
+    "half", "split", "shared", "separately",
     "each paid", "for my girlfriend", "for girlfriend", "for my friend",
     "for me", "owe", "owed", "debt", "borrowed", "lent", "paid back",
-    "payback", "refund"
+    "payback", "refund", "refunded", "reimbursement"
   ]) || /(?<![\p{L}\p{N}])(?:возврат(?:а|у|ом|ы|ов)?|долг(?:а|у|ом|и|ов)?)(?![\p{L}\p{N}])/iu.test(normalized)) {
     return "split_semantics";
   }
