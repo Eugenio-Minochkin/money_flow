@@ -24,7 +24,8 @@ FROM drafts d
 LEFT JOIN expenses e
   ON e.draft_id = d.id
  AND e.budget_impact = 'regular'
-WHERE d.status IN ('pending', 'confirmed', 'cancelled', 'inbox')
+WHERE d.status IN ('pending', 'cancelled', 'inbox')
+   OR (d.status = 'confirmed' AND e.id IS NOT NULL)
 GROUP BY d.id, d.user_id, d.status, d.source_text, d.items
 ORDER BY d.id
 `;
@@ -36,9 +37,25 @@ const SUPPORTED_ALIASES = new Map(CATEGORIES.flatMap((category) =>
 ));
 const FINANCIAL_TOKENS = new Set([
   "byn", "eur", "gel", "idr", "rub", "thb", "usd",
+  "baht", "dollar", "dollars", "euro", "euros", "lari",
+  "rouble", "roubles", "ruble", "rubles", "rupiah",
   "бат", "бата", "батов", "доллар", "доллара", "долларов",
-  "евро", "рубль", "рубля", "рублей"
+  "евро", "лари", "рубль", "рубля", "рублей", "рупий", "рупия", "рупии"
 ]);
+const NUMBER_WORD_TOKENS = new Set([
+  "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
+  "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen",
+  "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety",
+  "hundred", "hundreds", "thousand", "thousands", "million", "millions", "billion", "billions",
+  "trillion", "trillions",
+  "ноль", "один", "одна", "одно", "одни", "два", "две", "три", "четыре", "пять",
+  "шесть", "семь", "восемь", "девять", "десять", "одиннадцать", "двенадцать", "тринадцать",
+  "четырнадцать", "пятнадцать", "шестнадцать", "семнадцать", "восемнадцать", "девятнадцать",
+  "двадцать", "тридцать", "сорок", "пятьдесят", "шестьдесят", "семьдесят", "восемьдесят", "девяносто",
+  "сто", "двести", "триста", "четыреста", "пятьсот", "шестьсот", "семьсот", "восемьсот", "девятьсот",
+  "тысяча", "тысячи", "тысяч", "миллион", "миллиона", "миллионов", "миллиард", "миллиарда", "миллиардов"
+]);
+const NUMBER_WORD_CONNECTORS = new Set(["and", "и"]);
 
 export function normalizeAuditThresholds(input = {}) {
   const thresholds = {
@@ -83,21 +100,27 @@ export function buildParserAuditReport(rows = [], options = {}) {
         const aggregate = aggregates.get(key) ?? {
           language: candidate.language,
           phrase: candidate.phrase,
-          occurrenceCount: 0,
-          users: new Set(),
+          confirmedCount: 0,
+          confirmedUsers: new Set(),
           categories: new Map(),
           reviewOnlyCount: 0,
+          reviewOnlyUsers: new Set(),
           ambiguousCount: 0
         };
-        aggregate.occurrenceCount += 1;
-        aggregate.users.add(String(row?.user_id ?? ""));
+        if (evidence.confirmed) {
+          aggregate.confirmedCount += 1;
+          aggregate.confirmedUsers.add(String(row?.user_id ?? ""));
+        }
         if (evidence.category) {
           aggregate.categories.set(
             evidence.category,
             (aggregate.categories.get(evidence.category) ?? 0) + 1
           );
         }
-        if (evidence.reviewOnly) aggregate.reviewOnlyCount += 1;
+        if (evidence.reviewOnly) {
+          aggregate.reviewOnlyCount += 1;
+          aggregate.reviewOnlyUsers.add(String(row?.user_id ?? ""));
+        }
         if (evidence.ambiguous) aggregate.ambiguousCount += 1;
         aggregates.set(key, aggregate);
       }
@@ -106,11 +129,16 @@ export function buildParserAuditReport(rows = [], options = {}) {
 
   const candidates = { ru: [], en: [] };
   for (const aggregate of aggregates.values()) {
-    if (aggregate.occurrenceCount < thresholds.minCount
-        || aggregate.users.size < thresholds.minDistinctUsers) {
-      continue;
-    }
-    candidates[aggregate.language].push(formatCandidate(aggregate, thresholds));
+    const confirmedQualified = aggregate.confirmedCount >= thresholds.minCount
+      && aggregate.confirmedUsers.size >= thresholds.minDistinctUsers;
+    const reviewOnlyQualified = aggregate.reviewOnlyCount >= thresholds.minCount
+      && aggregate.reviewOnlyUsers.size >= thresholds.minDistinctUsers;
+    if (!confirmedQualified && !reviewOnlyQualified) continue;
+    candidates[aggregate.language].push(formatCandidate(
+      aggregate,
+      thresholds,
+      { confirmedQualified, reviewOnlyQualified }
+    ));
   }
 
   for (const language of LANGUAGES) {
@@ -145,20 +173,22 @@ function evidenceFromRow(row) {
   const expenses = parseJsonArray(row?.confirmed_expenses);
   const sourceText = String(row?.source_text ?? "");
 
-  if (status !== "confirmed" || expenses.length === 0) {
-    return [{ text: sourceText, category: null, reviewOnly: true, ambiguous: false }];
+  if (status !== "confirmed") {
+    return [{ text: sourceText, category: null, confirmed: false, reviewOnly: true, ambiguous: false }];
   }
+  if (expenses.length === 0) return [];
 
   if (items.length === expenses.length) {
     return items.map((item, index) => ({
       text: items.length === 1 ? sourceText : item?.description,
       category: normalizeCategory(expenses[index]?.category_slug),
+      confirmed: true,
       reviewOnly: false,
       ambiguous: !normalizeCategory(expenses[index]?.category_slug)
     }));
   }
 
-  return [{ text: sourceText, category: null, reviewOnly: false, ambiguous: true }];
+  return [{ text: sourceText, category: null, confirmed: true, reviewOnly: false, ambiguous: true }];
 }
 
 function extractSafeCandidates(value) {
@@ -172,7 +202,7 @@ function extractSafeCandidates(value) {
     .replaceAll(/\b(?:[\p{L}\p{N}-]+\.)+[a-zа-я]{2,}(?:\/\S*)?/giu, " ")
     .replaceAll(/\b(?=[\p{L}\p{N}_-]*\p{N})[\p{L}\p{N}_-]{2,}\b/gu, " ")
     .replaceAll(/\p{N}+(?:[.,:/-]\p{N}+)*\p{Sc}?/gu, " ");
-  const tokens = sanitized.match(/[\p{L}]+/gu) ?? [];
+  const tokens = removeNumberWordSequences(sanitized.match(/[\p{L}]+/gu) ?? []);
   const candidates = [];
   let currentLanguage = null;
   let currentTokens = [];
@@ -199,8 +229,8 @@ function extractSafeCandidates(value) {
   return candidates;
 }
 
-function formatCandidate(aggregate, thresholds) {
-  const distributionEntries = [...aggregate.categories.entries()]
+function formatCandidate(aggregate, thresholds, { confirmedQualified, reviewOnlyQualified }) {
+  const distributionEntries = (confirmedQualified ? [...aggregate.categories.entries()] : [])
     .sort(([left], [right]) => left.localeCompare(right));
   const categoryDistribution = Object.fromEntries(distributionEntries);
   const confirmedCount = distributionEntries.reduce((sum, [, count]) => sum + count, 0);
@@ -209,10 +239,12 @@ function formatCandidate(aggregate, thresholds) {
   const dominantCategory = dominantEntry?.[0] ?? null;
   const dominance = confirmedCount > 0 ? dominantEntry[1] / confirmedCount : null;
   let decision = "manual_review";
-  if (aggregate.ambiguousCount > 0
-      || (dominance !== null && dominance < thresholds.dominanceThreshold)) {
+  if (confirmedQualified && (aggregate.ambiguousCount > 0
+      || (dominance !== null && dominance < thresholds.dominanceThreshold))) {
     decision = "rejected_ambiguous";
-  } else if (dominantCategory && SUPPORTED_ALIASES.get(aggregate.phrase) === dominantCategory) {
+  } else if (confirmedQualified
+      && dominantCategory
+      && SUPPORTED_ALIASES.get(aggregate.phrase) === dominantCategory) {
     decision = "already_supported";
   }
 
@@ -221,11 +253,37 @@ function formatCandidate(aggregate, thresholds) {
     decision,
     dominantCategory,
     dominance,
-    occurrenceCount: aggregate.occurrenceCount,
-    distinctUsers: aggregate.users.size,
-    reviewOnlyCount: aggregate.reviewOnlyCount,
+    occurrenceCount: confirmedQualified ? aggregate.confirmedCount : aggregate.reviewOnlyCount,
+    distinctUsers: confirmedQualified ? aggregate.confirmedUsers.size : aggregate.reviewOnlyUsers.size,
+    reviewOnlyCount: reviewOnlyQualified ? aggregate.reviewOnlyCount : 0,
     categoryDistribution
   };
+}
+
+function removeNumberWordSequences(tokens) {
+  const filtered = [];
+  for (let index = 0; index < tokens.length;) {
+    if (!NUMBER_WORD_TOKENS.has(tokens[index])) {
+      filtered.push(tokens[index]);
+      index += 1;
+      continue;
+    }
+
+    index += 1;
+    while (index < tokens.length) {
+      if (NUMBER_WORD_TOKENS.has(tokens[index])) {
+        index += 1;
+        continue;
+      }
+      if (NUMBER_WORD_CONNECTORS.has(tokens[index])
+          && NUMBER_WORD_TOKENS.has(tokens[index + 1])) {
+        index += 2;
+        continue;
+      }
+      break;
+    }
+  }
+  return filtered;
 }
 
 function detectTokenLanguage(token) {

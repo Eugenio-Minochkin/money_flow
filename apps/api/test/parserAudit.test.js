@@ -100,6 +100,51 @@ test("audit report removes punctuated handles before candidate aggregation", () 
   assert.ok(!serialized.includes("secretname"));
 });
 
+test("audit report removes RU and EN number-word financial values without dropping ordinary words", () => {
+  const rows = [
+    ...repeatedConfirmedRows("такси пять тысяч бат", "transport", "ru-word-amount"),
+    ...repeatedConfirmedRows("taxi one hundred usd", "transport", "en-word-amount"),
+    ...repeatedConfirmedRows("taxi two hundred dollars", "transport", "en-dollar-amount")
+  ];
+
+  const report = buildParserAuditReport(rows);
+  const serialized = JSON.stringify(report);
+
+  assert.ok(report.candidates.ru.some((candidate) => candidate.phrase === "такси"));
+  assert.ok(report.candidates.en.some((candidate) => candidate.phrase === "taxi"));
+  for (const forbidden of ["пять", "тысяч", "бат", "one", "two", "hundred", "usd", "dollars"]) {
+    assert.ok(!serialized.includes(forbidden), `report leaked word amount token ${forbidden}`);
+  }
+});
+
+test("category qualification never mixes confirmed and review-only evidence", () => {
+  const rows = [
+    confirmedRow({ userId: "u1", sourceText: "taxi 10", description: "taxi", category: "transport" }),
+    unconfirmedRow({ userId: "u2", sourceText: "taxi 20", description: "taxi", itemCategory: "transport", status: "pending" }),
+    unconfirmedRow({ userId: "u3", sourceText: "taxi 30", description: "taxi", itemCategory: "transport", status: "cancelled" })
+  ];
+
+  const report = buildParserAuditReport(rows);
+
+  assert.ok(!report.candidates.en.some((candidate) => candidate.phrase === "taxi"));
+  assert.equal(report.statusCounts.already_supported, 0);
+});
+
+test("confirmed drafts without a joined regular expense are excluded instead of becoming review-only", () => {
+  const rows = ["u1", "u2", "u1"].map((userId, index) => ({
+    draft_id: `large-oneoff-${index}`,
+    user_id: userId,
+    draft_status: "confirmed",
+    source_text: `private yacht ${index + 100}`,
+    items: [{ description: "private yacht", budget_impact: "large_oneoff" }],
+    confirmed_expenses: []
+  }));
+
+  const report = buildParserAuditReport(rows);
+
+  assert.ok(!report.candidates.en.some((candidate) => candidate.phrase === "private yacht"));
+});
+
 test("confirmed expenses are category truth while unconfirmed item categories stay review-only", () => {
   const rows = [
     confirmedRow({ userId: "u1", sourceText: "harbor shuttle 10", description: "harbor shuttle", itemCategory: "travel", category: "transport" }),
@@ -179,6 +224,7 @@ test("historical audit SQL is a guarded fixed SELECT over regular drafts and con
   assert.match(HISTORICAL_AUDIT_SQL, /expenses\s+e/iu);
   assert.match(HISTORICAL_AUDIT_SQL, /e\.draft_id\s*=\s*d\.id/iu);
   assert.match(HISTORICAL_AUDIT_SQL, /e\.budget_impact\s*=\s*'regular'/iu);
+  assert.match(HISTORICAL_AUDIT_SQL, /d\.status\s*=\s*'confirmed'[\s\S]*e\.id\s+IS\s+NOT\s+NULL/iu);
   assert.doesNotMatch(HISTORICAL_AUDIT_SQL, /planned|topup|reserve/iu);
 
   for (const sql of [
@@ -217,6 +263,16 @@ function unconfirmedRow({ userId, sourceText, description, itemCategory, status 
     items: [{ description, category_slug: itemCategory }],
     confirmed_expenses: []
   };
+}
+
+function repeatedConfirmedRows(sourceText, category, draftPrefix) {
+  return ["u1", "u2", "u1"].map((userId, index) => confirmedRow({
+    draftId: `${draftPrefix}-${index}`,
+    userId,
+    sourceText,
+    description: sourceText,
+    category
+  }));
 }
 
 function findCandidate(report, language, phrase) {
