@@ -79,6 +79,7 @@ const expenseParser = createExpenseParser({
   localFirstRolloutPercent: config.expenseParserLocalFirstRolloutPercent,
   localFirstUserIds: config.expenseParserLocalFirstUserIds,
   maxLocalAmount: config.expenseParserMaxLocalAmount,
+  llmTimeoutMs: config.expenseParserLlmTimeoutMs,
   parserTextHashSecret: config.parserTextHashSecret
 });
 const voiceTranscriber = createVoiceTranscriber({

@@ -183,6 +183,29 @@ test('deployment runbook documents rate limit proxy compatibility settings', () 
   assert.match(runbook, /gateway[\s\S]*TRUSTED_PROXY_IPS/);
 });
 
+test('deployment runbook documents gated parser rollout and exact env rollback', () => {
+  const runbook = readText('docs/deployment-runbook.md');
+
+  assert.match(runbook, /shadow[\s\S]*allowlist[\s\S]*10%[\s\S]*25%[\s\S]*50%[\s\S]*100%/i);
+  assert.match(runbook, /minimum sample/i);
+  assert.match(runbook, /quality[\s\S]*latency/i);
+  assert.match(runbook, /stop conditions/i);
+  assert.match(runbook, /EXPENSE_PARSER_FAST_PATH_MODE=shadow/);
+  assert.match(runbook, /EXPENSE_PARSER_LOCAL_FIRST_ROLLOUT_PERCENT=0/);
+  assert.match(runbook, /EXPENSE_PARSER_LOCAL_FIRST_USER_IDS=\s*\n/);
+  assert.match(runbook, /restart/i);
+  assert.match(runbook, /EXPENSE_PARSER_FAST_PATH_MODE=off/);
+  assert.match(runbook, /does not authorize[\s\S]*production/i);
+});
+
+test('deployment runbook documents strict parser timeout runtime behavior', () => {
+  const runbook = readText('docs/deployment-runbook.md');
+
+  assert.match(runbook, /EXPENSE_PARSER_LLM_TIMEOUT_MS[\s\S]*fail fast/i);
+  assert.match(runbook, /LLM requests?[\s\S]*longer than[\s\S]*aborted/i);
+  assert.match(runbook, /Telegram job timeout[\s\S]*larger/i);
+});
+
 test('deployment runbook requires PRs for admin alerts to show a safe sample message', () => {
   const runbook = readText('docs/deployment-runbook.md');
 

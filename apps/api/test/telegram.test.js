@@ -961,7 +961,7 @@ test("message handling writes performance stage logs and compact summary", async
     await bot.handleUpdate({
       message: {
         chat: { id: 10 },
-        from: { id: 100, first_name: "M" },
+        from: { id: 987654321, first_name: "M" },
         text: "coffee 70 baht"
       }
     });
@@ -982,7 +982,8 @@ test("message handling writes performance stage logs and compact summary", async
   assert.ok(stages.includes("telegram_response_end"));
   assert.ok(stages.includes("total_done"));
   assert.ok(stageLines.every((line) => /traceId=[^ ]+/.test(line)));
-  assert.ok(stageLines.every((line) => /userId=100/.test(line)));
+  assert.ok(stageLines.every((line) => !/userId=/.test(line)));
+  assert.doesNotMatch(perfLines.join("\n"), /987654321/);
   assert.ok(stageLines.every((line) => /messageType=text/.test(line)));
   assert.ok(stageLines.every((line) => /durationMs=\d+/.test(line)));
   assert.ok(stageLines.every((line) => /totalMs=\d+/.test(line)));
@@ -1062,13 +1063,21 @@ test("completed text message app event includes parser metadata", async () => {
         async parse(_text, options = {}) {
           options.onLlmTrace({
             parserEngine: "local-fast-path",
+            parserRoute: "local_primary",
             localFastPathAccepted: true,
             localFastPathRejectReason: null,
             categoryResolution: "resolved",
+            localAcceptanceLevel: "local_safe",
+            localCandidate: true,
             llmSkipped: true,
             fastPathMode: "enabled",
             shadowDisagreement: null,
+            criticalShadowDisagreement: null,
+            categoryOnlyShadowDisagreement: null,
             shadowDisagreementFields: [],
+            localParseMs: 2,
+            localEvaluateMs: 1,
+            parserTotalMs: 4,
             model: "local-parser",
             promptChars: 9,
             responseChars: 220
@@ -1104,10 +1113,16 @@ test("completed text message app event includes parser metadata", async () => {
   assert.ok(completed);
   assert.equal(completed.metadata.inputType, "text");
   assert.equal(completed.metadata.parserEngine, "local-fast-path");
+  assert.equal(completed.metadata.parserRoute, "local_primary");
   assert.equal(completed.metadata.localFastPathAccepted, true);
+  assert.equal(completed.metadata.localAcceptanceLevel, "local_safe");
+  assert.equal(completed.metadata.localCandidate, true);
   assert.equal(completed.metadata.llmSkipped, true);
   assert.equal(completed.metadata.fastPathMode, "enabled");
   assert.equal(completed.metadata.categoryResolution, "resolved");
+  assert.equal(completed.metadata.localParseMs, 2);
+  assert.equal(completed.metadata.localEvaluateMs, 1);
+  assert.equal(completed.metadata.parserTotalMs, 4);
   assert.equal(Number.isFinite(completed.metadata.processingTotalMs), true);
 });
 
@@ -1135,13 +1150,21 @@ test("completed voice message app event includes parser metadata and transcript 
         async parse(_text, options = {}) {
           options.onLlmTrace({
             parserEngine: "local-fast-path",
+            parserRoute: "local_primary",
             localFastPathAccepted: true,
             localFastPathRejectReason: null,
             categoryResolution: "resolved",
+            localAcceptanceLevel: "local_safe",
+            localCandidate: true,
             llmSkipped: true,
             fastPathMode: "enabled",
             shadowDisagreement: null,
+            criticalShadowDisagreement: null,
+            categoryOnlyShadowDisagreement: null,
             shadowDisagreementFields: [],
+            localParseMs: 3,
+            localEvaluateMs: 1,
+            parserTotalMs: 5,
             model: "local-parser",
             promptChars: 9,
             responseChars: 220
@@ -1177,6 +1200,12 @@ test("completed voice message app event includes parser metadata and transcript 
   assert.ok(completed);
   assert.equal(completed.metadata.inputType, "voice");
   assert.equal(completed.metadata.parserEngine, "local-fast-path");
+  assert.equal(completed.metadata.parserRoute, "local_primary");
+  assert.equal(completed.metadata.localAcceptanceLevel, "local_safe");
+  assert.equal(completed.metadata.localCandidate, true);
+  assert.equal(completed.metadata.localParseMs, 3);
+  assert.equal(completed.metadata.localEvaluateMs, 1);
+  assert.equal(completed.metadata.parserTotalMs, 5);
   assert.equal(completed.metadata.llmSkipped, true);
   assert.equal(completed.metadata.transcriptChars, 9);
 });

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { createExpenseParser, rolloutBucket } from "../src/expenseParser.js";
+import { createExpenseParser, evaluateLocalFastPath, rolloutBucket } from "../src/expenseParser.js";
 
 test("uses OpenAI structured output when API key is configured", async () => {
   const parser = createExpenseParser({
@@ -154,10 +154,15 @@ test("local parser uses supplied timezone", async () => {
 
 test("off mode calls OpenAI before local parser", async () => {
   let openAiCalls = 0;
+  let localCalls = 0;
   let trace;
   const parser = createExpenseParser({
     apiKey: "test-key",
     fastPathMode: "off",
+    localParser: () => {
+      localCalls += 1;
+      throw new Error("local parser must not run in off mode");
+    },
     now: () => new Date("2026-06-01T10:00:00+07:00"),
     fetchImpl: async () => {
       openAiCalls += 1;
@@ -188,9 +193,14 @@ test("off mode calls OpenAI before local parser", async () => {
   });
 
   assert.equal(openAiCalls, 1);
+  assert.equal(localCalls, 0);
   assert.equal(parsed.expenses[0].amount, 80);
   assert.equal(trace.parserEngine, "llm");
-  assert.equal(trace.localFastPathAccepted, false);
+  assert.equal("localFastPathAccepted" in trace, false);
+  assert.equal("localAcceptanceLevel" in trace, false);
+  assert.equal("localCandidate" in trace, false);
+  assert.equal("localParseMs" in trace, false);
+  assert.equal("localEvaluateMs" in trace, false);
   assert.equal(trace.fastPathMode, "off");
 });
 
@@ -382,6 +392,30 @@ test("enabled fast-path keeps unknown category as review without OpenAI", async 
   assert.equal(parsed.expenses[0].category_slug, "other");
   assert.equal(parsed.expenses[0].needs_review, true);
   assert.equal(trace.categoryResolution, "needs_user_review");
+});
+
+test("local acceptance classifies safe reviewable and rejected candidates without changing compatibility flags", () => {
+  const baseExpense = {
+    amount: 80,
+    currency: "THB",
+    spent_at: "2026-06-01T10:00:00+07:00",
+    category_slug: "food_cafe",
+    needs_review: false
+  };
+
+  const safe = evaluateLocalFastPath({ text: "coffee 80", localResult: { expenses: [baseExpense] } });
+  const reviewable = evaluateLocalFastPath({
+    text: "notebook 80",
+    localResult: { expenses: [{ ...baseExpense, category_slug: "other", needs_review: true }] }
+  });
+  const rejected = evaluateLocalFastPath({ text: "split taxi 80", localResult: { expenses: [baseExpense] } });
+
+  assert.equal(safe.localAcceptanceLevel, "local_safe");
+  assert.equal(safe.accepted, true);
+  assert.equal(reviewable.localAcceptanceLevel, "local_reviewable");
+  assert.equal(reviewable.accepted, true);
+  assert.equal(rejected.localAcceptanceLevel, "local_rejected");
+  assert.equal(rejected.accepted, false);
 });
 
 test("stop-patterns reject local fast-path and call OpenAI", async () => {
@@ -730,6 +764,162 @@ test("shadow mode calls OpenAI and applies LLM result while recording disagreeme
   assert.deepEqual(trace.shadowDisagreementFields, ["amount"]);
 });
 
+test("shadow comparison treats category and needs review as reviewable on the same timezone-aware local day", async () => {
+  let trace;
+  const parser = createExpenseParser({
+    apiKey: "test-key",
+    fastPathMode: "shadow",
+    now: () => new Date("2026-06-01T12:00:00Z"),
+    localParser: () => ({
+      expenses: [{
+        amount: 80,
+        currency: "THB",
+        description: "coffee",
+        category_slug: "food_cafe",
+        tags: [],
+        spent_at: "2026-06-01T23:30:00+07:00",
+        budget_impact: "regular",
+        confidence: 0.9,
+        needs_review: false
+      }],
+      notes: []
+    }),
+    fetchImpl: async () => jsonResponse({
+      output_text: JSON.stringify({
+        expenses: [{
+          amount: 80,
+          currency: "THB",
+          description: "coffee",
+          category_slug: "other",
+          tags: [],
+          spent_at: "2026-06-01T16:30:00Z",
+          budget_impact: "regular",
+          confidence: 0.6,
+          needs_review: true
+        }],
+        notes: []
+      })
+    })
+  });
+
+  await parser.parse("coffee 80", {
+    timeZone: "Asia/Bangkok",
+    onLlmTrace(metadata) { trace = metadata; }
+  });
+
+  assert.deepEqual(trace.shadowDisagreementFields, ["category_slug", "needs_review"]);
+  assert.equal(trace.criticalShadowDisagreement, false);
+  assert.equal(trace.categoryOnlyShadowDisagreement, true);
+});
+
+test("shadow comparison marks timezone local day and budget impact disagreements as critical", async () => {
+  let trace;
+  const parser = createExpenseParser({
+    apiKey: "test-key",
+    fastPathMode: "shadow",
+    now: () => new Date("2026-06-01T12:00:00Z"),
+    localParser: () => ({
+      expenses: [{
+        amount: 80,
+        currency: "THB",
+        description: "coffee",
+        category_slug: "food_cafe",
+        tags: [],
+        spent_at: "2026-06-01T23:30:00+07:00",
+        budget_impact: "regular",
+        confidence: 0.9,
+        needs_review: false
+      }],
+      notes: []
+    }),
+    fetchImpl: async () => jsonResponse({
+      output_text: JSON.stringify({
+        expenses: [{
+          amount: 80,
+          currency: "THB",
+          description: "coffee",
+          category_slug: "food_cafe",
+          tags: [],
+          spent_at: "2026-06-01T17:30:00Z",
+          budget_impact: "large_oneoff",
+          confidence: 0.9,
+          needs_review: false
+        }],
+        notes: []
+      })
+    })
+  });
+
+  await parser.parse("coffee 80", {
+    timeZone: "Asia/Bangkok",
+    onLlmTrace(metadata) { trace = metadata; }
+  });
+
+  assert.deepEqual(trace.shadowDisagreementFields, ["spent_at", "budget_impact"]);
+  assert.equal(trace.criticalShadowDisagreement, true);
+  assert.equal(trace.categoryOnlyShadowDisagreement, false);
+});
+
+test("internal parser timing exposes local parse evaluation and total durations on local primary", async () => {
+  let trace;
+  const parser = createExpenseParser({
+    apiKey: "test-key",
+    fastPathMode: "enabled",
+    localFirstRolloutPercent: 100,
+    parserTextHashSecret: "test-secret",
+    now: () => new Date("2026-06-01T10:00:00+07:00"),
+    performanceNow: tickingClock(),
+    fetchImpl: async () => { throw new Error("OpenAI should not be called"); }
+  });
+
+  await parser.parse("coffee 80", {
+    userId: 42,
+    onLlmTrace(metadata) { trace = metadata; }
+  });
+
+  for (const field of ["localParseMs", "localEvaluateMs", "parserTotalMs"]) {
+    assert.equal(Number.isFinite(trace[field]), true, field);
+    assert.equal(trace[field] >= 0, true, field);
+  }
+  assert.equal(trace.llmHttpMs, undefined);
+  assert.equal(trace.llmDecodeNormalizeMs, undefined);
+});
+
+test("internal parser timing separates LLM HTTP from decode and normalization", async () => {
+  let trace;
+  const parser = createExpenseParser({
+    apiKey: "test-key",
+    fastPathMode: "shadow",
+    now: () => new Date("2026-06-01T10:00:00+07:00"),
+    performanceNow: tickingClock(),
+    fetchImpl: async () => jsonResponse({
+      output_text: JSON.stringify({
+        expenses: [{
+          amount: 80,
+          currency: "THB",
+          description: "coffee",
+          category_slug: "food_cafe",
+          tags: [],
+          spent_at: "2026-06-01T10:00:00.000+07:00",
+          budget_impact: "regular",
+          confidence: 0.9,
+          needs_review: false
+        }],
+        notes: []
+      })
+    })
+  });
+
+  await parser.parse("coffee 80", {
+    onLlmTrace(metadata) { trace = metadata; }
+  });
+
+  for (const field of ["localParseMs", "localEvaluateMs", "llmHttpMs", "llmDecodeNormalizeMs", "parserTotalMs"]) {
+    assert.equal(Number.isFinite(trace[field]), true, field);
+    assert.equal(trace[field] >= 0, true, field);
+  }
+});
+
 test("OpenAI error returns accepted local result with explicit fallback route", async () => {
   const originalError = console.error;
   console.error = () => {};
@@ -785,6 +975,87 @@ test("OpenAI error without accepted local result keeps parser failure path", asy
   assert.equal(trace.fallbackReason, "llm_error");
 });
 
+test("LLM timeout aborts the request once and falls back only for local_safe", async () => {
+  let trace;
+  let calls = 0;
+  let aborted = false;
+  const parser = createExpenseParser({
+    apiKey: "test-key",
+    fastPathMode: "enabled",
+    localFirstRolloutPercent: 0,
+    parserTextHashSecret: "test-secret",
+    llmTimeoutMs: 5,
+    now: () => new Date("2026-06-01T10:00:00+07:00"),
+    fetchImpl: async (_url, { signal }) => {
+      calls += 1;
+      assert.equal(signal instanceof AbortSignal, true);
+      return await new Promise((_resolve, reject) => {
+        signal.addEventListener("abort", () => {
+          aborted = true;
+          const error = new Error("request aborted");
+          error.name = "AbortError";
+          reject(error);
+        }, { once: true });
+      });
+    }
+  });
+
+  const parsed = await parser.parse("coffee 70", {
+    userId: 7,
+    onLlmTrace(metadata) {
+      trace = metadata;
+    }
+  });
+
+  assert.equal(parsed.expenses[0].amount, 70);
+  assert.equal(calls, 1);
+  assert.equal(aborted, true);
+  assert.equal(trace.localAcceptanceLevel, "local_safe");
+  assert.equal(trace.parserRoute, "llm_error_local_accepted_fallback");
+  assert.equal(trace.fallbackReason, "expense_parser_llm_timeout");
+});
+
+test("LLM timeout rejects local_reviewable with a safe code and without retry", async () => {
+  let trace;
+  let calls = 0;
+  let aborted = false;
+  const parser = createExpenseParser({
+    apiKey: "test-key",
+    fastPathMode: "enabled",
+    localFirstRolloutPercent: 0,
+    parserTextHashSecret: "test-secret",
+    llmTimeoutMs: 5,
+    now: () => new Date("2026-06-01T10:00:00+07:00"),
+    fetchImpl: async (_url, { signal }) => {
+      calls += 1;
+      return await new Promise((_resolve, reject) => {
+        signal.addEventListener("abort", () => {
+          aborted = true;
+          const error = new Error("request aborted");
+          error.name = "AbortError";
+          reject(error);
+        }, { once: true });
+      });
+    }
+  });
+
+  await assert.rejects(
+    () => parser.parse("notebook 80", {
+      userId: 7,
+      onLlmTrace(metadata) {
+        trace = metadata;
+      }
+    }),
+    (error) => error.code === "expense_parser_llm_timeout"
+  );
+
+  assert.equal(calls, 1);
+  assert.equal(aborted, true);
+  assert.equal(trace.localAcceptanceLevel, "local_reviewable");
+  assert.equal(trace.parserRoute, "llm_error");
+  assert.equal(trace.fallbackReason, "expense_parser_llm_timeout");
+});
+
 test("local parser exception falls back to LLM with explicit route", async () => {
   let trace;
   const parser = createExpenseParser({
@@ -826,7 +1097,7 @@ test("local parser exception falls back to LLM with explicit route", async () =>
   assert.equal(trace.parserRoute, "local_exception_fallback");
   assert.equal(trace.localFastPathRejectReason, "local_exception");
   assert.equal(trace.localParserErrorName, "TypeError");
-  assert.equal(trace.localParserErrorMessage, "synthetic local parser failure with raw text hidden");
+  assert.equal("localParserErrorMessage" in trace, false);
 });
 
 test("parsed expenses carry category_source parser", async () => {
@@ -866,5 +1137,13 @@ function jsonResponse(body, options = {}) {
     async text() {
       return JSON.stringify(body);
     }
+  };
+}
+
+function tickingClock() {
+  let value = 0;
+  return () => {
+    value += 1;
+    return value;
   };
 }

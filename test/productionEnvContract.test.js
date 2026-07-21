@@ -74,6 +74,7 @@ test("critical production env keys from the example are passed to api container"
   const derivedOrInternalEnv = new Set(["DATABASE_URL", "MINI_APP_URL", "PORT"]);
   const criticalProductionEnv = [
     "EXPENSE_FAST_PATH_MODE",
+    "EXPENSE_PARSER_LLM_TIMEOUT_MS",
     "DAILY_REMINDER_GLOBAL_ENABLED",
     "DAILY_REMINDER_ROLLOUT_PERCENT",
     "DAILY_REMINDER_INTERVAL_MS",
@@ -94,6 +95,7 @@ test("critical production env keys from the example are passed to api container"
   }
 
   assert.equal(composeEnv.get("EXPENSE_FAST_PATH_MODE"), "${EXPENSE_FAST_PATH_MODE:-off}");
+  assert.equal(composeEnv.get("EXPENSE_PARSER_LLM_TIMEOUT_MS"), "${EXPENSE_PARSER_LLM_TIMEOUT_MS:-20000}");
   assert.equal(composeEnv.get("DAILY_REMINDER_GLOBAL_ENABLED"), "${DAILY_REMINDER_GLOBAL_ENABLED:-false}");
   assert.equal(composeEnv.get("DAILY_REMINDER_ROLLOUT_PERCENT"), "${DAILY_REMINDER_ROLLOUT_PERCENT:-0}");
   assert.equal(composeEnv.get("REQUIRE_TELEGRAM_INIT_DATA"), "${REQUIRE_TELEGRAM_INIT_DATA:-true}");

@@ -39,9 +39,9 @@ export function formatTechnicalStatsSections(stats) {
       ["Confirm flow", /^Confirm (flow|outcomes|avg|P95):/],
       ["Processing", /^(Avg processing|P95 processing):/],
       ["Processing stages", /^(Avg stages|P95 stages):/],
-      ["Parser routing and averages", /^(Parser:|Parser routing:|Parser avg:)/],
+      ["Parser routing and averages", /^(Parser:|Parser routing:|Parser avg:|Local acceptance:|Levels:|LLM fallback:|Internal latency)/],
       ["Review", /^Review:/],
-      ["Shadow", /^Shadow:/],
+      ["Shadow", /^(Shadow:|Critical shadow:|Category-only shadow:|Amount\/currency shadow:)/],
       ["Rejects", /^Rejects:/],
       ["Shadow fields", /^Shadow fields:/]
     ];
@@ -162,7 +162,12 @@ async function periodStats(pool, period, usersCreatedAtAvailable) {
       dbSave: secondsOrNull(events.p95VoiceDbSaveMs)
     },
     localFastPathCount: Number(events.localFastPathCount),
+    localCandidateCount: Number(events.localCandidateCount),
+    localAcceptedCount: Number(events.localAcceptedCount),
     localPrimaryCount: Number(events.localPrimaryCount),
+    localSafeCount: Number(events.localSafeCount),
+    localReviewableCount: Number(events.localReviewableCount),
+    localRejectedCount: Number(events.localRejectedCount),
     localRejectedFallbackCount: Number(events.localRejectedFallbackCount),
     localExceptionFallbackCount: Number(events.localExceptionFallbackCount),
     rolloutExcludedCount: Number(events.rolloutExcludedCount),
@@ -170,9 +175,22 @@ async function periodStats(pool, period, usersCreatedAtAvailable) {
     llmCount: Number(events.llmCount),
     llmPrimaryCount: Number(events.llmPrimaryCount),
     llmSkippedCount: Number(events.llmSkippedCount),
+    llmFallbackCount: Number(events.llmFallbackCount),
     categoryNeedsReviewCount: Number(events.categoryNeedsReviewCount),
     shadowDisagreementCount: Number(events.shadowDisagreementCount),
     shadowComparedCount: Number(events.shadowComparedCount),
+    criticalShadowDisagreementCount: Number(events.criticalShadowDisagreementCount),
+    categoryOnlyShadowDisagreementCount: Number(events.categoryOnlyShadowDisagreementCount),
+    amountShadowDisagreementCount: Number(events.amountShadowDisagreementCount),
+    currencyShadowDisagreementCount: Number(events.currencyShadowDisagreementCount),
+    criticalShadowDisagreementRate: disagreementRate(events.criticalShadowDisagreementCount, events.shadowComparedCount),
+    categoryOnlyShadowDisagreementRate: disagreementRate(events.categoryOnlyShadowDisagreementCount, events.shadowComparedCount),
+    amountShadowDisagreementRate: disagreementRate(events.amountShadowDisagreementCount, events.shadowComparedCount),
+    currencyShadowDisagreementRate: disagreementRate(events.currencyShadowDisagreementCount, events.shadowComparedCount),
+    avgLocalParseSeconds: millisecondsToSeconds(events.avgLocalParseMs),
+    p95LocalParseSeconds: millisecondsToSeconds(events.p95LocalParseMs),
+    avgLlmHttpSeconds: millisecondsToSeconds(events.avgLlmHttpMs),
+    p95LlmHttpSeconds: millisecondsToSeconds(events.p95LlmHttpMs),
     avgLocalFastPathProcessingSeconds: secondsOrNull(events.avgLocalFastPathProcessingMs),
     avgLlmProcessingSeconds: secondsOrNull(events.avgLlmProcessingMs),
     localFastPathRejectReasons: objectFromJson(events.localFastPathRejectReasons),
@@ -410,8 +428,28 @@ async function aggregateEvents(pool, period) {
        )::int AS local_fast_path_count,
        COUNT(*) FILTER (
          WHERE event_name = 'message_processing_completed'
+           AND metadata->>'localCandidate' = 'true'
+       )::int AS local_candidate_count,
+       COUNT(*) FILTER (
+         WHERE event_name = 'message_processing_completed'
+           AND metadata->>'localAcceptanceLevel' IN ('local_safe', 'local_reviewable')
+       )::int AS local_accepted_count,
+       COUNT(*) FILTER (
+         WHERE event_name = 'message_processing_completed'
            AND metadata->>'parserRoute' = 'local_primary'
        )::int AS local_primary_count,
+       COUNT(*) FILTER (
+         WHERE event_name = 'message_processing_completed'
+           AND metadata->>'localAcceptanceLevel' = 'local_safe'
+       )::int AS local_safe_count,
+       COUNT(*) FILTER (
+         WHERE event_name = 'message_processing_completed'
+           AND metadata->>'localAcceptanceLevel' = 'local_reviewable'
+       )::int AS local_reviewable_count,
+       COUNT(*) FILTER (
+         WHERE event_name = 'message_processing_completed'
+           AND metadata->>'localAcceptanceLevel' = 'local_rejected'
+       )::int AS local_rejected_count,
        COUNT(*) FILTER (
          WHERE event_name = 'message_processing_completed'
            AND metadata->>'parserRoute' = 'local_rejected_fallback'
@@ -443,6 +481,11 @@ async function aggregateEvents(pool, period) {
        )::int AS llm_skipped_count,
        COUNT(*) FILTER (
          WHERE event_name = 'message_processing_completed'
+           AND metadata->>'parserEngine' = 'llm'
+           AND metadata->>'parserRoute' IN ('local_rejected_fallback', 'local_exception_fallback')
+       )::int AS llm_fallback_count,
+       COUNT(*) FILTER (
+         WHERE event_name = 'message_processing_completed'
            AND metadata->>'categoryResolution' = 'needs_user_review'
        )::int AS category_needs_review_count,
        COUNT(*) FILTER (
@@ -454,6 +497,30 @@ async function aggregateEvents(pool, period) {
            AND metadata ? 'shadowDisagreement'
            AND metadata->>'shadowDisagreement' IN ('true', 'false')
        )::int AS shadow_compared_count,
+       COUNT(*) FILTER (
+         WHERE event_name = 'message_processing_completed'
+           AND metadata->>'criticalShadowDisagreement' = 'true'
+       )::int AS critical_shadow_disagreement_count,
+       COUNT(*) FILTER (
+         WHERE event_name = 'message_processing_completed'
+           AND metadata->>'categoryOnlyShadowDisagreement' = 'true'
+       )::int AS category_only_shadow_disagreement_count,
+       COUNT(*) FILTER (
+         WHERE event_name = 'message_processing_completed'
+           AND metadata->'shadowDisagreementFields' ? 'amount'
+       )::int AS amount_shadow_disagreement_count,
+       COUNT(*) FILTER (
+         WHERE event_name = 'message_processing_completed'
+           AND metadata->'shadowDisagreementFields' ? 'currency'
+       )::int AS currency_shadow_disagreement_count,
+       AVG(CASE WHEN metadata->>'localParseMs' ~ '^[0-9]+(\\.[0-9]+)?$' THEN (metadata->>'localParseMs')::numeric END)::float AS avg_local_parse_ms,
+       PERCENTILE_CONT(0.95) WITHIN GROUP (
+         ORDER BY CASE WHEN metadata->>'localParseMs' ~ '^[0-9]+(\\.[0-9]+)?$' THEN (metadata->>'localParseMs')::numeric END
+       ) FILTER (WHERE metadata->>'localParseMs' ~ '^[0-9]+(\\.[0-9]+)?$')::float AS p95_local_parse_ms,
+       AVG(CASE WHEN metadata->>'llmHttpMs' ~ '^[0-9]+(\\.[0-9]+)?$' THEN (metadata->>'llmHttpMs')::numeric END)::float AS avg_llm_http_ms,
+       PERCENTILE_CONT(0.95) WITHIN GROUP (
+         ORDER BY CASE WHEN metadata->>'llmHttpMs' ~ '^[0-9]+(\\.[0-9]+)?$' THEN (metadata->>'llmHttpMs')::numeric END
+       ) FILTER (WHERE metadata->>'llmHttpMs' ~ '^[0-9]+(\\.[0-9]+)?$')::float AS p95_llm_http_ms,
        AVG(CASE
          WHEN metadata->>'processingTotalMs' ~ '^[0-9]+(\\.[0-9]+)?$'
          THEN (metadata->>'processingTotalMs')::numeric
@@ -554,7 +621,12 @@ async function aggregateEvents(pool, period) {
     avgVoiceDbSaveMs: nullableNumeric(row.avg_voice_db_save_ms),
     p95VoiceDbSaveMs: nullableNumeric(row.p95_voice_db_save_ms),
     localFastPathCount: numeric(row.local_fast_path_count),
+    localCandidateCount: numeric(row.local_candidate_count),
+    localAcceptedCount: numeric(row.local_accepted_count),
     localPrimaryCount: numeric(row.local_primary_count),
+    localSafeCount: numeric(row.local_safe_count),
+    localReviewableCount: numeric(row.local_reviewable_count),
+    localRejectedCount: numeric(row.local_rejected_count),
     localRejectedFallbackCount: numeric(row.local_rejected_fallback_count),
     localExceptionFallbackCount: numeric(row.local_exception_fallback_count),
     rolloutExcludedCount: numeric(row.rollout_excluded_count),
@@ -562,9 +634,18 @@ async function aggregateEvents(pool, period) {
     llmCount: numeric(row.llm_count),
     llmPrimaryCount: numeric(row.llm_primary_count),
     llmSkippedCount: numeric(row.llm_skipped_count),
+    llmFallbackCount: numeric(row.llm_fallback_count),
     categoryNeedsReviewCount: numeric(row.category_needs_review_count),
     shadowDisagreementCount: numeric(row.shadow_disagreement_count),
     shadowComparedCount: numeric(row.shadow_compared_count),
+    criticalShadowDisagreementCount: numeric(row.critical_shadow_disagreement_count),
+    categoryOnlyShadowDisagreementCount: numeric(row.category_only_shadow_disagreement_count),
+    amountShadowDisagreementCount: numeric(row.amount_shadow_disagreement_count),
+    currencyShadowDisagreementCount: numeric(row.currency_shadow_disagreement_count),
+    avgLocalParseMs: nullableNumeric(row.avg_local_parse_ms),
+    p95LocalParseMs: nullableNumeric(row.p95_local_parse_ms),
+    avgLlmHttpMs: nullableNumeric(row.avg_llm_http_ms),
+    p95LlmHttpMs: nullableNumeric(row.p95_llm_http_ms),
     avgLocalFastPathProcessingMs: nullableNumeric(row.avg_local_fast_path_processing_ms),
     avgLlmProcessingMs: nullableNumeric(row.avg_llm_processing_ms),
     localFastPathRejectReasons: row.local_fast_path_reject_reasons,
@@ -630,11 +711,30 @@ function formatPeriod(label, period, options) {
     `Parser: local ${period.localFastPathCount} / LLM ${period.llmCount} / skipped ${period.llmSkippedCount}`,
     `Parser routing: local primary ${period.localPrimaryCount ?? 0} / local->LLM ${period.localRejectedFallbackCount ?? 0} / LLM primary ${period.llmPrimaryCount ?? 0} / local exceptions ${period.localExceptionFallbackCount ?? 0} / excluded ${period.rolloutExcludedCount ?? 0} / guard ${period.nonExpenseGuardCount ?? 0}`,
     `Parser avg: local ${formatSeconds(period.avgLocalFastPathProcessingSeconds)} / LLM ${formatSeconds(period.avgLlmProcessingSeconds)}`,
+    `Local acceptance: ${numeric(period.localCandidateCount)} candidates / ${numeric(period.localAcceptedCount)} accepted / ${numeric(period.localPrimaryCount)} primary`,
+    `Levels: safe ${numeric(period.localSafeCount)} / reviewable ${numeric(period.localReviewableCount)} / rejected ${numeric(period.localRejectedCount)}`,
+    `LLM fallback: ${numeric(period.llmFallbackCount)}`,
+    `Internal latency avg/P95: local ${formatInternalSeconds(period.avgLocalParseSeconds)}/${formatInternalSeconds(period.p95LocalParseSeconds)} / LLM HTTP ${formatInternalSeconds(period.avgLlmHttpSeconds)}/${formatInternalSeconds(period.p95LlmHttpSeconds)}`,
     `Review: category ${period.categoryNeedsReviewCount}`,
     `Shadow: ${period.shadowDisagreementCount}/${period.shadowComparedCount} disagreements`,
+    `Critical shadow: ${formatShadowRate(period.criticalShadowDisagreementCount, period.shadowComparedCount, period.criticalShadowDisagreementRate)}`,
+    `Category-only shadow: ${formatShadowRate(period.categoryOnlyShadowDisagreementCount, period.shadowComparedCount, period.categoryOnlyShadowDisagreementRate)}`,
+    `Amount/currency shadow: ${formatShadowRate(period.amountShadowDisagreementCount, period.shadowComparedCount, period.amountShadowDisagreementRate)} / ${formatShadowRate(period.currencyShadowDisagreementCount, period.shadowComparedCount, period.currencyShadowDisagreementRate)}`,
     ...formatMapLine("Rejects", period.localFastPathRejectReasons),
     ...formatMapLine("Shadow fields", period.shadowDisagreementFields)
   ].join("\n");
+}
+
+function disagreementRate(count, sample) {
+  const denominator = numeric(sample);
+  if (denominator <= 0) return null;
+  return Math.round((numeric(count) / denominator) * 1000) / 10;
+}
+
+function formatShadowRate(count, sample, rate) {
+  const sampleCount = numeric(sample);
+  const label = sampleCount < 100 ? "insufficient sample" : `${rate ?? disagreementRate(count, sampleCount)}%`;
+  return `${numeric(count)}/${sampleCount} (${label})`;
 }
 
 function formatConfirmFlow(flow = {}) {
@@ -674,6 +774,15 @@ function fallbackCount(primary, fallback) {
 function secondsOrNull(value) {
   const number = nullableNumeric(value);
   return number == null ? null : Math.round((number / 1000) * 10) / 10;
+}
+
+function millisecondsToSeconds(value) {
+  const number = nullableNumeric(value);
+  return number == null ? null : number / 1000;
+}
+
+function formatInternalSeconds(value) {
+  return value == null ? "-" : `${Number(value).toFixed(3)}s`;
 }
 
 function formatSeconds(value) {
