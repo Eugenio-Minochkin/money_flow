@@ -2018,7 +2018,9 @@ async function handleConfirmDraft(trace, token, telegramClient, callback, draftI
   if (successfulSave || outcome === "cancelled") {
     const cleanupStartedAt = performance.now();
     backgroundTasks.push(safeConfirmDraftCleanup({
-      repository, telegramUserId, draftId, now, chatId, token, telegramClient
+      repository, telegramUserId, draftId, now, chatId, messageId,
+      clearOriginalDraftKeyboard: terminal.clearOriginalDraftKeyboard,
+      token, telegramClient
     }).finally(() => {
       cleanupMs = elapsedSince(cleanupStartedAt);
     }));
@@ -2060,8 +2062,6 @@ async function sendConfirmDraftTerminalResponse({ trace, outcome, token, telegra
           return;
         } catch (error) {
           console.error("[telegram] editing terminal draft confirmation failed, falling back to new message", error.message);
-          await editMessageReplyMarkup(token, chatId, messageId, { inline_keyboard: [] }, telegramClient)
-            .catch((markupError) => console.error("[telegram] could not clear old draft keyboard", markupError.message));
         }
       }
       telegramUpdateMode = "fallback_send";
@@ -2072,10 +2072,15 @@ async function sendConfirmDraftTerminalResponse({ trace, outcome, token, telegra
     telegramUpdateMode = "failed";
     console.error("[telegram] terminal draft confirmation delivery failed", error.message);
   }
-  return { telegramUpdateMs: elapsedSince(startedAt), telegramUpdateSucceeded, telegramUpdateMode };
+  return {
+    telegramUpdateMs: elapsedSince(startedAt),
+    telegramUpdateSucceeded,
+    telegramUpdateMode,
+    clearOriginalDraftKeyboard: telegramUpdateSucceeded && telegramUpdateMode === "fallback_send" && Boolean(messageId)
+  };
 }
 
-async function safeConfirmDraftCleanup({ repository, telegramUserId, draftId, now, chatId, token, telegramClient }) {
+async function safeConfirmDraftCleanup({ repository, telegramUserId, draftId, now, chatId, messageId, clearOriginalDraftKeyboard, token, telegramClient }) {
   try {
     const closed = await closeTelegramEditorInput({
       repository,
@@ -2090,6 +2095,10 @@ async function safeConfirmDraftCleanup({ repository, telegramUserId, draftId, no
       token,
       telegramClient
     });
+    if (clearOriginalDraftKeyboard) {
+      await editMessageReplyMarkup(token, chatId, messageId, { inline_keyboard: [] }, telegramClient)
+        .catch((error) => console.error("[telegram] old draft keyboard cleanup failed", error.message));
+    }
   } catch (error) {
     console.error("[telegram] confirmed draft editor cleanup failed", error.message);
   }

@@ -1391,6 +1391,37 @@ test("a failed early acknowledgement and terminal delivery do not change a commi
   assert.equal(diagnosticEvents[0].metadata.telegramUpdateSucceeded, false);
 });
 
+test("failed edit and fallback send leave the original draft card active", async () => {
+  const repo = fakeRepository();
+  repo.saveDraftAsExpense = async () => ({
+    expenses: [{ id: 71, amount_base: 75 }], dashboardSnapshot: null, alreadySaved: false
+  });
+  const calls = [];
+  const originalError = console.error;
+  console.error = () => {};
+  try {
+    const bot = createTelegramBot({
+      token: "test-token", miniAppUrl: "http://localhost:3000", repository: repo,
+      telegramClient: {
+        async answerCallbackQuery(message) { calls.push({ method: "answerCallbackQuery", ...message }); return { ok: true }; },
+        async editMessageText(message) { calls.push({ method: "editMessageText", ...message }); throw new Error("edit unavailable"); },
+        async sendMessage(message) { calls.push({ method: "sendMessage", ...message }); throw new Error("send unavailable"); },
+        async editMessageReplyMarkup(message) { calls.push({ method: "editMessageReplyMarkup", ...message }); return { ok: true }; },
+        async deleteMessage() { return { ok: true }; }
+      }
+    });
+    await assert.doesNotReject(() => bot.handleUpdate({ callback_query: {
+      id: "callback-card-kept", data: "confirm:42", from: { id: 100 }, message: { chat: { id: 10 }, message_id: 55 }
+    } }));
+  } finally {
+    console.error = originalError;
+  }
+
+  assert.ok(calls.some((call) => call.method === "editMessageText"));
+  assert.ok(calls.some((call) => call.method === "sendMessage"));
+  assert.equal(calls.some((call) => call.method === "editMessageReplyMarkup"), false);
+});
+
 test("category-required confirmation leaves the card and editor session available for a successful retry", async () => {
   const repo = fakeRepository();
   let attempts = 0;
