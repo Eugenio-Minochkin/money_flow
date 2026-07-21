@@ -1,4 +1,5 @@
 import { CATEGORIES } from "../../../packages/shared/src/categories.js";
+import { isCurrencyAlias } from "../../../packages/shared/src/parser.js";
 
 export const DEFAULT_AUDIT_THRESHOLDS = Object.freeze({
   minCount: 3,
@@ -35,15 +36,9 @@ const KNOWN_CATEGORY_SLUGS = new Set(CATEGORIES.map((category) => category.slug)
 const SUPPORTED_ALIASES = new Map(CATEGORIES.flatMap((category) =>
   category.keywords.map((keyword) => [normalizeAlias(keyword), category.slug])
 ));
-const FINANCIAL_TOKENS = new Set([
-  "byn", "eur", "gel", "idr", "rub", "thb", "usd",
-  "baht", "dollar", "dollars", "euro", "euros", "lari",
-  "rouble", "roubles", "ruble", "rubles", "rupiah",
-  "бат", "бата", "батов", "доллар", "доллара", "долларов",
-  "евро", "лари", "рубль", "рубля", "рублей", "рупий", "рупия", "рупии"
-]);
 const NUMBER_WORD_TOKENS = new Set([
-  "zero", "half", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
+  "zero", "half", "halves", "quarter", "quarters", "dozen", "dozens", "score", "scores",
+  "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
   "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen",
   "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety",
   "hundred", "hundreds", "thousand", "thousands", "million", "millions", "billion", "billions",
@@ -53,12 +48,20 @@ const NUMBER_WORD_TOKENS = new Set([
   "четырнадцать", "пятнадцать", "шестнадцать", "семнадцать", "восемнадцать", "девятнадцать",
   "двадцать", "тридцать", "сорок", "пятьдесят", "шестьдесят", "семьдесят", "восемьдесят", "девяносто",
   "сто", "двести", "триста", "четыреста", "пятьсот", "шестьсот", "семьсот", "восемьсот", "девятьсот",
-  "тысяча", "тысячи", "тысяч", "миллион", "миллиона", "миллионов", "миллиард", "миллиарда", "миллиардов"
+  "тысяча", "тысячи", "тысяч", "миллион", "миллиона", "миллионов", "миллиард", "миллиарда", "миллиардов",
+  "половина", "половины", "половину", "половиной", "половине", "половин", "половинами", "половинах",
+  "четверть", "четверти", "четвертью", "четвертей", "четвертям", "четвертями", "четвертях",
+  "треть", "трети", "третью", "третей", "третям", "третями", "третях"
 ]);
 const RU_NUMBER_MORPHOLOGY_PATTERNS = [
   /^полутора$/u,
   /^(?:двух|трех|четырех|пяти|шести|семи|восьми|девяти)сот$/u,
-  /^сорока$/u,
+  /^(?:двум|трем|четырем|пяти|шести|семи|восьми|девяти)стам$/u,
+  /^(?:двумя|тремя|четырьмя|пятью|шестью|семью|восемью|девятью)стами$/u,
+  /^(?:двух|трех|четырех|пяти|шести|семи|восьми|девяти)стах$/u,
+  /^с(?:та|отни|отен|отне|отню|отней|отнями|отнях)$/u,
+  /^(?:двадцати|тридцати|сорока|пятидесяти|шестидесяти|семидесяти|восьмидесяти|девяноста)$/u,
+  /^(?:двадцатью|тридцатью|пятьюдесятью|шестьюдесятью|семьюдесятью|восемьюдесятью)$/u,
   /^одн(?:а|о|у|ой|ою|е|и|их|им|ими|ого|ому)$/u,
   /^полтор(?:а|ы|у|ой|ою|ых|ым|ыми)$/u,
   /^дв(?:а|е|ух|ум|умя|оих|оим|оими)$/u,
@@ -311,7 +314,7 @@ function containsSensitiveMarker(value) {
 
   const tokens = value.match(/[\p{L}]+/gu) ?? [];
   return tokens.some((token) => token.length > 20
-    || FINANCIAL_TOKENS.has(token)
+    || isCurrencyAlias(token)
     || isNumberWordToken(token));
 }
 

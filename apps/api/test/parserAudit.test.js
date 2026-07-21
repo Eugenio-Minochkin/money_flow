@@ -194,6 +194,45 @@ test("audit report suppresses entire descriptions containing any sensitive marke
   assert.deepEqual(report.candidates, { ru: [], en: [] });
 });
 
+test("audit report suppresses case-form quantities fractions and shared currency aliases", () => {
+  const sensitiveDescriptions = [
+    "такси около ста",
+    "такси ста бакс",
+    "такси бакс",
+    "taxi บาท",
+    "такси бел.руб",
+    "taxi quarter",
+    "taxi dozen",
+    "такси двумстам",
+    "такси пятьюдесятью",
+    "такси половиной",
+    "taxi halves",
+    "taxi quarters",
+    "taxi dozens",
+    "taxi score",
+    "taxi scores"
+  ];
+  const safeDescriptions = ["quarterly taxi", "scorecard cafe", "баксоним кафе"];
+  const rows = [
+    ...sensitiveDescriptions.flatMap((description, index) =>
+      repeatedConfirmedRows(description, "transport", `quantity-${index}`)
+    ),
+    ...safeDescriptions.flatMap((description, index) =>
+      repeatedConfirmedRows(description, "transport", `anchored-${index}`)
+    )
+  ];
+
+  const report = buildParserAuditReport(rows);
+
+  for (const description of sensitiveDescriptions) {
+    assert.ok(![...report.candidates.ru, ...report.candidates.en]
+      .some((candidate) => candidate.phrase === description), description);
+  }
+  assert.ok(report.candidates.en.some((candidate) => candidate.phrase === "quarterly taxi"));
+  assert.ok(report.candidates.en.some((candidate) => candidate.phrase === "scorecard cafe"));
+  assert.ok(report.candidates.ru.some((candidate) => candidate.phrase === "баксоним кафе"));
+});
+
 test("audit report suppresses numeric words but preserves anchored prefix-similar ordinary words", () => {
   const rows = [
     ...repeatedConfirmedRows("студия одна", "health", "ordinary-one"),

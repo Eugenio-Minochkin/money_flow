@@ -422,7 +422,7 @@ function russianNumberSpanLooksLikeAmount(tokens, start, end) {
   return false;
 }
 
-function isCurrencyAlias(token) {
+export function isCurrencyAlias(token) {
   return CURRENCY_ALIASES.has(normalizeCurrencyToken(token));
 }
 
