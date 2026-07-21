@@ -83,6 +83,21 @@ test("admin alert config defaults and rejects invalid values", () => {
   assert.equal(config.adminAlertMaxMessageLength, 900);
 });
 
+test("expense parser LLM timeout accepts only positive integers and defaults to twenty seconds", () => {
+  assert.equal(buildConfig({}).expenseParserLlmTimeoutMs, 20000);
+  assert.equal(buildConfig({ EXPENSE_PARSER_LLM_TIMEOUT_MS: "15000" }).expenseParserLlmTimeoutMs, 15000);
+
+  for (const value of ["0", "-1", "1.5", "Infinity", "not-a-number"]) {
+    assert.equal(buildConfig({ EXPENSE_PARSER_LLM_TIMEOUT_MS: value }).expenseParserLlmTimeoutMs, 20000, value);
+  }
+});
+
+test("server wires expense parser LLM timeout", async () => {
+  const source = await readFile(new URL("../src/server.js", import.meta.url), "utf8");
+
+  assert.match(source, /llmTimeoutMs:\s*config\.expenseParserLlmTimeoutMs/);
+});
+
 test("server wires the release digest scheduler with Telegram token gating", async () => {
   const source = await readFile(new URL("../src/server.js", import.meta.url), "utf8");
 

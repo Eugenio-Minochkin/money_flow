@@ -3,12 +3,17 @@ import crypto from "node:crypto";
 import { parseExpenseText } from "../../../packages/shared/src/parser.js";
 import { SUPPORTED_CURRENCY_CODES, normalizeCurrency } from "../../../packages/shared/src/currencies.js";
 import { CATEGORIES } from "../../../packages/shared/src/categories.js";
+import { localDateKey } from "../../../packages/shared/src/time.js";
 import { normalizeRolloutPercent } from "./parserRollout.js";
 
 const DEFAULT_MODEL = "gpt-4.1-mini";
+const DEFAULT_LLM_TIMEOUT_MS = 20_000;
+const LLM_TIMEOUT_ERROR_CODE = "expense_parser_llm_timeout";
 const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
 const ALLOWED_CURRENCIES = new Set(SUPPORTED_CURRENCY_CODES);
 const ALLOWED_CATEGORIES = new Set(CATEGORIES.map((category) => category.slug));
+const CRITICAL_SHADOW_FIELDS = new Set(["expense_count", "amount", "currency", "spent_at", "budget_impact"]);
+const REVIEWABLE_SHADOW_FIELDS = new Set(["category_slug", "needs_review"]);
 
 export function createExpenseParser(options = {}) {
   const apiKey = options.apiKey;
@@ -21,11 +26,16 @@ export function createExpenseParser(options = {}) {
   const localFirstUserIds = new Set((options.localFirstUserIds ?? []).map((id) => String(id)));
   const parserTextHashSecret = options.parserTextHashSecret ?? "";
   const maxLocalAmount = options.maxLocalAmount;
+  const llmTimeoutMs = Number.isInteger(options.llmTimeoutMs) && options.llmTimeoutMs > 0
+    ? options.llmTimeoutMs
+    : DEFAULT_LLM_TIMEOUT_MS;
+  const performanceNow = options.performanceNow ?? (() => performance.now());
 
   return {
     model: apiKey ? model : "local-parser",
 
     async parse(text, parseOptions = {}) {
+      const parserStartedAt = performanceNow();
       const defaultCurrency = normalizeCurrency(parseOptions.defaultCurrency, "THB");
       const timeZone = parseOptions.timeZone ?? "Asia/Bangkok";
       const shouldRunLocalFastPath = fastPathMode === "enabled" || fastPathMode === "shadow";
@@ -41,31 +51,59 @@ export function createExpenseParser(options = {}) {
       let localFastPath = {
         accepted: false,
         rejectReason: null,
-        categoryResolution: null
+        categoryResolution: null,
+        localAcceptanceLevel: "local_rejected"
       };
       let localParserError = null;
+      let localParseMs;
+      let localEvaluateMs;
+      const emitTrace = (metadata) => parseOptions.onLlmTrace?.({
+        ...metadata,
+        ...(Number.isFinite(localParseMs) ? { localParseMs } : {}),
+        ...(Number.isFinite(localEvaluateMs) ? { localEvaluateMs } : {}),
+        parserTotalMs: elapsedMs(performanceNow, parserStartedAt)
+      });
       if (shouldRunLocalFastPath || !apiKey || !fetchImpl) {
+        const localParseStartedAt = performanceNow();
         try {
           localResult = localParser(text, { now: now(), defaultCurrency, timeZone, maxLocalAmount });
-          localFastPath = evaluateLocalFastPath({ text, localResult });
         } catch (error) {
           localParserError = error;
           localFastPath = {
             accepted: false,
             rejectReason: "local_exception",
-            categoryResolution: null
+            categoryResolution: null,
+            localAcceptanceLevel: "local_rejected"
           };
+        }
+        localParseMs = elapsedMs(performanceNow, localParseStartedAt);
+        if (!localParserError) {
+          const localEvaluateStartedAt = performanceNow();
+          try {
+            localFastPath = evaluateLocalFastPath({ text, localResult });
+          } catch (error) {
+            localParserError = error;
+            localFastPath = {
+              accepted: false,
+              rejectReason: "local_exception",
+              categoryResolution: null,
+              localAcceptanceLevel: "local_rejected"
+            };
+          }
+          localEvaluateMs = elapsedMs(performanceNow, localEvaluateStartedAt);
         }
       }
 
       if (!apiKey || !fetchImpl) {
         if (localParserError) throw localParserError;
-        parseOptions.onLlmTrace?.({
+        emitTrace({
           parserEngine: "local-fallback",
           parserRoute: "local_no_api_key",
           localFastPathAccepted: localFastPath.accepted,
           localFastPathRejectReason: localFastPath.rejectReason,
           categoryResolution: localFastPath.categoryResolution,
+          localAcceptanceLevel: localFastPath.localAcceptanceLevel,
+          localCandidate: hasLocalCandidate(localResult),
           llmSkipped: true,
           fastPathMode,
           shadowDisagreement: null,
@@ -78,12 +116,14 @@ export function createExpenseParser(options = {}) {
       }
 
       if (fastPathMode === "enabled" && inRollout && localFastPath.accepted) {
-        parseOptions.onLlmTrace?.({
+        emitTrace({
           parserEngine: "local-fast-path",
           parserRoute: "local_primary",
           localFastPathAccepted: true,
           localFastPathRejectReason: null,
           categoryResolution: localFastPath.categoryResolution,
+          localAcceptanceLevel: localFastPath.localAcceptanceLevel,
+          localCandidate: hasLocalCandidate(localResult),
           llmSkipped: true,
           fastPathMode,
           shadowDisagreement: null,
@@ -96,13 +136,21 @@ export function createExpenseParser(options = {}) {
       }
 
       try {
-        const parsed = await parseWithOpenAI({ text, apiKey, model, fetchImpl, now: now(), defaultCurrency, timeZone });
+        const parsed = await parseWithOpenAI({
+          text, apiKey, model, fetchImpl, now: now(), defaultCurrency, timeZone, performanceNow, llmTimeoutMs
+        });
         const parserRoute = resolveLlmParserRoute({ fastPathMode, inRollout, localFastPath, localParserError });
         const shouldCompareShadow = (fastPathMode === "shadow" || parserRoute === "rollout_excluded") && localFastPath.accepted;
         const shadowFields = shouldCompareShadow
-          ? compareParseResults(localResult, parsed.result)
+          ? compareParseResults(localResult, parsed.result, timeZone)
           : [];
-        parseOptions.onLlmTrace?.({
+        const criticalShadowDisagreement = shouldCompareShadow
+          ? shadowFields.some((field) => CRITICAL_SHADOW_FIELDS.has(field))
+          : null;
+        const categoryOnlyShadowDisagreement = shouldCompareShadow
+          ? shadowFields.length > 0 && shadowFields.every((field) => REVIEWABLE_SHADOW_FIELDS.has(field))
+          : null;
+        emitTrace({
           ...parsed.metadata,
           parserEngine: "llm",
           parserRoute,
@@ -110,22 +158,35 @@ export function createExpenseParser(options = {}) {
           localFastPathAccepted: localFastPath.accepted,
           localFastPathRejectReason: localFastPath.rejectReason,
           categoryResolution: localFastPath.categoryResolution,
+          localAcceptanceLevel: localFastPath.localAcceptanceLevel,
+          localCandidate: hasLocalCandidate(localResult),
           llmSkipped: false,
           fastPathMode,
           shadowDisagreement: shouldCompareShadow ? shadowFields.length > 0 : null,
+          criticalShadowDisagreement,
+          categoryOnlyShadowDisagreement,
           shadowDisagreementFields: shadowFields,
           ...localParserErrorMetadata(localParserError)
         });
         return parsed.result;
       } catch (error) {
-        if (localFastPath.accepted && localResult) {
-          parseOptions.onLlmTrace?.({
+        const fallbackReason = error?.code === LLM_TIMEOUT_ERROR_CODE
+          ? LLM_TIMEOUT_ERROR_CODE
+          : "llm_error";
+        const llmTimingMetadata = Number.isFinite(error?.llmHttpMs)
+          ? { llmHttpMs: error.llmHttpMs }
+          : {};
+        if (localFastPath.localAcceptanceLevel === "local_safe" && localResult) {
+          emitTrace({
+            ...llmTimingMetadata,
             parserEngine: "local-fallback",
             parserRoute: "llm_error_local_accepted_fallback",
-            fallbackReason: "llm_error",
+            fallbackReason,
             localFastPathAccepted: true,
             localFastPathRejectReason: null,
             categoryResolution: localFastPath.categoryResolution,
+            localAcceptanceLevel: localFastPath.localAcceptanceLevel,
+            localCandidate: hasLocalCandidate(localResult),
             llmSkipped: false,
             fastPathMode,
             shadowDisagreement: null,
@@ -136,13 +197,16 @@ export function createExpenseParser(options = {}) {
           });
           return localResult;
         }
-        parseOptions.onLlmTrace?.({
+        emitTrace({
+          ...llmTimingMetadata,
           parserEngine: "llm",
           parserRoute: "llm_error",
-          fallbackReason: "llm_error",
+          fallbackReason,
           localFastPathAccepted: localFastPath.accepted,
           localFastPathRejectReason: localFastPath.rejectReason,
           categoryResolution: localFastPath.categoryResolution,
+          localAcceptanceLevel: localFastPath.localAcceptanceLevel,
+          localCandidate: hasLocalCandidate(localResult),
           llmSkipped: false,
           fastPathMode,
           shadowDisagreement: null,
@@ -180,7 +244,8 @@ export function evaluateLocalFastPath({ text, localResult }) {
     return {
       accepted: false,
       rejectReason: stopReason,
-      categoryResolution: null
+      categoryResolution: null,
+      localAcceptanceLevel: "local_rejected"
     };
   }
 
@@ -188,7 +253,8 @@ export function evaluateLocalFastPath({ text, localResult }) {
     return {
       accepted: false,
       rejectReason: looksLikeAmountMappingProblem(text) ? "amount_mapping" : "no_amount",
-      categoryResolution: null
+      categoryResolution: null,
+      localAcceptanceLevel: "local_rejected"
     };
   }
 
@@ -199,7 +265,8 @@ export function evaluateLocalFastPath({ text, localResult }) {
     return {
       accepted: false,
       rejectReason: "amount_mapping",
-      categoryResolution: null
+      categoryResolution: null,
+      localAcceptanceLevel: "local_rejected"
     };
   }
 
@@ -207,54 +274,94 @@ export function evaluateLocalFastPath({ text, localResult }) {
   return {
     accepted: true,
     rejectReason: null,
-    categoryResolution: needsReview ? "needs_user_review" : "resolved"
+    categoryResolution: needsReview ? "needs_user_review" : "resolved",
+    localAcceptanceLevel: needsReview ? "local_reviewable" : "local_safe"
   };
 }
 
-async function parseWithOpenAI({ text, apiKey, model, fetchImpl, now, defaultCurrency, timeZone }) {
+async function parseWithOpenAI({
+  text,
+  apiKey,
+  model,
+  fetchImpl,
+  now,
+  defaultCurrency,
+  timeZone,
+  performanceNow,
+  llmTimeoutMs
+}) {
   const systemPrompt = buildSystemPrompt(now, defaultCurrency, timeZone);
-  const response = await fetchImpl(OPENAI_RESPONSES_URL, {
-    method: "POST",
-    headers: {
-      "authorization": `Bearer ${apiKey}`,
-      "content-type": "application/json"
-    },
-    body: JSON.stringify({
-      model,
-      input: [
-        {
-          role: "system",
-          content: systemPrompt
-        },
-        {
-          role: "user",
-          content: text
+  const llmHttpStartedAt = performanceNow();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), llmTimeoutMs);
+  let response;
+  let responseText;
+  try {
+    response = await fetchImpl(OPENAI_RESPONSES_URL, {
+      method: "POST",
+      headers: {
+        "authorization": `Bearer ${apiKey}`,
+        "content-type": "application/json"
+      },
+      signal: controller.signal,
+      body: JSON.stringify({
+        model,
+        input: [
+          {
+            role: "system",
+            content: systemPrompt
+          },
+          {
+            role: "user",
+            content: text
+          }
+        ],
+        text: {
+          format: {
+            type: "json_schema",
+            name: "expense_parse_result",
+            strict: true,
+            schema: expenseParseSchema()
+          }
         }
-      ],
-      text: {
-        format: {
-          type: "json_schema",
-          name: "expense_parse_result",
-          strict: true,
-          schema: expenseParseSchema()
-        }
-      }
-    })
-  });
+      })
+    });
+    responseText = await response.text();
+  } catch (error) {
+    const llmHttpMs = elapsedMs(performanceNow, llmHttpStartedAt);
+    if (controller.signal.aborted) {
+      const timeoutError = new Error("Expense parser LLM request timed out");
+      timeoutError.code = LLM_TIMEOUT_ERROR_CODE;
+      timeoutError.llmHttpMs = llmHttpMs;
+      throw timeoutError;
+    }
+    error.llmHttpMs = llmHttpMs;
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+  const llmHttpMs = elapsedMs(performanceNow, llmHttpStartedAt);
 
   if (!response.ok) {
-    throw new Error(`OpenAI Responses API failed: ${response.status} ${await response.text()}`);
+    const error = new Error(`OpenAI Responses API failed with status ${response.status}`);
+    error.llmHttpMs = llmHttpMs;
+    throw error;
   }
 
-  const body = await response.json();
+  const decodeStartedAt = performanceNow();
+  const body = JSON.parse(responseText);
   const outputText = extractOutputText(body);
   if (!outputText) throw new Error("OpenAI response did not include output text");
+  const result = normalizeParseResult(JSON.parse(outputText), now, defaultCurrency);
+  const llmDecodeNormalizeMs = elapsedMs(performanceNow, decodeStartedAt);
   return {
-    result: normalizeParseResult(JSON.parse(outputText), now, defaultCurrency),
+    result,
     metadata: {
       model,
       promptChars: systemPrompt.length + String(text ?? "").length,
-      responseChars: outputText.length
+      responseChars: outputText.length,
+      llmHttpMs,
+      llmDecodeNormalizeMs
     }
   };
 }
@@ -382,6 +489,14 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
+function elapsedMs(performanceNow, startedAt) {
+  return Math.max(0, performanceNow() - startedAt);
+}
+
+function hasLocalCandidate(result) {
+  return Array.isArray(result?.expenses) && result.expenses.length > 0;
+}
+
 function normalizeFastPathMode(value) {
   return ["off", "shadow", "enabled"].includes(value) ? value : "off";
 }
@@ -403,8 +518,7 @@ function fallbackReasonForRoute(parserRoute, localFastPath) {
 function localParserErrorMetadata(error) {
   if (!error) return {};
   return {
-    localParserErrorName: String(error.name || "Error").slice(0, 80),
-    localParserErrorMessage: String(error.message || "local parser failed").slice(0, 200)
+    localParserErrorName: String(error.name || "Error").slice(0, 80)
   };
 }
 
@@ -471,7 +585,7 @@ function looksLikeAmountMappingProblem(text) {
     || /(?<![\p{L}\p{N}])\d{1,2}(?:st|nd|rd|th)(?![\p{L}\p{N}])/iu.test(normalized);
 }
 
-function compareParseResults(localResult, llmResult) {
+function compareParseResults(localResult, llmResult, timeZone) {
   const fields = [];
   const localExpenses = localResult?.expenses ?? [];
   const llmExpenses = llmResult?.expenses ?? [];
@@ -483,14 +597,16 @@ function compareParseResults(localResult, llmResult) {
     const llm = llmExpenses[index];
     if (Number(local.amount) !== Number(llm.amount)) pushUnique(fields, "amount");
     if (local.currency !== llm.currency) pushUnique(fields, "currency");
-    if (dateBucket(local.spent_at) !== dateBucket(llm.spent_at)) pushUnique(fields, "spent_at");
+    if (dateBucket(local.spent_at, timeZone) !== dateBucket(llm.spent_at, timeZone)) pushUnique(fields, "spent_at");
+    if ((local.budget_impact ?? "regular") !== (llm.budget_impact ?? "regular")) pushUnique(fields, "budget_impact");
     if (local.category_slug !== llm.category_slug) pushUnique(fields, "category_slug");
+    if (Boolean(local.needs_review) !== Boolean(llm.needs_review)) pushUnique(fields, "needs_review");
   }
   return fields;
 }
 
-function dateBucket(value) {
-  return String(value ?? "").slice(0, 10);
+function dateBucket(value, timeZone) {
+  return localDateKey(new Date(value), timeZone);
 }
 
 function pushUnique(values, value) {

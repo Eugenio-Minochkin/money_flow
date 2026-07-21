@@ -4,6 +4,18 @@ Money Flow помогает пользователю управлять дост
 
 ## Language
 
+**Local Safe Parse**:
+A deterministic regular-expense parse whose expense count, amount, currency, local calendar day, and budget impact are unambiguous and whose category is confidently resolved.
+_Avoid_: Any local parse, locally parsed draft, high-confidence text
+
+**Local Reviewable Parse**:
+A deterministic regular-expense parse whose critical financial fields are unambiguous but whose category still requires an explicit user review before confirmation.
+_Avoid_: Partially safe parse, accepted category, silent category fallback
+
+**Local Rejected Parse**:
+A deterministic regular-expense parse that must not become the financial result because at least one critical financial field or protected intent is ambiguous or unsupported.
+_Avoid_: Parse error, invalid expense, LLM failure
+
 **Expense CSV Export**:
 A user-triggered CSV file containing only the user's confirmed expense records from `expenses`. It is not a full accounting export and must not include drafts, pending confirmations, failed parses, budget top-ups, reserve events, planned-payment definitions, feedback, internal user identifiers, Telegram identifiers, raw Telegram init data, debug payloads, tokens, or environment values.
 _Avoid_: Full account export, cashflow export, backup dump, accounting ledger

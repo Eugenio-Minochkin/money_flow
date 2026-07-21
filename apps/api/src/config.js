@@ -3,6 +3,7 @@ import { normalizeRolloutPercent } from "./parserRollout.js";
 const DEFAULT_RELEASE_DIGEST_SEND_HOUR = 21;
 const DEFAULT_RELEASE_DIGEST_CHECK_INTERVAL_MINUTES = 15;
 const DEFAULT_EXPENSE_PARSER_MAX_LOCAL_AMOUNT = 1_000_000;
+const DEFAULT_EXPENSE_PARSER_LLM_TIMEOUT_MS = 20_000;
 const DEFAULT_RATE_LIMIT_WINDOW_MS = 60_000;
 const DEFAULT_RATE_LIMIT_MAX = 120;
 const DEFAULT_RATE_LIMIT_BUCKET_TTL_MS = 120_000;
@@ -45,6 +46,10 @@ export function buildConfig(env) {
     expenseParserMaxLocalAmount: parsePositiveNumber(
       env.EXPENSE_PARSER_MAX_LOCAL_AMOUNT,
       DEFAULT_EXPENSE_PARSER_MAX_LOCAL_AMOUNT
+    ),
+    expenseParserLlmTimeoutMs: parsePositiveInteger(
+      env.EXPENSE_PARSER_LLM_TIMEOUT_MS,
+      DEFAULT_EXPENSE_PARSER_LLM_TIMEOUT_MS
     ),
     parserTextHashSecret: env.PARSER_TEXT_HASH_SECRET ?? (nodeEnv === "test" ? "test-parser-text-hash-secret" : ""),
     deepgramApiKey: env.DEEPGRAM_API_KEY,

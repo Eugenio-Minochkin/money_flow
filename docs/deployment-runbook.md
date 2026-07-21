@@ -47,6 +47,50 @@ PR description checks:
   such as tokens, env values, `initData`, cookies, authorization headers, raw
   request bodies, or personal financial details.
 
+## Expense Parser Rollout And Rollback
+
+Parser rollout is an owner-operated production change. Merging parser code or
+this runbook does not authorize production env edits, deploys, service restarts,
+or rollout changes. `EXPENSE_PARSER_LLM_TIMEOUT_MS` defaults to `20000`; the API
+accepts only a positive integer and otherwise safely falls back to that default.
+An LLM timeout is not retried, and only a `local_safe` result may be used as its
+fallback.
+
+Advance one stage at a time, only after reviewing `/admin_stats_tech` for the
+whole stage window:
+
+| Stage | Minimum sample before advancing | Quality and latency gate |
+| --- | ---: | --- |
+| shadow | 100 shadow comparisons | zero unexplained critical disagreements; parser failure rate no worse than baseline; LLM HTTP and local parse P95 reviewed |
+| owner/admin allowlist | 100 eligible messages | zero unsafe saves; no critical financial-field regression; local P95 below the LLM HTTP P95 |
+| 10% | 100 local-primary messages | all prior gates remain green |
+| 25% | 250 local-primary messages | all prior gates remain green |
+| 50% | 500 local-primary messages | all prior gates remain green |
+| 100% | 1,000 local-primary messages | all prior gates remain green through a full reporting window |
+
+Stop conditions are any unsafe save, unexplained critical shadow disagreement,
+material increase in parser failures, timeout errors above the accepted baseline,
+or a local latency regression. Category-only disagreements are reviewed
+separately and do not override a critical stop condition.
+
+Rollback to shadow-only measurement means changing the environment to exactly:
+
+```env
+EXPENSE_PARSER_FAST_PATH_MODE=shadow
+EXPENSE_PARSER_LOCAL_FIRST_ROLLOUT_PERCENT=0
+EXPENSE_PARSER_LOCAL_FIRST_USER_IDS=
+```
+
+Then restart the services through the approved operator/deployment procedure so
+the new environment is loaded. For full parser fast-path shutdown, set:
+
+```env
+EXPENSE_PARSER_FAST_PATH_MODE=off
+```
+
+Then restart the services again. These are operational instructions, not
+authorization for an agent to edit production env, deploy, or restart anything.
+
 ## GitHub Secrets
 
 Create these repository secrets in GitHub:

@@ -670,10 +670,19 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
         localFastPathAccepted: traceMetadata.llmParse?.localFastPathAccepted,
         localFastPathRejectReason: traceMetadata.llmParse?.localFastPathRejectReason,
         categoryResolution: traceMetadata.llmParse?.categoryResolution,
+        localAcceptanceLevel: traceMetadata.llmParse?.localAcceptanceLevel,
+        localCandidate: traceMetadata.llmParse?.localCandidate,
         llmSkipped: traceMetadata.llmParse?.llmSkipped,
         fastPathMode: traceMetadata.llmParse?.fastPathMode,
         shadowDisagreement: traceMetadata.llmParse?.shadowDisagreement,
+        criticalShadowDisagreement: traceMetadata.llmParse?.criticalShadowDisagreement,
+        categoryOnlyShadowDisagreement: traceMetadata.llmParse?.categoryOnlyShadowDisagreement,
         shadowDisagreementFields: traceMetadata.llmParse?.shadowDisagreementFields,
+        localParseMs: traceMetadata.llmParse?.localParseMs,
+        localEvaluateMs: traceMetadata.llmParse?.localEvaluateMs,
+        llmHttpMs: traceMetadata.llmParse?.llmHttpMs,
+        llmDecodeNormalizeMs: traceMetadata.llmParse?.llmDecodeNormalizeMs,
+        parserTotalMs: traceMetadata.llmParse?.parserTotalMs,
         transcriptChars,
         audioDurationSec: inputType === "voice" ? traceMetadata.audioDurationSec : undefined
       });
@@ -2572,7 +2581,6 @@ function createPerfTrace({ update, logger }) {
   const startedAt = performance.now();
   const traceId = createTraceId();
   const messageType = resolveMessageType(update);
-  const userId = update.message?.from?.id ?? update.callback_query?.from?.id ?? null;
   const initialMessageMetadata = messageMetadata(update, messageType);
   const starts = new Map();
   const durations = new Map();
@@ -2643,7 +2651,6 @@ function createPerfTrace({ update, logger }) {
     }
     const payload = {
       traceId,
-      userId,
       messageType,
       stage,
       durationMs,
@@ -2681,13 +2688,24 @@ function pickLlmMetadata(metadata) {
       responseChars: metadata.responseChars,
       fallback: metadata.fallback,
       parserEngine: metadata.parserEngine,
+      parserRoute: metadata.parserRoute,
+      fallbackReason: metadata.fallbackReason,
       localFastPathAccepted: metadata.localFastPathAccepted,
       localFastPathRejectReason: metadata.localFastPathRejectReason,
       categoryResolution: metadata.categoryResolution,
+      localAcceptanceLevel: metadata.localAcceptanceLevel,
+      localCandidate: metadata.localCandidate,
       llmSkipped: metadata.llmSkipped,
       fastPathMode: metadata.fastPathMode,
       shadowDisagreement: metadata.shadowDisagreement,
-      shadowDisagreementFields: metadata.shadowDisagreementFields
+      criticalShadowDisagreement: metadata.criticalShadowDisagreement,
+      categoryOnlyShadowDisagreement: metadata.categoryOnlyShadowDisagreement,
+      shadowDisagreementFields: metadata.shadowDisagreementFields,
+      localParseMs: metadata.localParseMs,
+      localEvaluateMs: metadata.localEvaluateMs,
+      llmHttpMs: metadata.llmHttpMs,
+      llmDecodeNormalizeMs: metadata.llmDecodeNormalizeMs,
+      parserTotalMs: metadata.parserTotalMs
     }).filter(([, value]) => value !== undefined)
   );
 }
