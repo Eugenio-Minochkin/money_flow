@@ -36,21 +36,21 @@ test("audit report separates RU and EN and never serializes raw fields or identi
       draftId: "draft-secret-1",
       userId: "telegram-111111",
       sourceText: "Кофейня Секрет 98765 https://private.example @hidden hidden@example.com",
-      description: "Кофейня Секрет 98765",
+      description: "Кофейня Секрет",
       category: "food_cafe"
     }),
     confirmedRow({
       draftId: "draft-secret-2",
       userId: "telegram-222222",
       sourceText: "Кофейня Секрет 54321 private.example/private-account-path",
-      description: "Кофейня Секрет 54321",
+      description: "Кофейня Секрет",
       category: "food_cafe"
     }),
     confirmedRow({
       draftId: "draft-secret-3",
       userId: "telegram-111111",
       sourceText: "Кофейня Секрет 12345,@hiddeninside",
-      description: "Кофейня Секрет 12345",
+      description: "Кофейня Секрет",
       category: "food_cafe"
     }),
     confirmedRow({ userId: "user-a", sourceText: "airport shuttle 9000", description: "airport shuttle", category: "transport" }),
@@ -67,6 +67,7 @@ test("audit report separates RU and EN and never serializes raw fields or identi
   const serialized = JSON.stringify(report);
 
   assert.equal(report.sourceKind, "local-copy");
+  assert.equal(report.schemaVersion, 2);
   const merchantCandidate = report.candidates.ru.find((candidate) => candidate.phrase === "кофейня секрет");
   assert.ok(merchantCandidate);
   assert.equal(merchantCandidate.decision, "manual_review");
@@ -84,7 +85,38 @@ test("audit report separates RU and EN and never serializes raw fields or identi
   }
 });
 
-test("audit report removes punctuated handles before candidate aggregation", () => {
+test("source text contributes only bounded language and status counts", () => {
+  const rows = [
+    confirmedRow({ userId: "u1", sourceText: "такси 100 @secret", description: "taxi", category: "transport" }),
+    confirmedRow({ userId: "u2", sourceText: "taxi 200 private-id", description: "taxi", category: "transport" }),
+    unconfirmedRow({ userId: "u3", sourceText: "такси taxi 300", description: "coffee", itemCategory: "food_cafe", status: "pending" }),
+    unconfirmedRow({ userId: "u4", sourceText: "https://secret.example 400 @hidden", description: "coffee", itemCategory: "food_cafe", status: "inbox" })
+  ];
+
+  const report = buildParserAuditReport(rows);
+
+  assert.deepEqual(report.sourceSummary, {
+    languageCounts: { ru: 1, en: 1, mixed: 1, unknown: 1 },
+    statusCounts: { pending: 1, confirmed: 2, inbox: 1, cancelled: 0, unknown: 0 }
+  });
+  assert.ok(!JSON.stringify(report).includes("secret.example"));
+});
+
+test("source-only secrets never become candidates", () => {
+  const rows = repeatedConfirmedRows(
+    "sourceonlysecret 99999 @privatehandle",
+    "transport",
+    "source-secret",
+    "taxi"
+  );
+
+  const report = buildParserAuditReport(rows);
+
+  assert.ok(report.candidates.en.some((candidate) => candidate.phrase === "taxi"));
+  assert.ok(!JSON.stringify(report).includes("sourceonlysecret"));
+});
+
+test("punctuated handles in source text never affect clean description candidates", () => {
   const rows = [
     confirmedRow({ userId: "u1", sourceText: "taxi (@secretname) 10", description: "taxi", category: "transport" }),
     confirmedRow({ userId: "u2", sourceText: "taxi (@secretname) 20", description: "taxi", category: "transport" }),
@@ -100,7 +132,7 @@ test("audit report removes punctuated handles before candidate aggregation", () 
   assert.ok(!serialized.includes("secretname"));
 });
 
-test("audit report removes RU and EN number-word financial values without dropping ordinary words", () => {
+test("audit report suppresses descriptions containing RU or EN word-number financial values", () => {
   const rows = [
     ...repeatedConfirmedRows("такси пять тысяч бат", "transport", "ru-word-amount"),
     ...repeatedConfirmedRows("taxi one hundred usd", "transport", "en-word-amount"),
@@ -110,47 +142,70 @@ test("audit report removes RU and EN number-word financial values without droppi
   const report = buildParserAuditReport(rows);
   const serialized = JSON.stringify(report);
 
-  assert.ok(report.candidates.ru.some((candidate) => candidate.phrase === "такси"));
-  assert.ok(report.candidates.en.some((candidate) => candidate.phrase === "taxi"));
+  assert.ok(!report.candidates.ru.some((candidate) => candidate.phrase.includes("такси")));
+  assert.ok(!report.candidates.en.some((candidate) => candidate.phrase.includes("taxi")));
   for (const forbidden of ["пять", "тысяч", "бат", "one", "two", "hundred", "usd", "dollars"]) {
     assert.ok(!serialized.includes(forbidden), `report leaked word amount token ${forbidden}`);
   }
 });
 
-test("audit report removes inflected one-thousand RU amount words next to currency", () => {
+test("audit report suppresses descriptions containing inflected one-thousand RU amounts", () => {
   const report = buildParserAuditReport(
     repeatedConfirmedRows("такси одну тысячу бат", "transport", "ru-one-thousand")
   );
   const serialized = JSON.stringify(report);
 
-  assert.ok(report.candidates.ru.some((candidate) => candidate.phrase === "такси"));
+  assert.equal(report.candidates.ru.length, 0);
   assert.ok(!serialized.includes("одну"));
   assert.ok(!serialized.includes("тысячу"));
 });
 
-test("audit report removes inflected one-and-a-half-thousand RU amount words next to currency", () => {
+test("audit report suppresses descriptions containing inflected one-and-a-half-thousand RU amounts", () => {
   const report = buildParserAuditReport(
     repeatedConfirmedRows("такси полторы тысячи бат", "transport", "ru-one-half-thousand")
   );
   const serialized = JSON.stringify(report);
 
-  assert.ok(report.candidates.ru.some((candidate) => candidate.phrase === "такси"));
+  assert.equal(report.candidates.ru.length, 0);
   assert.ok(!serialized.includes("полторы"));
   assert.ok(!serialized.includes("тысячи"));
+});
+
+test("audit report suppresses entire descriptions containing any sensitive marker", () => {
+  const sensitiveDescriptions = [
+    "такси полутора тысяч бат",
+    "такси двухсот бат",
+    "такси сорока бат",
+    "taxi half thousand usd",
+    "taxi 100",
+    "taxi $",
+    "taxi https://private.example",
+    "taxi private@example.com",
+    "taxi @secret",
+    "taxi private_identifier",
+    "taxi abcdefghijklmnopqrstuvwxyz"
+  ];
+  const rows = sensitiveDescriptions.flatMap((description, index) =>
+    repeatedAlignedDescriptionRows(description, `sensitive-${index}`)
+  );
+
+  const report = buildParserAuditReport(rows);
+
+  assert.deepEqual(report.candidates, { ru: [], en: [] });
 });
 
 test("audit report suppresses numeric words but preserves anchored prefix-similar ordinary words", () => {
   const rows = [
     ...repeatedConfirmedRows("студия одна", "health", "ordinary-one"),
     ...repeatedConfirmedRows("room one", "home", "ordinary-en-one"),
-    ...repeatedConfirmedRows("кафе пятница", "food_cafe", "ordinary-stem"),
-    ...repeatedConfirmedRows("someone cafe", "food_cafe", "ordinary-en-prefix")
+    ...repeatedConfirmedRows("кафе пятница 100 ref-1", "food_cafe", "ordinary-stem", "кафе пятница"),
+    ...repeatedConfirmedRows("someone cafe 200 ref-2", "food_cafe", "ordinary-en-prefix", "someone cafe")
   ];
 
   const report = buildParserAuditReport(rows);
 
-  assert.ok(report.candidates.ru.some((candidate) => candidate.phrase === "студия"));
-  assert.ok(report.candidates.en.some((candidate) => candidate.phrase === "room"));
+  assert.ok(!report.candidates.ru.some((candidate) => candidate.phrase.includes("студия")));
+  assert.ok(!report.candidates.en.some((candidate) => candidate.phrase.includes("room")));
   assert.ok(report.candidates.ru.some((candidate) => candidate.phrase === "кафе пятница"));
   assert.ok(report.candidates.en.some((candidate) => candidate.phrase === "someone cafe"));
   assert.ok(!candidateTokens(report).has("одна"));
@@ -167,8 +222,8 @@ test("audit report suppresses solitary implicit-currency number words", () => {
   const report = buildParserAuditReport(rows);
   const tokens = candidateTokens(report);
 
-  assert.ok(report.candidates.ru.some((candidate) => candidate.phrase === "такси"));
-  assert.ok(report.candidates.en.some((candidate) => candidate.phrase === "taxi"));
+  assert.equal(report.candidates.ru.length, 0);
+  assert.equal(report.candidates.en.length, 0);
   assert.ok(!tokens.has("сто"));
   assert.ok(!tokens.has("пять"));
   assert.ok(!tokens.has("five"));
@@ -180,7 +235,7 @@ test("audit report still removes clear multiword amounts when default currency i
   );
   const serialized = JSON.stringify(report);
 
-  assert.ok(report.candidates.en.some((candidate) => candidate.phrase === "taxi"));
+  assert.equal(report.candidates.en.length, 0);
   assert.ok(!serialized.includes("one"));
   assert.ok(!serialized.includes("hundred"));
 });
@@ -266,9 +321,8 @@ test("multi-expense drafts use ordinal mapping only when item and expense counts
 
   assert.equal(findCandidate(report, "en", "coffee").dominantCategory, "food_cafe");
   assert.equal(findCandidate(report, "en", "taxi").dominantCategory, "transport");
-  const ambiguous = findCandidate(report, "en", "shared outing");
-  assert.equal(ambiguous.dominantCategory, null);
-  assert.equal(ambiguous.decision, "rejected_ambiguous");
+  assert.ok(!report.candidates.en.some((candidate) => candidate.phrase === "shared outing"));
+  assert.equal(report.ambiguousMappingCount, 3);
 });
 
 test("category dominance below the floor is rejected as ambiguous", () => {
@@ -333,13 +387,24 @@ function unconfirmedRow({ userId, sourceText, description, itemCategory, status 
   };
 }
 
-function repeatedConfirmedRows(sourceText, category, draftPrefix) {
+function repeatedConfirmedRows(sourceText, category, draftPrefix, description = sourceText) {
   return ["u1", "u2", "u1"].map((userId, index) => confirmedRow({
     draftId: `${draftPrefix}-${index}`,
     userId,
     sourceText,
-    description: sourceText,
+    description,
     category
+  }));
+}
+
+function repeatedAlignedDescriptionRows(description, draftPrefix) {
+  return ["u1", "u2", "u1"].map((userId, index) => ({
+    draft_id: `${draftPrefix}-${index}`,
+    user_id: userId,
+    draft_status: "confirmed",
+    source_text: `${index + 100}`,
+    items: [{ description }, { description }],
+    confirmed_expenses: [{ category_slug: "transport" }, { category_slug: "transport" }]
   }));
 }
 

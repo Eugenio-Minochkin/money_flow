@@ -43,7 +43,7 @@ const FINANCIAL_TOKENS = new Set([
   "евро", "лари", "рубль", "рубля", "рублей", "рупий", "рупия", "рупии"
 ]);
 const NUMBER_WORD_TOKENS = new Set([
-  "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
+  "zero", "half", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
   "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen",
   "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety",
   "hundred", "hundreds", "thousand", "thousands", "million", "millions", "billion", "billions",
@@ -55,8 +55,10 @@ const NUMBER_WORD_TOKENS = new Set([
   "сто", "двести", "триста", "четыреста", "пятьсот", "шестьсот", "семьсот", "восемьсот", "девятьсот",
   "тысяча", "тысячи", "тысяч", "миллион", "миллиона", "миллионов", "миллиард", "миллиарда", "миллиардов"
 ]);
-const NUMBER_WORD_CONNECTORS = new Set(["and", "и"]);
 const RU_NUMBER_MORPHOLOGY_PATTERNS = [
+  /^полутора$/u,
+  /^(?:двух|трех|четырех|пяти|шести|семи|восьми|девяти)сот$/u,
+  /^сорока$/u,
   /^одн(?:а|о|у|ой|ою|е|и|их|им|ими|ого|ому)$/u,
   /^полтор(?:а|ы|у|ой|ою|ых|ым|ыми)$/u,
   /^дв(?:а|е|ух|ум|умя|оих|оим|оими)$/u,
@@ -104,9 +106,18 @@ export function assertReadOnlyAuditSql(sql) {
 export function buildParserAuditReport(rows = [], options = {}) {
   const thresholds = normalizeAuditThresholds(options);
   const aggregates = new Map();
+  const sourceSummary = {
+    languageCounts: { ru: 0, en: 0, mixed: 0, unknown: 0 },
+    statusCounts: { pending: 0, confirmed: 0, inbox: 0, cancelled: 0, unknown: 0 }
+  };
+  let ambiguousMappingCount = 0;
 
   for (const row of Array.isArray(rows) ? rows : []) {
-    for (const evidence of evidenceFromRow(row)) {
+    sourceSummary.languageCounts[detectSourceLanguage(row?.source_text)] += 1;
+    sourceSummary.statusCounts[normalizeDraftStatus(row?.draft_status ?? row?.status)] += 1;
+    const rowEvidence = evidenceFromRow(row);
+    ambiguousMappingCount += rowEvidence.ambiguousMappingCount;
+    for (const evidence of rowEvidence.evidence) {
       for (const candidate of extractSafeCandidates(evidence.text)) {
         const key = `${candidate.language}\u0000${candidate.phrase}`;
         const aggregate = aggregates.get(key) ?? {
@@ -167,9 +178,11 @@ export function buildParserAuditReport(rows = [], options = {}) {
   }
 
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     sourceKind: normalizeSourceKind(options.sourceKind),
     thresholds,
+    sourceSummary,
+    ambiguousMappingCount,
     languages: {
       ru: { qualifiedCandidateCount: candidates.ru.length },
       en: { qualifiedCandidateCount: candidates.en.length }
@@ -180,41 +193,50 @@ export function buildParserAuditReport(rows = [], options = {}) {
 }
 
 function evidenceFromRow(row) {
-  const status = String(row?.draft_status ?? row?.status ?? "").toLowerCase();
+  const status = normalizeDraftStatus(row?.draft_status ?? row?.status);
   const items = parseJsonArray(row?.items);
   const expenses = parseJsonArray(row?.confirmed_expenses);
-  const sourceText = String(row?.source_text ?? "");
 
-  if (status !== "confirmed") {
-    return [{ text: sourceText, category: null, confirmed: false, reviewOnly: true, ambiguous: false }];
+  if (["pending", "inbox", "cancelled"].includes(status)) {
+    return {
+      evidence: items.map((item) => ({
+        text: item?.description,
+        category: null,
+        confirmed: false,
+        reviewOnly: true,
+        ambiguous: false
+      })),
+      ambiguousMappingCount: 0
+    };
   }
-  if (expenses.length === 0) return [];
+  if (status !== "confirmed" || expenses.length === 0) {
+    return { evidence: [], ambiguousMappingCount: 0 };
+  }
 
   if (items.length === expenses.length) {
-    return items.map((item, index) => ({
-      text: items.length === 1 ? sourceText : item?.description,
-      category: normalizeCategory(expenses[index]?.category_slug),
-      confirmed: true,
-      reviewOnly: false,
-      ambiguous: !normalizeCategory(expenses[index]?.category_slug)
-    }));
+    return {
+      evidence: items.map((item, index) => ({
+        text: item?.description,
+        category: normalizeCategory(expenses[index]?.category_slug),
+        confirmed: true,
+        reviewOnly: false,
+        ambiguous: !normalizeCategory(expenses[index]?.category_slug)
+      })),
+      ambiguousMappingCount: 0
+    };
   }
 
-  return [{ text: sourceText, category: null, confirmed: true, reviewOnly: false, ambiguous: true }];
+  return { evidence: [], ambiguousMappingCount: 1 };
 }
 
 function extractSafeCandidates(value) {
-  const sanitized = String(value ?? "")
+  const normalized = String(value ?? "")
     .normalize("NFKC")
     .toLocaleLowerCase()
-    .replaceAll("ё", "е")
-    .replaceAll(/\b(?:https?:\/\/|www\.)\S+/giu, " ")
-    .replaceAll(/\b\S+@\S+\b/gu, " ")
-    .replaceAll(/(?<![\p{L}\p{N}_])@[\p{L}\p{N}_.-]+/gu, " ")
-    .replaceAll(/\b(?:[\p{L}\p{N}-]+\.)+[a-zа-я]{2,}(?:\/\S*)?/giu, " ")
-    .replaceAll(/\b(?=[\p{L}\p{N}_-]*\p{N})[\p{L}\p{N}_-]{2,}\b/gu, " ")
-    .replaceAll(/\p{N}+(?:[.,:/-]\p{N}+)*\p{Sc}?/gu, " ");
-  const tokens = removeNumberWordSequences(sanitized.match(/[\p{L}]+/gu) ?? []);
+    .replaceAll("ё", "е");
+  if (containsSensitiveMarker(normalized)) return [];
+
+  const tokens = normalized.match(/[\p{L}]+/gu) ?? [];
   const candidates = [];
   let currentLanguage = null;
   let currentTokens = [];
@@ -228,7 +250,7 @@ function extractSafeCandidates(value) {
 
   for (const token of tokens) {
     const language = detectTokenLanguage(token);
-    if (!language || token.length > 20 || FINANCIAL_TOKENS.has(token)) {
+    if (!language) {
       flush();
       continue;
     }
@@ -272,35 +294,47 @@ function formatCandidate(aggregate, thresholds, { confirmedQualified, reviewOnly
   };
 }
 
-function removeNumberWordSequences(tokens) {
-  const filtered = [];
-  for (let index = 0; index < tokens.length;) {
-    if (!isNumberWordToken(tokens[index])) {
-      filtered.push(tokens[index]);
-      index += 1;
-      continue;
-    }
-
-    index += 1;
-    while (index < tokens.length) {
-      if (isNumberWordToken(tokens[index])) {
-        index += 1;
-        continue;
-      }
-      if (NUMBER_WORD_CONNECTORS.has(tokens[index])
-          && isNumberWordToken(tokens[index + 1])) {
-        index += 2;
-        continue;
-      }
-      break;
-    }
-  }
-  return filtered;
-}
-
 function isNumberWordToken(token) {
   return NUMBER_WORD_TOKENS.has(token)
     || RU_NUMBER_MORPHOLOGY_PATTERNS.some((pattern) => pattern.test(token));
+}
+
+function containsSensitiveMarker(value) {
+  if (/\p{N}|\p{Sc}/u.test(value)
+      || /\b(?:https?:\/\/|www\.)\S+/iu.test(value)
+      || /\b\S+@\S+\b/u.test(value)
+      || /(?<![\p{L}\p{N}_])@[\p{L}\p{N}_.-]+/u.test(value)
+      || /\b(?:[\p{L}\p{N}-]+\.)+[\p{L}]{2,}(?:\/\S*)?/iu.test(value)
+      || /\b[\p{L}\p{N}]+_[\p{L}\p{N}_]+\b/u.test(value)) {
+    return true;
+  }
+
+  const tokens = value.match(/[\p{L}]+/gu) ?? [];
+  return tokens.some((token) => token.length > 20
+    || FINANCIAL_TOKENS.has(token)
+    || isNumberWordToken(token));
+}
+
+function detectSourceLanguage(value) {
+  const sanitized = String(value ?? "")
+    .normalize("NFKC")
+    .replaceAll(/\b(?:https?:\/\/|www\.)\S+/giu, " ")
+    .replaceAll(/\b\S+@\S+\b/gu, " ")
+    .replaceAll(/(?<![\p{L}\p{N}_])@[\p{L}\p{N}_.-]+/gu, " ")
+    .replaceAll(/\b(?:[\p{L}\p{N}-]+\.)+[\p{L}]{2,}(?:\/\S*)?/giu, " ");
+  const hasRu = /\p{Script=Cyrillic}/u.test(sanitized);
+  const hasEn = /\p{Script=Latin}/u.test(sanitized);
+  if (hasRu && hasEn) return "mixed";
+  if (hasRu) return "ru";
+  if (hasEn) return "en";
+  return "unknown";
+}
+
+function normalizeDraftStatus(value) {
+  const status = String(value ?? "").toLowerCase();
+  return ["pending", "confirmed", "inbox", "cancelled"].includes(status)
+    ? status
+    : "unknown";
 }
 
 function detectTokenLanguage(token) {
