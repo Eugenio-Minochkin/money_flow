@@ -2311,6 +2311,14 @@ export function createRepository(pool, options = {}) {
 
     async saveDraftAsExpense(draftId, telegramUserId) {
       const client = await pool.connect();
+      const readDashboardSnapshot = async () => {
+        try {
+          return (await this.dashboard(telegramUserId)).snapshot;
+        } catch {
+          console.warn("[repository] dashboard snapshot unavailable after draft confirmation", { draftId });
+          return null;
+        }
+      };
       try {
         await client.query("BEGIN");
         const draftResult = await client.query(
@@ -2335,7 +2343,7 @@ export function createRepository(pool, options = {}) {
             `SELECT * FROM expenses WHERE draft_id = $1 ORDER BY id`,
             [draftId]
           );
-          const snapshot = (await this.dashboard(telegramUserId)).snapshot;
+          const snapshot = await readDashboardSnapshot();
           return { expenses: existing.rows, dashboardSnapshot: snapshot, alreadySaved: true };
         }
 
@@ -2381,7 +2389,7 @@ export function createRepository(pool, options = {}) {
           [draft.id]
         );
         await client.query("COMMIT");
-        const snapshot = (await this.dashboard(telegramUserId)).snapshot;
+        const snapshot = await readDashboardSnapshot();
         return { expenses: inserted, dashboardSnapshot: snapshot, alreadySaved: false };
       } catch (error) {
         try { await client.query("ROLLBACK"); } catch { /* already rolled back or connection gone */ }
