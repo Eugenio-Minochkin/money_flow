@@ -269,7 +269,7 @@ test("does not add a Cyrillic category bypass outside the category model", () =>
   const movieTicket = parseExpenseText("билет в кино 300");
 
   assert.notEqual(phone.expenses[0].category_slug, "subscriptions");
-  assert.equal(movieTicket.expenses[0].category_slug, "travel");
+  assert.equal(movieTicket.expenses[0].category_slug, "entertainment");
 });
 
 test("preserves English parser regressions and ASR punctuation", () => {

@@ -57,6 +57,36 @@ test("does not match keywords inside larger words", () => {
   assert.equal(inferCategory("museumify"), "other");
 });
 
+test("routes event tickets to entertainment and travel tickets to travel", () => {
+  const events = [
+    ["билет в кино", "entertainment"],
+    ["билет в театр", "entertainment"],
+    ["билет на концерт", "entertainment"],
+    ["концертный билет", "entertainment"],
+    ["museum ticket", "entertainment"]
+  ];
+  const travel = [
+    ["авиабилет", "travel"],
+    ["билет на самолет", "travel"],
+    ["билет на самолёт", "travel"],
+    ["flight ticket", "travel"],
+    ["plane ticket", "travel"],
+    ["flight to bangkok", "travel"]
+  ];
+
+  for (const [description, category] of events) {
+    assert.equal(inferCategory(description), category, description);
+  }
+  for (const [description, category] of travel) {
+    assert.equal(inferCategory(description), category, description);
+  }
+});
+
+test("keeps a bare ambiguous ticket as other", () => {
+  assert.equal(inferCategory("билет"), "other");
+  assert.equal(inferCategory("ticket"), "other");
+});
+
 test("matches safe Cyrillic morphology stems", () => {
   const examples = [
     ["аптеку", "health"],

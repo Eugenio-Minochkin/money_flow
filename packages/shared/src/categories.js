@@ -74,7 +74,7 @@ export const CATEGORIES = [
     name: "Путешествия",
     keywords: [
       "hotel", "отель", "hostel", "guesthouse", "гестхаус", "airbnb", "flight", "flight ticket",
-      "plane ticket", "авиабилет", "ticket", "билет", "билет на самолет", "билет на самолёт", "train",
+      "plane ticket", "авиабилет", "билет на самолет", "билет на самолёт", "train",
       "поезд", "airport", "аэропорт", "accommodation", "проживание", "baggage", "багаж", "luggage",
       "visa", "виза"
     ]
