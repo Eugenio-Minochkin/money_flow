@@ -68,18 +68,11 @@ export function parseExpenseText(text, options = {}) {
   const expenses = [];
   for (const part of parts) {
     const normalizedPart = normalizePartAmountWords(part);
-    if (hasUnsafeAmountSyntax(normalizedPart)) {
-      return {
-        expenses: [],
-        notes: ["Не удалось безопасно разобрать сумму расхода."]
-      };
-    }
+    const rejectReason = diagnosePartRejectReason(part, normalizedPart, maxLocalAmount, defaultCurrency);
+    if (rejectReason) return rejectedParse(rejectReason);
     const parsed = parsePart(normalizedPart, now, defaultCurrency, timeZone, maxLocalAmount);
     if (!parsed) {
-      return {
-        expenses: [],
-        notes: ["Не удалось безопасно разобрать сумму расхода."]
-      };
+      return rejectedParse(parts.length > 1 ? "unsafe_split_or_mapping" : "unsupported_amount_shape");
     }
     expenses.push(parsed);
   }
@@ -88,6 +81,38 @@ export function parseExpenseText(text, options = {}) {
     expenses,
     notes: expenses.length === 0 ? ["Не удалось найти сумму расхода."] : []
   };
+}
+
+function rejectedParse(rejectReason) {
+  return {
+    expenses: [],
+    notes: [rejectReason === "no_amount_token"
+      ? "Не удалось найти сумму расхода."
+      : "Не удалось безопасно разобрать сумму расхода."],
+    reject_reason: rejectReason
+  };
+}
+
+function diagnosePartRejectReason(originalPart, normalizedPart, maxLocalAmount, defaultCurrency) {
+  if (hasUnsafeAmountSyntax(normalizedPart)) return "unsafe_split_or_mapping";
+  if (hasNumericAmountCandidate(originalPart) && containsRussianAmountWordSequence(originalPart)) {
+    return "multiple_amounts_ambiguous";
+  }
+
+  const matches = findAmountMatches(normalizedPart);
+  if (matches.some((match) => match.invalid)) return "unsupported_amount_shape";
+  if (matches.length > 1) return "multiple_amounts_ambiguous";
+  if (matches.length === 0) {
+    return containsRussianNumberWord(originalPart) ? "unsupported_number_words" : "no_amount_token";
+  }
+
+  const match = matches[0];
+  const amount = normalizeAmount(match.rawAmount, match.multiplier);
+  if (!Number.isFinite(amount) || amount <= 0) return "unsupported_amount_shape";
+  if (amount > maxLocalAmount) return "amount_over_limit";
+  if (isSmallBareIntegerWithoutCurrency(normalizedPart, match)) return "small_bare_integer";
+  if (!resolveCurrency(normalizedPart, match, defaultCurrency)) return "unsafe_split_or_mapping";
+  return null;
 }
 
 function splitExpenseParts(text) {
@@ -118,6 +143,12 @@ function splitExpensePartsForVoice(text) {
       && /[,;]/u.test(previous.separator)
       && !hasNumericAmountCandidate(previous.text)
       && startsWithAmountLike(part.text)) {
+      previous.text = `${previous.text} ${part.text}`.trim();
+      previous.separator = part.separator;
+    } else if (previous
+      && /[,;]/u.test(previous.separator)
+      && hasNumericAmountCandidate(previous.text)
+      && isCurrencyOnlyPart(part.text)) {
       previous.text = `${previous.text} ${part.text}`.trim();
       previous.separator = part.separator;
     } else {
@@ -303,37 +334,76 @@ function parseRussianNumberSequence(tokens, start, forcedEnd = null) {
   let index = start;
   let total = 0;
 
-  if (index < end && RU_THOUSANDS.has(normalizeWordToken(tokens[index]))) {
-    total += 1000;
-    index += 1;
-  } else if (index + 1 < end
-    && RU_UNITS.has(normalizeWordToken(tokens[index]))
-    && RU_THOUSANDS.has(normalizeWordToken(tokens[index + 1]))) {
-    total += RU_UNITS.get(normalizeWordToken(tokens[index])) * 1000;
-    index += 2;
+  const thousandIndex = findRussianThousandsIndex(tokens, index, end);
+  if (thousandIndex >= 0) {
+    const thousands = thousandIndex === index
+      ? { value: 1, nextIndex: index }
+      : parseRussianUnderThousand(tokens, index, thousandIndex);
+    if (!thousands || thousands.nextIndex !== thousandIndex) return null;
+    total += thousands.value * 1000;
+    index = thousandIndex + 1;
   }
 
+  if (index < end) {
+    const remainder = parseRussianUnderThousand(tokens, index, end);
+    if (!remainder || remainder.nextIndex !== end) return null;
+    total += remainder.value;
+    index = remainder.nextIndex;
+  }
+
+  if (index !== end || total <= 0 || total > 999_999) return null;
+  return { value: total, nextIndex: end };
+}
+
+function isCurrencyOnlyPart(value) {
+  const tokens = tokenizeWords(value);
+  return tokens.length === 1 && isCurrencyAlias(tokens[0]);
+}
+
+function findRussianThousandsIndex(tokens, start, end) {
+  for (let index = start; index < end; index += 1) {
+    if (RU_THOUSANDS.has(normalizeWordToken(tokens[index]))) return index;
+  }
+  return -1;
+}
+
+function parseRussianUnderThousand(tokens, start, end) {
+  let index = start;
+  let value = 0;
   if (index < end && RU_HUNDREDS.has(normalizeWordToken(tokens[index]))) {
-    total += RU_HUNDREDS.get(normalizeWordToken(tokens[index]));
+    value += RU_HUNDREDS.get(normalizeWordToken(tokens[index]));
     index += 1;
   }
-
   if (index < end && RU_TEENS.has(normalizeWordToken(tokens[index]))) {
-    total += RU_TEENS.get(normalizeWordToken(tokens[index]));
+    value += RU_TEENS.get(normalizeWordToken(tokens[index]));
     index += 1;
   } else {
     if (index < end && RU_TENS.has(normalizeWordToken(tokens[index]))) {
-      total += RU_TENS.get(normalizeWordToken(tokens[index]));
+      value += RU_TENS.get(normalizeWordToken(tokens[index]));
       index += 1;
     }
     if (index < end && RU_UNITS.has(normalizeWordToken(tokens[index]))) {
-      total += RU_UNITS.get(normalizeWordToken(tokens[index]));
+      value += RU_UNITS.get(normalizeWordToken(tokens[index]));
       index += 1;
     }
   }
+  return value > 0 ? { value, nextIndex: index } : null;
+}
 
-  if (index !== end || total <= 0 || total > 9999) return null;
-  return { value: total, nextIndex: end };
+function containsRussianNumberWord(value) {
+  return tokenizeWords(value).some((token) => isRussianNumberWord(token));
+}
+
+function containsRussianAmountWordSequence(value) {
+  const tokens = tokenizeWords(value);
+  for (let index = 0; index < tokens.length; index += 1) {
+    if (!isRussianNumberWord(tokens[index])) continue;
+    const end = contiguousRussianNumberEnd(tokens, index);
+    const parsed = parseRussianNumberSequence(tokens, index, end);
+    if (parsed && russianNumberSpanLooksLikeAmount(tokens, index, parsed.nextIndex)) return true;
+    index = end - 1;
+  }
+  return false;
 }
 
 function russianNumberSpanLooksLikeAmount(tokens, start, end) {
@@ -364,9 +434,7 @@ function resolveCurrency(part, amountMatch, defaultCurrency) {
     candidates.push(CURRENCY_ALIASES.get(symbol));
   }
 
-  const before = part.slice(0, amountMatch.start).trim().split(/\s+/u).at(-1);
-  const after = part.slice(amountMatch.end).trim().split(/\s+/u)[0];
-  for (const token of [before, after].filter(Boolean)) {
+  for (const token of tokenizeWords(part)) {
     const normalized = normalizeCurrencyToken(token);
     if (CURRENCY_ALIASES.has(normalized)) {
       candidates.push(CURRENCY_ALIASES.get(normalized));

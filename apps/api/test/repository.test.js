@@ -5066,6 +5066,7 @@ test("isCategoryValid distinguishes parser-other, user-other and confident categ
   const { isCategoryValid } = await import("../src/repository.js");
   assert.equal(isCategoryValid({ category_slug: "food_cafe", needs_review: false, category_source: "parser" }), true);
   assert.equal(isCategoryValid({ category_slug: "other", needs_review: true, category_source: "parser" }), false);
+  assert.equal(isCategoryValid({ category_slug: "other", needs_review: false, category_source: "parser" }), false);
   assert.equal(isCategoryValid({ category_slug: "other", needs_review: false, category_source: "user" }), true);
   assert.equal(isCategoryValid({ category_slug: "other", needs_review: false, category_source: null }), false);
 });
@@ -5149,12 +5150,12 @@ test("saveDraftAsExpense throws DraftCanceledError on a cancelled draft", async 
   await assert.rejects(() => repo.saveDraftAsExpense(7, 100), (err) => err instanceof DraftCanceledError);
 });
 
-test("saveDraftAsExpense throws CategoryRequiredError and does not insert when category invalid", async () => {
+test("saveDraftAsExpense blocks parser-provided other even if needs_review is accidentally false", async () => {
   const { createRepository, CategoryRequiredError } = await import("../src/repository.js");
   const queries = [];
   const client = fakeConfirmClient({
     draftRow: { id: 7, user_id: 1, status: "pending", base_currency: "THB",
-      items: [{ amount: 80, currency: "THB", description: "x", category_slug: "other", needs_review: true, category_source: "parser", budget_impact: "regular", tags: [], spent_at: "2026-06-25T10:00:00Z" }] },
+      items: [{ amount: 80, currency: "THB", description: "x", category_slug: "other", needs_review: false, category_source: "parser", budget_impact: "regular", tags: [], spent_at: "2026-06-25T10:00:00Z" }] },
     onQuery: (q) => queries.push(String(q))
   });
   const repo = createRepository({ ...fakePool(() => ({ rows: [] })), async connect() { return client; } });
