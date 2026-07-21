@@ -389,6 +389,6 @@
   - После нажатия «Сохранить» Telegram сразу подтверждает действие и снимает spinner; итог сохранения появляется следом.
   ```
 
-- [ ] **Step 4: Publish a draft PR into `master` and stop.**
+- [x] **Step 4: Publish a draft PR into `master` and stop.**
 
   Use the repository GitHub publication workflow to push `codex/telegram-confirm-latency`, create a draft PR, and include the evidence from Step 3. Do not merge, deploy, access production, or perform database writes.
