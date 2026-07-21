@@ -49,14 +49,15 @@ Required metadata:
 - `telegramUpdateMs`
 - `telegramUpdateSucceeded`
 - `telegramUpdateMode: "edit" | "send" | "fallback_send" | "failed"`
+- `userResultMs`
 - `cleanupMs`
 - `totalMs`
 - `expenseCount: number`
 - `source: "telegram"`
 
-`summaryBuildMs` is `null` and `expenseCount` is `0` for `cancelled`, `category_required`, and `failed`; SQL avg/P95 ignores null stages. `telegramUpdateMs` includes the edit attempt and fallback send when both are attempted. `cleanupMs` is the wall-clock duration from starting the eligible cleanup group until all its tasks settle, not the sum of parallel task durations. `totalMs` runs from entry to `handleConfirmDraft()` through the terminal Telegram operation and all safe background tasks, but excludes writing `draft_confirm_processing_completed` itself. Dashboard snapshot construction is after the database transaction commit and remains part of `dbSaveMs`; its failure cannot change a persistence outcome.
+`summaryBuildMs` is `null` and `expenseCount` is `0` for `cancelled`, `category_required`, and `failed`; SQL avg/P95 ignores null stages. `telegramUpdateMs` includes the edit attempt and fallback send when both are attempted. `userResultMs` runs from entry to `handleConfirmDraft()` through the terminal Telegram operation, before analytics and cleanup; Confirm flow reports its avg/P95 directly against the user-result target. `cleanupMs` is the wall-clock duration from starting the eligible cleanup group until all its tasks settle, not the sum of parallel task durations. `totalMs` runs from entry to `handleConfirmDraft()` through the terminal Telegram operation and all safe background tasks, but excludes writing `draft_confirm_processing_completed` itself. Dashboard snapshot construction is after the database transaction commit and remains part of `dbSaveMs`; its failure cannot change a persistence outcome.
 
-`/admin_stats_tech` adds a Confirm flow section for Today and Last 7 days only when confirm attempts exist. It shows attempts and separately counts `success`, `already_saved`, `cancelled`, `category_required`, and `failed`; their sum must equal attempts. It also shows avg/P95 callback ACK and total time, plus avg/P95 DB save and Telegram update when values exist. A missing metric is omitted rather than rendered as a zero P95.
+`/admin_stats_tech` adds a Confirm flow section for Today and Last 7 days only when confirm attempts exist. It shows attempts and separately counts `success`, `already_saved`, `cancelled`, `category_required`, and `failed`; their sum must equal attempts. It also shows avg/P95 callback ACK, user result, and total time, plus avg/P95 DB save and Telegram update when values exist. A missing metric is omitted rather than rendered as a zero P95.
 
 ## Verification
 
