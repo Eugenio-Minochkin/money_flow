@@ -139,16 +139,39 @@ test("audit report removes inflected one-and-a-half-thousand RU amount words nex
   assert.ok(!serialized.includes("тысячи"));
 });
 
-test("audit report preserves ordinary RU words outside numeric-currency context", () => {
+test("audit report suppresses numeric words but preserves anchored prefix-similar ordinary words", () => {
   const rows = [
     ...repeatedConfirmedRows("студия одна", "health", "ordinary-one"),
-    ...repeatedConfirmedRows("кафе пятница", "food_cafe", "ordinary-stem")
+    ...repeatedConfirmedRows("room one", "home", "ordinary-en-one"),
+    ...repeatedConfirmedRows("кафе пятница", "food_cafe", "ordinary-stem"),
+    ...repeatedConfirmedRows("someone cafe", "food_cafe", "ordinary-en-prefix")
   ];
 
   const report = buildParserAuditReport(rows);
 
-  assert.ok(report.candidates.ru.some((candidate) => candidate.phrase === "студия одна"));
+  assert.ok(report.candidates.ru.some((candidate) => candidate.phrase === "студия"));
+  assert.ok(report.candidates.en.some((candidate) => candidate.phrase === "room"));
   assert.ok(report.candidates.ru.some((candidate) => candidate.phrase === "кафе пятница"));
+  assert.ok(report.candidates.en.some((candidate) => candidate.phrase === "someone cafe"));
+  assert.ok(!candidateTokens(report).has("одна"));
+  assert.ok(!candidateTokens(report).has("one"));
+});
+
+test("audit report suppresses solitary implicit-currency number words", () => {
+  const rows = [
+    ...repeatedConfirmedRows("такси сто", "transport", "implicit-ru-hundred"),
+    ...repeatedConfirmedRows("такси пять", "transport", "implicit-ru-five"),
+    ...repeatedConfirmedRows("taxi five", "transport", "implicit-en-five")
+  ];
+
+  const report = buildParserAuditReport(rows);
+  const tokens = candidateTokens(report);
+
+  assert.ok(report.candidates.ru.some((candidate) => candidate.phrase === "такси"));
+  assert.ok(report.candidates.en.some((candidate) => candidate.phrase === "taxi"));
+  assert.ok(!tokens.has("сто"));
+  assert.ok(!tokens.has("пять"));
+  assert.ok(!tokens.has("five"));
 });
 
 test("audit report still removes clear multiword amounts when default currency is implicit", () => {
@@ -318,6 +341,11 @@ function repeatedConfirmedRows(sourceText, category, draftPrefix) {
     description: sourceText,
     category
   }));
+}
+
+function candidateTokens(report) {
+  return new Set([...report.candidates.ru, ...report.candidates.en]
+    .flatMap((candidate) => candidate.phrase.split(" ")));
 }
 
 function findCandidate(report, language, phrase) {

@@ -281,28 +281,18 @@ function removeNumberWordSequences(tokens) {
       continue;
     }
 
-    const sequenceStart = index;
-    let numberWordCount = 1;
     index += 1;
     while (index < tokens.length) {
       if (isNumberWordToken(tokens[index])) {
-        numberWordCount += 1;
         index += 1;
         continue;
       }
       if (NUMBER_WORD_CONNECTORS.has(tokens[index])
           && isNumberWordToken(tokens[index + 1])) {
-        numberWordCount += 1;
         index += 2;
         continue;
       }
       break;
-    }
-
-    const adjacentToCurrency = FINANCIAL_TOKENS.has(tokens[sequenceStart - 1])
-      || FINANCIAL_TOKENS.has(tokens[index]);
-    if (!adjacentToCurrency && numberWordCount < 2) {
-      filtered.push(...tokens.slice(sequenceStart, index));
     }
   }
   return filtered;
