@@ -19,7 +19,8 @@
     "release-note:create": "node --env-file=.env apps/api/scripts/create-release-note.js",
     "release-notes:sync-pr": "node apps/api/scripts/sync-release-notes-pr.js",
     "reports:backfill": "node --env-file=.env apps/api/scripts/backfill-report.js",
-    "parser:audit": "node apps/api/scripts/audit-expense-parser.js"
+    "parser:audit": "node apps/api/scripts/audit-expense-parser.js",
+    "parser:benchmark:api": "node apps/api/scripts/benchmark-expense-parser.js"
   },
   "dependencies": {
     "pg": "^8.13.1"
