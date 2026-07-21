@@ -194,8 +194,15 @@ test("audit report suppresses entire descriptions containing any sensitive marke
   assert.deepEqual(report.candidates, { ru: [], en: [] });
 });
 
-test("audit report suppresses Unicode emails and domains without broad punctuation matches", () => {
-  const sensitiveDescriptions = ["иван@почта.рф", "alice@почта.рф", "почта.рф"];
+test("audit report suppresses all email-shaped tokens and Unicode domains without broad punctuation matches", () => {
+  const sensitiveDescriptions = [
+    "иван@почта.рф",
+    "alice@почта.рф",
+    "_alice@example.com",
+    "+alice@example.com",
+    "-alice@example.com",
+    "почта.рф"
+  ];
   const rows = [
     ...sensitiveDescriptions.flatMap((description, index) =>
       repeatedConfirmedRows(description, "transport", `unicode-identifier-${index}`)

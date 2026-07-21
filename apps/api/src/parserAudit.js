@@ -32,11 +32,11 @@ ORDER BY d.id
 `;
 
 const LANGUAGES = ["ru", "en"];
-const UNICODE_EMAIL_SOURCE = String.raw`(?<![\p{L}\p{N}._%+-])[\p{L}\p{N}](?:[\p{L}\p{N}._%+-]*[\p{L}\p{N}])?@(?:[\p{L}\p{N}](?:[\p{L}\p{N}-]*[\p{L}\p{N}])?\.)+[\p{L}]{2,}(?![\p{L}\p{N}._%+-])`;
+const EMAIL_SHAPE_SOURCE = String.raw`\S+@\S+`;
 const UNICODE_DOMAIN_SOURCE = String.raw`(?<![\p{L}\p{N}@_-])(?:[\p{L}\p{N}](?:[\p{L}\p{N}-]*[\p{L}\p{N}])?\.)+[\p{L}]{2,}(?:\/[^\s]*)?(?![\p{L}\p{N}_-])`;
-const UNICODE_EMAIL_PATTERN = new RegExp(UNICODE_EMAIL_SOURCE, "iu");
+const EMAIL_SHAPE_PATTERN = new RegExp(EMAIL_SHAPE_SOURCE, "u");
 const UNICODE_DOMAIN_PATTERN = new RegExp(UNICODE_DOMAIN_SOURCE, "iu");
-const UNICODE_EMAIL_PATTERN_GLOBAL = new RegExp(UNICODE_EMAIL_SOURCE, "giu");
+const EMAIL_SHAPE_PATTERN_GLOBAL = new RegExp(EMAIL_SHAPE_SOURCE, "gu");
 const UNICODE_DOMAIN_PATTERN_GLOBAL = new RegExp(UNICODE_DOMAIN_SOURCE, "giu");
 const KNOWN_CATEGORY_SLUGS = new Set(CATEGORIES.map((category) => category.slug));
 const SUPPORTED_ALIASES = new Map(CATEGORIES.flatMap((category) =>
@@ -333,7 +333,7 @@ function isSensitiveQuantityToken(token) {
 function containsSensitiveMarker(value) {
   if (/\p{N}|\p{Sc}/u.test(value)
       || /\b(?:https?:\/\/|www\.)\S+/iu.test(value)
-      || UNICODE_EMAIL_PATTERN.test(value)
+      || EMAIL_SHAPE_PATTERN.test(value)
       || /(?<![\p{L}\p{N}_])@[\p{L}\p{N}_.-]+/u.test(value)
       || UNICODE_DOMAIN_PATTERN.test(value)
       || /\b[\p{L}\p{N}]+_[\p{L}\p{N}_]+\b/u.test(value)) {
@@ -350,7 +350,7 @@ function detectSourceLanguage(value) {
   const sanitized = String(value ?? "")
     .normalize("NFKC")
     .replaceAll(/\b(?:https?:\/\/|www\.)\S+/giu, " ")
-    .replaceAll(UNICODE_EMAIL_PATTERN_GLOBAL, " ")
+    .replaceAll(EMAIL_SHAPE_PATTERN_GLOBAL, " ")
     .replaceAll(/(?<![\p{L}\p{N}_])@[\p{L}\p{N}_.-]+/gu, " ")
     .replaceAll(UNICODE_DOMAIN_PATTERN_GLOBAL, " ");
   const hasRu = /\p{Script=Cyrillic}/u.test(sanitized);
