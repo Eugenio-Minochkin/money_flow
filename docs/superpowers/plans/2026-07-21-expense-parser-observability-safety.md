@@ -262,6 +262,6 @@ Run: `git diff --check` and `git status --short`
 
 Expected: no whitespace errors and only PR A files are changed.
 
-- [ ] **Step 4: Commit and publish**
+- [x] **Step 4: Commit and publish**
 
 Stage only PR A files, commit with an intentional message, push `codex/issue-115a-parser-observability`, and open a draft PR into `master` containing baseline/result, docs checked, privacy impact, DB/production impact, exact rollback, assumptions, and `## User Release Notes`.
