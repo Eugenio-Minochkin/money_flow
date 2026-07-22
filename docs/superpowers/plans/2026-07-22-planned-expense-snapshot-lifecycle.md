@@ -328,7 +328,7 @@ git commit -m "feat: explain planned expense disable impact"
 - Modify: `docs/DECISIONS.md`
 - Modify: `docs/TESTING_GUIDE.md`
 
-- [ ] **Step 1: Record the stable domain rules**
+- [x] **Step 1: Record the stable domain rules**
 
 Document verbatim in meaning:
 
@@ -340,7 +340,7 @@ Disabling a plan cancels only its unpaid obligations. Valid paid occurrences and
 
 Also document the server-owned paid/remaining summary and the new Postgres smoke coverage.
 
-- [ ] **Step 2: Run focused verification**
+- [x] **Step 2: Run focused verification**
 
 ```powershell
 npm.cmd test -- apps/api/test/budgetReserveIntegration.test.js apps/api/test/repository.test.js apps/api/test/reportService.test.js apps/api/test/security.test.js apps/miniapp/test/plannedDisable.test.js apps/miniapp/test/planned.test.js apps/miniapp/test/i18n.test.js apps/miniapp/test/smokeAssets.test.js
@@ -360,7 +360,7 @@ npm.cmd run test:integration:postgres
 
 Expected: the safety guard confirms a localhost test database, migrations 001-011 apply idempotently, and the expanded planned lifecycle smoke passes.
 
-- [ ] **Step 5: Review the final diff**
+- [x] **Step 5: Review the final diff**
 
 ```powershell
 git diff --check
@@ -370,7 +370,7 @@ git status --short
 
 Confirm there are no production values, unrelated refactors, old-migration edits, archive UI, restoration, Undo payment, or general mutation-policy changes.
 
-- [ ] **Step 6: Commit documentation**
+- [x] **Step 6: Commit documentation**
 
 ```powershell
 git add docs/DOMAIN_RULES.md docs/DECISIONS.md docs/TESTING_GUIDE.md docs/superpowers/plans/2026-07-22-planned-expense-snapshot-lifecycle.md
