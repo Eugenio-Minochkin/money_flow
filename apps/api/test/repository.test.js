@@ -2598,12 +2598,16 @@ test("creates and lists planned expenses", async () => {
     category_slug: "subscriptions",
     tags: ["регулярная трата"],
     recurrence: "monthly",
-    due_day: 10
+    due_day: 10,
+    active: false
   });
   const planned = await repo.listPlannedExpensesForTelegramUser(100);
 
   assert.equal(created.description, "ChatGPT");
   assert.equal(planned[0].recurrence, "monthly");
+  const createQuery = queries.find((query) => query.sql.includes("INSERT INTO planned_expenses"));
+  assert.match(createQuery.sql, /VALUES \(\$1, \$2, \$3, \$4, \$5, \$6, \$7, \$8, \$9, \$10, \$11, \$12, true\)/);
+  assert.ok(!queries.some((query) => query.sql.includes("DELETE FROM daily_budget_snapshots")));
   const event = queries.find((query) => query.sql.includes("INSERT INTO app_events"));
   assert.deepEqual(event.params, ["5", "planned_expense_created", JSON.stringify({ source: "miniapp" })]);
   assert.doesNotMatch(event.params[2], /ChatGPT|20/);
@@ -2649,6 +2653,11 @@ test("records safe events after planned expense update and deactivation", async 
     active: true
   });
   await repo.deactivatePlannedExpense(100, 5);
+
+  const updateQuery = queries.find((query) => query.sql.startsWith("UPDATE planned_expenses") && query.sql.includes("amount ="));
+  assert.doesNotMatch(updateQuery.sql, /\bactive\s*=/);
+  assert.equal(updateQuery.params.length, 13);
+  assert.ok(!queries.some((query) => query.sql.includes("DELETE FROM daily_budget_snapshots")));
 
   const events = queries
     .filter((query) => query.sql.includes("INSERT INTO app_events"))

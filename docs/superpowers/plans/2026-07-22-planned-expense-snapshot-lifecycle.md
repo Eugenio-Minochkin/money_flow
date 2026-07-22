@@ -17,7 +17,7 @@
 - Modify: `apps/api/test/repository.test.js`
 - Modify: `apps/api/src/repository.js`
 
-- [ ] **Step 1: Rewrite the opposite-expectation integration test**
+- [x] **Step 1: Rewrite the opposite-expectation integration test**
 
 Replace the existing planned-mutation invalidation assertion with the approved contract:
 
@@ -34,7 +34,7 @@ test("planned expense changes preserve today's snapshot while monthly state upda
 
 Add create and disable cases, a missing-snapshot case, and a next-local-day case using the existing in-memory budget/reserve state helper.
 
-- [ ] **Step 2: Run the focused test and verify RED**
+- [x] **Step 2: Run the focused test and verify RED**
 
 Run:
 
@@ -44,15 +44,15 @@ npm.cmd test -- apps/api/test/budgetReserveIntegration.test.js
 
 Expected: planned create/update/disable cases fail because repository methods still delete the current `daily_budget_snapshot`.
 
-- [ ] **Step 3: Add repository contract tests for PATCH and invalidation boundaries**
+- [x] **Step 3: Add repository contract tests for PATCH and invalidation boundaries**
 
 Assert that planned create/update/disable SQL never issues `DELETE FROM daily_budget_snapshots`, that create always writes `active = true`, and update SQL contains no `active =` assignment even if payload contains `active: true`.
 
-- [ ] **Step 4: Implement the minimal snapshot and PATCH fix**
+- [x] **Step 4: Implement the minimal snapshot and PATCH fix**
 
 In `createPlannedExpense` and `updatePlannedExpense`, remove only the planned-flow calls to `invalidateDailyBudgetSnapshot`. Remove `active` from `normalizePlannedExpense` and the update SQL/parameters. Leave `invalidateDailyBudgetSnapshot` itself and every budget, top-up, reserve, timezone/currency, and expense-correction caller unchanged.
 
-- [ ] **Step 5: Run focused tests and verify GREEN**
+- [x] **Step 5: Run focused tests and verify GREEN**
 
 Run:
 
@@ -62,7 +62,7 @@ npm.cmd test -- apps/api/test/budgetReserveIntegration.test.js apps/api/test/rep
 
 Expected: all selected tests pass, including unchanged budget and reserve invalidation tests.
 
-- [ ] **Step 6: Commit the snapshot policy**
+- [x] **Step 6: Commit the snapshot policy**
 
 ```powershell
 git add apps/api/src/repository.js apps/api/test/budgetReserveIntegration.test.js apps/api/test/repository.test.js

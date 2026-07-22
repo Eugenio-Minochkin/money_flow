@@ -2754,7 +2754,6 @@ export function createRepository(pool, options = {}) {
         ]
       );
       const row = result.rows[0] ?? null;
-      if (row) await invalidateDailyBudgetSnapshot(pool, user.id, now, resolveUserTimeZone(user));
       if (row) await this.recordAppEvent(row.user_id ?? user.id, "planned_expense_created", { source: "miniapp" });
       return row;
     },
@@ -2779,10 +2778,9 @@ export function createRepository(pool, options = {}) {
              due_day = $8,
              due_days = $9,
              weekday = $10,
-             due_date = $11,
-             active = $12
-         WHERE id = $13
-           AND user_id = (SELECT id FROM users WHERE telegram_user_id = $14)
+             due_date = $11
+         WHERE id = $12
+           AND user_id = (SELECT id FROM users WHERE telegram_user_id = $13)
          RETURNING *`,
         [
           planned.amount,
@@ -2796,13 +2794,11 @@ export function createRepository(pool, options = {}) {
           planned.due_days,
           planned.weekday,
           planned.due_date,
-          planned.active,
           plannedExpenseId,
           telegramUserId
         ]
       );
       const row = result.rows[0] ?? null;
-      if (row) await invalidateDailyBudgetSnapshot(pool, user.id, now, resolveUserTimeZone(user));
       if (row) await this.recordAppEvent(row.user_id ?? user.id, "planned_expense_updated", { source: "miniapp" });
       return row;
     },
@@ -2818,7 +2814,6 @@ export function createRepository(pool, options = {}) {
         [plannedExpenseId, telegramUserId]
       );
       const row = result.rows[0] ?? null;
-      if (row && user) await invalidateDailyBudgetSnapshot(pool, user.id, now, resolveUserTimeZone(user));
       if (row && user) await this.recordAppEvent(row.user_id ?? user.id, "planned_expense_deleted", { source: "miniapp" });
       return row;
     },
@@ -3701,8 +3696,7 @@ function normalizePlannedExpense(item) {
     due_day: dueDay,
     due_days: recurrence === "weekly" ? [] : dueDays,
     weekday: recurrence === "weekly" ? normalizeWeekday(item.weekday) : null,
-    due_date: item.due_date || null,
-    active: item.active ?? true
+    due_date: item.due_date || null
   };
 }
 
