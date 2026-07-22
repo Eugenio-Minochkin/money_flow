@@ -275,6 +275,9 @@ test("disables a partially paid weekly plan idempotently while preserving paid h
 
   const now = new Date("2026-07-22T10:00:00+07:00");
   const beforeDisableDashboard = await repo.dashboard(990004, now);
+  assert.equal(beforeDisableDashboard.snapshot.plannedRemaining, 3000);
+  assert.equal(beforeDisableDashboard.snapshot.freeRemaining, 40000);
+  assert.equal(beforeDisableDashboard.snapshot.forecastMonthTotal, 5000);
   const beforeRows = {
     expenses: Number((await pool.query("SELECT COUNT(*)::int AS count FROM expenses WHERE user_id = $1", [planned.user_id])).rows[0].count),
     payments: Number((await pool.query("SELECT COUNT(*)::int AS count FROM planned_expense_payments WHERE planned_expense_id = $1", [planned.id])).rows[0].count)
@@ -307,6 +310,22 @@ test("disables a partially paid weekly plan idempotently while preserving paid h
 
   const afterDisableDashboard = await repo.dashboard(990004, now);
   assert.equal(afterDisableDashboard.snapshot.dayPlanLimit, beforeDisableDashboard.snapshot.dayPlanLimit);
+  assert.equal(afterDisableDashboard.snapshot.plannedRemaining, 0);
+  assert.equal(afterDisableDashboard.snapshot.freeRemaining, 43000);
+  assert.equal(afterDisableDashboard.snapshot.forecastMonthTotal, 2000);
+
+  const nextDayDashboard = await repo.dashboard(990004, new Date("2026-07-23T10:00:00+07:00"));
+  assert.ok(nextDayDashboard.snapshot.dayPlanLimit > afterDisableDashboard.snapshot.dayPlanLimit);
+  const dailySnapshots = await pool.query(
+    `SELECT day_key::text, budget_amount_base
+     FROM daily_budget_snapshots
+     WHERE user_id = $1
+     ORDER BY day_key`,
+    [planned.user_id]
+  );
+  assert.deepEqual(dailySnapshots.rows.map((row) => row.day_key), ["2026-07-22", "2026-07-23"]);
+  assert.equal(Number(dailySnapshots.rows[0].budget_amount_base), beforeDisableDashboard.snapshot.dayPlanLimit);
+  assert.equal(Number(dailySnapshots.rows[1].budget_amount_base), nextDayDashboard.snapshot.dayPlanLimit);
   assert.equal((await pool.query(
     "SELECT COUNT(*)::int AS count FROM app_events WHERE user_id = $1 AND event_name = 'planned_expense_deleted'",
     [planned.user_id]

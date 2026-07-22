@@ -2843,7 +2843,7 @@ export function createRepository(pool, options = {}) {
         const validPaidByOccurrence = new Map();
         for (const payment of paidResult.rows) {
           const occurrenceDate = normalizeOccurrenceKey(payment.occurrence_date);
-          if (occurrenceDateSet.has(occurrenceDate) && !validPaidByOccurrence.has(occurrenceDate)) {
+          if (occurrenceDate && !validPaidByOccurrence.has(occurrenceDate)) {
             validPaidByOccurrence.set(occurrenceDate, Number(payment.amount_base ?? 0));
           }
         }

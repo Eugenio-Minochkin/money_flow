@@ -2692,9 +2692,7 @@ test("deactivates an owned weekly planned expense transactionally and returns st
         return {
           rows: [
             { occurrence_date: "2026-07-01", amount_base: "900" },
-            { occurrence_date: "2026-07-08", amount_base: "1100" },
-            { occurrence_date: "2026-06-24", amount_base: "700" },
-            { occurrence_date: "2026-07-02", amount_base: "800" }
+            { occurrence_date: "2026-07-08", amount_base: "1100" }
           ]
         };
       }
@@ -2774,6 +2772,71 @@ test("deactivates an owned weekly planned expense transactionally and returns st
   const deletionEvents = events.filter((query) => query.sql.includes("INSERT INTO app_events"));
   assert.equal(deletionEvents.length, 1);
   assert.deepEqual(deletionEvents[0].params, ["7", "planned_expense_deleted", JSON.stringify({ source: "miniapp" })]);
+});
+
+test("keeps valid current-month payments that no longer match an edited plan schedule", async () => {
+  const now = new Date("2026-07-22T10:00:00+07:00");
+  const client = {
+    async query(sql, params = []) {
+      const query = String(sql);
+      if (["BEGIN", "COMMIT"].includes(query)) return { rows: [] };
+      if (query.includes("FROM planned_expenses") && query.includes("FOR UPDATE")) {
+        return {
+          rows: [{
+            id: "5",
+            user_id: "7",
+            amount_base: "1000",
+            recurrence: "twice_monthly",
+            due_day: 20,
+            due_days: [20, 25],
+            active: true,
+            disabled_at: null,
+            base_currency: "THB",
+            timezone: "Asia/Bangkok"
+          }]
+        };
+      }
+      if (query.includes("FROM planned_expense_payments")) {
+        assert.equal(params[2], "2026-07");
+        return {
+          rows: [
+            { occurrence_date: "2026-07-10", amount_base: "900" },
+            { occurrence_date: "2026-07-20", amount_base: "1100" }
+          ]
+        };
+      }
+      if (query.startsWith("UPDATE planned_expenses")) {
+        return {
+          rows: [{
+            id: "5",
+            user_id: "7",
+            amount_base: "1000",
+            recurrence: "twice_monthly",
+            due_day: 20,
+            due_days: [20, 25],
+            active: false,
+            disabled_at: params[1]
+          }]
+        };
+      }
+      throw new Error(`Unexpected query: ${query}`);
+    },
+    release() {}
+  };
+  const repo = createRepository({
+    async connect() { return client; },
+    async query() { return { rows: [], rowCount: 1 }; }
+  });
+
+  const result = await repo.deactivatePlannedExpense(100, 5, now);
+
+  assert.deepEqual(result.impact, {
+    paidOccurrencesKept: 2,
+    paidAmountKept: 2000,
+    unpaidOccurrencesRemoved: 1,
+    unpaidAmountRemoved: 1000,
+    currency: "THB"
+  });
 });
 
 test("rolls back and returns null when planned expense is missing or belongs to another user", async () => {
