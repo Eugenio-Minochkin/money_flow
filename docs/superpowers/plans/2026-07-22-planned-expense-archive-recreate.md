@@ -870,7 +870,7 @@ In `app.js`, `afterDashboard` invalidates archive state; refresh immediately onl
 npm.cmd test -- apps/miniapp/test/plannedArchive.test.js apps/miniapp/test/plannedDisable.test.js apps/miniapp/test/i18n.test.js apps/miniapp/test/smokeAssets.test.js
 ```
 
-- [ ] **Step 8: Commit the lazy archive UI**
+- [x] **Step 8: Commit the lazy archive UI**
 
 ```powershell
 git add apps/miniapp/src/plannedArchive.js apps/miniapp/src/plannedDisable.js apps/miniapp/src/app.js apps/miniapp/src/index.html apps/miniapp/src/styles.css apps/miniapp/src/i18n.js apps/miniapp/test/plannedArchive.test.js apps/miniapp/test/plannedDisable.test.js apps/miniapp/test/i18n.test.js apps/miniapp/test/smokeAssets.test.js
@@ -887,7 +887,7 @@ git commit -m "feat: show disabled planned expense archive"
 - Modify: `apps/miniapp/test/i18n.test.js`
 - Modify: `apps/miniapp/test/smokeAssets.test.js`
 
-- [ ] **Step 1: Write failing pure recreate interaction tests**
+- [x] **Step 1: Write failing pure recreate interaction tests**
 
 Test cancelled/no request, pending double-submit, mutation failure preserving form, successful POST closing before refresh, and independent refresh warnings:
 
@@ -914,13 +914,13 @@ assert.ok(events.includes("showRefreshWarning"));
 
 Repeat with archive refresh failing. Assert neither case reopens or re-enables the completed form. A new call requires a newly constructed form session.
 
-- [ ] **Step 2: Run recreate tests and verify RED**
+- [x] **Step 2: Run recreate tests and verify RED**
 
 ```powershell
 npm.cmd test -- apps/miniapp/test/plannedRecreate.test.js apps/miniapp/test/smokeAssets.test.js
 ```
 
-- [ ] **Step 3: Implement the pure interaction boundary**
+- [x] **Step 3: Implement the pure interaction boundary**
 
 Create `plannedRecreate.js`:
 
@@ -949,7 +949,7 @@ export async function runPlannedRecreate({
 
 The mutation error path restores the button and retains fields. The post-201 path never resets `completed`, never retries POST, and never throws a refresh failure as creation failure.
 
-- [ ] **Step 4: Make form mode explicit**
+- [x] **Step 4: Make form mode explicit**
 
 Change the form signature and all callers:
 
@@ -984,7 +984,7 @@ function closeAndResetPlannedForm() {
 }
 ```
 
-- [ ] **Step 5: Route submit by mode without leaking source ID into PATCH**
+- [x] **Step 5: Route submit by mode without leaking source ID into PATCH**
 
 Use one explicit dispatcher. Recreate uses the source-only route; ordinary modes retain their current contracts:
 
@@ -1025,7 +1025,7 @@ showToast(t("toast.plannedAdded"));
 
 Never assign `sourcePlannedExpenseId` to `plannedId`. Keep ordinary create/edit error behavior unchanged.
 
-- [ ] **Step 6: Run Mini App focused tests and verify GREEN**
+- [x] **Step 6: Run Mini App focused tests and verify GREEN**
 
 ```powershell
 npm.cmd test -- apps/miniapp/test/plannedRecreate.test.js apps/miniapp/test/plannedArchive.test.js apps/miniapp/test/planned.test.js apps/miniapp/test/formatters.test.js apps/miniapp/test/i18n.test.js apps/miniapp/test/smokeAssets.test.js

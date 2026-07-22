@@ -13,6 +13,7 @@ import {
   moneyBase,
   moneyDisplay,
   moneyDisplaySigned,
+  localDateKeyInTimeZone,
   setBaseCurrency
 } from "./formatters.js";
 import {
@@ -30,6 +31,7 @@ import { createTranslator } from "./i18n.js";
 import { inboxCountLabel, inboxDraftDescription, inboxDraftTotal, shouldShowInboxOnDashboard, updateFirstInboxItemCategory } from "./inbox.js";
 import { buildReserveSettingsView } from "./reserveSettings.js";
 import { runPlannedDisable } from "./plannedDisable.js";
+import { createPlannedRecreateSession, runPlannedRecreate } from "./plannedRecreate.js";
 import {
   buildArchivedPlanView,
   collapsePlannedArchive,
@@ -1071,11 +1073,24 @@ function bindExpenseActions(container, expenses) {
   });
 }
 
-function renderPlannedForm(item = {}) {
+function renderPlannedForm(item = {}, { mode = "create", sourcePlannedExpenseId = null } = {}) {
   const form = document.querySelector("#plannedForm");
   const dueDays = Array.isArray(item.due_days) && item.due_days.length ? item.due_days.join(", ") : (item.due_day ?? "");
   const plannedCurrency = defaultPlannedCurrency(item, dashboardState?.user?.base_currency ?? "THB");
+  const startsOn = mode === "recreate" ? localDateKeyInTimeZone(new Date(), userTimeZone()) : null;
+  const sourceDueDate = item.due_date ? String(item.due_date).slice(0, 10) : "";
+  const dueDate = mode === "recreate" && sourceDueDate <= startsOn ? "" : sourceDueDate;
+  const title = mode === "recreate" ? t("plan.createAgain") : mode === "edit" ? t("plan.saveExisting") : t("plan.addPlanned");
+  const submitLabel = mode === "recreate" ? t("plan.createAgain") : mode === "edit" ? t("plan.saveExisting") : t("plan.saveNew");
+  const recreateSession = mode === "recreate" ? createPlannedRecreateSession() : null;
   form.innerHTML = `
+    <h3>${title}</h3>
+    ${mode === "recreate" ? `
+      <label>
+        <span>${t("plan.startsOn")}</span>
+        <input name="planned-starts_on" type="date" value="${startsOn}" min="${startsOn}" required />
+      </label>
+    ` : ""}
     <div class="field-grid">
       <label>
         <span>${t("forms.description")}</span>
@@ -1120,7 +1135,7 @@ function renderPlannedForm(item = {}) {
       </label>
       <label data-recurrence-field="one_off">
         <span>${t("plan.dueDate")}</span>
-        <input name="planned-due_date" type="date" value="${item.due_date ? String(item.due_date).slice(0, 10) : ""}" />
+        <input name="planned-due_date" type="date" value="${dueDate}" />
       </label>
     </div>
     <label>
@@ -1128,17 +1143,19 @@ function renderPlannedForm(item = {}) {
       <input name="planned-tags" value="${escapeAttribute((item.tags ?? []).join(", "))}" />
     </label>
     <div class="button-row">
-      <button type="submit">${item.id ? t("plan.saveExisting") : t("plan.saveNew")}</button>
+      <button type="submit">${submitLabel}</button>
       <button type="button" class="ghost-button" id="resetPlannedForm">${t("plan.reset")}</button>
       <button type="button" class="ghost-button" id="cancelPlannedForm">${t("actions.close")}</button>
     </div>
   `;
-  form.onsubmit = (event) => savePlanned(event, item.id);
-  form.querySelector("#resetPlannedForm").addEventListener("click", () => renderPlannedForm());
-  form.querySelector("#cancelPlannedForm").addEventListener("click", () => {
-    renderPlannedForm();
-    form.classList.add("hidden");
+  form.onsubmit = (event) => savePlanned(event, {
+    mode,
+    plannedId: mode === "edit" ? item.id : null,
+    sourcePlannedExpenseId,
+    recreateSession
   });
+  form.querySelector("#resetPlannedForm").addEventListener("click", () => renderPlannedForm());
+  form.querySelector("#cancelPlannedForm").addEventListener("click", closeAndResetPlannedForm);
   form.querySelector('[name="planned-recurrence"]').addEventListener("change", syncPlannedRecurrenceFields);
   syncPlannedRecurrenceFields();
 }
@@ -1179,6 +1196,11 @@ function renderPlannedExpenses(items) {
   `;
   }).join("");
   bindPlannedActions(list, items);
+}
+
+function closeAndResetPlannedForm() {
+  renderPlannedForm();
+  document.querySelector("#plannedForm").classList.add("hidden");
 }
 
 async function refreshPlannedArchive({ force = false } = {}) {
@@ -1263,6 +1285,16 @@ function renderPlannedArchive() {
       </article>
     `;
   }).join("");
+  list.querySelectorAll("[data-recreate-planned]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const item = plannedArchiveState.items.find((planned) => String(planned.id) === button.dataset.recreatePlanned);
+      if (!item) return;
+      renderPlannedForm(item, { mode: "recreate", sourcePlannedExpenseId: item.id });
+      const form = document.querySelector("#plannedForm");
+      form.classList.remove("hidden");
+      form.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  });
 }
 
 function plannedPaymentProgressLabel(item) {
@@ -1280,7 +1312,7 @@ function bindPlannedActions(container, items) {
     button.addEventListener("click", () => {
       const item = items.find((planned) => String(planned.id) === button.dataset.editPlanned);
       switchTab("plan");
-      renderPlannedForm(item);
+      renderPlannedForm(item, { mode: "edit" });
       document.querySelector("#plannedForm").classList.remove("hidden");
       document.querySelector("#plannedForm").scrollIntoView({ behavior: "smooth", block: "start" });
     });
@@ -1363,7 +1395,7 @@ function bindPlannedActions(container, items) {
         const item = items.find((planned) => String(planned.id) === button.dataset.editPlanned);
         popover.classList.add("hidden");
         switchTab("plan");
-        renderPlannedForm(item);
+        renderPlannedForm(item, { mode: "edit" });
         document.querySelector("#plannedForm").classList.remove("hidden");
         document.querySelector("#plannedForm").scrollIntoView({ behavior: "smooth", block: "start" });
       });
@@ -1775,8 +1807,51 @@ async function saveExpense(event, expenseId) {
   switchTab(expenseReturnTab);
 }
 
-async function savePlanned(event, plannedId) {
+async function savePlanned(event, {
+  mode = "create",
+  plannedId = null,
+  sourcePlannedExpenseId = null,
+  recreateSession = null
+} = {}) {
   event.preventDefault();
+  if (mode === "recreate") {
+    const form = event.currentTarget;
+    const submitButton = form.querySelector('button[type="submit"]');
+    try {
+      await runPlannedRecreate({
+        session: recreateSession,
+        recreateRequest: async () => {
+          submitButton.disabled = true;
+          try {
+            return await api(`/api/planned-expenses/${sourcePlannedExpenseId}/recreate`, {
+              method: "POST",
+              body: {
+                telegramUserId,
+                startsOn: input("planned-starts_on").value,
+                plannedExpense: collectPlanned()
+              }
+            });
+          } catch (error) {
+            submitButton.disabled = false;
+            throw error;
+          }
+        },
+        closeForm: closeAndResetPlannedForm,
+        loadDashboard,
+        refreshArchive: () => refreshPlannedArchive({ force: true }),
+        showCreated: () => showToast(t("toast.plannedRecreated")),
+        showRefreshWarning: () => showToast(t("toast.plannedRefreshWarning"))
+      });
+    } catch (error) {
+      if (error.message === "reserve_conflicts_with_planned_change") {
+        showToast(t("reserve.plannedChangeError"));
+        return;
+      }
+      showError(error);
+    }
+    return;
+  }
+
   const method = plannedId ? "PATCH" : "POST";
   const path = plannedId ? `/api/planned-expenses/${plannedId}` : "/api/planned-expenses";
   try {
@@ -1788,8 +1863,7 @@ async function savePlanned(event, plannedId) {
     }
     throw error;
   }
-  renderPlannedForm();
-  document.querySelector("#plannedForm").classList.add("hidden");
+  closeAndResetPlannedForm();
   await loadDashboard();
   showToast(plannedId ? t("toast.plannedSaved") : t("toast.plannedAdded"));
 }
