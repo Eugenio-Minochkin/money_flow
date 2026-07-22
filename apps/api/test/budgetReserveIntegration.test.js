@@ -136,12 +136,16 @@ test("deactivating a planned expense preserves today's existing snapshot", async
   });
   const repo = createRepository(createBudgetReservePool(state));
 
+  const before = await repo.dashboard(100, now);
+  state.totalsCall = 0;
   await repo.deactivatePlannedExpense(100, 5, now);
   const dashboard = await repo.dashboard(100, now);
 
   assert.equal(state.daySnapshotDeleted, false);
   assert.equal(dashboard.snapshot.dayPlanLimit, 999);
   assert.equal(dashboard.snapshot.plannedRemaining, 0);
+  assert.equal(dashboard.snapshot.freeRemaining - before.snapshot.freeRemaining, 2000);
+  assert.equal(before.snapshot.forecastMonthTotal - dashboard.snapshot.forecastMonthTotal, 2000);
 });
 
 test("first dashboard after a planned change creates a missing snapshot from current state", async () => {
@@ -511,7 +515,7 @@ function handleBudgetReserveQuery(state, sql, params) {
     return { rows: state.plans.filter((plan) => plan.active) };
   }
 
-  if (sql.includes("COUNT(planned_expense_payments.id)::int AS paid_count")) {
+  if (sql.includes("COUNT(expenses.id)::int AS paid_count")) {
     return { rows: state.plans.map((plan) => ({ ...plan, paid_count: 0 })) };
   }
   if (sql.includes("COALESCE(paid.paid_count")) {

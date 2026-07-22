@@ -3060,6 +3060,17 @@ export function createRepository(pool, options = {}) {
       const plannedRemainingDisplayTotal = displayFromBase(plannedRemaining, user);
       const plannedThisWeekDisplayTotal = displayFromBase(plannedThisWeekTotal, user);
       const paidPlannedMonthDisplayTotal = displayFromBase(paidPlannedMonthTotal, user);
+      const plannedMonthSummary = {
+        paid: roundMoney(paidPlannedMonthTotal),
+        remaining: roundMoney(plannedRemaining),
+        total: roundMoney(paidPlannedMonthTotal + plannedRemaining),
+        display: {
+          currency: user.display_currency ?? "USD",
+          paid: roundMoney(paidPlannedMonthDisplayTotal),
+          remaining: roundMoney(plannedRemainingDisplayTotal),
+          total: roundMoney(paidPlannedMonthDisplayTotal + plannedRemainingDisplayTotal)
+        }
+      };
       const manualWeeklyBudget = user.weekly_budget_amount == null ? null : Number(user.weekly_budget_amount);
       const daysInCurrentMonth = timeZoneMonthState(now, calculationTimeZone).daysInMonth;
       const resolvedWeeklyBudget = roundMoney(
@@ -3160,6 +3171,7 @@ export function createRepository(pool, options = {}) {
         recurringReserveBlocked: reserveOpening?.recurringReserveBlocked === true,
         closedReserveEvents: pendingReserveEventsResult.rows,
         snapshot,
+        plannedMonthSummary,
         latestExpenses: latest.rows.map((row) => withDisplay(row, user)),
         topCategories,
         analytics,
@@ -3267,15 +3279,25 @@ async function totalForPreviousWeek(pool, userId, now, user, timeZone = userTime
 }
 
 async function paidPlannedTotalForMonth(pool, userId, now, timeZone = "Asia/Bangkok") {
-  const bounds = localPeriodBounds(now, "month", timeZone);
+  const period = monthKey(now, timeZone);
   const result = await pool.query(
-    `SELECT COALESCE(SUM(expenses.amount_base), 0)::float AS total
-     FROM planned_expense_payments
-     JOIN expenses ON expenses.id = planned_expense_payments.expense_id
-     WHERE expenses.user_id = $1
-       AND expenses.spent_at >= $2
-       AND expenses.spent_at < $3`,
-    [userId, bounds.start, bounds.end]
+    `SELECT COALESCE(SUM(paid.amount_base), 0)::float AS total
+     FROM (
+       SELECT planned_expense_payments.planned_expense_id,
+              planned_expense_payments.paid_key,
+              MAX(expenses.amount_base)::float AS amount_base
+       FROM planned_expense_payments
+       JOIN planned_expenses
+         ON planned_expenses.id = planned_expense_payments.planned_expense_id
+       JOIN expenses
+         ON expenses.id = planned_expense_payments.expense_id
+        AND expenses.user_id = planned_expenses.user_id
+       WHERE planned_expenses.user_id = $1
+         AND planned_expense_payments.paid_month = $2
+       GROUP BY planned_expense_payments.planned_expense_id,
+                planned_expense_payments.paid_key
+     ) paid`,
+    [userId, period]
   );
   return Number(result.rows[0]?.total ?? 0);
 }
@@ -4096,12 +4118,15 @@ async function plannedObligationsForPeriod(client, userId, period, timeZone) {
     : `${year}-${String(month + 1).padStart(2, "0")}`;
   const plansResult = await client.query(
     `SELECT planned_expenses.*,
-            COUNT(planned_expense_payments.id)::int AS paid_count
+            COUNT(expenses.id)::int AS paid_count
      FROM planned_expenses
      LEFT JOIN planned_expense_payments
        ON planned_expense_payments.planned_expense_id = planned_expenses.id
-      AND planned_expense_payments.occurrence_date >= $2::date
-      AND planned_expense_payments.occurrence_date < $3::date
+       AND planned_expense_payments.occurrence_date >= $2::date
+       AND planned_expense_payments.occurrence_date < $3::date
+     LEFT JOIN expenses
+       ON expenses.id = planned_expense_payments.expense_id
+      AND expenses.user_id = planned_expenses.user_id
      WHERE planned_expenses.user_id = $1
      GROUP BY planned_expenses.id`,
     [

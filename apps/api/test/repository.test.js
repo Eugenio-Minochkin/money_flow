@@ -1761,6 +1761,7 @@ test("updates report deliveries as sent failed and skipped", async () => {
 });
 
 test("builds report data with paid actual planned amount and unpaid planned occurrences", async () => {
+  const queries = [];
   const user = {
     id: 1,
     telegram_user_id: 100,
@@ -1772,6 +1773,7 @@ test("builds report data with paid actual planned amount and unpaid planned occu
   };
   const repo = createRepository(fakePool((sql) => {
     const query = String(sql);
+    queries.push(query);
     if (query.includes("FROM expenses") && query.includes("ORDER BY spent_at ASC")) {
       return {
         rows: [
@@ -1846,6 +1848,9 @@ test("builds report data with paid actual planned amount and unpaid planned occu
     { name: "Internet", amount: 450, paid: true, dueDate: "2026-06-05" },
     { name: "Internet", amount: 1200, paid: false, dueDate: "2026-06-20" }
   ]);
+  const paidFactsQuery = queries.find((query) => query.includes("FROM planned_expense_payments") && query.includes("JOIN planned_expenses"));
+  assert.ok(paidFactsQuery);
+  assert.doesNotMatch(paidFactsQuery, /planned_expenses\.active = true/);
 });
 
 test("report data includes display equivalents for budget amount and remaining", async () => {
@@ -4344,6 +4349,149 @@ test("dashboard excludes current-month paid planned expenses from reserve", asyn
 
   assert.equal(dashboard.snapshot.plannedRemaining, 0);
   assert.equal(dashboard.snapshot.freeRemaining, 45000);
+});
+
+test("dashboard returns a factual planned month summary while keeping the planned list active-only", async () => {
+  const queries = [];
+  const partiallyPaidInactiveWeeklyPlan = {
+    id: "5",
+    user_id: "1",
+    amount_base: "1000",
+    recurrence: "weekly",
+    weekday: 3,
+    active: false,
+    validPayments: [{ amount_base: 900 }, { amount_base: 1100 }]
+  };
+  const activePlan = {
+    id: "8",
+    user_id: "1",
+    amount: "3000",
+    amount_base: "3000",
+    currency: "THB",
+    description: "active rent",
+    category_slug: "home",
+    recurrence: "monthly",
+    due_day: 30,
+    due_days: [30],
+    active: true,
+    paid_count: 0,
+    paid_occurrence_dates: [],
+    paid_occurrences: {}
+  };
+  const repo = createRepository(fakePool((sql, params) => {
+    const query = String(sql);
+    queries.push({ sql: query, params });
+    if (query.startsWith("SELECT * FROM users")) {
+      return {
+        rows: [{
+          id: "1",
+          telegram_user_id: "100",
+          monthly_budget_amount: "45000",
+          base_currency: "THB",
+          display_currency: "USD",
+          usd_thb_rate: "32.65",
+          timezone: "Asia/Bangkok"
+        }]
+      };
+    }
+    if (query.includes("FROM planned_expenses") && query.includes("JOIN users")) return { rows: [activePlan] };
+    if (query.includes("FROM planned_expense_payments") && query.includes("AS total")) {
+      return {
+        rows: [{
+          total: partiallyPaidInactiveWeeklyPlan.validPayments.reduce(
+            (sum, payment) => sum + payment.amount_base,
+            0
+          )
+        }]
+      };
+    }
+    if (query.includes("COALESCE(SUM(amount_base)") && query.includes("FILTER")) {
+      return {
+        rows: [{
+          total: 0,
+          regular_total: 0,
+          planned_total: 0,
+          large_oneoff_total: 0,
+          display_total: 0,
+          regular_display_total: 0,
+          planned_display_total: 0,
+          large_oneoff_display_total: 0
+        }]
+      };
+    }
+    if (query.includes("COALESCE(SUM(amount_base)") && query.includes("month_key")) return { rows: [{ total: 0 }] };
+    if (query.includes("FROM expenses") && query.includes("ORDER BY spent_at")) return { rows: [] };
+    if (query.includes("GROUP BY category_slug")) return { rows: [] };
+    return { rows: [] };
+  }));
+
+  const dashboard = await repo.dashboard(100, new Date("2026-06-10T10:00:00+07:00"));
+
+  assert.deepEqual(dashboard.plannedMonthSummary, {
+    paid: 2000,
+    remaining: 3000,
+    total: 5000,
+    display: { currency: "USD", paid: 61.26, remaining: 91.88, total: 153.14 }
+  });
+  assert.deepEqual(dashboard.plannedExpenses.map((plan) => plan.id), ["8"]);
+  const paidQuery = queries.find(({ sql }) => sql.includes("FROM planned_expense_payments") && sql.includes("AS total"));
+  assert.ok(paidQuery);
+  assert.match(paidQuery.sql, /paid_month = \$2/);
+  assert.match(paidQuery.sql, /JOIN planned_expenses/);
+  assert.match(paidQuery.sql, /expenses\.user_id = planned_expenses\.user_id/);
+  assert.doesNotMatch(paidQuery.sql, /expenses\.spent_at/);
+  assert.doesNotMatch(paidQuery.sql, /planned_expenses\.active = true/);
+  assert.deepEqual(paidQuery.params, ["1", "2026-06"]);
+});
+
+test("reserve capacity counts only valid paid occurrences from inactive plans", async () => {
+  const queries = [];
+  const user = {
+    id: "1",
+    telegram_user_id: "100",
+    monthly_budget_amount: "10000",
+    base_currency: "THB",
+    timezone: "Asia/Bangkok"
+  };
+  const query = async (sql, params = []) => {
+    const statement = String(sql);
+    queries.push({ sql: statement, params });
+    if (["BEGIN", "COMMIT", "ROLLBACK"].includes(statement)) return { rows: [] };
+    if (statement.startsWith("SELECT * FROM users")) return { rows: [user] };
+    if (statement.includes("FROM monthly_reserve_instances") && statement.includes("status = 'active'")) {
+      return { rows: [{ id: "9", user_id: "1", period: "2026-06", timezone: "Asia/Bangkok", reserve_amount: "1000", status: "active" }] };
+    }
+    if (statement.includes("COUNT(expenses.id)::int AS paid_count")) {
+      const validatesExpenseOwner = /JOIN expenses/.test(statement)
+        && /expenses\.user_id = planned_expenses\.user_id/.test(statement);
+      return {
+        rows: [
+          { id: "5", active: false, recurrence: "monthly", due_day: 10, amount_base: "2000", paid_count: validatesExpenseOwner ? 1 : 2 },
+          { id: "6", active: false, recurrence: "monthly", due_day: 20, amount_base: "4000", paid_count: validatesExpenseOwner ? 0 : 1 },
+          { id: "7", active: true, recurrence: "monthly", due_day: 30, amount_base: "3000", paid_count: 0 }
+        ]
+      };
+    }
+    if (statement.includes("UPDATE users u") && statement.includes("existing_user AS MATERIALIZED")) {
+      user.monthly_budget_amount = String(params[0]);
+      return { rows: [{ ...user, budget_changed: true }] };
+    }
+    if (statement.startsWith("UPDATE monthly_reserve_instances")) return { rows: [] };
+    if (statement.includes("DELETE FROM daily_budget_snapshots")) return { rows: [] };
+    return { rows: [] };
+  };
+  const repo = createRepository({ query, async connect() { return { query, release() {} }; } });
+
+  await assert.rejects(
+    repo.updateMonthlyBudget(100, 5999, new Date("2026-06-10T10:00:00+07:00")),
+    (error) => error.code === "reserve_conflicts_with_budget_change"
+  );
+  await repo.updateMonthlyBudget(100, 6000, new Date("2026-06-10T10:00:00+07:00"));
+
+  const obligationsQuery = queries.find(({ sql }) => sql.includes("COUNT(expenses.id)::int AS paid_count"));
+  assert.ok(obligationsQuery);
+  assert.match(obligationsQuery.sql, /JOIN expenses/);
+  assert.match(obligationsQuery.sql, /expenses\.user_id = planned_expenses\.user_id/);
 });
 
 test("dashboard returns USD display totals from converted amounts", async () => {

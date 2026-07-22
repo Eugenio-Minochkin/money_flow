@@ -156,7 +156,7 @@ git commit -m "feat: make planned disable transactional"
 - Modify: `apps/api/test/budgetReserveIntegration.test.js`
 - Modify: `apps/api/test/reportService.test.js`
 
-- [ ] **Step 1: Write failing summary tests**
+- [x] **Step 1: Write failing summary tests**
 
 Cover a partially paid disabled weekly plan and an unpaid active plan. Assert:
 
@@ -171,13 +171,13 @@ assert.deepEqual(dashboard.plannedMonthSummary, {
 
 Also assert live `plannedRemaining`, `freeRemaining`, and forecast update while the saved day limit stays fixed. Add reserve-closure and report regressions proving inactive paid occurrences remain included and inactive unpaid occurrences remain excluded.
 
-- [ ] **Step 2: Run focused tests and verify RED**
+- [x] **Step 2: Run focused tests and verify RED**
 
 ```powershell
 npm.cmd test -- apps/api/test/repository.test.js apps/api/test/budgetReserveIntegration.test.js apps/api/test/reportService.test.js
 ```
 
-- [ ] **Step 3: Implement one factual paid aggregate plus active remaining**
+- [x] **Step 3: Implement one factual paid aggregate plus active remaining**
 
 Reuse the existing valid payment ownership join and user-local month bounds. Build:
 
@@ -197,15 +197,15 @@ const plannedMonthSummary = {
 
 Return it additively beside existing `snapshot` and active-only `plannedExpenses`.
 
-- [ ] **Step 4: Keep reserve and report semantics unchanged**
+- [x] **Step 4: Keep reserve and report semantics unchanged**
 
 If tests expose a validity gap, narrow `plannedObligationsForPeriod` to count paid rows only when their linked expense exists and belongs to the same user, without changing recurrence or reserve formulas.
 
-- [ ] **Step 5: Run focused tests and verify GREEN**
+- [x] **Step 5: Run focused tests and verify GREEN**
 
 Run the same command from Step 2 and confirm all selected tests pass.
 
-- [ ] **Step 6: Commit server summary changes**
+- [x] **Step 6: Commit server summary changes**
 
 ```powershell
 git add apps/api/src/repository.js apps/api/test/repository.test.js apps/api/test/budgetReserveIntegration.test.js apps/api/test/reportService.test.js
