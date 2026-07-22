@@ -691,7 +691,7 @@ export function localDateKeyInTimeZone(value = new Date(), timeZone = "Asia/Bang
 npm.cmd test -- apps/miniapp/test/planned.test.js apps/miniapp/test/formatters.test.js
 ```
 
-- [ ] **Step 5: Commit client date compatibility**
+- [x] **Step 5: Commit client date compatibility**
 
 ```powershell
 git add apps/miniapp/src/planned.js apps/miniapp/src/formatters.js apps/miniapp/test/planned.test.js apps/miniapp/test/formatters.test.js
@@ -712,7 +712,7 @@ git commit -m "fix: align planned start dates in mini app"
 - Modify: `apps/miniapp/test/i18n.test.js`
 - Modify: `apps/miniapp/test/smokeAssets.test.js`
 
-- [ ] **Step 1: Write failing archive state and presentation tests**
+- [x] **Step 1: Write failing archive state and presentation tests**
 
 Create pure tests for idle/collapsed state, one in-flight load, loaded cache, retry after error, invalidation, and localized rows:
 
@@ -731,13 +731,13 @@ assert.equal(state.stale, true);
 
 Test RU counts `1 оплата`, `2 оплаты`, `5 оплат`, EN singular/plural, and null date copy.
 
-- [ ] **Step 2: Run archive tests and verify RED**
+- [x] **Step 2: Run archive tests and verify RED**
 
 ```powershell
 npm.cmd test -- apps/miniapp/test/plannedArchive.test.js apps/miniapp/test/plannedDisable.test.js apps/miniapp/test/i18n.test.js apps/miniapp/test/smokeAssets.test.js
 ```
 
-- [ ] **Step 3: Implement the pure archive state module**
+- [x] **Step 3: Implement the pure archive state module**
 
 Create `plannedArchive.js` with exported `createPlannedArchiveState`, `expandPlannedArchive`, `collapsePlannedArchive`, `invalidatePlannedArchive`, `archivePaymentCountKey`, and `buildArchivedPlanView`. `expandPlannedArchive` stores and returns the same `inFlight` promise, caches only success, and clears `inFlight` in `finally`:
 
@@ -767,7 +767,7 @@ export function invalidatePlannedArchive(state) {
 }
 ```
 
-- [ ] **Step 4: Add archive markup, localized keys, and compact styles**
+- [x] **Step 4: Add archive markup, localized keys, and compact styles**
 
 After `#plannedExpenses` add the accessible collapsed structure:
 
@@ -814,7 +814,7 @@ Add these payment-count keys: RU `plan.archivePaymentOne = "{count} сохран
 }
 ```
 
-- [ ] **Step 5: Wire lazy loading and rendering in `app.js`**
+- [x] **Step 5: Wire lazy loading and rendering in `app.js`**
 
 Initialize one archive state, bind the toggle once, and request only:
 
@@ -851,7 +851,7 @@ async function refreshArchiveAfterDisable() {
 }
 ```
 
-- [ ] **Step 6: Extend ordinary disable with an optional post-dashboard callback**
+- [x] **Step 6: Extend ordinary disable with an optional post-dashboard callback**
 
 Update `runPlannedDisable`:
 
@@ -864,7 +864,7 @@ showResult(buildPlannedDisableResult(...));
 
 In `app.js`, `afterDashboard` invalidates archive state; refresh immediately only when expanded, mark stale when loaded/collapsed, and do nothing when never loaded. Add tests for all three states and preserve the existing event order when the callback is absent.
 
-- [ ] **Step 7: Run archive and disable tests and verify GREEN**
+- [x] **Step 7: Run archive and disable tests and verify GREEN**
 
 ```powershell
 npm.cmd test -- apps/miniapp/test/plannedArchive.test.js apps/miniapp/test/plannedDisable.test.js apps/miniapp/test/i18n.test.js apps/miniapp/test/smokeAssets.test.js

@@ -408,6 +408,22 @@ test("planned disable uses the focused helper and prefers the server-owned month
   assert.match(app, /runPlannedDisable\(\{[^]*?language:\s*currentLanguage,[^]*?createTranslator,/s);
 });
 
+test("planned archive is accessible, lazy, and separate from dashboard loading", async () => {
+  const html = await readFile(join(miniAppRoot, "index.html"), "utf8");
+  const css = await readFile(join(miniAppRoot, "styles.css"), "utf8");
+  const app = await readFile(join(miniAppRoot, "app.js"), "utf8");
+
+  assert.match(html, /id="plannedArchiveToggle"[^>]+aria-expanded="false"[^>]+aria-controls="plannedArchiveContent"/);
+  assert.match(html, /id="plannedArchiveStatus"[^>]+role="status"/);
+  assert.match(app, /createPlannedArchiveState\(\)/);
+  assert.match(app, /\/api\/planned-expenses\/archive\?telegramUserId=/);
+  assert.match(app, /async function refreshArchiveAfterDisable\(\)/);
+  const dashboardBlock = app.slice(app.indexOf("async function loadDashboard()"), app.indexOf("function renderOnboardingState"));
+  assert.doesNotMatch(dashboardBlock, /planned-expenses\/archive|refreshPlannedArchive/);
+  assert.match(css, /\.planned-archive\s*{/);
+  assert.match(css, /@media \(max-width: 430px\)[^]*\.planned-archive \.button-row button[^]*width:\s*100%/s);
+});
+
 test("toast preserves planned disable result paragraphs", async () => {
   const css = await readFile(join(miniAppRoot, "styles.css"), "utf8");
 

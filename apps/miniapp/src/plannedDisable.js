@@ -28,6 +28,7 @@ export async function runPlannedDisable({
   confirm,
   disableRequest,
   loadDashboard,
+  afterDashboard,
   showResult,
   language,
   translate,
@@ -47,6 +48,7 @@ export async function runPlannedDisable({
   try {
     const result = await disableRequest(item.id);
     await loadDashboard();
+    if (typeof afterDashboard === "function") await afterDashboard(result);
     showResult(buildPlannedDisableResult(item, result.impact, {
       language: actionLanguage,
       translate: actionTranslate,

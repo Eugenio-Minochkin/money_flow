@@ -31,6 +31,13 @@ import { inboxCountLabel, inboxDraftDescription, inboxDraftTotal, shouldShowInbo
 import { buildReserveSettingsView } from "./reserveSettings.js";
 import { runPlannedDisable } from "./plannedDisable.js";
 import {
+  buildArchivedPlanView,
+  collapsePlannedArchive,
+  createPlannedArchiveState,
+  expandPlannedArchive,
+  invalidatePlannedArchive
+} from "./plannedArchive.js";
+import {
   buildPlannedOccurrences,
   calculatePlannedMonthSummary,
   defaultPlannedCurrency,
@@ -65,6 +72,7 @@ let currentTheme = "light";
 let reserveSettingsExpanded = false;
 let settingsBaseline = "";
 let accountDeleted = false;
+const plannedArchiveState = createPlannedArchiveState();
 
 const deleteAccountStartButton = document.getElementById("deleteAccountStartButton");
 const deleteAccountAdvanceButton = document.getElementById("deleteAccountAdvanceButton");
@@ -104,6 +112,19 @@ document.querySelector("#togglePlannedForm").addEventListener("click", () => {
   const form = document.querySelector("#plannedForm");
   form.classList.toggle("hidden");
   if (!form.classList.contains("hidden")) form.scrollIntoView({ behavior: "smooth", block: "start" });
+});
+document.querySelector("#plannedArchiveToggle")?.addEventListener("click", async () => {
+  if (plannedArchiveState.expanded) {
+    collapsePlannedArchive(plannedArchiveState);
+    renderPlannedArchive();
+    return;
+  }
+  plannedArchiveState.expanded = true;
+  try {
+    await refreshPlannedArchive();
+  } catch {
+    // The archive owns its retryable error state and must not block the active plan list.
+  }
 });
 document.querySelectorAll("[data-tab]").forEach((button) => {
   button.addEventListener("click", () => switchTab(button.dataset.tab));
@@ -1160,6 +1181,90 @@ function renderPlannedExpenses(items) {
   bindPlannedActions(list, items);
 }
 
+async function refreshPlannedArchive({ force = false } = {}) {
+  if (!plannedArchiveState.expanded && !force) return plannedArchiveState.items;
+  if (force) plannedArchiveState.stale = true;
+  const pending = expandPlannedArchive(plannedArchiveState, {
+    load: async () => {
+      const data = await api(`/api/planned-expenses/archive?telegramUserId=${encodeURIComponent(telegramUserId)}`);
+      return data.archivedPlannedExpenses ?? [];
+    }
+  });
+  renderPlannedArchive();
+  try {
+    const items = await pending;
+    renderPlannedArchive();
+    return items;
+  } catch (error) {
+    renderPlannedArchive();
+    throw error;
+  }
+}
+
+async function refreshArchiveAfterDisable() {
+  const shouldRefresh = invalidatePlannedArchive(plannedArchiveState);
+  if (shouldRefresh) await refreshPlannedArchive({ force: true });
+}
+
+function renderPlannedArchive() {
+  const toggle = document.querySelector("#plannedArchiveToggle");
+  const content = document.querySelector("#plannedArchiveContent");
+  const status = document.querySelector("#plannedArchiveStatus");
+  const list = document.querySelector("#plannedArchiveList");
+  if (!toggle || !content || !status || !list) return;
+
+  toggle.setAttribute("aria-expanded", String(plannedArchiveState.expanded));
+  content.classList.toggle("hidden", !plannedArchiveState.expanded);
+  if (!plannedArchiveState.expanded) return;
+
+  status.innerHTML = "";
+  list.innerHTML = "";
+  if (plannedArchiveState.status === "loading") {
+    status.textContent = t("plan.archiveLoading");
+    return;
+  }
+  if (plannedArchiveState.status === "error") {
+    status.innerHTML = `${escapeHtml(t("plan.archiveError"))} <button type="button" class="ghost-button" data-retry-planned-archive>${escapeHtml(t("plan.archiveRetry"))}</button>`;
+    status.querySelector("[data-retry-planned-archive]")?.addEventListener("click", async () => {
+      try { await refreshPlannedArchive({ force: true }); } catch { /* keep retry state visible */ }
+    });
+    return;
+  }
+  if (plannedArchiveState.status !== "loaded") return;
+  if (!plannedArchiveState.items.length) {
+    status.textContent = t("plan.archiveEmpty");
+    return;
+  }
+
+  const baseCurrency = dashboardState?.user?.base_currency ?? dashboardState?.snapshot?.baseCurrency ?? "THB";
+  list.innerHTML = plannedArchiveState.items.map((item) => {
+    const view = buildArchivedPlanView(item, { language: currentLanguage, translate: t });
+    const disabledLabel = view.disabledAt
+      ? formatDate(view.disabledAt, currentLanguage, userTimeZone())
+      : view.disabledLabel;
+    const paidAmounts = [moneyBase(view.paidAmountBase, baseCurrency)];
+    const displayPaid = moneyDisplay(view.displayPaidAmount, item.display?.currency);
+    if (displayPaid && item.display?.currency !== baseCurrency) paidAmounts.push(displayPaid);
+    return `
+      <article class="expense-row planned-archive__row" style="--category-color: ${categoryColor(item.category_slug)}">
+        <div class="expense-main">
+          <div class="expense-title">${escapeHtml(view.title)}</div>
+          <div class="expense-meta">${escapeHtml(recurrenceLabel(item))} · ${escapeHtml(disabledLabel)}</div>
+          <div class="expense-meta">${escapeHtml(view.paymentLabel)} · ${escapeHtml(paidAmounts.join(" · "))}</div>
+        </div>
+        <div class="expense-actions">
+          <div class="expense-amount">${formatMoney(item.amount, item.currency)}
+            <em>${moneyDisplay(item.display?.amount, item.display?.currency)}</em>
+          </div>
+          <div class="button-row compact">
+            <button type="button" class="ghost-button" data-recreate-planned="${escapeAttribute(item.id)}">${t("plan.createAgain")}</button>
+          </div>
+        </div>
+      </article>
+    `;
+  }).join("");
+}
+
 function plannedPaymentProgressLabel(item) {
   const occurrences = buildPlannedOccurrences(item);
   if (!occurrences.length) return "";
@@ -1194,6 +1299,7 @@ function bindPlannedActions(container, items) {
             body: { telegramUserId }
           }),
           loadDashboard,
+          afterDashboard: refreshArchiveAfterDisable,
           showResult: showToast,
           language: currentLanguage,
           createTranslator,
@@ -1814,6 +1920,7 @@ function applyLanguage(language) {
   renderReserveSettings();
   updateHistoryFilterChips();
   if (historyCalendarDraft) renderHistoryCalendar();
+  renderPlannedArchive();
 }
 
 function applyTheme(theme) {

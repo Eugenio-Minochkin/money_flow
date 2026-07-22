@@ -125,6 +125,26 @@ test("locks before DELETE, ignores a double tap, and refreshes before showing ba
   assert.deepEqual(events, ["confirm", "disable", "loadDashboard", "showResult"]);
 });
 
+test("runs an optional archive callback after dashboard refresh and before success", async () => {
+  const events = [];
+  const button = { disabled: false, isConnected: true };
+
+  await runPlannedDisable({
+    button,
+    item,
+    confirm: () => true,
+    disableRequest: async () => { events.push("disable"); return { plannedExpense: { ...item, active: false }, impact }; },
+    loadDashboard: async () => { events.push("loadDashboard"); },
+    afterDashboard: async () => { events.push("afterDashboard"); },
+    showResult: () => { events.push("showResult"); },
+    language: "en",
+    translate: createTranslator("en"),
+    formatMoney
+  });
+
+  assert.deepEqual(events, ["disable", "loadDashboard", "afterDashboard", "showResult"]);
+});
+
 test("propagates request errors, restores a connected button, and never shows success", async () => {
   const button = { disabled: false, isConnected: true };
   let resultMessages = 0;
