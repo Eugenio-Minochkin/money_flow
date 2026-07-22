@@ -398,6 +398,13 @@ async function route(req, res) {
     return sendJson(res, 200, { plannedExpenses });
   }
 
+  if (req.method === "GET" && url.pathname === "/api/planned-expenses/archive") {
+    const auth = apiSecurity.resolveTelegramUserId(req, url);
+    if (auth.error) return sendJson(res, 400, { error: auth.error });
+    const archivedPlannedExpenses = await repository.listArchivedPlannedExpensesForTelegramUser(auth.telegramUserId);
+    return sendJson(res, 200, { archivedPlannedExpenses });
+  }
+
   if (req.method === "POST" && url.pathname === "/api/planned-expenses") {
     const body = await readJson(req);
     const auth = apiSecurity.resolveTelegramUserId(req, url, body);

@@ -241,6 +241,24 @@ test("account deletion request and advance map null repository results to contro
   assert.match(source, /error\.code === "account_deletion_expired"[\s\S]*return 410/);
 });
 
+test("planned expense archive has a separate authenticated read contract before mutation routes", async () => {
+  const source = await readFile(new URL("../src/server.js", import.meta.url), "utf8");
+  const archiveStart = source.indexOf('if (req.method === "GET" && url.pathname === "/api/planned-expenses/archive")');
+  const createStart = source.indexOf('req.method === "POST" && url.pathname === "/api/planned-expenses"');
+  const itemStart = source.indexOf("const plannedMatch = url.pathname.match");
+
+  assert.notEqual(archiveStart, -1, "planned archive route is registered");
+  assert.ok(archiveStart < createStart, "archive read route precedes create");
+  assert.ok(archiveStart < itemStart, "archive read route precedes item mutations");
+
+  const archiveBlock = source.slice(archiveStart, createStart);
+  assert.match(archiveBlock, /req\.method === "GET"/);
+  assert.match(archiveBlock, /apiSecurity\.resolveTelegramUserId\(req, url\)/);
+  assert.match(archiveBlock, /repository\.listArchivedPlannedExpensesForTelegramUser\(auth\.telegramUserId\)/);
+  assert.match(archiveBlock, /return sendJson\(res, 200, \{ archivedPlannedExpenses \}\);/);
+  assert.doesNotMatch(archiveBlock, /createPlannedExpense|updatePlannedExpense|deactivatePlannedExpense/);
+});
+
 test("planned expense mutation routes keep PATCH and DELETE response contracts explicit", async () => {
   const source = await readFile(new URL("../src/server.js", import.meta.url), "utf8");
   const routeStart = source.indexOf("const plannedMatch = url.pathname.match");

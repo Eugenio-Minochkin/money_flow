@@ -2724,6 +2724,56 @@ export function createRepository(pool, options = {}) {
       return listPlannedExpensesForTelegramUserAt(pool, telegramUserId, new Date());
     },
 
+    async listArchivedPlannedExpensesForTelegramUser(telegramUserId) {
+      const result = await pool.query(
+        `WITH valid_payments AS (
+           SELECT DISTINCT ON (pep.planned_expense_id, pep.paid_key)
+                  pep.planned_expense_id, pep.paid_key, e.amount_base
+           FROM planned_expense_payments pep
+           JOIN planned_expenses source ON source.id = pep.planned_expense_id
+           JOIN expenses e ON e.id = pep.expense_id AND e.user_id = source.user_id
+           ORDER BY pep.planned_expense_id, pep.paid_key, pep.id
+         ), paid AS (
+           SELECT planned_expense_id,
+                  COUNT(*)::int AS paid_count,
+                  COALESCE(SUM(amount_base), 0)::float AS paid_amount_base
+           FROM valid_payments
+           GROUP BY planned_expense_id
+         )
+         SELECT planned_expenses.*,
+                users.timezone AS user_timezone,
+                users.base_currency AS user_base_currency,
+                users.display_currency AS user_display_currency,
+                users.usd_thb_rate AS user_usd_thb_rate,
+                COALESCE(paid.paid_count, 0)::int AS paid_count,
+                COALESCE(paid.paid_amount_base, 0)::float AS paid_amount_base
+         FROM planned_expenses
+         JOIN users ON users.id = planned_expenses.user_id
+         LEFT JOIN paid ON paid.planned_expense_id = planned_expenses.id
+         WHERE users.telegram_user_id = $1 AND planned_expenses.active = false
+         ORDER BY planned_expenses.disabled_at DESC NULLS LAST, planned_expenses.id DESC`,
+        [telegramUserId]
+      );
+      return result.rows.map((row) => {
+        const {
+          user_timezone,
+          user_base_currency,
+          user_display_currency,
+          user_usd_thb_rate,
+          ...planned
+        } = row;
+        const user = {
+          timezone: user_timezone,
+          base_currency: user_base_currency,
+          display_currency: user_display_currency,
+          usd_thb_rate: user_usd_thb_rate
+        };
+        const mapped = withDisplayPlanned(planned, user);
+        mapped.display.paid_amount = displayFromBase(planned.paid_amount_base, user);
+        return mapped;
+      });
+    },
+
     async createPlannedExpense(telegramUserId, input, now = new Date()) {
       const user = await this.getUserByTelegramId(telegramUserId);
       if (!user) return null;

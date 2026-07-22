@@ -2670,6 +2670,44 @@ test("creates and lists planned expenses", async () => {
   assert.doesNotMatch(event.params[2], /ChatGPT|20/);
 });
 
+test("lists archived planned expenses with deduplicated same-user payment facts", async () => {
+  const queries = [];
+  const aliases = {
+    user_timezone: "Asia/Bangkok",
+    user_base_currency: "THB",
+    user_display_currency: "USD",
+    user_usd_thb_rate: "32.64"
+  };
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql: String(sql), params });
+    return {
+      rows: [
+        { id: 9, active: false, amount_base: "2000", disabled_at: "2026-07-20T00:00:00Z", paid_count: 2, paid_amount_base: 1750, ...aliases },
+        { id: 7, active: false, amount_base: "900", disabled_at: "2026-07-10T00:00:00Z", paid_count: 0, paid_amount_base: 0, ...aliases },
+        { id: 3, active: false, amount_base: "500", disabled_at: null, paid_count: 0, paid_amount_base: 0, ...aliases }
+      ]
+    };
+  }));
+
+  const archived = await repo.listArchivedPlannedExpensesForTelegramUser(100);
+
+  assert.deepEqual(archived.map((item) => item.id), [9, 7, 3]);
+  assert.equal(archived[0].active, false);
+  assert.equal(archived[0].paid_count, 2);
+  assert.equal(archived[0].paid_amount_base, 1750);
+  assert.equal(archived[0].display.paid_amount, 53.62);
+  assert.equal(archived.at(-1).disabled_at, null);
+  assert.ok(!("user_timezone" in archived[0]));
+  assert.ok(!("user_base_currency" in archived[0]));
+
+  const [{ sql, params }] = queries;
+  assert.deepEqual(params, [100]);
+  assert.match(sql, /SELECT DISTINCT ON \(pep\.planned_expense_id, pep\.paid_key\)/);
+  assert.match(sql, /JOIN expenses e ON e\.id = pep\.expense_id AND e\.user_id = source\.user_id/);
+  assert.match(sql, /WHERE users\.telegram_user_id = \$1 AND planned_expenses\.active = false/);
+  assert.match(sql, /ORDER BY planned_expenses\.disabled_at DESC NULLS LAST, planned_expenses\.id DESC/);
+});
+
 test("checks successful report delivery for an exact user type and key", async () => {
   const queries = [];
   const repo = createRepository(fakePool((sql, params) => {

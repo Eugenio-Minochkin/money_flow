@@ -301,7 +301,7 @@ npm.cmd test -- apps/api/test/plannedOccurrenceDates.test.js apps/api/test/repos
 
 Expected: all selected suites pass, including PR #122 snapshot and paid-history cases.
 
-- [ ] **Step 6: Commit canonical server consumption**
+- [x] **Step 6: Commit canonical server consumption**
 
 ```powershell
 git add apps/api/src/repository.js apps/api/test/repository.test.js apps/api/test/budgetReserveIntegration.test.js apps/api/test/reportService.test.js
@@ -316,7 +316,7 @@ git commit -m "fix: unify planned occurrence calculations"
 - Modify: `apps/api/test/repository.test.js`
 - Modify: `apps/api/test/security.test.js`
 
-- [ ] **Step 1: Write failing archive repository tests**
+- [x] **Step 1: Write failing archive repository tests**
 
 Add tests that capture SQL and returned rows:
 
@@ -332,7 +332,7 @@ assert.equal(archived.at(-1).disabled_at, null);
 
 Assert the query contains ownership isolation, `active = false`, `ORDER BY disabled_at DESC NULLS LAST, planned_expenses.id DESC`, same-user expense ownership, and de-duplication by `paid_key`. Cover orphan and foreign expense links with zero contribution.
 
-- [ ] **Step 2: Run repository tests and verify RED**
+- [x] **Step 2: Run repository tests and verify RED**
 
 ```powershell
 npm.cmd test -- apps/api/test/repository.test.js
@@ -340,7 +340,7 @@ npm.cmd test -- apps/api/test/repository.test.js
 
 Expected: FAIL because `listArchivedPlannedExpensesForTelegramUser` does not exist.
 
-- [ ] **Step 3: Implement the archive query and mapping**
+- [x] **Step 3: Implement the archive query and mapping**
 
 Add `listArchivedPlannedExpensesForTelegramUser` to the repository. Use a CTE that selects one valid row per `(planned_expense_id, paid_key)` before aggregation:
 
@@ -393,7 +393,7 @@ return result.rows.map((row) => {
 });
 ```
 
-- [ ] **Step 4: Write a failing archive route contract test**
+- [x] **Step 4: Write a failing archive route contract test**
 
 In `apps/api/test/security.test.js`, assert `GET /api/planned-expenses/archive` appears before mutation routes, uses `resolveTelegramUserId`, calls only `listArchivedPlannedExpensesForTelegramUser`, and responds with:
 
@@ -401,7 +401,7 @@ In `apps/api/test/security.test.js`, assert `GET /api/planned-expenses/archive` 
 return sendJson(res, 200, { archivedPlannedExpenses });
 ```
 
-- [ ] **Step 5: Implement the archive route**
+- [x] **Step 5: Implement the archive route**
 
 Add to `apps/api/src/server.js`:
 
@@ -414,7 +414,7 @@ if (req.method === "GET" && url.pathname === "/api/planned-expenses/archive") {
 }
 ```
 
-- [ ] **Step 6: Run archive tests and verify GREEN**
+- [x] **Step 6: Run archive tests and verify GREEN**
 
 ```powershell
 npm.cmd test -- apps/api/test/repository.test.js apps/api/test/security.test.js
