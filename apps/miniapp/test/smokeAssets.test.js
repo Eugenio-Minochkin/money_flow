@@ -408,6 +408,35 @@ test("planned disable uses the focused helper and prefers the server-owned month
   assert.match(app, /runPlannedDisable\(\{[^]*?language:\s*currentLanguage,[^]*?createTranslator,/s);
 });
 
+test("planned archive is accessible, lazy, and separate from dashboard loading", async () => {
+  const html = await readFile(join(miniAppRoot, "index.html"), "utf8");
+  const css = await readFile(join(miniAppRoot, "styles.css"), "utf8");
+  const app = await readFile(join(miniAppRoot, "app.js"), "utf8");
+
+  assert.match(html, /id="plannedArchiveToggle"[^>]+aria-expanded="false"[^>]+aria-controls="plannedArchiveContent"/);
+  assert.match(html, /id="plannedArchiveStatus"[^>]+role="status"/);
+  assert.match(app, /createPlannedArchiveState\(\)/);
+  assert.match(app, /\/api\/planned-expenses\/archive\?telegramUserId=/);
+  assert.match(app, /async function refreshArchiveAfterDisable\(\)/);
+  const dashboardBlock = app.slice(app.indexOf("async function loadDashboard()"), app.indexOf("function renderOnboardingState"));
+  assert.doesNotMatch(dashboardBlock, /planned-expenses\/archive|refreshPlannedArchive/);
+  assert.match(css, /\.planned-archive\s*{/);
+  assert.match(css, /@media \(max-width: 430px\)[^]*\.planned-archive \.button-row button[^]*width:\s*100%/s);
+});
+
+test("planned recreate uses an explicit form mode and the dedicated source endpoint", async () => {
+  const app = await readFile(join(miniAppRoot, "app.js"), "utf8");
+
+  assert.match(app, /import\s*{[^}]*runPlannedRecreate[^}]*}\s*from "\.\/plannedRecreate\.js"/s);
+  assert.match(app, /function renderPlannedForm\(item = {}, \{ mode = "create", sourcePlannedExpenseId = null } = {}\)/);
+  assert.match(app, /renderPlannedForm\(item, \{ mode: "edit" }\)/);
+  assert.match(app, /renderPlannedForm\(item, \{ mode: "recreate", sourcePlannedExpenseId: item\.id }\)/);
+  assert.match(app, /name="planned-starts_on" type="date" value="\$\{startsOn}" min="\$\{startsOn}" required/);
+  assert.match(app, /`\/api\/planned-expenses\/\$\{sourcePlannedExpenseId}\/recreate`[^]*method:\s*"POST"[^]*startsOn:\s*input\("planned-starts_on"\)\.value/s);
+  assert.match(app, /plannedId:\s*mode === "edit" \? item\.id : null/);
+  assert.doesNotMatch(app, /plannedId:\s*sourcePlannedExpenseId|sourcePlannedExpenseId:\s*plannedId/);
+});
+
 test("toast preserves planned disable result paragraphs", async () => {
   const css = await readFile(join(miniAppRoot, "styles.css"), "utf8");
 

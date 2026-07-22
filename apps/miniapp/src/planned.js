@@ -145,10 +145,12 @@ export function buildPlannedOccurrences(item, now = new Date()) {
     dates.push(...clampedDays.map((day) => dateKey(new Date(year, month, day))));
   }
 
+  const startsOn = /^\d{4}-\d{2}-\d{2}$/.test(String(item.starts_on ?? "")) ? String(item.starts_on) : null;
+  const eligibleDates = startsOn ? dates.filter((key) => key >= startsOn) : dates;
   const paidDates = new Set(item.paid_occurrence_dates ?? item.paidOccurrences ?? []);
   const paidMap = item.paid_occurrences && typeof item.paid_occurrences === "object" ? item.paid_occurrences : null;
-  const legacyPaidCount = Math.min(Number(item.paid_count ?? (item.paid_month ? 1 : 0)), dates.length);
-  return dates.map((occurrenceDate, index) => {
+  const legacyPaidCount = Math.min(Number(item.paid_count ?? (item.paid_month ? 1 : 0)), eligibleDates.length);
+  return eligibleDates.map((occurrenceDate, index) => {
     const paidEntry = paidMap ? paidMap[occurrenceDate] : null;
     const paid = paidMap
       ? Boolean(paidEntry && paidEntry.expense_id)

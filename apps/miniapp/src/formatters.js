@@ -103,6 +103,18 @@ export function dateTimeLocal(value, timeZone = "Asia/Bangkok") {
   return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
 }
 
+export function localDateKeyInTimeZone(value = new Date(), timeZone = "Asia/Bangkok") {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(new Date(value))
+    .filter((part) => part.type !== "literal")
+    .map((part) => [part.type, part.value]));
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
 export function escapeHtml(value) {
   return String(value)
     .replaceAll("&", "&amp;")

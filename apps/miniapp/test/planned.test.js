@@ -70,6 +70,52 @@ test("builds occurrence dates for weekly and twice-monthly plans in the selected
   );
 });
 
+test("filters client occurrence keys by starts_on with server-compatible boundaries", () => {
+  const july = new Date(2026, 6, 15);
+  const cases = [
+    {
+      item: { recurrence: "weekly", weekday: 3, starts_on: "2026-07-23" },
+      expected: ["2026-07-29"]
+    },
+    {
+      item: { recurrence: "monthly", due_day: 10, starts_on: "2026-07-20" },
+      expected: []
+    },
+    {
+      item: { recurrence: "monthly", due_day: 25, starts_on: "2026-07-20" },
+      expected: ["2026-07-25"]
+    },
+    {
+      item: { recurrence: "twice_monthly", due_days: [5, 20], starts_on: "2026-07-12" },
+      expected: ["2026-07-20"]
+    },
+    {
+      item: { recurrence: "one_off", due_date: "2026-07-19", starts_on: "2026-07-20" },
+      expected: []
+    },
+    {
+      item: { recurrence: "one_off", due_date: "2026-07-20", starts_on: "2026-07-20" },
+      expected: ["2026-07-20"]
+    }
+  ];
+
+  for (const { item, expected } of cases) {
+    assert.deepEqual(
+      buildPlannedOccurrences(item, july).map((occurrence) => occurrence.occurrence_date),
+      expected
+    );
+  }
+  assert.deepEqual(
+    buildPlannedOccurrences({ active: false, recurrence: "weekly", weekday: 3, starts_on: "2026-07-23" }, july),
+    []
+  );
+  assert.deepEqual(
+    buildPlannedOccurrences({ recurrence: "weekly", weekday: 3, starts_on: null }, july)
+      .map((occurrence) => occurrence.occurrence_date),
+    ["2026-07-01", "2026-07-08", "2026-07-15", "2026-07-22", "2026-07-29"]
+  );
+});
+
 test("keeps recurring planned item payable until all current month occurrences are paid", () => {
   const item = {
     id: 1,

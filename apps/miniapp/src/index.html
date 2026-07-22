@@ -201,7 +201,16 @@
             </div>
           </form>
           <div class="expense-list" id="plannedExpenses"></div>
-
+          <section class="planned-archive" id="plannedArchiveBlock">
+            <button type="button" class="planned-archive__toggle" id="plannedArchiveToggle" aria-expanded="false" aria-controls="plannedArchiveContent">
+              <span data-i18n="plan.archiveTitle">Отключённые</span>
+              <span class="planned-archive__chevron" aria-hidden="true">›</span>
+            </button>
+            <div class="planned-archive__content hidden" id="plannedArchiveContent">
+              <div class="planned-archive__status" id="plannedArchiveStatus" role="status"></div>
+              <div class="expense-list" id="plannedArchiveList"></div>
+            </div>
+          </section>
         </section>
       </section>
 

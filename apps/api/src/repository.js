@@ -6,7 +6,6 @@ import {
   localMonthDay,
   localMonthKey,
   localPeriodBounds,
-  localWeekday as sharedLocalWeekday,
   normalizeTimeZone,
   resolveUserTimeZone,
   timeZoneDayKey,
@@ -16,6 +15,10 @@ import {
 } from "../../../packages/shared/src/time.js";
 import { calculateReserveState, validateReserveCapacity } from "../../../packages/shared/src/reserve.js";
 import { createExchangeRateProvider } from "./exchangeRates.js";
+import {
+  normalizePlannedDateKey,
+  plannedOccurrenceDateKeysForPeriod
+} from "./plannedOccurrenceDates.js";
 import { normalizeAcquisitionSource, SINGLETON_ONBOARDING_EVENTS } from "./productAnalytics.js";
 import { buildReportMetrics } from "./reportService.js";
 
@@ -310,7 +313,7 @@ export function createRepository(pool, options = {}) {
     async upsertCurrentReserve(telegramUserId, input, now = new Date()) {
       const user = await this.getUserByTelegramId(telegramUserId);
       if (!user) return null;
-      const timeZone = normalizeTimeZone(user.timezone);
+      const timeZone = normalizeTimeZone(user.timezone).timeZone;
       const period = timeZoneMonthKey(now, timeZone);
       const currentBudget = await currentMonthBudget(pool, user, now);
       const plannedExpenses = await listPlannedExpensesForTelegramUserAt(pool, telegramUserId, now);
@@ -2721,6 +2724,135 @@ export function createRepository(pool, options = {}) {
       return listPlannedExpensesForTelegramUserAt(pool, telegramUserId, new Date());
     },
 
+    async listArchivedPlannedExpensesForTelegramUser(telegramUserId) {
+      const result = await pool.query(
+        `WITH valid_payments AS (
+           SELECT DISTINCT ON (pep.planned_expense_id, pep.paid_key)
+                  pep.planned_expense_id, pep.paid_key, e.amount_base
+           FROM planned_expense_payments pep
+           JOIN planned_expenses source ON source.id = pep.planned_expense_id
+           JOIN expenses e ON e.id = pep.expense_id AND e.user_id = source.user_id
+           ORDER BY pep.planned_expense_id, pep.paid_key, pep.id
+         ), paid AS (
+           SELECT planned_expense_id,
+                  COUNT(*)::int AS paid_count,
+                  COALESCE(SUM(amount_base), 0)::float AS paid_amount_base
+           FROM valid_payments
+           GROUP BY planned_expense_id
+         )
+         SELECT planned_expenses.*,
+                users.timezone AS user_timezone,
+                users.base_currency AS user_base_currency,
+                users.display_currency AS user_display_currency,
+                users.usd_thb_rate AS user_usd_thb_rate,
+                COALESCE(paid.paid_count, 0)::int AS paid_count,
+                COALESCE(paid.paid_amount_base, 0)::float AS paid_amount_base
+         FROM planned_expenses
+         JOIN users ON users.id = planned_expenses.user_id
+         LEFT JOIN paid ON paid.planned_expense_id = planned_expenses.id
+         WHERE users.telegram_user_id = $1 AND planned_expenses.active = false
+         ORDER BY planned_expenses.disabled_at DESC NULLS LAST, planned_expenses.id DESC`,
+        [telegramUserId]
+      );
+      return result.rows.map((row) => {
+        const {
+          user_timezone,
+          user_base_currency,
+          user_display_currency,
+          user_usd_thb_rate,
+          ...planned
+        } = row;
+        const user = {
+          timezone: user_timezone,
+          base_currency: user_base_currency,
+          display_currency: user_display_currency,
+          usd_thb_rate: user_usd_thb_rate
+        };
+        const mapped = withDisplayPlanned(planned, user);
+        mapped.display.paid_amount = displayFromBase(planned.paid_amount_base, user);
+        return mapped;
+      });
+    },
+
+    async recreatePlannedExpense(telegramUserId, archivedId, input, startsOn, now = new Date()) {
+      const source = await readOwnedArchivedPlannedExpense(pool, telegramUserId, archivedId, false);
+      if (!source) return null;
+
+      const planned = normalizePlannedExpense(input);
+      const startsOnKey = typeof startsOn === "string" && /^\d{4}-\d{2}-\d{2}$/.test(startsOn)
+        ? normalizePlannedDateKey(startsOn)
+        : null;
+      if (!startsOnKey) throw codedError("Invalid planned start date", "invalid_planned_start_date");
+      const todayKey = localDayKey(now, userTimezone(source));
+      if (startsOnKey < todayKey) {
+        throw codedError("Planned start date is in the past", "planned_start_date_in_past");
+      }
+      const dueDateKey = normalizePlannedDateKey(planned.due_date);
+      if (planned.recurrence === "one_off" && !dueDateKey) {
+        throw codedError("Invalid planned due date", "invalid_planned_due_date");
+      }
+      if (planned.recurrence === "one_off" && dueDateKey < startsOnKey) {
+        throw codedError("Planned due date is before start", "planned_due_date_before_start");
+      }
+      const money = await buildMoneyAmounts(exchangeRates, planned.amount, planned.currency, now, source);
+
+      const client = await pool.connect();
+      let created = null;
+      try {
+        await client.query("BEGIN");
+        const locked = await readOwnedArchivedPlannedExpense(client, telegramUserId, archivedId, true);
+        if (!locked) {
+          await client.query("ROLLBACK");
+          return null;
+        }
+        const candidate = {
+          ...planned,
+          amount_base: money.amountBase,
+          active: true,
+          starts_on: startsOnKey
+        };
+        await assertPlannedMutationCapacityWithQueryable(client, locked, candidate, null);
+        const result = await client.query(
+          `INSERT INTO planned_expenses (
+             user_id, amount, currency, amount_base, description, category_slug, tags,
+             recurrence, due_day, due_days, weekday, due_date, starts_on, active
+           )
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, true)
+           RETURNING *`,
+          [
+            locked.user_id,
+            planned.amount,
+            planned.currency,
+            money.amountBase,
+            planned.description,
+            planned.category_slug,
+            planned.tags,
+            planned.recurrence,
+            planned.due_day,
+            planned.due_days,
+            planned.weekday,
+            planned.due_date,
+            startsOnKey
+          ]
+        );
+        created = result.rows[0] ?? null;
+        await client.query("COMMIT");
+      } catch (error) {
+        try { await client.query("ROLLBACK"); } catch { /* preserve original transaction error */ }
+        throw error;
+      } finally {
+        client.release();
+      }
+      if (created) {
+        try {
+          await this.recordAppEvent(created.user_id, "planned_expense_created", { source: "miniapp", mode: "recreate" });
+        } catch (error) {
+          console.warn("[repository] recreate event failed after commit", { message: error?.message });
+        }
+      }
+      return created;
+    },
+
     async createPlannedExpense(telegramUserId, input, now = new Date()) {
       const user = await this.getUserByTelegramId(telegramUserId);
       if (!user) return null;
@@ -3756,6 +3888,24 @@ async function listPlannedExpensesForTelegramUserAt(pool, telegramUserId, now, p
   return result.rows;
 }
 
+async function readOwnedArchivedPlannedExpense(queryable, telegramUserId, archivedId, lock) {
+  const result = await queryable.query(
+    `SELECT planned_expenses.*,
+            users.base_currency,
+            users.display_currency,
+            users.usd_thb_rate,
+            users.timezone
+     FROM planned_expenses
+     JOIN users ON users.id = planned_expenses.user_id
+     WHERE planned_expenses.id = $1
+       AND users.telegram_user_id = $2
+       AND planned_expenses.active = false
+     ${lock ? "FOR UPDATE" : ""}`,
+    [archivedId, telegramUserId]
+  );
+  return result.rows[0] ?? null;
+}
+
 function normalizeDraftItem(item) {
   const amount = Number(item.amount);
   if (!Number.isFinite(amount) || amount <= 0) {
@@ -4012,19 +4162,24 @@ async function assertReserveCurrencyChangeAllowed(pool, userId) {
 
 async function assertPlannedMutationCapacity(pool, user, changedPlan, changedPlanId, now) {
   if (typeof pool.connect !== "function" || changedPlan.active === false) return;
-  const reserveResult = await pool.query(
+  return assertPlannedMutationCapacityWithQueryable(pool, user, changedPlan, changedPlanId);
+}
+
+async function assertPlannedMutationCapacityWithQueryable(queryable, user, changedPlan, changedPlanId) {
+  const userId = user.user_id ?? user.id;
+  const reserveResult = await queryable.query(
     `SELECT * FROM monthly_reserve_instances
      WHERE user_id = $1 AND status = 'active'
      ORDER BY period DESC
      LIMIT 1`,
-    [user.id]
+    [userId]
   );
   const reserve = reserveResult.rows[0];
   if (!reserve) return;
-  const plansResult = await pool.query(
+  const plansResult = await queryable.query(
     `SELECT * FROM planned_expenses
      WHERE user_id = $1 AND active = true`,
-    [user.id]
+    [userId]
   );
   const plans = plansResult.rows.filter((item) => String(item.id) !== String(changedPlanId));
   plans.push(changedPlan);
@@ -4037,9 +4192,7 @@ async function assertPlannedMutationCapacity(pool, user, changedPlan, changedPla
     reserveAmount: reserve.reserve_amount
   });
   if (!capacity.valid) {
-    throw Object.assign(new Error("reserve_conflicts_with_planned_change"), {
-      code: "reserve_conflicts_with_planned_change"
-    });
+    throw codedError("reserve_conflicts_with_planned_change", "reserve_conflicts_with_planned_change");
   }
 }
 
@@ -4140,36 +4293,16 @@ async function plannedObligationsForPeriod(client, userId, period, timeZone) {
     ]
   );
   return roundMoney(plansResult.rows.reduce((sum, item) => {
-    const occurrenceCount = plannedOccurrenceCountForPeriod(item, period);
-    const paidCount = Math.min(Number(item.paid_count ?? 0), occurrenceCount);
-    const includedCount = item.active === false ? paidCount : occurrenceCount;
+    const scheduledCount = plannedOccurrenceCountForPeriod(item, period);
+    const validPaidCount = Number(item.paid_count ?? 0);
+    const includedCount = item.active === false ? validPaidCount : scheduledCount;
     return sum + Number(item.amount_base) * includedCount;
   }, 0));
 }
 
 function plannedOccurrenceCountForPeriod(item, period) {
-  const [year, month] = period.split("-").map(Number);
-  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
-  if (item.recurrence === "weekly") {
-    let count = 0;
-    for (let day = 1; day <= daysInMonth; day += 1) {
-      const weekday = new Date(Date.UTC(year, month - 1, day)).getUTCDay() || 7;
-      if (weekday === Number(item.weekday)) count += 1;
-    }
-    return count;
-  }
-  if (item.recurrence === "one_off" || item.recurrence === "one_time") {
-    const dueDateKey = normalizeOccurrenceKey(item.due_date);
-    if (!dueDateKey) {
-      if (item.due_date) logInvalidPlannedDueDate(item);
-      return 0;
-    }
-    return dueDateKey.slice(0, 7) === period ? 1 : 0;
-  }
-  const days = Array.isArray(item.due_days) && item.due_days.length
-    ? item.due_days
-    : [Number(item.due_day ?? 1)];
-  return new Set(days.map(Number).filter((day) => day >= 1).map((day) => Math.min(day, daysInMonth))).size;
+  logInvalidOneOffDueDate(item);
+  return plannedOccurrenceDateKeysForPeriod(item, period).length;
 }
 
 function calculatePlannedThisWeek(plannedExpenses, now, timeZone = "Asia/Bangkok") {
@@ -4236,17 +4369,10 @@ function localFullWeekBounds(now, timeZone = "Asia/Bangkok") {
 }
 
 function plannedDueDatesThisMonth(item, now, timeZone = userTimezone(item)) {
-  if (item.recurrence === "weekly") return weeklyDueDatesThisMonth(now, Number(item.weekday ?? localWeekday(now, timeZone)), timeZone);
-  if (item.recurrence === "one_off" || item.recurrence === "one_time") {
-    if (!item.due_date) return [];
-    const dueDate = plannedLocalDate(item.due_date, timeZone);
-    if (!dueDate) {
-      logInvalidPlannedDueDate(item);
-      return [];
-    }
-    return monthKey(dueDate, timeZone) === monthKey(now, timeZone) ? [dueDate] : [];
-  }
-  return dueDaysInMonthValues(item, now, timeZone).map((day) => plannedLocalDateForMonthDay(now, day, timeZone));
+  logInvalidOneOffDueDate(item);
+  return plannedOccurrenceDateKeysForPeriod(item, monthKey(now, timeZone))
+    .map((key) => plannedLocalDate(key, timeZone))
+    .filter(Boolean);
 }
 
 function unpaidPlannedDueDatesThisMonth(item, now, timeZone = userTimezone(item)) {
@@ -4260,58 +4386,12 @@ function unpaidPlannedDueDatesThisMonth(item, now, timeZone = userTimezone(item)
   return dueDates.slice(paidCount);
 }
 
-function occurrencesThisMonth(item, now) {
-  const timeZone = userTimezone(item);
-  if (item.recurrence === "weekly") return weekdaysInMonth(now, Number(item.weekday ?? localWeekday(now, timeZone)), timeZone);
-  if (item.recurrence === "twice_monthly") return dueDaysInMonth(item);
-  if (item.recurrence === "one_off" || item.recurrence === "one_time") {
-    const dueDate = plannedLocalDate(item.due_date, timeZone);
-    if (!dueDate) {
-      if (item.due_date) logInvalidPlannedDueDate(item);
-      return 0;
-    }
-    return monthKey(dueDate, timeZone) === monthKey(now, timeZone) ? 1 : 0;
+function logInvalidOneOffDueDate(item) {
+  if ((item.recurrence === "one_off" || item.recurrence === "one_time")
+      && item.due_date
+      && !normalizePlannedDateKey(item.due_date)) {
+    logInvalidPlannedDueDate(item);
   }
-  return dueDaysInMonth(item);
-}
-
-function dueDaysInMonth(item) {
-  const days = Array.isArray(item.due_days) && item.due_days.length ? item.due_days : [Number(item.due_day ?? 1)];
-  return days.filter((day) => Number(day) >= 1 && Number(day) <= 31).length;
-}
-
-function dueDaysInMonthValues(item, now, timeZone = userTimezone(item)) {
-  const days = Array.isArray(item.due_days) && item.due_days.length ? item.due_days : [Number(item.due_day ?? 1)];
-  const [year, month] = monthKey(now, timeZone).split("-").map(Number);
-  const daysInCurrentMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
-  return [...new Set(days.map(Number).filter((day) => day >= 1).map((day) => Math.min(day, daysInCurrentMonth)))]
-    .sort((left, right) => left - right);
-}
-
-function weekdaysInMonth(now, weekday, timeZone = "Asia/Bangkok") {
-  const [year, monthKeyValue] = monthKey(now, timeZone).split("-").map(Number);
-  const month = monthKeyValue - 1;
-  const daysInMonth = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
-  let count = 0;
-  for (let currentDay = 1; currentDay <= daysInMonth; currentDay += 1) {
-    const current = new Date(Date.UTC(year, month, currentDay));
-    const currentWeekday = current.getUTCDay() === 0 ? 7 : current.getUTCDay();
-    if (currentWeekday === weekday) count += 1;
-  }
-  return count;
-}
-
-function weeklyDueDatesThisMonth(now, weekday, timeZone = "Asia/Bangkok") {
-  const [year, monthKeyValue] = monthKey(now, timeZone).split("-").map(Number);
-  const month = monthKeyValue - 1;
-  const daysInMonth = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
-  const dates = [];
-  for (let currentDay = 1; currentDay <= daysInMonth; currentDay += 1) {
-    const current = new Date(Date.UTC(year, month, currentDay));
-    const currentWeekday = current.getUTCDay() === 0 ? 7 : current.getUTCDay();
-    if (currentWeekday === weekday) dates.push(plannedLocalDateForMonthDay(now, currentDay, timeZone));
-  }
-  return dates;
 }
 
 function plannedLocalDate(value, timeZone = "Asia/Bangkok") {
@@ -4338,10 +4418,6 @@ function plannedExpenseSpentAt(occurrenceDate, paidAt = new Date(), timeZone = "
 function plannedLocalDateForMonthDay(now, day, timeZone = "Asia/Bangkok") {
   const [year, month] = monthKey(now, timeZone).split("-").map(Number);
   return localPeriodBounds(new Date(Date.UTC(year, month - 1, day, 12)), "today", timeZone).start;
-}
-
-function localWeekday(now, timeZone = "Asia/Bangkok") {
-  return sharedLocalWeekday(now, timeZone);
 }
 
 function startOfLocalDay(now, timeZone = "Asia/Bangkok") {

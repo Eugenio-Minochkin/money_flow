@@ -10,6 +10,9 @@ Use this guide when changing business logic or UI around the main Money Flow sur
 - Planned payment occurrence logic.
 - Planned create/update/disable mutations: live monthly obligations and forecast change immediately, an existing current-local-day opening snapshot and its `dayPlanLimit` remain fixed, a missing same-day snapshot uses the current active plan state, and the next local day creates a fresh snapshot.
 - Planned disable lifecycle: transaction rollback safety, first-transition `disabled_at`, idempotent retries, ownership isolation, ordinary PATCH rejection of `active`, preserved payment/expense rows, and no duplicate lifecycle event.
+- Planned archive/recreate lifecycle: read-only archive ownership, valid-payment aggregation, exact 404-before-payload error precedence, locked source recheck, reserve validation on the same transaction client, independent new IDs, repeated intentional recreate, no copied payment/expense rows, and unchanged archived source fields.
+- Planned `starts_on`: migration `012` is additive and nullable with no backfill; `NULL` preserves legacy occurrences, while a value applies the same user-calendar filter in dashboard, reserve, reports, Pay, and Mini App helpers. Cover PostgreSQL `DATE` objects in a non-UTC process timezone.
+- Mini App recreate synchronization: one POST per form session, mutation failure keeps the form retryable, HTTP `201` closes before refresh, and independent dashboard/archive refresh failures show a warning without reopening or retrying creation.
 - Planned month summary: valid paid occurrences from active and disabled plans use actual same-user linked expense amounts; remaining includes only active unpaid occurrences; base/display paid, remaining, and total values reconcile after rounding.
 - User timezone behavior for today/yesterday, weeks, months, daily budget snapshots, planned payment dates, and reminders.
 - Daily empty-day reminder guardrails: kill switch, rollout, 48-hour cap, idempotency, no-spending marks, and Telegram blocked/forbidden errors.
@@ -27,7 +30,7 @@ Use this guide when changing business logic or UI around the main Money Flow sur
 
 - Budget and pace logic lives primarily in `packages/shared/src/budget.js` and `packages/shared/test/budget.test.js`.
 - Currency support lives in `packages/shared/src/currencies.js`, Mini App currency helpers, and their tests.
-- Planned payment behavior is spread across shared parsing, API repository logic, Telegram callbacks, Mini App planned UI, and related tests. Lifecycle changes need repository and budget/reserve coverage, server DELETE/PATCH contract coverage, pure Mini App confirmation/result tests in RU and EN, and narrow-width visual verification.
+- Planned payment behavior is spread across shared parsing, API repository logic, Telegram callbacks, Mini App planned UI, and related tests. Lifecycle changes need canonical occurrence tests, repository and budget/reserve coverage, server archive/recreate/DELETE/PATCH contract coverage, pure Mini App interaction tests in RU and EN, and narrow-width visual verification of archive and recreate states.
 - Timezone helpers live in `packages/shared/src/time.js` and are covered by `packages/shared/test/time.test.js`.
 - Daily reminder behavior is covered by `apps/api/test/dailyReminderService.test.js`, repository tests, and Telegram callback tests.
 - Telegram editor text-input changes must cover prompt persistence, retry after validation errors, session cleanup on Cancel/Save/terminal actions, and a fresh editor card after successful input.
@@ -69,7 +72,7 @@ The suite refuses to run unless `DATABASE_URL` points at localhost/127.0.0.1 and
 - new Telegram user persistence and defaults;
 - confirmed draft expense save/read;
 - dashboard budget summary over real rows;
-- planned payment create/list/pay/deactivate, including migration `011`, `disabled_at`, transactional and idempotent disable, preserved paid history, same-day snapshot stability, immediate live month recalculation, and next-local-day snapshot creation;
+- planned payment create/list/pay/deactivate/archive/recreate, including migrations `011` and `012`, `disabled_at`, nullable `starts_on`, transactional and idempotent disable, archive aggregates, independent recreate with transaction-client reserve validation, preserved paid history, PostgreSQL calendar-date semantics, same-day snapshot stability, immediate live month recalculation, and next-local-day snapshot creation;
 - reserve create/read through dashboard state;
 - expense edit/delete and recalculated totals;
 - transactional account deletion, privacy-sensitive row cleanup, safe audit metadata, and global exchange-rate preservation;
@@ -90,7 +93,7 @@ Run the relevant focused tests first, then run the full test suite:
 npm.cmd test
 ```
 
-For UI work, also use the local acceptance sandbox described in `README.md` and check the affected dashboard/settings/planned-payment flows on narrow mobile widths.
+For UI work, also use the local acceptance sandbox described in `README.md` and check the affected dashboard/settings/planned-payment flows on narrow mobile widths. Archive/recreate changes require RU and EN screenshots of the expanded archive and recreate form at iPhone 11 and iPhone 14 Pro widths, including long synthetic text, a large synthetic amount, multiple saved payments, and a legacy null disable date. Verify no horizontal scroll, clipped text, overflowing buttons, or active controls on archived rows.
 
 ## Product Analytics Contracts
 

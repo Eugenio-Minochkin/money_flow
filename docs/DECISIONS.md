@@ -2,11 +2,19 @@
 
 This is a lightweight log for product and domain decisions that future agents should preserve unless the user explicitly asks to revisit them.
 
+## 2026-07-22 - Planned Archive Is Read-only And Recreate Is Independent
+
+Disabled planned payments are exposed through a separate lazy archive read endpoint. Archive rows remain immutable: ordinary PATCH and direct reactivation through `active = true` stay forbidden. `Create again` uses a separate endpoint and a repository transaction to insert a new active row with a new `id`; it does not copy payment or expense history, mutate the source or its `disabled_at`, or store `source_planned_expense_id`, `recreated`, an idempotency key, or another permanent link. One archived row may be recreated repeatedly when each attempt follows a new explicit user action.
+
+The nullable `starts_on` date is a user-timezone calendar key. `NULL` preserves legacy scheduling; a value filters only scheduled occurrences before that key in dashboard, reserve, reports, Pay, and Mini App compatibility calculations. Valid linked payments remain factual even when their occurrence is earlier than `starts_on`. The opening-snapshot policy below remains unchanged: live monthly values update immediately, while an existing current-local-day snapshot stays fixed.
+
+The recreate transaction rechecks the archived source under lock and validates reserve capacity on the same transaction client. A committed row is not rolled back by best-effort analytics failure. In the Mini App, HTTP `201` closes and resets the form before dashboard and archive refresh; refresh failures become a warning, never a retryable creation error.
+
 ## 2026-07-22 - Planned Changes Preserve Today's Opening Snapshot
 
 Planned-payment create, update, and disable mutations recalculate live monthly obligations, free remainder, and forecast immediately. They do not delete or replace an opening `daily_budget_snapshot` that already exists for the user's current local day. When that snapshot does not yet exist, the first subsequent dashboard creates it from the then-current active plan set; a new local day likewise starts from the active plan state at that time. Budget, top-up, reserve, ordinary-expense, currency, and timezone invalidation policies are unchanged.
 
-Disable is a dedicated transactional lifecycle action, not an ordinary PATCH field. The first active-to-inactive transition records `disabled_at`; repeated requests return the same lifecycle impact without another transition or event. Ordinary PATCH cannot mutate `active`. Legacy inactive rows are not backfilled, and restore, archive UI, and Undo payment remain outside this decision.
+Disable is a dedicated transactional lifecycle action, not an ordinary PATCH field. The first active-to-inactive transition records `disabled_at`; repeated requests return the same lifecycle impact without another transition or event. Ordinary PATCH cannot mutate `active`. Legacy inactive rows are not backfilled, direct restore remains forbidden, and Undo payment remains outside this decision; archive/recreate behavior is governed by the decision above.
 
 Disable removes only unpaid obligations. Valid `planned_expense_payments` rows and their same-user linked expenses remain historical facts. The server owns the current planned-month summary: paid uses the actual linked expense amounts for valid payments in the current local occurrence month, including disabled plans, while remaining uses only unpaid occurrences of active plans. The Mini App renders this paid/remaining/total response and may calculate locally only as compatibility fallback for an older server response.
 

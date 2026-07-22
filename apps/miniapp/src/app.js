@@ -13,6 +13,7 @@ import {
   moneyBase,
   moneyDisplay,
   moneyDisplaySigned,
+  localDateKeyInTimeZone,
   setBaseCurrency
 } from "./formatters.js";
 import {
@@ -30,6 +31,14 @@ import { createTranslator } from "./i18n.js";
 import { inboxCountLabel, inboxDraftDescription, inboxDraftTotal, shouldShowInboxOnDashboard, updateFirstInboxItemCategory } from "./inbox.js";
 import { buildReserveSettingsView } from "./reserveSettings.js";
 import { runPlannedDisable } from "./plannedDisable.js";
+import { createPlannedRecreateSession, runPlannedRecreate } from "./plannedRecreate.js";
+import {
+  buildArchivedPlanView,
+  collapsePlannedArchive,
+  createPlannedArchiveState,
+  expandPlannedArchive,
+  invalidatePlannedArchive
+} from "./plannedArchive.js";
 import {
   buildPlannedOccurrences,
   calculatePlannedMonthSummary,
@@ -65,6 +74,7 @@ let currentTheme = "light";
 let reserveSettingsExpanded = false;
 let settingsBaseline = "";
 let accountDeleted = false;
+const plannedArchiveState = createPlannedArchiveState();
 
 const deleteAccountStartButton = document.getElementById("deleteAccountStartButton");
 const deleteAccountAdvanceButton = document.getElementById("deleteAccountAdvanceButton");
@@ -104,6 +114,19 @@ document.querySelector("#togglePlannedForm").addEventListener("click", () => {
   const form = document.querySelector("#plannedForm");
   form.classList.toggle("hidden");
   if (!form.classList.contains("hidden")) form.scrollIntoView({ behavior: "smooth", block: "start" });
+});
+document.querySelector("#plannedArchiveToggle")?.addEventListener("click", async () => {
+  if (plannedArchiveState.expanded) {
+    collapsePlannedArchive(plannedArchiveState);
+    renderPlannedArchive();
+    return;
+  }
+  plannedArchiveState.expanded = true;
+  try {
+    await refreshPlannedArchive();
+  } catch {
+    // The archive owns its retryable error state and must not block the active plan list.
+  }
 });
 document.querySelectorAll("[data-tab]").forEach((button) => {
   button.addEventListener("click", () => switchTab(button.dataset.tab));
@@ -1050,11 +1073,24 @@ function bindExpenseActions(container, expenses) {
   });
 }
 
-function renderPlannedForm(item = {}) {
+function renderPlannedForm(item = {}, { mode = "create", sourcePlannedExpenseId = null } = {}) {
   const form = document.querySelector("#plannedForm");
   const dueDays = Array.isArray(item.due_days) && item.due_days.length ? item.due_days.join(", ") : (item.due_day ?? "");
   const plannedCurrency = defaultPlannedCurrency(item, dashboardState?.user?.base_currency ?? "THB");
+  const startsOn = mode === "recreate" ? localDateKeyInTimeZone(new Date(), userTimeZone()) : null;
+  const sourceDueDate = item.due_date ? String(item.due_date).slice(0, 10) : "";
+  const dueDate = mode === "recreate" && sourceDueDate <= startsOn ? "" : sourceDueDate;
+  const title = mode === "recreate" ? t("plan.createAgain") : mode === "edit" ? t("plan.saveExisting") : t("plan.addPlanned");
+  const submitLabel = mode === "recreate" ? t("plan.createAgain") : mode === "edit" ? t("plan.saveExisting") : t("plan.saveNew");
+  const recreateSession = mode === "recreate" ? createPlannedRecreateSession() : null;
   form.innerHTML = `
+    <h3>${title}</h3>
+    ${mode === "recreate" ? `
+      <label>
+        <span>${t("plan.startsOn")}</span>
+        <input name="planned-starts_on" type="date" value="${startsOn}" min="${startsOn}" required />
+      </label>
+    ` : ""}
     <div class="field-grid">
       <label>
         <span>${t("forms.description")}</span>
@@ -1099,7 +1135,7 @@ function renderPlannedForm(item = {}) {
       </label>
       <label data-recurrence-field="one_off">
         <span>${t("plan.dueDate")}</span>
-        <input name="planned-due_date" type="date" value="${item.due_date ? String(item.due_date).slice(0, 10) : ""}" />
+        <input name="planned-due_date" type="date" value="${dueDate}" />
       </label>
     </div>
     <label>
@@ -1107,17 +1143,19 @@ function renderPlannedForm(item = {}) {
       <input name="planned-tags" value="${escapeAttribute((item.tags ?? []).join(", "))}" />
     </label>
     <div class="button-row">
-      <button type="submit">${item.id ? t("plan.saveExisting") : t("plan.saveNew")}</button>
+      <button type="submit">${submitLabel}</button>
       <button type="button" class="ghost-button" id="resetPlannedForm">${t("plan.reset")}</button>
       <button type="button" class="ghost-button" id="cancelPlannedForm">${t("actions.close")}</button>
     </div>
   `;
-  form.onsubmit = (event) => savePlanned(event, item.id);
-  form.querySelector("#resetPlannedForm").addEventListener("click", () => renderPlannedForm());
-  form.querySelector("#cancelPlannedForm").addEventListener("click", () => {
-    renderPlannedForm();
-    form.classList.add("hidden");
+  form.onsubmit = (event) => savePlanned(event, {
+    mode,
+    plannedId: mode === "edit" ? item.id : null,
+    sourcePlannedExpenseId,
+    recreateSession
   });
+  form.querySelector("#resetPlannedForm").addEventListener("click", () => renderPlannedForm());
+  form.querySelector("#cancelPlannedForm").addEventListener("click", closeAndResetPlannedForm);
   form.querySelector('[name="planned-recurrence"]').addEventListener("change", syncPlannedRecurrenceFields);
   syncPlannedRecurrenceFields();
 }
@@ -1160,6 +1198,105 @@ function renderPlannedExpenses(items) {
   bindPlannedActions(list, items);
 }
 
+function closeAndResetPlannedForm() {
+  renderPlannedForm();
+  document.querySelector("#plannedForm").classList.add("hidden");
+}
+
+async function refreshPlannedArchive({ force = false } = {}) {
+  if (!plannedArchiveState.expanded && !force) return plannedArchiveState.items;
+  if (force) plannedArchiveState.stale = true;
+  const pending = expandPlannedArchive(plannedArchiveState, {
+    load: async () => {
+      const data = await api(`/api/planned-expenses/archive?telegramUserId=${encodeURIComponent(telegramUserId)}`);
+      return data.archivedPlannedExpenses ?? [];
+    }
+  });
+  renderPlannedArchive();
+  try {
+    const items = await pending;
+    renderPlannedArchive();
+    return items;
+  } catch (error) {
+    renderPlannedArchive();
+    throw error;
+  }
+}
+
+async function refreshArchiveAfterDisable() {
+  const shouldRefresh = invalidatePlannedArchive(plannedArchiveState);
+  if (shouldRefresh) await refreshPlannedArchive({ force: true });
+}
+
+function renderPlannedArchive() {
+  const toggle = document.querySelector("#plannedArchiveToggle");
+  const content = document.querySelector("#plannedArchiveContent");
+  const status = document.querySelector("#plannedArchiveStatus");
+  const list = document.querySelector("#plannedArchiveList");
+  if (!toggle || !content || !status || !list) return;
+
+  toggle.setAttribute("aria-expanded", String(plannedArchiveState.expanded));
+  content.classList.toggle("hidden", !plannedArchiveState.expanded);
+  if (!plannedArchiveState.expanded) return;
+
+  status.innerHTML = "";
+  list.innerHTML = "";
+  if (plannedArchiveState.status === "loading") {
+    status.textContent = t("plan.archiveLoading");
+    return;
+  }
+  if (plannedArchiveState.status === "error") {
+    status.innerHTML = `${escapeHtml(t("plan.archiveError"))} <button type="button" class="ghost-button" data-retry-planned-archive>${escapeHtml(t("plan.archiveRetry"))}</button>`;
+    status.querySelector("[data-retry-planned-archive]")?.addEventListener("click", async () => {
+      try { await refreshPlannedArchive({ force: true }); } catch { /* keep retry state visible */ }
+    });
+    return;
+  }
+  if (plannedArchiveState.status !== "loaded") return;
+  if (!plannedArchiveState.items.length) {
+    status.textContent = t("plan.archiveEmpty");
+    return;
+  }
+
+  const baseCurrency = dashboardState?.user?.base_currency ?? dashboardState?.snapshot?.baseCurrency ?? "THB";
+  list.innerHTML = plannedArchiveState.items.map((item) => {
+    const view = buildArchivedPlanView(item, { language: currentLanguage, translate: t });
+    const disabledLabel = view.disabledAt
+      ? formatDate(view.disabledAt, currentLanguage, userTimeZone())
+      : view.disabledLabel;
+    const paidAmounts = [moneyBase(view.paidAmountBase, baseCurrency)];
+    const displayPaid = moneyDisplay(view.displayPaidAmount, item.display?.currency);
+    if (displayPaid && item.display?.currency !== baseCurrency) paidAmounts.push(displayPaid);
+    return `
+      <article class="expense-row planned-archive__row" style="--category-color: ${categoryColor(item.category_slug)}">
+        <div class="expense-main">
+          <div class="expense-title">${escapeHtml(view.title)}</div>
+          <div class="expense-meta">${escapeHtml(recurrenceLabel(item))} · ${escapeHtml(disabledLabel)}</div>
+          <div class="expense-meta">${escapeHtml(view.paymentLabel)} · ${escapeHtml(paidAmounts.join(" · "))}</div>
+        </div>
+        <div class="expense-actions">
+          <div class="expense-amount">${formatMoney(item.amount, item.currency)}
+            <em>${moneyDisplay(item.display?.amount, item.display?.currency)}</em>
+          </div>
+          <div class="button-row compact">
+            <button type="button" class="ghost-button" data-recreate-planned="${escapeAttribute(item.id)}">${t("plan.createAgain")}</button>
+          </div>
+        </div>
+      </article>
+    `;
+  }).join("");
+  list.querySelectorAll("[data-recreate-planned]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const item = plannedArchiveState.items.find((planned) => String(planned.id) === button.dataset.recreatePlanned);
+      if (!item) return;
+      renderPlannedForm(item, { mode: "recreate", sourcePlannedExpenseId: item.id });
+      const form = document.querySelector("#plannedForm");
+      form.classList.remove("hidden");
+      form.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  });
+}
+
 function plannedPaymentProgressLabel(item) {
   const occurrences = buildPlannedOccurrences(item);
   if (!occurrences.length) return "";
@@ -1175,7 +1312,7 @@ function bindPlannedActions(container, items) {
     button.addEventListener("click", () => {
       const item = items.find((planned) => String(planned.id) === button.dataset.editPlanned);
       switchTab("plan");
-      renderPlannedForm(item);
+      renderPlannedForm(item, { mode: "edit" });
       document.querySelector("#plannedForm").classList.remove("hidden");
       document.querySelector("#plannedForm").scrollIntoView({ behavior: "smooth", block: "start" });
     });
@@ -1194,6 +1331,7 @@ function bindPlannedActions(container, items) {
             body: { telegramUserId }
           }),
           loadDashboard,
+          afterDashboard: refreshArchiveAfterDisable,
           showResult: showToast,
           language: currentLanguage,
           createTranslator,
@@ -1257,7 +1395,7 @@ function bindPlannedActions(container, items) {
         const item = items.find((planned) => String(planned.id) === button.dataset.editPlanned);
         popover.classList.add("hidden");
         switchTab("plan");
-        renderPlannedForm(item);
+        renderPlannedForm(item, { mode: "edit" });
         document.querySelector("#plannedForm").classList.remove("hidden");
         document.querySelector("#plannedForm").scrollIntoView({ behavior: "smooth", block: "start" });
       });
@@ -1669,8 +1807,51 @@ async function saveExpense(event, expenseId) {
   switchTab(expenseReturnTab);
 }
 
-async function savePlanned(event, plannedId) {
+async function savePlanned(event, {
+  mode = "create",
+  plannedId = null,
+  sourcePlannedExpenseId = null,
+  recreateSession = null
+} = {}) {
   event.preventDefault();
+  if (mode === "recreate") {
+    const form = event.currentTarget;
+    const submitButton = form.querySelector('button[type="submit"]');
+    try {
+      await runPlannedRecreate({
+        session: recreateSession,
+        recreateRequest: async () => {
+          submitButton.disabled = true;
+          try {
+            return await api(`/api/planned-expenses/${sourcePlannedExpenseId}/recreate`, {
+              method: "POST",
+              body: {
+                telegramUserId,
+                startsOn: input("planned-starts_on").value,
+                plannedExpense: collectPlanned()
+              }
+            });
+          } catch (error) {
+            submitButton.disabled = false;
+            throw error;
+          }
+        },
+        closeForm: closeAndResetPlannedForm,
+        loadDashboard,
+        refreshArchive: () => refreshPlannedArchive({ force: true }),
+        showCreated: () => showToast(t("toast.plannedRecreated")),
+        showRefreshWarning: () => showToast(t("toast.plannedRefreshWarning"))
+      });
+    } catch (error) {
+      if (error.message === "reserve_conflicts_with_planned_change") {
+        showToast(t("reserve.plannedChangeError"));
+        return;
+      }
+      showError(error);
+    }
+    return;
+  }
+
   const method = plannedId ? "PATCH" : "POST";
   const path = plannedId ? `/api/planned-expenses/${plannedId}` : "/api/planned-expenses";
   try {
@@ -1682,8 +1863,7 @@ async function savePlanned(event, plannedId) {
     }
     throw error;
   }
-  renderPlannedForm();
-  document.querySelector("#plannedForm").classList.add("hidden");
+  closeAndResetPlannedForm();
   await loadDashboard();
   showToast(plannedId ? t("toast.plannedSaved") : t("toast.plannedAdded"));
 }
@@ -1814,6 +1994,7 @@ function applyLanguage(language) {
   renderReserveSettings();
   updateHistoryFilterChips();
   if (historyCalendarDraft) renderHistoryCalendar();
+  renderPlannedArchive();
 }
 
 function applyTheme(theme) {

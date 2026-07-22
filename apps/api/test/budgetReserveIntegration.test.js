@@ -97,6 +97,28 @@ test("planned expense changes preserve today's snapshot while monthly state upda
   assert.equal(dashboard.snapshot.safeToSpendPerDay, 5807.14);
 });
 
+test("starts_on updates live planned values without rewriting today's snapshot", async () => {
+  const now = new Date("2026-06-24T10:00:00+07:00");
+  const state = createBudgetReserveState({
+    monthlyBudget: 45000,
+    plannedAmount: 1000,
+    reserveAmount: 0,
+    storedDayBudget: 999,
+    storedDayKey: "2026-06-24"
+  });
+  state.planned.recurrence = "weekly";
+  state.planned.weekday = 3;
+  state.planned.starts_on = "2026-06-25";
+  const repo = createRepository(createBudgetReservePool(state));
+
+  const dashboard = await repo.dashboard(100, now);
+
+  assert.equal(dashboard.snapshot.plannedRemaining, 0);
+  assert.equal(dashboard.snapshot.plannedThisWeek, 0);
+  assert.equal(dashboard.snapshot.dayPlanLimit, 999);
+  assert.equal(state.daySnapshotDeleted, false);
+});
+
 test("creating a planned expense preserves today's existing snapshot", async () => {
   const now = new Date("2026-06-24T10:00:00+07:00");
   const state = createBudgetReserveState({

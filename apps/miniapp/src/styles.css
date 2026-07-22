@@ -1250,11 +1250,71 @@ body[data-theme="dark"] .monthly-forecast {
   gap: 8px;
 }
 
+.planned-archive {
+  margin-top: 14px;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+
+.planned-archive__toggle {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: var(--ink);
+  background: transparent;
+  box-shadow: none;
+  padding: 8px 2px;
+}
+
+.planned-archive__chevron {
+  transition: transform 160ms ease;
+}
+
+.planned-archive__toggle[aria-expanded="true"] .planned-archive__chevron {
+  transform: rotate(90deg);
+}
+
+.planned-archive__content {
+  margin-top: 8px;
+}
+
+.planned-archive__status {
+  color: var(--muted);
+  font-size: 13px;
+  padding: 8px 2px;
+}
+
+.planned-archive__status:empty {
+  display: none;
+}
+
+.planned-archive .expense-row {
+  align-items: flex-start;
+}
+
+.planned-archive .expense-title,
+.planned-archive .expense-amount {
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
 .inline-form,
 .form-stack {
   display: grid;
   gap: 12px;
   padding: 14px;
+}
+
+@media (max-width: 430px) {
+  .planned-archive .expense-actions,
+  .planned-archive .button-row {
+    width: 100%;
+  }
+
+  .planned-archive .button-row button {
+    width: 100%;
+  }
 }
 
 .inline-form {

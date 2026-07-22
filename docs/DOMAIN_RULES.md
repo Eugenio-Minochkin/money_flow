@@ -19,6 +19,10 @@ This file records stable product and business rules. Read it before changing bud
 - When the user pays an overdue planned payment, the created transaction must use the occurrence date, not today's date.
 - Planned payment local dates are interpreted in the user's IANA timezone.
 - Disabled planned payments must not be included in active monthly totals.
+- The planned-payment archive is read-only history. An archived row cannot be patched or restored by setting `active = true`; `Create again` always inserts a new independent active row with a new `id`.
+- Recreate never copies `planned_expense_payments` or their linked expenses, never changes the archived source or its `disabled_at`, and stores no permanent source-to-copy link. Repeating recreate after a new explicit confirmation is allowed.
+- `starts_on = NULL` preserves legacy recurrence behavior. A non-null `starts_on` filters scheduled obligations before that user-local calendar key across dashboard, reserve, reports, Pay, and Mini App fallback helpers; it does not erase otherwise valid factual payment links from history.
+- Recreate uses the user's IANA timezone to validate and store the `starts_on` calendar key. PostgreSQL `DATE` values remain calendar dates and must not shift through UTC conversion.
 - Planned-payment create, update, and disable mutations immediately update live monthly obligations and forecast, but they must not replace an already-created current-local-day opening snapshot. If no snapshot exists for that local day, the first subsequent dashboard creates it from the then-current active plan set; the next local day also receives a new snapshot from that current state.
 - Disabling a plan cancels only its unpaid obligations. Valid paid occurrences and their linked expenses remain historical facts and continue to contribute their actual linked expense amounts to factual paid totals.
 - Disabling is transactional and idempotent. The first active-to-inactive transition records `disabled_at`; repeating disable preserves that lifecycle result without another transition. Legacy inactive rows are not assigned a synthetic disable time.
@@ -27,6 +31,7 @@ This file records stable product and business rules. Read it before changing bud
 - Weekly planned payments must not be counted more than once for the same target week.
 - One-off planned payments must not repeat in the next month.
 - The source of truth for whether a planned occurrence is paid is `planned_expense_payments` (matching the planned expense and occurrence), not the local date of the linked expense. A payment row counts as paid as long as its linked expense exists and belongs to the same user; `expenses.spent_at` is history placement and must not make an otherwise valid payment appear unpaid or allow a duplicate Pay.
+- A committed recreate remains successful if best-effort analytics fail. In the Mini App, HTTP `201` is the mutation boundary: dashboard or archive refresh failures show a synchronization warning and must not reopen the form or retry the POST.
 
 ## Timezone
 

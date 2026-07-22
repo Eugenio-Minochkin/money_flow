@@ -109,6 +109,28 @@ test("planned disable UX keys stay in parity for Russian and English", () => {
   }
 });
 
+test("planned archive and recreate UX keys stay in parity for Russian and English", () => {
+  const keys = [
+    "plan.archiveTitle",
+    "plan.archiveLoading",
+    "plan.archiveEmpty",
+    "plan.archiveError",
+    "plan.archiveRetry",
+    "plan.archiveDateUnavailable",
+    "plan.archivePaymentOne",
+    "plan.archivePaymentFew",
+    "plan.archivePaymentMany",
+    "plan.createAgain",
+    "plan.startsOn",
+    "toast.plannedRecreated",
+    "toast.plannedRefreshWarning"
+  ];
+
+  for (const language of ["ru", "en"]) {
+    for (const key of keys) assert.equal(typeof translations[language][key], "string", `${language}.${key}`);
+  }
+});
+
 test("settings translations cover interface themes", () => {
   assert.equal(createTranslator("ru")("settings.interfaceTheme"), "Тема интерфейса");
   assert.equal(createTranslator("ru")("settings.themeDark"), "Темная");

@@ -1853,6 +1853,58 @@ test("builds report data with paid actual planned amount and unpaid planned occu
   assert.doesNotMatch(paidFactsQuery, /planned_expenses\.active = true/);
 });
 
+test("report excludes unpaid weekly occurrences before starts_on", async () => {
+  const user = {
+    id: 1,
+    telegram_user_id: 100,
+    monthly_budget_amount: 50000,
+    base_currency: "THB",
+    display_currency: "THB",
+    timezone: "America/New_York",
+    interface_language: "en"
+  };
+  const repo = createRepository(fakePool((sql) => {
+    const query = String(sql);
+    if (query.includes("FROM expenses") && query.includes("ORDER BY spent_at ASC")) return { rows: [] };
+    if (query.includes("FROM planned_expenses") && query.includes("JOIN users")) {
+      return {
+        rows: [{
+          id: "7",
+          description: "weekly class",
+          amount_base: 1000,
+          recurrence: "weekly",
+          weekday: 3,
+          starts_on: "2026-07-23",
+          timezone: "America/New_York",
+          paid_count: 0,
+          paid_occurrence_dates: [],
+          paid_occurrences: {}
+        }]
+      };
+    }
+    if (query.includes("FROM planned_expense_payments") && query.includes("JOIN planned_expenses")) return { rows: [] };
+    if (query.includes("FROM budget_topups") && query.includes("occurred_at")) return { rows: [] };
+    if (query.includes("GROUP BY category_slug")) return { rows: [] };
+    if (query === "SELECT timezone FROM users WHERE telegram_user_id = $1") return { rows: [{ timezone: user.timezone }] };
+    if (query.includes("FROM monthly_budget_overrides")) return { rows: [] };
+    if (query.includes("COALESCE(SUM(amount_base)") && query.includes("month_key")) return { rows: [{ total: 0 }] };
+    if (query.includes("FROM budget_topups") && query.includes("month_key")) return { rows: [] };
+    if (query.includes("FROM month_baselines")) return { rows: [] };
+    return { rows: [] };
+  }));
+
+  const report = await repo.buildReportDataForDelivery(user, "monthly", {
+    periodKey: "2026-07",
+    periodStartUtc: new Date("2026-07-01T04:00:00Z"),
+    periodEndUtc: new Date("2026-08-01T04:00:00Z"),
+    timezoneUsed: user.timezone,
+    localStartDate: "2026-07-01",
+    localEndDate: "2026-07-31"
+  }, new Date("2026-08-01T05:00:00Z"));
+
+  assert.deepEqual(report.plannedPayments.map((payment) => payment.dueDate), ["2026-07-29"]);
+});
+
 test("report data includes display equivalents for budget amount and remaining", async () => {
   const user = {
     id: 1,
@@ -2616,6 +2668,186 @@ test("creates and lists planned expenses", async () => {
   const event = queries.find((query) => query.sql.includes("INSERT INTO app_events"));
   assert.deepEqual(event.params, ["5", "planned_expense_created", JSON.stringify({ source: "miniapp" })]);
   assert.doesNotMatch(event.params[2], /ChatGPT|20/);
+});
+
+test("lists archived planned expenses with deduplicated same-user payment facts", async () => {
+  const queries = [];
+  const aliases = {
+    user_timezone: "Asia/Bangkok",
+    user_base_currency: "THB",
+    user_display_currency: "USD",
+    user_usd_thb_rate: "32.64"
+  };
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql: String(sql), params });
+    return {
+      rows: [
+        { id: 9, active: false, amount_base: "2000", disabled_at: "2026-07-20T00:00:00Z", paid_count: 2, paid_amount_base: 1750, ...aliases },
+        { id: 7, active: false, amount_base: "900", disabled_at: "2026-07-10T00:00:00Z", paid_count: 0, paid_amount_base: 0, ...aliases },
+        { id: 3, active: false, amount_base: "500", disabled_at: null, paid_count: 0, paid_amount_base: 0, ...aliases }
+      ]
+    };
+  }));
+
+  const archived = await repo.listArchivedPlannedExpensesForTelegramUser(100);
+
+  assert.deepEqual(archived.map((item) => item.id), [9, 7, 3]);
+  assert.equal(archived[0].active, false);
+  assert.equal(archived[0].paid_count, 2);
+  assert.equal(archived[0].paid_amount_base, 1750);
+  assert.equal(archived[0].display.paid_amount, 53.62);
+  assert.equal(archived.at(-1).disabled_at, null);
+  assert.ok(!("user_timezone" in archived[0]));
+  assert.ok(!("user_base_currency" in archived[0]));
+
+  const [{ sql, params }] = queries;
+  assert.deepEqual(params, [100]);
+  assert.match(sql, /SELECT DISTINCT ON \(pep\.planned_expense_id, pep\.paid_key\)/);
+  assert.match(sql, /JOIN expenses e ON e\.id = pep\.expense_id AND e\.user_id = source\.user_id/);
+  assert.match(sql, /WHERE users\.telegram_user_id = \$1 AND planned_expenses\.active = false/);
+  assert.match(sql, /ORDER BY planned_expenses\.disabled_at DESC NULLS LAST, planned_expenses\.id DESC/);
+});
+
+test("recreates the same archived plan twice as independent active plans without copying history", async () => {
+  const fixture = recreateRepositoryFixture();
+  const input = {
+    amount: 1000,
+    currency: "THB",
+    description: "weekly class",
+    category_slug: "education",
+    recurrence: "weekly",
+    weekday: 3
+  };
+  const now = new Date("2026-07-22T10:00:00+07:00");
+  const originalDisabledAt = new Date(fixture.source.disabled_at);
+
+  const first = await fixture.repository.recreatePlannedExpense(100, 7, input, "2026-07-23", now);
+  const second = await fixture.repository.recreatePlannedExpense(100, 7, input, "2026-07-23", now);
+
+  assert.notEqual(first.id, second.id);
+  assert.equal(first.active, true);
+  assert.equal(first.starts_on, "2026-07-23");
+  assert.equal(fixture.source.active, false);
+  assert.equal(new Date(fixture.source.disabled_at).toISOString(), originalDisabledAt.toISOString());
+  assert.equal(fixture.insertedPayments.length, 0);
+  assert.equal(fixture.insertedExpenses.length, 0);
+  assert.equal(fixture.created.length, 2);
+  assert.deepEqual(fixture.events.map((event) => event.metadata), [
+    { source: "miniapp", mode: "recreate" },
+    { source: "miniapp", mode: "recreate" }
+  ]);
+  assert.doesNotMatch(JSON.stringify(fixture.events), /archived|plannedExpenseId|1000|weekly class/);
+});
+
+test("recreate checks archived ownership and state before payload, date, or rates", async () => {
+  for (const source of [null, { active: true }, { active: false, owned: false }]) {
+    const fixture = recreateRepositoryFixture({ source });
+    const result = await fixture.repository.recreatePlannedExpense(
+      100,
+      7,
+      { amount: "bad", recurrence: "one_off", due_date: "bad" },
+      "bad",
+      new Date("2026-07-22T10:00:00+07:00")
+    );
+    assert.equal(result, null);
+    assert.equal(fixture.rateCalls, 0);
+    assert.equal(fixture.statements.length, 1);
+  }
+});
+
+test("recreate validates start and one-off dates with stable domain codes", async () => {
+  const cases = [
+    { startsOn: "bad", dueDate: "2026-07-25", code: "invalid_planned_start_date" },
+    { startsOn: "2026-07-23T00:00:00Z", dueDate: "2026-07-25", code: "invalid_planned_start_date" },
+    { startsOn: "2026-07-21", dueDate: "2026-07-25", code: "planned_start_date_in_past" },
+    { startsOn: "2026-07-23", dueDate: null, code: "invalid_planned_due_date" },
+    { startsOn: "2026-07-23", dueDate: "2026-02-31", code: "invalid_planned_due_date" },
+    { startsOn: "2026-07-23", dueDate: "2026-07-22", code: "planned_due_date_before_start" }
+  ];
+  for (const { startsOn, dueDate, code } of cases) {
+    const fixture = recreateRepositoryFixture();
+    await assert.rejects(
+      fixture.repository.recreatePlannedExpense(100, 7, {
+        amount: 1000,
+        currency: "THB",
+        description: "insurance",
+        recurrence: "one_off",
+        due_date: dueDate
+      }, startsOn, new Date("2026-07-22T10:00:00+07:00")),
+      (error) => error.code === code
+    );
+    assert.equal(fixture.created.length, 0);
+  }
+});
+
+test("recreate returns not found when the archived source no longer qualifies after locking", async () => {
+  const fixture = recreateRepositoryFixture({ disappearOnLock: true });
+
+  const result = await fixture.repository.recreatePlannedExpense(100, 7, {
+    amount: 1000,
+    currency: "THB",
+    description: "insurance",
+    recurrence: "monthly",
+    due_day: 30
+  }, "2026-07-23", new Date("2026-07-22T10:00:00+07:00"));
+
+  assert.equal(result, null);
+  assert.ok(fixture.statements.includes("ROLLBACK"));
+  assert.ok(!fixture.statements.includes("COMMIT"));
+  assert.equal(fixture.created.length, 0);
+  assert.equal(fixture.events.length, 0);
+});
+
+test("recreate rolls back reserve conflicts on the transaction client", async () => {
+  const fixture = recreateRepositoryFixture({
+    reserve: {
+      id: "9",
+      user_id: "1",
+      period: "2026-07",
+      budget_amount: "1000",
+      reserve_amount: "500",
+      status: "active"
+    }
+  });
+
+  await assert.rejects(
+    fixture.repository.recreatePlannedExpense(100, 7, {
+      amount: 1000,
+      currency: "THB",
+      description: "insurance",
+      recurrence: "monthly",
+      due_day: 30
+    }, "2026-07-23", new Date("2026-07-22T10:00:00+07:00")),
+    (error) => error.code === "reserve_conflicts_with_planned_change"
+  );
+
+  assert.ok(fixture.statements.includes("ROLLBACK"));
+  assert.ok(!fixture.statements.includes("COMMIT"));
+  assert.equal(fixture.created.length, 0);
+  assert.equal(fixture.events.length, 0);
+  assert.ok(fixture.clientStatements.some((sql) => sql.includes("FROM monthly_reserve_instances")));
+  assert.ok(fixture.clientStatements.some((sql) => sql.includes("FROM planned_expenses") && sql.includes("active = true")));
+  const reserveRead = fixture.clientQueries.find(({ sql }) => sql.includes("FROM monthly_reserve_instances"));
+  const activePlansRead = fixture.clientQueries.find(({ sql }) => sql.includes("FROM planned_expenses") && sql.includes("active = true"));
+  assert.deepEqual(reserveRead.params, [fixture.source.user_id]);
+  assert.deepEqual(activePlansRead.params, [fixture.source.user_id]);
+});
+
+test("recreate keeps a committed plan successful when analytics fails", async () => {
+  const fixture = recreateRepositoryFixture({ eventFailure: new Error("analytics unavailable") });
+
+  const created = await fixture.repository.recreatePlannedExpense(100, 7, {
+    amount: 1000,
+    currency: "THB",
+    description: "insurance",
+    recurrence: "monthly",
+    due_day: 30
+  }, "2026-07-23", new Date("2026-07-22T10:00:00+07:00"));
+
+  assert.equal(created.id, "100");
+  assert.equal(fixture.created.length, 1);
+  assert.ok(fixture.statements.includes("COMMIT"));
+  assert.ok(!fixture.statements.includes("ROLLBACK"));
 });
 
 test("checks successful report delivery for an exact user type and key", async () => {
@@ -3776,6 +4008,46 @@ test("paying with an invalid occurrenceDate rejects with invalid_occurrence", as
   assert.ok(!queries.some((query) => String(query.sql).includes("INSERT INTO expenses")));
 });
 
+test("paying a weekly planned expense rejects occurrences before starts_on and accepts later due dates", async () => {
+  const queries = [];
+  const repo = createRepository({
+    async connect() {
+      return fakePayClient({
+        planned: {
+          id: "5",
+          user_id: "1",
+          amount: "1000",
+          currency: "THB",
+          amount_base: "1000",
+          description: "weekly class",
+          category_slug: "education",
+          tags: [],
+          recurrence: "weekly",
+          weekday: 3,
+          starts_on: "2026-07-23",
+          base_currency: "THB",
+          timezone: "Asia/Bangkok"
+        },
+        queries
+      });
+    }
+  }, { exchangeRates: fixedRates() });
+
+  await assert.rejects(
+    repo.payPlannedExpenseForTelegramUser(5, 100, new Date("2026-07-30T09:00:00+07:00"), { occurrenceDate: "2026-07-22" }),
+    (error) => error.code === "invalid_occurrence"
+  );
+  await repo.payPlannedExpenseForTelegramUser(
+    5,
+    100,
+    new Date("2026-07-30T09:00:00+07:00"),
+    { occurrenceDate: "2026-07-29" }
+  );
+
+  const paymentInsert = queries.find((query) => String(query.sql).includes("INSERT INTO planned_expense_payments"));
+  assert.equal(paymentInsert.params[4], "2026-07-29");
+});
+
 test("paying a weekly planned expense pays the earliest overdue occurrence", async () => {
   const queries = [];
   const repo = createRepository({
@@ -4319,6 +4591,30 @@ test("dashboard subtracts unpaid planned expenses due this week from weekly rema
   assert.equal(dashboard.snapshot.weekRemaining, 7000);
 });
 
+test("dashboard excludes weekly occurrences before starts_on in the user calendar", async () => {
+  const repo = createRepository(dashboardPoolWithPlannedExpenses([{
+    id: "5",
+    user_id: "1",
+    amount: "1000",
+    amount_base: "1000",
+    currency: "THB",
+    description: "weekly class",
+    category_slug: "education",
+    recurrence: "weekly",
+    weekday: 3,
+    starts_on: "2026-07-23",
+    paid_count: 0,
+    paid_occurrence_dates: []
+  }], {
+    user: { timezone: "Asia/Bangkok", monthly_budget_amount: "45000", weekly_budget_amount: "12000" }
+  }));
+
+  const dashboard = await repo.dashboard(100, new Date("2026-07-23T10:00:00+07:00"));
+
+  assert.equal(dashboard.snapshot.plannedRemaining, 1000);
+  assert.equal(dashboard.snapshot.plannedThisWeek, 0);
+});
+
 test("dashboard excludes current-month paid planned expenses from reserve", async () => {
   const repo = createRepository(fakePool((sql) => {
     if (String(sql).startsWith("SELECT * FROM users")) {
@@ -4503,7 +4799,7 @@ test("reserve capacity counts only valid paid occurrences from inactive plans", 
         && /expenses\.user_id = planned_expenses\.user_id/.test(statement);
       return {
         rows: [
-          { id: "5", active: false, recurrence: "monthly", due_day: 10, amount_base: "2000", paid_count: validatesExpenseOwner ? 1 : 2 },
+          { id: "5", active: false, recurrence: "monthly", due_day: 10, starts_on: "2026-07-01", amount_base: "2000", paid_count: validatesExpenseOwner ? 1 : 2 },
           { id: "6", active: false, recurrence: "monthly", due_day: 20, amount_base: "4000", paid_count: validatesExpenseOwner ? 0 : 1 },
           { id: "7", active: true, recurrence: "monthly", due_day: 30, amount_base: "3000", paid_count: 0 }
         ]
@@ -4762,6 +5058,8 @@ test("upserts the current reserve and recurring template with explicit scope", a
   assert.equal(result.template.is_active, true);
   assert.ok(calls.some((call) => call.query.includes("ON CONFLICT (user_id, period)")));
   assert.ok(calls.some((call) => call.query.includes("ON CONFLICT (user_id)")));
+  const reserveInsert = calls.find((call) => call.query.includes("INSERT INTO monthly_reserve_instances"));
+  assert.equal(reserveInsert.params[2], "UTC");
 });
 
 test("disables current reserve and recurrence with current_and_future scope", async () => {
@@ -5275,6 +5573,112 @@ function fakePool(handler) {
     async query(sql, params = []) {
       return handler(sql, params);
     }
+  };
+}
+
+function recreateRepositoryFixture({
+  source: sourceOverride,
+  reserve = null,
+  eventFailure = null,
+  disappearOnLock = false
+} = {}) {
+  const defaultSource = {
+    id: "7",
+    user_id: "1",
+    active: false,
+    owned: true,
+    disabled_at: "2026-07-01T03:00:00.000Z",
+    base_currency: "THB",
+    display_currency: "USD",
+    usd_thb_rate: "32.6",
+    timezone: "Asia/Bangkok"
+  };
+  const source = sourceOverride === undefined ? defaultSource : sourceOverride;
+  const statements = [];
+  const clientStatements = [];
+  const clientQueries = [];
+  const created = [];
+  const insertedPayments = [];
+  const insertedExpenses = [];
+  const events = [];
+  let rateCalls = 0;
+
+  const archivedRow = () => source && source.active === false && source.owned !== false ? source : null;
+  const client = {
+    async query(sql, params = []) {
+      const query = String(sql);
+      statements.push(query);
+      clientStatements.push(query);
+      clientQueries.push({ sql: query, params });
+      if (["BEGIN", "COMMIT", "ROLLBACK"].includes(query)) return { rows: [] };
+      if (query.includes("planned_expenses.active = false") && query.includes("FOR UPDATE")) {
+        return { rows: !disappearOnLock && archivedRow() ? [{ ...archivedRow() }] : [] };
+      }
+      if (query.includes("FROM monthly_reserve_instances") && query.includes("status = 'active'")) {
+        return { rows: reserve ? [reserve] : [] };
+      }
+      if (query.includes("FROM planned_expenses") && query.includes("active = true")) return { rows: [] };
+      if (query.startsWith("INSERT INTO planned_expenses")) {
+        const row = {
+          id: String(100 + created.length),
+          user_id: params[0],
+          amount: params[1],
+          currency: params[2],
+          amount_base: params[3],
+          description: params[4],
+          category_slug: params[5],
+          tags: params[6],
+          recurrence: params[7],
+          due_day: params[8],
+          due_days: params[9],
+          weekday: params[10],
+          due_date: params[11],
+          starts_on: params[12],
+          active: true
+        };
+        created.push(row);
+        return { rows: [row] };
+      }
+      if (query.includes("INSERT INTO planned_expense_payments")) insertedPayments.push(params);
+      if (query.includes("INSERT INTO expenses")) insertedExpenses.push(params);
+      throw new Error(`Unexpected SQL: ${query}`);
+    },
+    release() {}
+  };
+  const pool = {
+    async query(sql) {
+      const query = String(sql);
+      statements.push(query);
+      if (query.includes("planned_expenses.active = false") && !query.includes("FOR UPDATE")) {
+        return { rows: archivedRow() ? [{ ...archivedRow() }] : [] };
+      }
+      throw new Error(`Unexpected pool SQL: ${query}`);
+    },
+    async connect() { return client; }
+  };
+  const repository = createRepository(pool, {
+    exchangeRates: {
+      async ratesFor() {
+        rateCalls += 1;
+        return fixedRates().ratesFor();
+      }
+    }
+  });
+  repository.recordAppEvent = async (userId, eventName, metadata) => {
+    events.push({ userId, eventName, metadata });
+    if (eventFailure) throw eventFailure;
+  };
+  return {
+    repository,
+    source,
+    statements,
+    clientStatements,
+    clientQueries,
+    created,
+    insertedPayments,
+    insertedExpenses,
+    events,
+    get rateCalls() { return rateCalls; }
   };
 }
 
