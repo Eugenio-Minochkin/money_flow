@@ -408,6 +408,12 @@ test("planned disable uses the focused helper and prefers the server-owned month
   assert.match(app, /runPlannedDisable\(\{[^]*?language:\s*currentLanguage,[^]*?createTranslator,/s);
 });
 
+test("toast preserves planned disable result paragraphs", async () => {
+  const css = await readFile(join(miniAppRoot, "styles.css"), "utf8");
+
+  assert.match(css, /\.toast\s*{[^}]*white-space:\s*pre-line/s);
+});
+
 test("settings expose interface theme as a visible select", async () => {
   const html = await readFile(join(miniAppRoot, "index.html"), "utf8");
 

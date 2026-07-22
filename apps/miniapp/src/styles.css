@@ -1759,6 +1759,7 @@ button:disabled {
   font-weight: 850;
   padding: 12px 14px;
   text-align: center;
+  white-space: pre-line;
 }
 
 .empty,
