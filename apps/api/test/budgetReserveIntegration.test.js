@@ -121,7 +121,7 @@ test("creating a planned expense preserves today's existing snapshot", async () 
 
   assert.equal(state.daySnapshotDeleted, false);
   assert.equal(dashboard.snapshot.dayPlanLimit, 999);
-  assert.equal(dashboard.snapshot.plannedRemaining, 4000);
+  assert.equal(dashboard.snapshot.plannedRemaining, 6000);
 });
 
 test("deactivating a planned expense preserves today's existing snapshot", async () => {
@@ -195,13 +195,14 @@ test("the next local day creates a new snapshot from the latest planned state", 
     due_day: 30
   }, firstDay);
   const firstDashboard = await repo.dashboard(100, firstDay);
+  state.totals.today = { regular: 0, planned: 0, largeOneOff: 0 };
   state.totalsCall = 0;
   const nextDashboard = await repo.dashboard(100, nextDay);
 
   assert.equal(firstDashboard.snapshot.dayPlanLimit, 999);
   assert.equal(state.daySnapshotDeleted, false);
   assert.equal(state.storedDayKey, "2026-06-25");
-  assert.equal(nextDashboard.snapshot.dayPlanLimit, 6833.33);
+  assert.equal(nextDashboard.snapshot.dayPlanLimit, 6775);
   assert.equal(nextDashboard.snapshot.plannedRemaining, 4000);
 });
 
@@ -303,27 +304,29 @@ function createBudgetReserveState({
     timezone: "Asia/Bangkok",
     budget_advice_enabled: true
   };
+  const planned = {
+    id: "5",
+    user_id: "1",
+    amount: String(plannedAmount),
+    currency: "THB",
+    amount_base: String(plannedAmount),
+    description: "therapy",
+    category_slug: "health",
+    tags: [],
+    recurrence: "monthly",
+    due_day: 30,
+    due_days: [30],
+    weekday: null,
+    due_date: null,
+    active: true,
+    paid_count: 0,
+    paid_occurrence_dates: [],
+    paid_occurrences: {}
+  };
   return {
     user,
-    planned: {
-      id: "5",
-      user_id: "1",
-      amount: String(plannedAmount),
-      currency: "THB",
-      amount_base: String(plannedAmount),
-      description: "therapy",
-      category_slug: "health",
-      tags: [],
-      recurrence: "monthly",
-      due_day: 30,
-      due_days: [30],
-      weekday: null,
-      due_date: null,
-      active: true,
-      paid_count: 0,
-      paid_occurrence_dates: [],
-      paid_occurrences: {}
-    },
+    planned,
+    plans: [planned],
     reserve: {
       id: "9",
       user_id: "1",
@@ -381,8 +384,9 @@ function handleBudgetReserveQuery(state, sql, params) {
   }
 
   if (sql.startsWith("INSERT INTO planned_expenses")) {
-    state.planned = {
+    const created = {
       ...state.planned,
+      id: String(state.plans.length + 5),
       amount: String(params[1]),
       currency: params[2],
       amount_base: String(params[3]),
@@ -394,14 +398,19 @@ function handleBudgetReserveQuery(state, sql, params) {
       due_days: params[9],
       weekday: params[10],
       due_date: params[11],
+      paid_occurrence_dates: [],
+      paid_occurrences: {},
       active: true
     };
-    return { rows: [state.planned] };
+    state.plans.push(created);
+    return { rows: [created] };
   }
 
   if (sql.startsWith("UPDATE planned_expenses") && sql.includes("amount =")) {
-    state.planned = {
-      ...state.planned,
+    const targetId = String(params[11]);
+    const target = state.plans.find((plan) => String(plan.id) === targetId) ?? state.planned;
+    const updated = {
+      ...target,
       amount: String(params[0]),
       currency: params[1],
       amount_base: String(params[2]),
@@ -414,16 +423,23 @@ function handleBudgetReserveQuery(state, sql, params) {
       weekday: params[9],
       due_date: params[10]
     };
-    return { rows: [state.planned] };
+    state.plans = state.plans.map((plan) => String(plan.id) === targetId ? updated : plan);
+    if (String(state.planned.id) === targetId) state.planned = updated;
+    return { rows: [updated] };
   }
 
   if (sql.startsWith("UPDATE planned_expenses") && sql.includes("active = false")) {
-    state.planned = { ...state.planned, active: false };
-    return { rows: [state.planned] };
+    const targetId = String(params[0]);
+    const target = state.plans.find((plan) => String(plan.id) === targetId) ?? state.planned;
+    const updated = { ...target, active: false };
+    state.plans = state.plans.map((plan) => String(plan.id) === targetId ? updated : plan);
+    if (String(state.planned.id) === targetId) state.planned = updated;
+    return { rows: [updated] };
   }
 
   if (sql.includes("SELECT planned_expenses.*, users.base_currency, users.usd_thb_rate")) {
-    return { rows: [{ ...state.planned, base_currency: state.user.base_currency, usd_thb_rate: state.user.usd_thb_rate }] };
+    const target = state.plans.find((plan) => String(plan.id) === String(params[0])) ?? state.planned;
+    return { rows: [{ ...target, base_currency: state.user.base_currency, usd_thb_rate: state.user.usd_thb_rate }] };
   }
 
   if (sql.includes("SELECT pep.occurrence_date::text")) {
@@ -449,10 +465,12 @@ function handleBudgetReserveQuery(state, sql, params) {
   }
 
   if (sql.includes("INSERT INTO planned_expense_payments")) {
-    state.planned = {
+    const updated = {
       ...state.planned,
       paid_occurrence_dates: [params[4]]
     };
+    state.planned = updated;
+    state.plans = state.plans.map((plan) => String(plan.id) === String(updated.id) ? updated : plan);
     return { rows: [] };
   }
 
@@ -483,11 +501,15 @@ function handleBudgetReserveQuery(state, sql, params) {
   if (sql.includes("monthly_budget_overrides")) return { rows: [] };
   if (sql.includes("month_baselines")) return { rows: [] };
 
+  if (sql.startsWith("SELECT * FROM planned_expenses") && sql.includes("active = true")) {
+    return { rows: state.plans.filter((plan) => plan.active) };
+  }
+
   if (sql.includes("COUNT(planned_expense_payments.id)::int AS paid_count")) {
-    return { rows: state.planned.active ? [{ ...state.planned, paid_count: 0 }] : [] };
+    return { rows: state.plans.map((plan) => ({ ...plan, paid_count: 0 })) };
   }
   if (sql.includes("COALESCE(paid.paid_count")) {
-    return { rows: state.planned.active ? [{ ...state.planned, paid_count: 0 }] : [] };
+    return { rows: state.plans.filter((plan) => plan.active).map((plan) => ({ ...plan, paid_count: 0 })) };
   }
   if (sql.includes("FROM planned_expense_payments") && sql.includes("JOIN expenses")) return { rows: [{ total: state.paidPlannedAmount }] };
 
