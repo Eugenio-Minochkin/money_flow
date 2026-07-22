@@ -2754,7 +2754,6 @@ export function createRepository(pool, options = {}) {
         ]
       );
       const row = result.rows[0] ?? null;
-      if (row) await invalidateDailyBudgetSnapshot(pool, user.id, now, resolveUserTimeZone(user));
       if (row) await this.recordAppEvent(row.user_id ?? user.id, "planned_expense_created", { source: "miniapp" });
       return row;
     },
@@ -2779,10 +2778,10 @@ export function createRepository(pool, options = {}) {
              due_day = $8,
              due_days = $9,
              weekday = $10,
-             due_date = $11,
-             active = $12
-         WHERE id = $13
-           AND user_id = (SELECT id FROM users WHERE telegram_user_id = $14)
+             due_date = $11
+         WHERE id = $12
+           AND user_id = (SELECT id FROM users WHERE telegram_user_id = $13)
+           AND active = true
          RETURNING *`,
         [
           planned.amount,
@@ -2796,31 +2795,98 @@ export function createRepository(pool, options = {}) {
           planned.due_days,
           planned.weekday,
           planned.due_date,
-          planned.active,
           plannedExpenseId,
           telegramUserId
         ]
       );
       const row = result.rows[0] ?? null;
-      if (row) await invalidateDailyBudgetSnapshot(pool, user.id, now, resolveUserTimeZone(user));
       if (row) await this.recordAppEvent(row.user_id ?? user.id, "planned_expense_updated", { source: "miniapp" });
       return row;
     },
 
     async deactivatePlannedExpense(telegramUserId, plannedExpenseId, now = new Date()) {
-      const user = await this.getUserByTelegramId(telegramUserId);
-      const result = await pool.query(
-        `UPDATE planned_expenses
-         SET active = false
-         WHERE id = $1
-           AND user_id = (SELECT id FROM users WHERE telegram_user_id = $2)
-         RETURNING id`,
-        [plannedExpenseId, telegramUserId]
-      );
-      const row = result.rows[0] ?? null;
-      if (row && user) await invalidateDailyBudgetSnapshot(pool, user.id, now, resolveUserTimeZone(user));
-      if (row && user) await this.recordAppEvent(row.user_id ?? user.id, "planned_expense_deleted", { source: "miniapp" });
-      return row;
+      const currentNow = normalizeNow(now);
+      const client = await pool.connect();
+      let response = null;
+      let transitioned = false;
+      try {
+        await client.query("BEGIN");
+        const plannedResult = await client.query(
+          `SELECT planned_expenses.*, users.base_currency, users.timezone
+           FROM planned_expenses
+           JOIN users ON users.id = planned_expenses.user_id
+           WHERE planned_expenses.id = $1
+             AND users.telegram_user_id = $2
+           FOR UPDATE`,
+          [plannedExpenseId, telegramUserId]
+        );
+        const planned = plannedResult.rows[0] ?? null;
+        if (!planned) {
+          await client.query("ROLLBACK");
+          return null;
+        }
+
+        const timeZone = userTimezone(planned);
+        const impactNow = planned.active || !planned.disabled_at
+          ? currentNow
+          : normalizeNow(planned.disabled_at);
+        const currentMonth = timeZoneMonthKey(impactNow, timeZone);
+        const occurrenceDates = plannedDueDatesThisMonth(planned, impactNow, timeZone)
+          .map((date) => localDayKey(date, timeZone));
+        const occurrenceDateSet = new Set(occurrenceDates);
+        const paidResult = await client.query(
+          `SELECT pep.occurrence_date::text, e.amount_base
+           FROM planned_expense_payments pep
+           JOIN expenses e ON e.id = pep.expense_id
+                          AND e.user_id = $2
+           WHERE pep.planned_expense_id = $1
+             AND pep.paid_month = $3
+           ORDER BY pep.occurrence_date`,
+          [planned.id, planned.user_id, currentMonth]
+        );
+        const validPaidByOccurrence = new Map();
+        for (const payment of paidResult.rows) {
+          const occurrenceDate = normalizeOccurrenceKey(payment.occurrence_date);
+          if (occurrenceDate && !validPaidByOccurrence.has(occurrenceDate)) {
+            validPaidByOccurrence.set(occurrenceDate, Number(payment.amount_base ?? 0));
+          }
+        }
+        const unpaidOccurrencesRemoved = occurrenceDates.filter((date) => !validPaidByOccurrence.has(date)).length;
+        const impact = {
+          paidOccurrencesKept: validPaidByOccurrence.size,
+          paidAmountKept: roundMoney([...validPaidByOccurrence.values()].reduce((sum, amount) => sum + amount, 0)),
+          unpaidOccurrencesRemoved,
+          unpaidAmountRemoved: roundMoney(unpaidOccurrencesRemoved * Number(planned.amount_base ?? 0)),
+          currency: planned.base_currency
+        };
+
+        let plannedExpense;
+        if (planned.active) {
+          const updatedResult = await client.query(
+            `UPDATE planned_expenses
+             SET active = false, disabled_at = $2
+             WHERE id = $1 AND active = true
+             RETURNING *`,
+            [planned.id, currentNow]
+          );
+          plannedExpense = updatedResult.rows[0] ?? null;
+          transitioned = Boolean(plannedExpense);
+        } else {
+          const { base_currency: _baseCurrency, timezone: _timezone, ...storedPlannedExpense } = planned;
+          plannedExpense = storedPlannedExpense;
+        }
+        response = plannedExpense ? { plannedExpense, impact } : null;
+        await client.query("COMMIT");
+      } catch (error) {
+        try { await client.query("ROLLBACK"); } catch { /* preserve original transaction error */ }
+        throw error;
+      } finally {
+        client.release();
+      }
+      if (transitioned && response) {
+        await this.recordAppEvent(response.plannedExpense.user_id, "planned_expense_deleted", { source: "miniapp" });
+      }
+      return response;
     },
 
     async payPlannedExpenseForTelegramUser(plannedExpenseId, telegramUserId, paidAt = new Date(), options = {}) {
@@ -2994,6 +3060,21 @@ export function createRepository(pool, options = {}) {
       const plannedRemainingDisplayTotal = displayFromBase(plannedRemaining, user);
       const plannedThisWeekDisplayTotal = displayFromBase(plannedThisWeekTotal, user);
       const paidPlannedMonthDisplayTotal = displayFromBase(paidPlannedMonthTotal, user);
+      const plannedMonthPaid = roundMoney(paidPlannedMonthTotal);
+      const plannedMonthRemaining = roundMoney(plannedRemaining);
+      const plannedMonthDisplayPaid = roundMoney(paidPlannedMonthDisplayTotal);
+      const plannedMonthDisplayRemaining = roundMoney(plannedRemainingDisplayTotal);
+      const plannedMonthSummary = {
+        paid: plannedMonthPaid,
+        remaining: plannedMonthRemaining,
+        total: roundMoney(plannedMonthPaid + plannedMonthRemaining),
+        display: {
+          currency: user.display_currency ?? "USD",
+          paid: plannedMonthDisplayPaid,
+          remaining: plannedMonthDisplayRemaining,
+          total: roundMoney(plannedMonthDisplayPaid + plannedMonthDisplayRemaining)
+        }
+      };
       const manualWeeklyBudget = user.weekly_budget_amount == null ? null : Number(user.weekly_budget_amount);
       const daysInCurrentMonth = timeZoneMonthState(now, calculationTimeZone).daysInMonth;
       const resolvedWeeklyBudget = roundMoney(
@@ -3094,6 +3175,7 @@ export function createRepository(pool, options = {}) {
         recurringReserveBlocked: reserveOpening?.recurringReserveBlocked === true,
         closedReserveEvents: pendingReserveEventsResult.rows,
         snapshot,
+        plannedMonthSummary,
         latestExpenses: latest.rows.map((row) => withDisplay(row, user)),
         topCategories,
         analytics,
@@ -3201,15 +3283,25 @@ async function totalForPreviousWeek(pool, userId, now, user, timeZone = userTime
 }
 
 async function paidPlannedTotalForMonth(pool, userId, now, timeZone = "Asia/Bangkok") {
-  const bounds = localPeriodBounds(now, "month", timeZone);
+  const period = monthKey(now, timeZone);
   const result = await pool.query(
-    `SELECT COALESCE(SUM(expenses.amount_base), 0)::float AS total
-     FROM planned_expense_payments
-     JOIN expenses ON expenses.id = planned_expense_payments.expense_id
-     WHERE expenses.user_id = $1
-       AND expenses.spent_at >= $2
-       AND expenses.spent_at < $3`,
-    [userId, bounds.start, bounds.end]
+    `SELECT COALESCE(SUM(paid.amount_base), 0)::float AS total
+     FROM (
+       SELECT planned_expense_payments.planned_expense_id,
+              planned_expense_payments.paid_key,
+              MAX(expenses.amount_base)::float AS amount_base
+       FROM planned_expense_payments
+       JOIN planned_expenses
+         ON planned_expenses.id = planned_expense_payments.planned_expense_id
+       JOIN expenses
+         ON expenses.id = planned_expense_payments.expense_id
+        AND expenses.user_id = planned_expenses.user_id
+       WHERE planned_expenses.user_id = $1
+         AND planned_expense_payments.paid_month = $2
+       GROUP BY planned_expense_payments.planned_expense_id,
+                planned_expense_payments.paid_key
+     ) paid`,
+    [userId, period]
   );
   return Number(result.rows[0]?.total ?? 0);
 }
@@ -3701,8 +3793,7 @@ function normalizePlannedExpense(item) {
     due_day: dueDay,
     due_days: recurrence === "weekly" ? [] : dueDays,
     weekday: recurrence === "weekly" ? normalizeWeekday(item.weekday) : null,
-    due_date: item.due_date || null,
-    active: item.active ?? true
+    due_date: item.due_date || null
   };
 }
 
@@ -4031,12 +4122,15 @@ async function plannedObligationsForPeriod(client, userId, period, timeZone) {
     : `${year}-${String(month + 1).padStart(2, "0")}`;
   const plansResult = await client.query(
     `SELECT planned_expenses.*,
-            COUNT(planned_expense_payments.id)::int AS paid_count
+            COUNT(expenses.id)::int AS paid_count
      FROM planned_expenses
      LEFT JOIN planned_expense_payments
        ON planned_expense_payments.planned_expense_id = planned_expenses.id
-      AND planned_expense_payments.occurrence_date >= $2::date
-      AND planned_expense_payments.occurrence_date < $3::date
+       AND planned_expense_payments.occurrence_date >= $2::date
+       AND planned_expense_payments.occurrence_date < $3::date
+     LEFT JOIN expenses
+       ON expenses.id = planned_expense_payments.expense_id
+      AND expenses.user_id = planned_expenses.user_id
      WHERE planned_expenses.user_id = $1
      GROUP BY planned_expenses.id`,
     [

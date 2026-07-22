@@ -25,7 +25,7 @@ test.before(async () => {
   const applied = await pool.query("SELECT filename FROM schema_migrations ORDER BY filename");
   assert.deepEqual(
     applied.rows.map((row) => row.filename),
-    ["001_initial.sql", "002_draft_confirm_flow.sql", "003_budget_topups.sql", "004_report_deliveries.sql", "005_exchange_rates.sql", "006_feedback.sql", "007_account_deletion.sql", "008_product_analytics.sql", "009_telegram_expense_editor.sql", "010_telegram_editor_prompt_message.sql"]
+    ["001_initial.sql", "002_draft_confirm_flow.sql", "003_budget_topups.sql", "004_report_deliveries.sql", "005_exchange_rates.sql", "006_feedback.sql", "007_account_deletion.sql", "008_product_analytics.sql", "009_telegram_expense_editor.sql", "010_telegram_editor_prompt_message.sql", "011_planned_expense_disabled_at.sql"]
   );
 
   const sessions = await pool.query(`
@@ -235,40 +235,101 @@ test("recalculates dashboard budget summary from real expense rows", async () =>
   assert.equal(dashboard.topCategories[0].category_slug, "food_groceries");
 });
 
-test("creates, lists, pays, and deactivates a planned payment", async () => {
+test("disables a partially paid weekly plan idempotently while preserving paid history and today's snapshot", async () => {
   await createSmokeUser(990004);
   const planned = await repo.createPlannedExpense(990004, {
-    amount: 2000,
+    amount: 1000,
     currency: "THB",
-    description: "rent",
+    description: "weekly lesson",
     category_slug: "home",
-    recurrence: "monthly",
-    due_day: 30,
-    due_days: [30],
+    recurrence: "weekly",
+    weekday: 3,
     tags: ["fixed"]
   }, new Date("2026-07-01T00:00:00+07:00"));
 
-  assert.equal(Number(planned.amount_base), 2000);
+  assert.equal(Number(planned.amount_base), 1000);
+  assert.equal(planned.disabled_at, null);
 
   let plannedRows = await repo.listPlannedExpensesForTelegramUser(990004);
   assert.equal(plannedRows.length, 1);
-  assert.equal(plannedRows[0].description, "rent");
+  assert.equal(plannedRows[0].description, "weekly lesson");
 
-  const paid = await repo.payPlannedExpenseForTelegramUser(
+  const firstPaid = await repo.payPlannedExpenseForTelegramUser(
     planned.id,
     990004,
-    new Date("2026-07-30T10:00:00+07:00"),
-    { occurrenceDate: "2026-07-30" }
+    new Date("2026-07-01T10:00:00+07:00"),
+    { occurrenceDate: "2026-07-01" }
   );
-  assert.equal(paid.budget_impact, "planned");
+  const secondPaid = await repo.payPlannedExpenseForTelegramUser(
+    planned.id,
+    990004,
+    new Date("2026-07-08T10:00:00+07:00"),
+    { occurrenceDate: "2026-07-08" }
+  );
+  assert.equal(firstPaid.budget_impact, "planned");
+  assert.equal(secondPaid.budget_impact, "planned");
 
   plannedRows = await repo.listPlannedExpensesForTelegramUser(990004);
-  assert.equal(plannedRows[0].paid_count, 1);
-  assert.deepEqual(plannedRows[0].paid_occurrence_dates, ["2026-07-30"]);
+  assert.equal(plannedRows[0].paid_count, 2);
+  assert.deepEqual(plannedRows[0].paid_occurrence_dates, ["2026-07-01", "2026-07-08"]);
 
-  await repo.deactivatePlannedExpense(990004, planned.id);
+  const now = new Date("2026-07-22T10:00:00+07:00");
+  const beforeDisableDashboard = await repo.dashboard(990004, now);
+  assert.equal(beforeDisableDashboard.snapshot.plannedRemaining, 3000);
+  assert.equal(beforeDisableDashboard.snapshot.freeRemaining, 40000);
+  assert.equal(beforeDisableDashboard.snapshot.forecastMonthTotal, 5000);
+  const beforeRows = {
+    expenses: Number((await pool.query("SELECT COUNT(*)::int AS count FROM expenses WHERE user_id = $1", [planned.user_id])).rows[0].count),
+    payments: Number((await pool.query("SELECT COUNT(*)::int AS count FROM planned_expense_payments WHERE planned_expense_id = $1", [planned.id])).rows[0].count)
+  };
+
+  const firstDisable = await repo.deactivatePlannedExpense(990004, planned.id, now);
+  const secondDisable = await repo.deactivatePlannedExpense(990004, planned.id, new Date("2026-07-22T12:00:00+07:00"));
+
+  assert.deepEqual(firstDisable.impact, {
+    paidOccurrencesKept: 2,
+    paidAmountKept: 2000,
+    unpaidOccurrencesRemoved: 3,
+    unpaidAmountRemoved: 3000,
+    currency: "THB"
+  });
+  assert.deepEqual(secondDisable, firstDisable);
+  assert.equal(firstDisable.plannedExpense.active, false);
+  assert.equal(firstDisable.plannedExpense.disabled_at.toISOString(), now.toISOString());
+
   plannedRows = await repo.listPlannedExpensesForTelegramUser(990004);
   assert.equal(plannedRows.length, 0);
+
+  const storedPlan = await pool.query("SELECT active, disabled_at FROM planned_expenses WHERE id = $1", [planned.id]);
+  assert.equal(storedPlan.rows[0].active, false);
+  assert.equal(storedPlan.rows[0].disabled_at.toISOString(), now.toISOString());
+  assert.deepEqual({
+    expenses: Number((await pool.query("SELECT COUNT(*)::int AS count FROM expenses WHERE user_id = $1", [planned.user_id])).rows[0].count),
+    payments: Number((await pool.query("SELECT COUNT(*)::int AS count FROM planned_expense_payments WHERE planned_expense_id = $1", [planned.id])).rows[0].count)
+  }, beforeRows);
+
+  const afterDisableDashboard = await repo.dashboard(990004, now);
+  assert.equal(afterDisableDashboard.snapshot.dayPlanLimit, beforeDisableDashboard.snapshot.dayPlanLimit);
+  assert.equal(afterDisableDashboard.snapshot.plannedRemaining, 0);
+  assert.equal(afterDisableDashboard.snapshot.freeRemaining, 43000);
+  assert.equal(afterDisableDashboard.snapshot.forecastMonthTotal, 2000);
+
+  const nextDayDashboard = await repo.dashboard(990004, new Date("2026-07-23T10:00:00+07:00"));
+  assert.ok(nextDayDashboard.snapshot.dayPlanLimit > afterDisableDashboard.snapshot.dayPlanLimit);
+  const dailySnapshots = await pool.query(
+    `SELECT day_key::text, budget_amount_base
+     FROM daily_budget_snapshots
+     WHERE user_id = $1
+     ORDER BY day_key`,
+    [planned.user_id]
+  );
+  assert.deepEqual(dailySnapshots.rows.map((row) => row.day_key), ["2026-07-22", "2026-07-23"]);
+  assert.equal(Number(dailySnapshots.rows[0].budget_amount_base), beforeDisableDashboard.snapshot.dayPlanLimit);
+  assert.equal(Number(dailySnapshots.rows[1].budget_amount_base), nextDayDashboard.snapshot.dayPlanLimit);
+  assert.equal((await pool.query(
+    "SELECT COUNT(*)::int AS count FROM app_events WHERE user_id = $1 AND event_name = 'planned_expense_deleted'",
+    [planned.user_id]
+  )).rows[0].count, 1);
 });
 
 test("creates and reads a current reserve through dashboard state", async () => {

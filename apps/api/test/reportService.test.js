@@ -41,6 +41,22 @@ test("paid planned total uses actual linked expense amount instead of template a
   assert.equal(metrics.regularTotal, 0);
 });
 
+test("paid planned expense from a disabled plan remains a factual report expense", () => {
+  const metrics = buildReportMetrics({
+    currency: "THB",
+    expenses: [
+      expense({ id: 10, amount: 450, impact: "planned" })
+    ],
+    paidPlannedPayments: [
+      { expense_id: 10, amount_base: 450, planned_amount_base: 1000, planned_expense_active: false }
+    ]
+  });
+
+  assert.equal(metrics.totalSpent, 450);
+  assert.equal(metrics.plannedPaidTotal, 450);
+  assert.equal(metrics.regularTotal, 0);
+});
+
 test("large planned payment is not double-counted as regular or large", () => {
   const metrics = buildReportMetrics({
     currency: "THB",

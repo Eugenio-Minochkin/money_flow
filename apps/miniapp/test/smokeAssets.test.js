@@ -399,6 +399,21 @@ test("planned summary uses stacked paid and remaining rows", async () => {
   assert.match(css, /\.planned-summary-row__amount\s*{[^}]*color:\s*var\(--ink\)/s);
 });
 
+test("planned disable uses the focused helper and prefers the server-owned month summary", async () => {
+  const app = await readFile(join(miniAppRoot, "app.js"), "utf8");
+
+  assert.match(app, /import\s*{[^}]*runPlannedDisable[^}]*}\s*from "\.\/plannedDisable\.js"/s);
+  assert.match(app, /dashboardState\?\.plannedMonthSummary\s*\?\?\s*calculatePlannedMonthSummary\(items\)/);
+  assert.match(app, /runPlannedDisable\(\{[^]*?confirm:\s*window\.confirm[^]*?disableRequest:[^]*?method:\s*"DELETE"[^]*?loadDashboard[^]*?showResult:\s*showToast/s);
+  assert.match(app, /runPlannedDisable\(\{[^]*?language:\s*currentLanguage,[^]*?createTranslator,/s);
+});
+
+test("toast preserves planned disable result paragraphs", async () => {
+  const css = await readFile(join(miniAppRoot, "styles.css"), "utf8");
+
+  assert.match(css, /\.toast\s*{[^}]*white-space:\s*pre-line/s);
+});
+
 test("settings expose interface theme as a visible select", async () => {
   const html = await readFile(join(miniAppRoot, "index.html"), "utf8");
 

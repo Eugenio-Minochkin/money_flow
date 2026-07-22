@@ -19,6 +19,11 @@ This file records stable product and business rules. Read it before changing bud
 - When the user pays an overdue planned payment, the created transaction must use the occurrence date, not today's date.
 - Planned payment local dates are interpreted in the user's IANA timezone.
 - Disabled planned payments must not be included in active monthly totals.
+- Planned-payment create, update, and disable mutations immediately update live monthly obligations and forecast, but they must not replace an already-created current-local-day opening snapshot. If no snapshot exists for that local day, the first subsequent dashboard creates it from the then-current active plan set; the next local day also receives a new snapshot from that current state.
+- Disabling a plan cancels only its unpaid obligations. Valid paid occurrences and their linked expenses remain historical facts and continue to contribute their actual linked expense amounts to factual paid totals.
+- Disabling is transactional and idempotent. The first active-to-inactive transition records `disabled_at`; repeating disable preserves that lifecycle result without another transition. Legacy inactive rows are not assigned a synthetic disable time.
+- The ordinary planned-payment PATCH cannot change `active`. Disabling uses the dedicated lifecycle action; restoring disabled plans is outside the current product scope.
+- The dashboard's server-owned planned-month summary is the source of truth for paid, remaining, and total values. Paid includes valid current-occurrence-month payment links, including links from disabled plans, using actual linked expense amounts; remaining includes only unpaid occurrences of active plans. Rounded paid plus rounded remaining must reconcile with the rounded total in each reported currency.
 - Weekly planned payments must not be counted more than once for the same target week.
 - One-off planned payments must not repeat in the next month.
 - The source of truth for whether a planned occurrence is paid is `planned_expense_payments` (matching the planned expense and occurrence), not the local date of the linked expense. A payment row counts as paid as long as its linked expense exists and belongs to the same user; `expenses.spent_at` is history placement and must not make an otherwise valid payment appear unpaid or allow a duplicate Pay.

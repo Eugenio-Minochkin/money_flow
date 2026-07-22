@@ -241,6 +241,46 @@ test("account deletion request and advance map null repository results to contro
   assert.match(source, /error\.code === "account_deletion_expired"[\s\S]*return 410/);
 });
 
+test("planned expense mutation routes keep PATCH and DELETE response contracts explicit", async () => {
+  const source = await readFile(new URL("../src/server.js", import.meta.url), "utf8");
+  const routeStart = source.indexOf("const plannedMatch = url.pathname.match");
+  const patchStart = source.indexOf('if (req.method === "PATCH") {', routeStart);
+  const reserveHandler = source.indexOf('error.code === "reserve_conflicts_with_planned_change"', patchStart);
+  const deleteStart = source.indexOf("const result = await repository.deactivatePlannedExpense", patchStart);
+  const blockEnd = source.indexOf('if (req.method === "PATCH" && url.pathname === "/api/settings/budget")', deleteStart);
+
+  assert.notEqual(routeStart, -1, "planned expense item route is registered");
+  assert.notEqual(patchStart, -1, "planned expense PATCH branch is explicit");
+  assert.notEqual(reserveHandler, -1, "PATCH reserve conflict handler is registered");
+  assert.notEqual(deleteStart, -1, "planned expense DELETE branch is explicit");
+  assert.notEqual(blockEnd, -1, "planned expense item route has a bounded source block");
+  assert.ok(routeStart < patchStart, "PATCH branch follows the item route matcher");
+  assert.ok(patchStart < reserveHandler, "reserve conflicts are handled inside PATCH");
+  assert.ok(reserveHandler < deleteStart, "DELETE starts after PATCH reserve handling");
+  assert.ok(deleteStart < blockEnd, "DELETE remains inside the planned expense item route");
+
+  const routePrelude = source.slice(routeStart, patchStart);
+  const patchBlock = source.slice(patchStart, deleteStart);
+  const deleteBlock = source.slice(deleteStart, blockEnd);
+
+  assert.match(routePrelude, /if \(plannedMatch && \(req\.method === "PATCH" \|\| req\.method === "DELETE"\)\) \{/);
+  assert.match(routePrelude, /const body = await readJson\(req\);/);
+  assert.match(routePrelude, /const auth = apiSecurity\.resolveTelegramUserId\(req, url, body\);/);
+  assert.match(routePrelude, /if \(auth\.error\) return sendJson\(res, 400, \{ error: auth\.error \}\);/);
+
+  assert.match(patchBlock, /const plannedExpense = await repository\.updatePlannedExpense\([\s\S]*body\.plannedExpense\s*\);/);
+  assert.match(patchBlock, /if \(!plannedExpense\) return sendJson\(res, 404, \{ error: "planned_expense_not_found" \}\);/);
+  assert.match(patchBlock, /return sendJson\(res, 200, \{ plannedExpense \}\);/);
+  assert.match(patchBlock, /error\.code === "reserve_conflicts_with_planned_change"/);
+  assert.doesNotMatch(patchBlock, /deactivatePlannedExpense/);
+
+  assert.match(deleteBlock, /const result = await repository\.deactivatePlannedExpense\(/);
+  assert.match(deleteBlock, /if \(!result\) return sendJson\(res, 404, \{ error: "planned_expense_not_found" \}\);/);
+  assert.match(deleteBlock, /return sendJson\(res, 200, result\);/);
+  assert.doesNotMatch(deleteBlock, /sendJson\(res,\s*200,\s*\{\s*plannedExpense\b/);
+  assert.doesNotMatch(deleteBlock, /reserve_conflicts_with_planned_change/);
+});
+
 test("API security rejects invalid Telegram init data hash", () => {
   const botToken = "123456:test-token";
   const authDate = String(Math.floor(Date.now() / 1000));

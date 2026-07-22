@@ -87,6 +87,28 @@ test("Mini App translations cover dashboard, plan, history and settings labels",
   }
 });
 
+test("planned disable UX keys stay in parity for Russian and English", () => {
+  const keys = [
+    "plannedDisable.confirmation",
+    "plannedDisable.resultTitle",
+    "plannedDisable.paidOne",
+    "plannedDisable.paidFew",
+    "plannedDisable.paidMany",
+    "plannedDisable.unpaidOne",
+    "plannedDisable.unpaidFew",
+    "plannedDisable.unpaidMany",
+    "plannedDisable.monthUpdated",
+    "plannedDisable.dayUnchanged"
+  ];
+
+  for (const language of ["ru", "en"]) {
+    for (const key of keys) {
+      assert.equal(typeof translations[language][key], "string", `${language}.${key}`);
+      assert.ok(translations[language][key].length > 0, `${language}.${key} must not be empty`);
+    }
+  }
+});
+
 test("settings translations cover interface themes", () => {
   assert.equal(createTranslator("ru")("settings.interfaceTheme"), "Тема интерфейса");
   assert.equal(createTranslator("ru")("settings.themeDark"), "Темная");
