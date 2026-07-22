@@ -29,6 +29,7 @@ import {
 import { createTranslator } from "./i18n.js";
 import { inboxCountLabel, inboxDraftDescription, inboxDraftTotal, shouldShowInboxOnDashboard, updateFirstInboxItemCategory } from "./inbox.js";
 import { buildReserveSettingsView } from "./reserveSettings.js";
+import { runPlannedDisable } from "./plannedDisable.js";
 import {
   buildPlannedOccurrences,
   calculatePlannedMonthSummary,
@@ -710,7 +711,7 @@ function renderReserveSettings() {
 }
 
 function renderPlannedMonthSummary(items) {
-  const summary = calculatePlannedMonthSummary(items);
+  const summary = dashboardState?.plannedMonthSummary ?? calculatePlannedMonthSummary(items);
   const baseCurrency = dashboardState?.user?.base_currency ?? dashboardState?.snapshot?.baseCurrency ?? "THB";
   const total = plannedSummaryMoneyParts(summary.total, baseCurrency, summary.display.total, summary.display.currency);
   const paid = plannedSummaryMoneyParts(summary.paid, baseCurrency, summary.display.paid, summary.display.currency);
@@ -1181,10 +1182,26 @@ function bindPlannedActions(container, items) {
   });
   container.querySelectorAll("[data-delete-planned]").forEach((button) => {
     button.addEventListener("click", async () => {
-      await api(`/api/planned-expenses/${button.dataset.deletePlanned}`, { method: "DELETE", body: { telegramUserId } });
-      renderPlannedForm();
-      await loadDashboard();
-      showToast(t("toast.plannedDisabled"));
+      const item = items.find((planned) => String(planned.id) === button.dataset.deletePlanned);
+      if (!item) return;
+      try {
+        await runPlannedDisable({
+          button,
+          item,
+          confirm: window.confirm.bind(window),
+          disableRequest: (id) => api(`/api/planned-expenses/${id}`, {
+            method: "DELETE",
+            body: { telegramUserId }
+          }),
+          loadDashboard,
+          showResult: showToast,
+          language: currentLanguage,
+          translate: t,
+          formatMoney
+        });
+      } catch (error) {
+        showError(error);
+      }
     });
   });
   container.querySelectorAll("[data-pay-planned]").forEach((button) => {

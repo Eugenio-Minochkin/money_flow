@@ -266,7 +266,7 @@ git commit -m "feat: return planned disable impact"
 - Modify: `apps/miniapp/test/smokeAssets.test.js`
 - Modify: `apps/miniapp/test/planned.test.js`
 
-- [ ] **Step 1: Write failing pure interaction tests**
+- [x] **Step 1: Write failing pure interaction tests**
 
 Test exact RU/EN confirmation and result text, button pending state, a second invocation returning before DELETE, one API call, and event ordering:
 
@@ -276,13 +276,13 @@ assert.deepEqual(events, ["confirm", "disable", "loadDashboard", "showResult"]);
 
 Test result amounts come from backend `impact`, not the active-only client plan list.
 
-- [ ] **Step 2: Run Mini App tests and verify RED**
+- [x] **Step 2: Run Mini App tests and verify RED**
 
 ```powershell
 npm.cmd test -- apps/miniapp/test/plannedDisable.test.js apps/miniapp/test/planned.test.js apps/miniapp/test/i18n.test.js apps/miniapp/test/smokeAssets.test.js
 ```
 
-- [ ] **Step 3: Implement the focused interaction helper**
+- [x] **Step 3: Implement the focused interaction helper**
 
 Create a small dependency-injected helper that:
 
@@ -302,11 +302,11 @@ try {
 
 Use exact approved Russian and English meaning, including that paid history remains, unpaid occurrences stop counting, the monthly plan is updated, and today's budget is unchanged.
 
-- [ ] **Step 4: Wire the helper and server summary into `app.js`**
+- [x] **Step 4: Wire the helper and server summary into `app.js`**
 
 Resolve the item from the current active list, call the helper from the disable button, and use `dashboardState.plannedMonthSummary` in `renderPlannedMonthSummary`, retaining the client calculation only as a compatibility fallback for old dashboard responses.
 
-- [ ] **Step 5: Run Mini App focused tests and verify GREEN**
+- [x] **Step 5: Run Mini App focused tests and verify GREEN**
 
 Run the command from Step 2 and confirm all selected tests pass.
 
@@ -314,7 +314,7 @@ Run the command from Step 2 and confirm all selected tests pass.
 
 Run the local Mini App sandbox and capture RU/EN screenshots at iPhone 11 and iPhone 14 Pro widths. Confirm no permanent archive or large dashboard block was added.
 
-- [ ] **Step 7: Commit Mini App UX**
+- [x] **Step 7: Commit Mini App UX**
 
 ```powershell
 git add apps/miniapp/src/plannedDisable.js apps/miniapp/src/app.js apps/miniapp/src/i18n.js apps/miniapp/test/plannedDisable.test.js apps/miniapp/test/planned.test.js apps/miniapp/test/i18n.test.js apps/miniapp/test/smokeAssets.test.js
