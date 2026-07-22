@@ -1,6 +1,6 @@
 # Planned Expense Archive And Safe Recreate Design
 
-**Status:** Proposed for user review
+**Status:** Approved
 
 ## Context
 
@@ -172,20 +172,25 @@ Existing `GET /api/planned-expenses`, `POST /api/planned-expenses`, and `PATCH /
 
 ## Recreate Transaction
 
-`recreatePlannedExpense(telegramUserId, archivedPlannedExpenseId, input, startsOn, now)` performs the following repository flow:
+Missing, foreign, and active source rows take precedence over payload and date validation and return the same `404 planned_expense_not_found`. `recreatePlannedExpense(telegramUserId, archivedPlannedExpenseId, input, startsOn, now)` therefore performs the following repository flow:
 
-1. Resolve and normalize the user and form input, and resolve money amounts through the existing dated currency path.
-2. Begin a database transaction.
-3. Lock the owned source plan with `FOR UPDATE` and require `active = false`.
-4. Validate `startsOn` against `localDayKey(now, users.timezone)`.
-5. For one-off recurrence, require a valid `due_date >= startsOn`.
-6. Run the existing reserve-capacity policy inside the transaction, with the candidate plan carrying `starts_on`.
-7. Insert one new row with `active = true` and the validated `starts_on`.
-8. Do not insert or copy any payment or expense rows.
-9. Commit and return the new plan.
-10. Record the existing privacy-safe `planned_expense_created` event after commit with metadata limited to `{ source: "miniapp", mode: "recreate" }`.
+1. Perform a read-only preflight for an owned source with `active = false`; return not-found before normalizing form input or resolving currency when it is missing, foreign, or active.
+2. Resolve and normalize the user and form input, and resolve money amounts through the existing dated currency path without holding an open transaction.
+3. Begin a database transaction.
+4. Lock and revalidate the same owned archived source with `FOR UPDATE`; return the same not-found outcome if it no longer qualifies.
+5. Validate `startsOn` against `localDayKey(now, users.timezone)`.
+6. For one-off recurrence, require a valid `due_date >= startsOn`.
+7. Validate reserve capacity and insert through the same transaction client, with the candidate plan carrying `starts_on`.
+8. Insert one new row with `active = true` and the validated `starts_on`.
+9. Do not insert or copy any payment or expense rows.
+10. Commit and return the new plan.
+11. Attempt the existing privacy-safe `planned_expense_created` event after commit with metadata limited to `{ source: "miniapp", mode: "recreate" }`.
 
-The event contains no plan name, amount, currency, tags, dates, source plan ID, new plan ID, user-facing text, or other financial data.
+Recreate reserve validation must execute against the same transaction client that performs the source lock and insert. The current `assertPlannedMutationCapacity` checks for `.connect()` and would return early for a normal `pg` transaction client that exposes `.query()` but not `.connect()`. Refactor that helper narrowly to accept an explicit queryable client, or add a focused transaction-safe variant. All reserve reads, active-plan reads, validation, and the new-plan insert use that same transaction client.
+
+A reserve conflict rolls back the transaction, inserts no plan, records no creation event, and returns the existing `409` contract. It must not execute `COMMIT`.
+
+The event contains no plan name, amount, currency, tags, dates, source plan ID, new plan ID, user-facing text, or other financial data. Once the transaction commits, recreate is successful and the API returns `201`. The post-commit event is best-effort: an event-write failure is safely logged and must not turn a committed recreate into an API failure or another retryable response.
 
 Concurrent or later separately confirmed recreate requests are allowed to create separate plans. Server-side source-use uniqueness and idempotency are intentionally absent. The Mini App prevents accidental same-form double submission.
 
@@ -240,6 +245,7 @@ Start filtering changes only whether an occurrence exists for a plan. It does no
 - Active remaining values use unpaid canonical occurrences on or after `starts_on`.
 - Pay rejects a requested date that is not a canonical occurrence, including a pre-start date, as `invalid_occurrence`.
 - Pay without an explicit date selects the first eligible unpaid occurrence according to existing overdue/today/future ordering.
+- `starts_on` filters active scheduled obligations, but it never erases or reinterprets an already valid factual payment link solely because its occurrence key is earlier than `starts_on`.
 - Archived plans contribute only valid factual paid links where existing PR #122 calculations include history.
 - Reports continue to include factual linked expenses and exclude unpaid pre-start dates.
 - The next month uses the plan's full normal schedule when its dates are after `starts_on`.
@@ -269,6 +275,8 @@ Add a compact collapsible section after the active planned-expense list:
 - an error remains visible without discarding active-plan state, and a later explicit reopen/retry may request again;
 - a successful recreate refreshes both dashboard and archive data.
 
+A successful ordinary planned-expense disable invalidates the archive cache. If the archive is expanded, refresh it after the dashboard refresh. If it was previously loaded but is collapsed, mark it stale and refetch on the next expansion. If it has never been loaded, do not introduce an eager archive request.
+
 Each archived row shows description, amount/currency, recurrence, disable date, valid saved-payment count, and one `Создать снова` / `Create again` action. A null disable time is rendered exactly as `Дата отключения не сохранена` / `Disable date unavailable`; no inferred date is substituted.
 
 Archived rows do not show Pay, Edit, Disable, unpaid progress, or nearest occurrence. Their layout must remain compact with long names and large amounts at iPhone 11 and iPhone 14 Pro widths.
@@ -295,7 +303,9 @@ Recreate prefills editable amount, currency, description, category, tags, recurr
 
 The heading and submit label are `Создать снова` / `Create again`. While submitting, the button is disabled and a second submission returns without another POST. On failure the form remains open and populated and the button becomes active again.
 
-After a successful `201`, the Mini App closes/resets the submitted form so it cannot be submitted again accidentally, then waits for both the dashboard refresh and archive refresh before showing a localized success toast. The new plan appears in active plans; the source remains in the archive. Reopening the source and confirming again is an allowed new action.
+A successful HTTP `201` is the Mini App commit boundary. The Mini App immediately makes the submitted form non-resubmittable and closes/resets it. Dashboard and archive refreshes are subsequent synchronization operations, not part of the recreate mutation.
+
+If either refresh fails, the UI must not report that plan creation failed, reopen the submitted form, re-enable the completed submission, or automatically retry the recreate POST. It reports that the plan was created and separately shows a refresh/reload warning. When both refreshes succeed, the new plan appears in active plans and the source remains in the archive. Reopening the source and confirming again is the only way to perform another intentional recreate.
 
 ## Mini App Compatibility Occurrences
 
@@ -325,7 +335,9 @@ Tests are added red-first.
 - new independent active ID, unchanged source and `disabled_at`, no copied payments, and no inserted expenses;
 - two sequential confirmed recreates from one source creating two different IDs, both without inherited payments;
 - strict local start-date validation and one-off due-date validation;
-- reserve conflict and privacy-safe event metadata;
+- active-reserve conflict producing `409`, `ROLLBACK`, no inserted row, no `COMMIT`, and no event while all reserve work uses the transaction client;
+- missing, foreign, and active source precedence over malformed payload and date errors;
+- privacy-safe event metadata and a post-commit event-write failure still returning success with exactly one created plan;
 - route authentication and exact response shapes.
 
 ### Occurrence and financial regressions
@@ -345,7 +357,10 @@ Tests are added red-first.
 - one first-expansion request, pending-click suppression, loaded cache, loading/empty/error states, and RU/EN copy;
 - null disable date, payment-count pluralization, and absence of Pay/Edit/Disable controls;
 - explicit recreate mode, source-ID isolation from PATCH, user-timezone `startsOn`, and past one-off clearing;
-- cancellation without a request, double-click producing one POST, populated form after error, and dashboard/archive refresh before success;
+- cancellation without a request, double-click producing one POST, and a populated form after a pre-commit mutation error;
+- successful POST followed by archive-refresh failure producing one POST, a closed non-resubmittable form, creation success, and a separate synchronization warning;
+- successful POST followed by dashboard-refresh failure never reporting creation as failed or reopening the form;
+- ordinary disable refreshing an expanded archive, marking a loaded collapsed archive stale, and preserving lazy loading when the archive has never loaded;
 - two separate form sessions may each recreate the same source;
 - ordinary create/edit behavior and server-summary precedence remain unchanged.
 
