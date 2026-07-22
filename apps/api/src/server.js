@@ -452,6 +452,28 @@ async function route(req, res) {
     }
   }
 
+  const plannedPaymentUndoMatch = url.pathname.match(/^\/api\/planned-expenses\/(\d+)\/payments\/([^/]+)$/);
+  if (plannedPaymentUndoMatch && req.method === "DELETE") {
+    const body = await readJson(req);
+    const auth = apiSecurity.resolveTelegramUserId(req, url, body);
+    if (auth.error) return sendJson(res, 400, { error: auth.error });
+    try {
+      const result = await repository.undoPlannedExpensePaymentForTelegramUser(
+        Number(plannedPaymentUndoMatch[1]),
+        auth.telegramUserId,
+        plannedPaymentUndoMatch[2]
+      );
+      return sendJson(res, 200, result);
+    } catch (error) {
+      if (error.code === "invalid_occurrence") return sendJson(res, 400, { error: error.code });
+      if (error.code === "planned_expense_not_found") return sendJson(res, 404, { error: error.code });
+      if (["planned_payment_inconsistent", "planned_payment_undo_blocked"].includes(error.code)) {
+        return sendJson(res, 409, { error: error.code });
+      }
+      throw error;
+    }
+  }
+
   const plannedMatch = url.pathname.match(/^\/api\/planned-expenses\/(\d+)$/);
   if (plannedMatch && (req.method === "PATCH" || req.method === "DELETE")) {
     const body = await readJson(req);

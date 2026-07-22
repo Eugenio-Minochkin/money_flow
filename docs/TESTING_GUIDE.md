@@ -14,6 +14,7 @@ Use this guide when changing business logic or UI around the main Money Flow sur
 - Planned `starts_on`: migration `012` is additive and nullable with no backfill; `NULL` preserves legacy occurrences, while a value applies the same user-calendar filter in dashboard, reserve, reports, Pay, and Mini App helpers. Cover PostgreSQL `DATE` objects in a non-UTC process timezone.
 - Mini App recreate synchronization: one POST per form session, mutation failure keeps the form retryable, HTTP `201` closes before refresh, and independent dashboard/archive refresh failures show a warning without reopening or retrying creation.
 - Planned month summary: valid paid occurrences from active and disabled plans use actual same-user linked expense amounts; remaining includes only active unpaid occurrences; base/display paid, remaining, and total values reconcile after rounding.
+- Planned payment undo: exact occurrence selection across weekly/twice-monthly/monthly/one-off plans; same-user link integrity; idempotent retry; closed reserve month rollback; archive-capable repository route; unchanged current-day opening snapshot; post-commit privacy-minimal analytics; exact-date Mini App controls with one-request lifecycle and RU/EN error text.
 - User timezone behavior for today/yesterday, weeks, months, daily budget snapshots, planned payment dates, and reminders.
 - Daily empty-day reminder guardrails: kill switch, rollout, 48-hour cap, idempotency, no-spending marks, and Telegram blocked/forbidden errors.
 - Disabled planned payments.
@@ -72,7 +73,7 @@ The suite refuses to run unless `DATABASE_URL` points at localhost/127.0.0.1 and
 - new Telegram user persistence and defaults;
 - confirmed draft expense save/read;
 - dashboard budget summary over real rows;
-- planned payment create/list/pay/deactivate/archive/recreate, including migrations `011` and `012`, `disabled_at`, nullable `starts_on`, transactional and idempotent disable, archive aggregates, independent recreate with transaction-client reserve validation, preserved paid history, PostgreSQL calendar-date semantics, same-day snapshot stability, immediate live month recalculation, and next-local-day snapshot creation;
+- planned payment create/list/pay/undo/deactivate/archive/recreate, including migrations `011` and `012`, `disabled_at`, nullable `starts_on`, exact payment-link undo with closed-month rollback and idempotent retry, transactional and idempotent disable, archive aggregates, independent recreate with transaction-client reserve validation, preserved paid history, PostgreSQL calendar-date semantics, same-day snapshot stability, immediate live month recalculation, and next-local-day snapshot creation;
 - reserve create/read through dashboard state;
 - expense edit/delete and recalculated totals;
 - transactional account deletion, privacy-sensitive row cleanup, safe audit metadata, and global exchange-rate preservation;

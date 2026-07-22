@@ -283,6 +283,25 @@ test("planned expense recreate has a separate authenticated POST contract and ex
   ]) assert.match(block, new RegExp(code));
 });
 
+test("planned payment undo has an exact authenticated DELETE contract", async () => {
+  const source = await readFile(new URL("../src/server.js", import.meta.url), "utf8");
+  const routeStart = source.indexOf("const plannedPaymentUndoMatch = url.pathname.match");
+  const routeEnd = source.indexOf("const plannedPayMatch = url.pathname.match", routeStart);
+
+  assert.notEqual(routeStart, -1, "planned payment undo route is registered");
+  assert.ok(routeStart < routeEnd, "undo route precedes the ordinary Pay route");
+  const block = source.slice(routeStart, routeEnd);
+  assert.match(block, /planned-expenses/);
+  assert.match(block, /payments/);
+  assert.match(block, /req\.method === "DELETE"/);
+  assert.match(block, /apiSecurity\.resolveTelegramUserId\(req, url, body\)/);
+  assert.match(block, /repository\.undoPlannedExpensePaymentForTelegramUser\(/);
+  assert.match(block, /planned_expense_not_found/);
+  assert.match(block, /invalid_occurrence/);
+  assert.match(block, /planned_payment_inconsistent/);
+  assert.match(block, /planned_payment_undo_blocked/);
+});
+
 test("planned expense mutation routes keep PATCH and DELETE response contracts explicit", async () => {
   const source = await readFile(new URL("../src/server.js", import.meta.url), "utf8");
   const routeStart = source.indexOf("const plannedMatch = url.pathname.match");

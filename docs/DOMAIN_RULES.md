@@ -31,6 +31,9 @@ This file records stable product and business rules. Read it before changing bud
 - Weekly planned payments must not be counted more than once for the same target week.
 - One-off planned payments must not repeat in the next month.
 - The source of truth for whether a planned occurrence is paid is `planned_expense_payments` (matching the planned expense and occurrence), not the local date of the linked expense. A payment row counts as paid as long as its linked expense exists and belongs to the same user; `expenses.spent_at` is history placement and must not make an otherwise valid payment appear unpaid or allow a duplicate Pay.
+- Undoing a planned payment is a dedicated exact-occurrence action. It deletes only the selected `planned_expense_payments` row and its linked same-user expense in one transaction; it never uses ordinary History deletion, changes the plan, or removes neighbouring payments.
+- Undo treats a missing link on an owned plan as idempotent `already_unpaid`; a malformed calendar key, foreign/missing plan, inconsistent link, and closed expense month fail without deleting data. It may undo a valid payment on an archived plan, although the Mini App only offers controls for active current-month plans.
+- Planned payment undo must not invalidate, replace, or recalculate an existing current-local-day opening snapshot or its `dayPlanLimit`. Actual totals and future opening snapshots use the resulting factual state.
 - A committed recreate remains successful if best-effort analytics fail. In the Mini App, HTTP `201` is the mutation boundary: dashboard or archive refresh failures show a synchronization warning and must not reopen the form or retry the POST.
 
 ## Timezone

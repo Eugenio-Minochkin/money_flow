@@ -3109,6 +3109,91 @@ export function createRepository(pool, options = {}) {
       }
     },
 
+    async undoPlannedExpensePaymentForTelegramUser(plannedExpenseId, telegramUserId, occurrenceDate, now = new Date()) {
+      const normalizedOccurrenceDate = normalizePlannedDateKey(occurrenceDate);
+      if (!normalizedOccurrenceDate) throw codedError("Invalid planned occurrence", "invalid_occurrence");
+
+      const client = await pool.connect();
+      let undone = false;
+      let userId = null;
+      try {
+        await client.query("BEGIN");
+        const plannedResult = await client.query(
+          `SELECT planned_expenses.*, users.timezone
+           FROM planned_expenses
+           JOIN users ON users.id = planned_expenses.user_id
+           WHERE planned_expenses.id = $1
+             AND users.telegram_user_id = $2
+           FOR UPDATE`,
+          [plannedExpenseId, telegramUserId]
+        );
+        const planned = plannedResult.rows[0] ?? null;
+        if (!planned) throw codedError("Planned expense not found", "planned_expense_not_found");
+        userId = planned.user_id;
+
+        const paymentResult = await client.query(
+          `SELECT id, planned_expense_id, expense_id, occurrence_date::text
+           FROM planned_expense_payments
+           WHERE planned_expense_id = $1
+             AND occurrence_date = $2::date
+           FOR UPDATE`,
+          [planned.id, normalizedOccurrenceDate]
+        );
+        const payment = paymentResult.rows[0] ?? null;
+        if (!payment) {
+          await client.query("COMMIT");
+          return { status: "already_unpaid", occurrenceDate: normalizedOccurrenceDate };
+        }
+
+        const expenseResult = await client.query(
+          `SELECT * FROM expenses WHERE id = $1 FOR UPDATE`,
+          [payment.expense_id]
+        );
+        const expense = expenseResult.rows[0] ?? null;
+        if (!expense || String(expense.user_id) !== String(planned.user_id)) {
+          throw codedError("Planned payment is inconsistent", "planned_payment_inconsistent");
+        }
+
+        const expenseMonth = timeZoneMonthKey(new Date(expense.spent_at), userTimezone(planned));
+        await lockFinancialMonths(client, planned.user_id, [expenseMonth]);
+        if ((await closedReserveMonths(client, planned.user_id, [expenseMonth])).has(expenseMonth)) {
+          throw codedError("Planned payment undo blocked", "planned_payment_undo_blocked");
+        }
+
+        const deletedPayment = await client.query(
+          `DELETE FROM planned_expense_payments
+           WHERE id = $1 AND planned_expense_id = $2
+           RETURNING id`,
+          [payment.id, planned.id]
+        );
+        if (!deletedPayment.rows[0]) throw codedError("Planned payment is inconsistent", "planned_payment_inconsistent");
+
+        const deletedExpense = await client.query(
+          `DELETE FROM expenses
+           WHERE id = $1 AND user_id = $2
+           RETURNING id`,
+          [expense.id, planned.user_id]
+        );
+        if (!deletedExpense.rows[0]) throw codedError("Planned payment is inconsistent", "planned_payment_inconsistent");
+        await client.query("COMMIT");
+        undone = true;
+      } catch (error) {
+        try { await client.query("ROLLBACK"); } catch { /* preserve the original transaction error */ }
+        throw error;
+      } finally {
+        client.release();
+      }
+
+      if (undone) {
+        try {
+          await this.recordAppEvent(userId, "planned_expense_payment_undone", { source: "miniapp" });
+        } catch (error) {
+          console.warn("[repository] planned payment undo event failed after commit", { message: error?.message });
+        }
+      }
+      return { status: "undone", occurrenceDate: normalizedOccurrenceDate };
+    },
+
     async totals(userId, now = new Date(), timeZone = null) {
       const userResult = await pool.query("SELECT * FROM users WHERE id = $1", [userId]);
       const user = userResult.rows[0] ?? {};

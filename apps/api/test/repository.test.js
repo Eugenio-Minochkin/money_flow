@@ -7,6 +7,59 @@ import { createRepository, shouldInvalidateExpenseSnapshot } from "../src/reposi
 import * as repositoryModule from "../src/repository.js";
 import { formatSavedSummary } from "../src/telegramFormat.js";
 
+test("undoes only the exact planned payment link and its same-user expense", async () => {
+  const queries = [];
+  const client = {
+    async query(sql, params = []) {
+      const query = String(sql);
+      queries.push({ query, params });
+      if (query.includes("FROM planned_expenses") && query.includes("JOIN users")) {
+        return { rows: [{ id: 41, user_id: 7, telegram_user_id: 100, active: true, timezone: "Europe/Moscow" }] };
+      }
+      if (query.includes("FROM planned_expense_payments") && query.includes("FOR UPDATE")) {
+        return { rows: [{ id: 61, planned_expense_id: 41, expense_id: 81, occurrence_date: "2026-07-15" }] };
+      }
+      if (query.includes("FROM expenses") && query.includes("FOR UPDATE")) {
+        return { rows: [{ id: 81, user_id: 7, spent_at: "2026-07-15T09:00:00.000Z" }] };
+      }
+      if (query.includes("FROM monthly_reserve_instances")) return { rows: [] };
+      if (query.startsWith("DELETE FROM planned_expense_payments")) return { rows: [{ id: 61 }] };
+      if (query.startsWith("DELETE FROM expenses")) return { rows: [{ id: 81 }] };
+      return { rows: [] };
+    },
+    release() {}
+  };
+  const repo = createRepository({
+    async connect() { return client; },
+    async query(sql, params = []) { return client.query(sql, params); }
+  });
+
+  const result = await repo.undoPlannedExpensePaymentForTelegramUser(41, 100, "2026-07-15");
+
+  assert.deepEqual(result, { status: "undone", occurrenceDate: "2026-07-15" });
+  const paymentDelete = queries.find(({ query }) => query.startsWith("DELETE FROM planned_expense_payments"));
+  const expenseDelete = queries.find(({ query }) => query.startsWith("DELETE FROM expenses"));
+  assert.deepEqual(paymentDelete.params, [61, 41]);
+  assert.deepEqual(expenseDelete.params, [81, 7]);
+  assert.ok(queries.findIndex(({ query }) => query.startsWith("DELETE FROM planned_expense_payments")) < queries.findIndex(({ query }) => query.startsWith("DELETE FROM expenses")));
+  assert.equal(queries.some(({ query }) => query.includes("daily_budget_snapshots")), false);
+});
+
+test("planned payment undo validates its calendar key before opening a transaction", async () => {
+  const queries = [];
+  const repo = createRepository({
+    async connect() {
+      return { async query(sql) { queries.push(String(sql)); return { rows: [] }; }, release() {} };
+    }
+  });
+
+  await assert.rejects(
+    () => repo.undoPlannedExpensePaymentForTelegramUser(41, 100, "2026-02-30"),
+    (error) => error.code === "invalid_occurrence"
+  );
+  assert.deepEqual(queries, []);
+});
+
 test("records app events with JSON metadata", async () => {
   const queries = [];
   const repo = createRepository(fakePool((sql, params) => {
