@@ -1147,7 +1147,7 @@ git commit -m "docs: record planned archive recreate rules"
 **Files:**
 - Review: all files changed from `origin/master...HEAD`
 
-- [ ] **Step 1: Run all focused suites**
+- [x] **Step 1: Run all focused suites**
 
 ```powershell
 npm.cmd test -- apps/api/test/plannedOccurrenceDates.test.js apps/api/test/repository.test.js apps/api/test/budgetReserveIntegration.test.js apps/api/test/reportService.test.js apps/api/test/security.test.js apps/miniapp/test/plannedArchive.test.js apps/miniapp/test/plannedRecreate.test.js apps/miniapp/test/plannedDisable.test.js apps/miniapp/test/planned.test.js apps/miniapp/test/formatters.test.js apps/miniapp/test/i18n.test.js apps/miniapp/test/smokeAssets.test.js
@@ -1155,7 +1155,7 @@ npm.cmd test -- apps/api/test/plannedOccurrenceDates.test.js apps/api/test/repos
 
 Expected: all focused tests pass.
 
-- [ ] **Step 2: Run the full unit suite**
+- [x] **Step 2: Run the full unit suite**
 
 ```powershell
 npm.cmd test
@@ -1163,7 +1163,7 @@ npm.cmd test
 
 Expected: zero failures; no real exchange-rate/model/network call is made.
 
-- [ ] **Step 3: Run disposable Postgres integration**
+- [x] **Step 3: Run disposable Postgres integration**
 
 ```powershell
 npm.cmd run test:integration:postgres
@@ -1171,7 +1171,7 @@ npm.cmd run test:integration:postgres
 
 Expected: localhost/test safety guard passes, migrations 001-012 are recorded, and all smoke scenarios pass.
 
-- [ ] **Step 4: Review scope and repository hygiene**
+- [x] **Step 4: Review scope and repository hygiene**
 
 ```powershell
 git diff --check
@@ -1182,7 +1182,7 @@ git log --oneline origin/master..HEAD
 
 Confirm no production values, user data, `001_initial.sql` edits, source-plan linkage, idempotency key, archive restore, payment deletion, reminder change, dependency update, drive-by refactor, merge, or deploy.
 
-- [ ] **Step 5: Perform a reviewer pass**
+- [x] **Step 5: Perform a reviewer pass**
 
 Use `requesting-code-review` and check the final diff against every spec heading, especially transaction-client reserve validation, 404 precedence, post-commit/post-201 boundaries, factual history, cache invalidation, and snapshot stability. Resolve only verified blockers and rerun affected tests.
 
