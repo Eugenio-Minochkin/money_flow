@@ -2804,18 +2804,85 @@ export function createRepository(pool, options = {}) {
     },
 
     async deactivatePlannedExpense(telegramUserId, plannedExpenseId, now = new Date()) {
-      const user = await this.getUserByTelegramId(telegramUserId);
-      const result = await pool.query(
-        `UPDATE planned_expenses
-         SET active = false
-         WHERE id = $1
-           AND user_id = (SELECT id FROM users WHERE telegram_user_id = $2)
-         RETURNING id`,
-        [plannedExpenseId, telegramUserId]
-      );
-      const row = result.rows[0] ?? null;
-      if (row && user) await this.recordAppEvent(row.user_id ?? user.id, "planned_expense_deleted", { source: "miniapp" });
-      return row;
+      const currentNow = normalizeNow(now);
+      const client = await pool.connect();
+      let response = null;
+      let transitioned = false;
+      try {
+        await client.query("BEGIN");
+        const plannedResult = await client.query(
+          `SELECT planned_expenses.*, users.base_currency, users.timezone
+           FROM planned_expenses
+           JOIN users ON users.id = planned_expenses.user_id
+           WHERE planned_expenses.id = $1
+             AND users.telegram_user_id = $2
+           FOR UPDATE`,
+          [plannedExpenseId, telegramUserId]
+        );
+        const planned = plannedResult.rows[0] ?? null;
+        if (!planned) {
+          await client.query("ROLLBACK");
+          return null;
+        }
+
+        const timeZone = userTimezone(planned);
+        const currentMonth = timeZoneMonthKey(currentNow, timeZone);
+        const occurrenceDates = plannedDueDatesThisMonth(planned, currentNow, timeZone)
+          .map((date) => localDayKey(date, timeZone));
+        const occurrenceDateSet = new Set(occurrenceDates);
+        const paidResult = await client.query(
+          `SELECT pep.occurrence_date::text, e.amount_base
+           FROM planned_expense_payments pep
+           JOIN expenses e ON e.id = pep.expense_id
+                          AND e.user_id = $2
+           WHERE pep.planned_expense_id = $1
+             AND pep.paid_month = $3
+           ORDER BY pep.occurrence_date`,
+          [planned.id, planned.user_id, currentMonth]
+        );
+        const validPaidByOccurrence = new Map();
+        for (const payment of paidResult.rows) {
+          const occurrenceDate = normalizeOccurrenceKey(payment.occurrence_date);
+          if (occurrenceDateSet.has(occurrenceDate) && !validPaidByOccurrence.has(occurrenceDate)) {
+            validPaidByOccurrence.set(occurrenceDate, Number(payment.amount_base ?? 0));
+          }
+        }
+        const unpaidOccurrencesRemoved = occurrenceDates.filter((date) => !validPaidByOccurrence.has(date)).length;
+        const impact = {
+          paidOccurrencesKept: validPaidByOccurrence.size,
+          paidAmountKept: roundMoney([...validPaidByOccurrence.values()].reduce((sum, amount) => sum + amount, 0)),
+          unpaidOccurrencesRemoved,
+          unpaidAmountRemoved: roundMoney(unpaidOccurrencesRemoved * Number(planned.amount_base ?? 0)),
+          currency: planned.base_currency
+        };
+
+        let plannedExpense;
+        if (planned.active) {
+          const updatedResult = await client.query(
+            `UPDATE planned_expenses
+             SET active = false, disabled_at = $2
+             WHERE id = $1 AND active = true
+             RETURNING *`,
+            [planned.id, currentNow]
+          );
+          plannedExpense = updatedResult.rows[0] ?? null;
+          transitioned = Boolean(plannedExpense);
+        } else {
+          const { base_currency: _baseCurrency, timezone: _timezone, ...storedPlannedExpense } = planned;
+          plannedExpense = storedPlannedExpense;
+        }
+        response = plannedExpense ? { plannedExpense, impact } : null;
+        await client.query("COMMIT");
+      } catch (error) {
+        try { await client.query("ROLLBACK"); } catch { /* preserve original transaction error */ }
+        throw error;
+      } finally {
+        client.release();
+      }
+      if (transitioned && response) {
+        await this.recordAppEvent(response.plannedExpense.user_id, "planned_expense_deleted", { source: "miniapp" });
+      }
+      return response;
     },
 
     async payPlannedExpenseForTelegramUser(plannedExpenseId, telegramUserId, paidAt = new Date(), options = {}) {

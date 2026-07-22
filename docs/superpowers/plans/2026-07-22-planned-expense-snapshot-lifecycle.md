@@ -77,7 +77,7 @@ git commit -m "fix: preserve daily snapshot for planned changes"
 - Modify: `apps/api/test/repository.test.js`
 - Modify: `apps/api/integration/postgres-smoke.js`
 
-- [ ] **Step 1: Write failing repository transaction tests**
+- [x] **Step 1: Write failing repository transaction tests**
 
 Test an owned weekly plan locked with `FOR UPDATE`, two valid paid occurrence rows with actual linked `amount_base`, three unpaid current-month occurrences, an active-to-inactive update, preservation of payment/expense rows, and this result:
 
@@ -96,7 +96,7 @@ Test an owned weekly plan locked with `FOR UPDATE`, two valid paid occurrence ro
 
 Add RED cases for repeated disable returning the same impact without another update/event and foreign/missing ownership returning `null`.
 
-- [ ] **Step 2: Run repository tests and verify RED**
+- [x] **Step 2: Run repository tests and verify RED**
 
 ```powershell
 npm.cmd test -- apps/api/test/repository.test.js
@@ -104,7 +104,7 @@ npm.cmd test -- apps/api/test/repository.test.js
 
 Expected: failures show the current direct UPDATE has no transaction, lock, impact calculation, timestamp, or idempotency distinction.
 
-- [ ] **Step 3: Add the additive migration**
+- [x] **Step 3: Add the additive migration**
 
 Create `011_planned_expense_disabled_at.sql` with:
 
@@ -118,7 +118,7 @@ ON planned_expenses(user_id, active, disabled_at DESC);
 
 Do not backfill legacy inactive rows.
 
-- [ ] **Step 4: Implement transactional disable**
+- [x] **Step 4: Implement transactional disable**
 
 Use `pool.connect()`, `BEGIN`, an owned plan/user query with `FOR UPDATE`, `timeZoneMonthKey(now, userTimezone(plan))`, a payment query joined to `expenses` on matching owner, and the existing occurrence helpers. Update only when `active = true`:
 
@@ -131,17 +131,17 @@ RETURNING *
 
 Record `planned_expense_deleted` only after the transaction reports a real transition. Never delete from `expenses`, `planned_expense_payments`, or `daily_budget_snapshots`.
 
-- [ ] **Step 5: Extend the disposable Postgres smoke**
+- [x] **Step 5: Extend the disposable Postgres smoke**
 
 Update the migration ledger expectation through `011`. Expand create/list/pay/disable to assert `disabled_at`, same-day snapshot stability, live monthly summary, preserved expense/payment rows, idempotent repeat disable, and a next-local-day snapshot derived from the disabled plan set.
 
-- [ ] **Step 6: Run focused repository tests and verify GREEN**
+- [x] **Step 6: Run focused repository tests and verify GREEN**
 
 ```powershell
 npm.cmd test -- apps/api/test/repository.test.js
 ```
 
-- [ ] **Step 7: Commit transactional lifecycle changes**
+- [x] **Step 7: Commit transactional lifecycle changes**
 
 ```powershell
 git add apps/api/migrations/011_planned_expense_disabled_at.sql apps/api/src/repository.js apps/api/test/repository.test.js apps/api/integration/postgres-smoke.js

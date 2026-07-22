@@ -437,6 +437,12 @@ function handleBudgetReserveQuery(state, sql, params) {
     return { rows: [updated] };
   }
 
+  if (sql.includes("SELECT planned_expenses.*, users.base_currency, users.timezone") && sql.includes("FOR UPDATE")) {
+    const target = state.plans.find((plan) => String(plan.id) === String(params[0])) ?? state.planned;
+    if (!target || String(state.user.telegram_user_id) !== String(params[1])) return { rows: [] };
+    return { rows: [{ ...target, base_currency: state.user.base_currency, timezone: state.user.timezone }] };
+  }
+
   if (sql.includes("SELECT planned_expenses.*, users.base_currency, users.usd_thb_rate")) {
     const target = state.plans.find((plan) => String(plan.id) === String(params[0])) ?? state.planned;
     return { rows: [{ ...target, base_currency: state.user.base_currency, usd_thb_rate: state.user.usd_thb_rate }] };

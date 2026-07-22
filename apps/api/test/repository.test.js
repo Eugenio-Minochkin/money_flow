@@ -2626,7 +2626,7 @@ test("checks successful report delivery for an exact user type and key", async (
   assert.deepEqual(queries[0].params, [7, "weekly", "2026-W27"]);
 });
 
-test("records safe events after planned expense update and deactivation", async () => {
+test("records a safe event after planned expense update", async () => {
   const queries = [];
   const repo = createRepository(fakePool((sql, params) => {
     const query = String(sql);
@@ -2636,9 +2636,6 @@ test("records safe events after planned expense update and deactivation", async 
     }
     if (query.startsWith("UPDATE planned_expenses") && query.includes("amount =")) {
       return { rows: [{ id: "5", user_id: "7", active: true }] };
-    }
-    if (query.startsWith("UPDATE planned_expenses") && query.includes("active = false")) {
-      return { rows: [{ id: "5", user_id: "7" }] };
     }
     return { rows: [], rowCount: query.includes("INSERT INTO app_events") ? 1 : 0 };
   }));
@@ -2652,8 +2649,6 @@ test("records safe events after planned expense update and deactivation", async 
     due_day: 10,
     active: true
   });
-  await repo.deactivatePlannedExpense(100, 5);
-
   const updateQuery = queries.find((query) => query.sql.startsWith("UPDATE planned_expenses") && query.sql.includes("amount ="));
   assert.doesNotMatch(updateQuery.sql, /\bactive\s*=/);
   assert.equal(updateQuery.params.length, 13);
@@ -2662,11 +2657,181 @@ test("records safe events after planned expense update and deactivation", async 
   const events = queries
     .filter((query) => query.sql.includes("INSERT INTO app_events"))
     .map((query) => [query.params[1], JSON.parse(query.params[2])]);
-  assert.deepEqual(events, [
-    ["planned_expense_updated", { source: "miniapp" }],
-    ["planned_expense_deleted", { source: "miniapp" }]
-  ]);
+  assert.deepEqual(events, [["planned_expense_updated", { source: "miniapp" }]]);
   assert.doesNotMatch(JSON.stringify(events), /Private description|20/);
+});
+
+test("deactivates an owned weekly planned expense transactionally and returns stable current-month impact", async () => {
+  const now = new Date("2026-07-22T10:00:00+07:00");
+  const queries = [];
+  const events = [];
+  let active = true;
+  let disabledAt = null;
+  let releases = 0;
+  const client = {
+    async query(sql, params = []) {
+      const query = String(sql);
+      queries.push({ sql: query, params });
+      if (["BEGIN", "COMMIT", "ROLLBACK"].includes(query)) return { rows: [] };
+      if (query.includes("FROM planned_expenses") && query.includes("FOR UPDATE")) {
+        return {
+          rows: [{
+            id: "5",
+            user_id: "7",
+            amount_base: "1000",
+            recurrence: "weekly",
+            weekday: 3,
+            active,
+            disabled_at: disabledAt,
+            base_currency: "THB",
+            timezone: "Asia/Bangkok"
+          }]
+        };
+      }
+      if (query.includes("FROM planned_expense_payments")) {
+        return {
+          rows: [
+            { occurrence_date: "2026-07-01", amount_base: "900" },
+            { occurrence_date: "2026-07-08", amount_base: "1100" },
+            { occurrence_date: "2026-06-24", amount_base: "700" },
+            { occurrence_date: "2026-07-02", amount_base: "800" }
+          ]
+        };
+      }
+      if (query.startsWith("UPDATE planned_expenses") && query.includes("active = false")) {
+        assert.equal(active, true);
+        active = false;
+        disabledAt = params[1];
+        return {
+          rows: [{
+            id: "5",
+            user_id: "7",
+            amount_base: "1000",
+            recurrence: "weekly",
+            weekday: 3,
+            active,
+            disabled_at: disabledAt
+          }]
+        };
+      }
+      throw new Error(`Unexpected client query: ${query}`);
+    },
+    release() { releases += 1; }
+  };
+  const repo = createRepository({
+    async connect() { return client; },
+    async query(sql, params = []) {
+      events.push({ sql: String(sql), params });
+      return { rows: [], rowCount: 1 };
+    }
+  });
+
+  const first = await repo.deactivatePlannedExpense(100, 5, now);
+  const second = await repo.deactivatePlannedExpense(100, 5, now);
+
+  const expectedImpact = {
+    paidOccurrencesKept: 2,
+    paidAmountKept: 2000,
+    unpaidOccurrencesRemoved: 3,
+    unpaidAmountRemoved: 3000,
+    currency: "THB"
+  };
+  assert.deepEqual(first, {
+    plannedExpense: {
+      id: "5",
+      user_id: "7",
+      amount_base: "1000",
+      recurrence: "weekly",
+      weekday: 3,
+      active: false,
+      disabled_at: now
+    },
+    impact: expectedImpact
+  });
+  assert.deepEqual(second, first);
+  assert.equal(queries.filter((query) => query.sql === "BEGIN").length, 2);
+  assert.equal(queries.filter((query) => query.sql === "COMMIT").length, 2);
+  assert.equal(queries.filter((query) => query.sql === "ROLLBACK").length, 0);
+  assert.equal(releases, 2);
+
+  const lockQueries = queries.filter((query) => query.sql.includes("FOR UPDATE"));
+  assert.equal(lockQueries.length, 2);
+  assert.match(lockQueries[0].sql, /JOIN users ON users\.id = planned_expenses\.user_id/);
+  assert.match(lockQueries[0].sql, /planned_expenses\.id = \$1/);
+  assert.match(lockQueries[0].sql, /users\.telegram_user_id = \$2/);
+  const paymentQuery = queries.find((query) => query.sql.includes("FROM planned_expense_payments"));
+  assert.match(paymentQuery.sql, /JOIN expenses/);
+  assert.match(paymentQuery.sql, /e\.user_id = \$2/);
+  assert.equal(paymentQuery.params[2], "2026-07");
+
+  const updates = queries.filter((query) => query.sql.startsWith("UPDATE planned_expenses") && query.sql.includes("active = false"));
+  assert.equal(updates.length, 1);
+  assert.match(updates[0].sql, /disabled_at = \$2/);
+  assert.match(updates[0].sql, /AND active = true/);
+  assert.deepEqual(updates[0].params, ["5", now]);
+  assert.ok(!queries.some((query) => /DELETE FROM (expenses|planned_expense_payments|daily_budget_snapshots)/.test(query.sql)));
+
+  const deletionEvents = events.filter((query) => query.sql.includes("INSERT INTO app_events"));
+  assert.equal(deletionEvents.length, 1);
+  assert.deepEqual(deletionEvents[0].params, ["7", "planned_expense_deleted", JSON.stringify({ source: "miniapp" })]);
+});
+
+test("rolls back and returns null when planned expense is missing or belongs to another user", async () => {
+  const queries = [];
+  let releases = 0;
+  const client = {
+    async query(sql, params = []) {
+      const query = String(sql);
+      queries.push({ sql: query, params });
+      if (["BEGIN", "ROLLBACK"].includes(query)) return { rows: [] };
+      if (query.includes("FOR UPDATE")) return { rows: [] };
+      throw new Error(`Unexpected query: ${query}`);
+    },
+    release() { releases += 1; }
+  };
+  const repo = createRepository({
+    async connect() { return client; },
+    async query() { throw new Error("missing disable must not record an event"); }
+  });
+
+  const result = await repo.deactivatePlannedExpense(999, 5, new Date("2026-07-22T10:00:00+07:00"));
+
+  assert.equal(result, null);
+  assert.deepEqual(queries.map((query) => query.sql), [
+    "BEGIN",
+    queries[1].sql,
+    "ROLLBACK"
+  ]);
+  assert.match(queries[1].sql, /FOR UPDATE/);
+  assert.deepEqual(queries[1].params, [5, 999]);
+  assert.equal(releases, 1);
+});
+
+test("rolls back and releases the client when planned disable impact lookup fails", async () => {
+  const queries = [];
+  let releases = 0;
+  const failure = new Error("payment lookup failed");
+  const client = {
+    async query(sql) {
+      const query = String(sql);
+      queries.push(query);
+      if (["BEGIN", "ROLLBACK"].includes(query)) return { rows: [] };
+      if (query.includes("FOR UPDATE")) {
+        return { rows: [{ id: "5", user_id: "7", amount_base: "1000", recurrence: "monthly", due_day: 10, active: true, base_currency: "THB", timezone: "Asia/Bangkok" }] };
+      }
+      if (query.includes("FROM planned_expense_payments")) throw failure;
+      throw new Error(`Unexpected query: ${query}`);
+    },
+    release() { releases += 1; }
+  };
+  const repo = createRepository({ async connect() { return client; } });
+
+  await assert.rejects(
+    repo.deactivatePlannedExpense(100, 5, new Date("2026-07-22T10:00:00+07:00")),
+    failure
+  );
+  assert.equal(queries.at(-1), "ROLLBACK");
+  assert.equal(releases, 1);
 });
 
 test("paying a planned expense creates an expense and records payment month", async () => {
