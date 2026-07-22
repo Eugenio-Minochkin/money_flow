@@ -104,6 +104,19 @@ test("normalizes only real YYYY-MM-DD calendar dates", () => {
   assert.equal(normalizePlannedDateKey("not-a-date"), null);
 });
 
+test("preserves the local calendar key returned by pg for a DATE column", () => {
+  const postgresDate = new Date(2026, 6, 23);
+
+  assert.equal(normalizePlannedDateKey(postgresDate), "2026-07-23");
+  assert.deepEqual(
+    plannedOccurrenceDateKeysForPeriod(
+      { recurrence: "weekly", weekday: 3, starts_on: postgresDate },
+      "2026-07"
+    ),
+    ["2026-07-29"]
+  );
+});
+
 test("rejects invalid periods without producing occurrence keys", () => {
   assert.deepEqual(plannedOccurrenceDateKeysForPeriod({ recurrence: "monthly", due_day: 1 }, "2026-13"), []);
   assert.deepEqual(plannedOccurrenceDateKeysForPeriod({ recurrence: "monthly", due_day: 1 }, "invalid"), []);

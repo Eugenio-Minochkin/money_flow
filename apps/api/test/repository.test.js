@@ -5058,6 +5058,8 @@ test("upserts the current reserve and recurring template with explicit scope", a
   assert.equal(result.template.is_active, true);
   assert.ok(calls.some((call) => call.query.includes("ON CONFLICT (user_id, period)")));
   assert.ok(calls.some((call) => call.query.includes("ON CONFLICT (user_id)")));
+  const reserveInsert = calls.find((call) => call.query.includes("INSERT INTO monthly_reserve_instances"));
+  assert.equal(reserveInsert.params[2], "UTC");
 });
 
 test("disables current reserve and recurrence with current_and_future scope", async () => {

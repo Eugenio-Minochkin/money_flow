@@ -39,7 +39,7 @@ export function normalizePlannedDateKey(value) {
   if (value == null || value === "") return null;
 
   const raw = value instanceof Date && !Number.isNaN(value.getTime())
-    ? value.toISOString().slice(0, 10)
+    ? dateKey(value.getFullYear(), value.getMonth() + 1, value.getDate())
     : String(value).slice(0, 10);
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
   if (!match) return null;

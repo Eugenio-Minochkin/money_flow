@@ -313,7 +313,7 @@ export function createRepository(pool, options = {}) {
     async upsertCurrentReserve(telegramUserId, input, now = new Date()) {
       const user = await this.getUserByTelegramId(telegramUserId);
       if (!user) return null;
-      const timeZone = normalizeTimeZone(user.timezone);
+      const timeZone = normalizeTimeZone(user.timezone).timeZone;
       const period = timeZoneMonthKey(now, timeZone);
       const currentBudget = await currentMonthBudget(pool, user, now);
       const plannedExpenses = await listPlannedExpensesForTelegramUserAt(pool, telegramUserId, now);
