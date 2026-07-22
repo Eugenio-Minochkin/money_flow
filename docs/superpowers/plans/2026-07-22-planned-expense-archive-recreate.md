@@ -1186,7 +1186,7 @@ Confirm no production values, user data, `001_initial.sql` edits, source-plan li
 
 Use `requesting-code-review` and check the final diff against every spec heading, especially transaction-client reserve validation, 404 precedence, post-commit/post-201 boundaries, factual history, cache invalidation, and snapshot stability. Resolve only verified blockers and rerun affected tests.
 
-- [ ] **Step 6: Push the branch and open a draft PR**
+- [x] **Step 6: Push the branch and open a draft PR**
 
 Push `codex/planned-expense-archive-recreate` and open a draft PR into `master`. The PR body must include:
 
