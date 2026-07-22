@@ -4,6 +4,19 @@ export function buildPlannedPaymentUndoConfirmation(occurrenceDate, { translate,
   });
 }
 
+export function paidPlannedPaymentUndoOccurrences(item) {
+  const dates = new Set(Array.isArray(item?.paid_occurrence_dates) ? item.paid_occurrence_dates : []);
+  if (item?.paid_occurrences && typeof item.paid_occurrences === "object") {
+    for (const [occurrenceDate, payment] of Object.entries(item.paid_occurrences)) {
+      if (payment?.expense_id) dates.add(occurrenceDate);
+    }
+  }
+  return [...dates]
+    .map((value) => String(value).slice(0, 10))
+    .filter((value) => /^\d{4}-\d{2}-\d{2}$/.test(value))
+    .sort();
+}
+
 export async function runPlannedPaymentUndo({
   button,
   item,
@@ -27,8 +40,7 @@ export async function runPlannedPaymentUndo({
   if (button.dataset) button.dataset.busy = "true";
   try {
     const result = await undoRequest(item.id, occurrenceDate);
-    await loadDashboard();
-    await loadHistory();
+    await Promise.allSettled([loadDashboard(), loadHistory()]);
     const status = result?.status === "already_unpaid" ? "already_unpaid" : "undone";
     showToast(translate(status === "already_unpaid" ? "toast.plannedPaymentAlreadyUndone" : "toast.plannedPaymentUndone"));
     return { status, result };

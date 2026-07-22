@@ -31,7 +31,7 @@ import { createTranslator } from "./i18n.js";
 import { inboxCountLabel, inboxDraftDescription, inboxDraftTotal, shouldShowInboxOnDashboard, updateFirstInboxItemCategory } from "./inbox.js";
 import { buildReserveSettingsView } from "./reserveSettings.js";
 import { runPlannedDisable } from "./plannedDisable.js";
-import { runPlannedPaymentUndo } from "./plannedPaymentUndo.js";
+import { paidPlannedPaymentUndoOccurrences, runPlannedPaymentUndo } from "./plannedPaymentUndo.js";
 import { createPlannedRecreateSession, runPlannedRecreate } from "./plannedRecreate.js";
 import {
   buildArchivedPlanView,
@@ -1177,11 +1177,10 @@ function renderPlannedExpenses(items) {
   list.innerHTML = items.map((item) => {
     const paid = isPlannedPaid(item);
     const progress = plannedPaymentProgressLabel(item);
-    const undoButtons = buildPlannedOccurrences(item)
-      .filter((occurrence) => occurrence.paid)
-      .map((occurrence) => {
-        const date = formatDateOnly(`${occurrence.occurrence_date}T12:00:00.000Z`, currentLanguage, "UTC");
-        return `<button type="button" class="ghost-button" data-undo-planned="${escapeAttribute(item.id)}" data-occurrence-date="${escapeAttribute(occurrence.occurrence_date)}">${escapeHtml(t("actions.undoPayment", { date }))}</button>`;
+    const undoButtons = paidPlannedPaymentUndoOccurrences(item)
+      .map((occurrenceDate) => {
+        const date = formatDateOnly(`${occurrenceDate}T12:00:00.000Z`, currentLanguage, "UTC");
+        return `<button type="button" class="ghost-button" data-undo-planned="${escapeAttribute(item.id)}" data-occurrence-date="${escapeAttribute(occurrenceDate)}">${escapeHtml(t("actions.undoPayment", { date }))}</button>`;
       })
       .join("");
     return `

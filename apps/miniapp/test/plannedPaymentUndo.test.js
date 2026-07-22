@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { runPlannedPaymentUndo } from "../src/plannedPaymentUndo.js";
+import { paidPlannedPaymentUndoOccurrences, runPlannedPaymentUndo } from "../src/plannedPaymentUndo.js";
 
 test("planned payment undo confirms an exact occurrence and sends one DELETE lifecycle", async () => {
   const button = { disabled: false, dataset: {}, isConnected: true };
@@ -74,4 +74,36 @@ test("planned payment undo restores the selected button after an error", async (
   assert.equal(result.status, "error");
   assert.equal(button.disabled, false);
   assert.equal(errorMessage, "toast.plannedPaymentUndoBlocked");
+});
+
+test("planned payment undo keeps its committed success when refresh fails", async () => {
+  const button = { disabled: false, dataset: {}, isConnected: true };
+  const calls = [];
+  const result = await runPlannedPaymentUndo({
+    button, item: { id: 41 }, occurrenceDate: "2026-07-15", confirm: () => true,
+    undoRequest: async () => { calls.push("delete"); return { status: "undone" }; },
+    loadDashboard: async () => { throw new Error("refresh failed"); },
+    loadHistory: async () => { throw new Error("refresh failed"); },
+    showToast: (message) => calls.push(message),
+    showError: (message) => calls.push(`error:${message}`),
+    translate: (key) => key, formatOccurrenceDate: (value) => value
+  });
+
+  assert.equal(result.status, "undone");
+  assert.deepEqual(calls, ["delete", "toast.plannedPaymentUndone"]);
+  assert.equal(button.disabled, false);
+});
+
+test("undo controls use factual payment links after a plan schedule changes", () => {
+  const dates = paidPlannedPaymentUndoOccurrences({
+    recurrence: "monthly",
+    due_day: 25,
+    paid_occurrence_dates: ["2026-07-08", "2026-07-15"],
+    paid_occurrences: {
+      "2026-07-08": { expense_id: 10 },
+      "2026-07-15": { expense_id: 11 }
+    }
+  });
+
+  assert.deepEqual(dates, ["2026-07-08", "2026-07-15"]);
 });
