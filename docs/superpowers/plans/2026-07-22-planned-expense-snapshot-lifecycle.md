@@ -310,7 +310,7 @@ Resolve the item from the current active list, call the helper from the disable 
 
 Run the command from Step 2 and confirm all selected tests pass.
 
-- [ ] **Step 6: Perform compact mobile visual verification**
+- [x] **Step 6: Perform compact mobile visual verification**
 
 Run the local Mini App sandbox and capture RU/EN screenshots at iPhone 11 and iPhone 14 Pro widths. Confirm no permanent archive or large dashboard block was added.
 
@@ -346,13 +346,13 @@ Also document the server-owned paid/remaining summary and the new Postgres smoke
 npm.cmd test -- apps/api/test/budgetReserveIntegration.test.js apps/api/test/repository.test.js apps/api/test/reportService.test.js apps/api/test/security.test.js apps/miniapp/test/plannedDisable.test.js apps/miniapp/test/planned.test.js apps/miniapp/test/i18n.test.js apps/miniapp/test/smokeAssets.test.js
 ```
 
-- [ ] **Step 3: Run the full unit suite**
+- [x] **Step 3: Run the full unit suite**
 
 ```powershell
 npm.cmd test
 ```
 
-- [ ] **Step 4: Run disposable Postgres integration**
+- [x] **Step 4: Run disposable Postgres integration**
 
 ```powershell
 npm.cmd run test:integration:postgres
