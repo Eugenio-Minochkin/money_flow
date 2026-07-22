@@ -41,7 +41,7 @@
 - Create: `apps/api/src/plannedOccurrenceDates.js`
 - Create: `apps/api/test/plannedOccurrenceDates.test.js`
 
-- [ ] **Step 1: Write failing pure occurrence tests**
+- [x] **Step 1: Write failing pure occurrence tests**
 
 Create `apps/api/test/plannedOccurrenceDates.test.js` with table-driven assertions for legacy `NULL`, weekly, monthly, twice-monthly, one-off, clamped month end, future start, and invalid dates:
 
@@ -112,7 +112,7 @@ test("accepts a real leap day and rejects a non-leap day", () => {
 });
 ```
 
-- [ ] **Step 2: Run the new test and verify RED**
+- [x] **Step 2: Run the new test and verify RED**
 
 Run:
 
@@ -122,7 +122,7 @@ npm.cmd test -- apps/api/test/plannedOccurrenceDates.test.js
 
 Expected: FAIL with `ERR_MODULE_NOT_FOUND` for `plannedOccurrenceDates.js`.
 
-- [ ] **Step 3: Implement the pure date-key module**
+- [x] **Step 3: Implement the pure date-key module**
 
 Create `apps/api/src/plannedOccurrenceDates.js`:
 
@@ -191,7 +191,7 @@ function dateKey(year, month, day) {
 }
 ```
 
-- [ ] **Step 4: Add the additive migration**
+- [x] **Step 4: Add the additive migration**
 
 Create `apps/api/migrations/012_planned_expense_starts_on.sql`:
 
@@ -202,7 +202,7 @@ ADD COLUMN IF NOT EXISTS starts_on DATE;
 
 Do not edit `001_initial.sql`, add an index, or backfill existing rows.
 
-- [ ] **Step 5: Run focused tests and verify GREEN**
+- [x] **Step 5: Run focused tests and verify GREEN**
 
 Run:
 
