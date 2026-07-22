@@ -1083,7 +1083,7 @@ git commit -m "test: cover planned archive recreate in postgres"
 - Modify: `docs/TESTING_GUIDE.md`
 - Modify: `docs/superpowers/plans/2026-07-22-planned-expense-archive-recreate.md`
 
-- [ ] **Step 1: Record the final domain rules**
+- [x] **Step 1: Record the final domain rules**
 
 Document these exact meanings:
 
@@ -1096,11 +1096,11 @@ Document these exact meanings:
 - PR #122 opening-snapshot policy remains unchanged;
 - post-commit analytics and post-201 refresh failures cannot turn successful creation into a retryable mutation error.
 
-- [ ] **Step 2: Record compact archive UI and testing guidance**
+- [x] **Step 2: Record compact archive UI and testing guidance**
 
 Update `UI_PRINCIPLES.md` with collapsed-by-default lazy history, no archive controls other than Create again, explicit loading/empty/error states, and narrow-width wrapping. Update `TESTING_GUIDE.md` with migration 012, archive validity, transaction-client reserve validation, error precedence, synchronization boundary, and mobile screenshots.
 
-- [ ] **Step 3: Run the local Mini App acceptance sandbox**
+- [x] **Step 3: Run the local Mini App acceptance sandbox**
 
 Use only the local disposable development database:
 
@@ -1111,7 +1111,7 @@ npm.cmd run dev:api
 
 Create synthetic active plans through the local UI/API, pay and disable them through normal local flows, and include one local legacy row with `disabled_at = NULL` only in the disposable database. Do not use production data or production commands.
 
-- [ ] **Step 4: Capture and review four screenshots**
+- [x] **Step 4: Capture and review four screenshots**
 
 Capture:
 
@@ -1122,11 +1122,20 @@ Capture:
 
 Check iPhone 11 and iPhone 14 Pro viewports, long synthetic description, large synthetic amount, null disable date, and multiple saved payments. Confirm no horizontal scroll, clipped text, overflowing buttons, or active controls on archived rows. Save screenshot paths for the draft PR body; do not commit secrets or real data.
 
-- [ ] **Step 5: Mark only actually completed plan checkboxes**
+Evidence (synthetic disposable data only):
+
+- `C:/Users/minoc/.codex/visualizations/2026/07/22/019f899b-4650-77a1-8263-8b0638525ffa/planned-archive-ru-iphone11.png` — 414×896;
+- `C:/Users/minoc/.codex/visualizations/2026/07/22/019f899b-4650-77a1-8263-8b0638525ffa/planned-recreate-ru-iphone11.png` — 414×896;
+- `C:/Users/minoc/.codex/visualizations/2026/07/22/019f899b-4650-77a1-8263-8b0638525ffa/planned-archive-en-iphone14pro.png` — 393×852;
+- `C:/Users/minoc/.codex/visualizations/2026/07/22/019f899b-4650-77a1-8263-8b0638525ffa/planned-recreate-en-iphone14pro.png` — 393×852.
+
+Measured results: page `scrollWidth` equaled viewport width at both sizes; archive rows and recreate forms reported no internal overflow; every archived row exposed only the recreate action; legacy null-date copy and the form's `min === value` start-date boundary were visible.
+
+- [x] **Step 5: Mark only actually completed plan checkboxes**
 
 Update this file checkbox-by-checkbox from command and visual evidence. Leave any unexecuted step unchecked and explain it in the PR rather than claiming completion.
 
-- [ ] **Step 6: Commit docs and evidence references**
+- [x] **Step 6: Commit docs and evidence references**
 
 ```powershell
 git add docs/DOMAIN_RULES.md docs/DECISIONS.md docs/UI_PRINCIPLES.md docs/TESTING_GUIDE.md docs/superpowers/plans/2026-07-22-planned-expense-archive-recreate.md
