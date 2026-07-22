@@ -420,7 +420,7 @@ if (req.method === "GET" && url.pathname === "/api/planned-expenses/archive") {
 npm.cmd test -- apps/api/test/repository.test.js apps/api/test/security.test.js
 ```
 
-- [ ] **Step 7: Commit the archive API**
+- [x] **Step 7: Commit the archive API**
 
 ```powershell
 git add apps/api/src/repository.js apps/api/src/server.js apps/api/test/repository.test.js apps/api/test/security.test.js
@@ -435,7 +435,7 @@ git commit -m "feat: add planned expense archive API"
 - Modify: `apps/api/test/repository.test.js`
 - Modify: `apps/api/test/security.test.js`
 
-- [ ] **Step 1: Write failing transaction tests**
+- [x] **Step 1: Write failing transaction tests**
 
 Create a test fixture whose pool exposes `query()` for preflight and `connect()` for a client that records `BEGIN`, `FOR UPDATE`, reserve reads, active-plan reads, INSERT, `COMMIT`, and `ROLLBACK`. Cover:
 
@@ -453,7 +453,7 @@ assert.equal(insertedExpenses.length, 0);
 
 Add missing/foreign/active source cases with malformed payload and malformed `startsOn`; all must return the repository not-found outcome before exchange-rate resolution. Add one-off missing/invalid/before-start codes.
 
-- [ ] **Step 2: Add the reserve rollback and event-boundary tests**
+- [x] **Step 2: Add the reserve rollback and event-boundary tests**
 
 For an active reserve conflict assert:
 
@@ -467,7 +467,7 @@ assert.equal(events.length, 0);
 
 Override `repo.recordAppEvent` to throw after `COMMIT`; assert the method still returns the new plan and only one plan row exists. Assert event metadata contains exactly `{ source: "miniapp", mode: "recreate" }` and no financial/source IDs.
 
-- [ ] **Step 3: Run repository tests and verify RED**
+- [x] **Step 3: Run repository tests and verify RED**
 
 ```powershell
 npm.cmd test -- apps/api/test/repository.test.js
@@ -475,24 +475,25 @@ npm.cmd test -- apps/api/test/repository.test.js
 
 Expected: FAIL because recreate and transaction-safe reserve validation do not exist.
 
-- [ ] **Step 4: Add a transaction-safe reserve helper**
+- [x] **Step 4: Add a transaction-safe reserve helper**
 
 Keep legacy callers stable and add an explicit queryable variant:
 
 ```js
 async function assertPlannedMutationCapacityWithQueryable(queryable, user, changedPlan, changedPlanId) {
+  const userId = user.user_id ?? user.id;
   const reserveResult = await queryable.query(
     `SELECT * FROM monthly_reserve_instances
      WHERE user_id = $1 AND status = 'active'
      ORDER BY period DESC
      LIMIT 1`,
-    [user.id]
+    [userId]
   );
   const reserve = reserveResult.rows[0];
   if (!reserve) return;
   const plansResult = await queryable.query(
     `SELECT * FROM planned_expenses WHERE user_id = $1 AND active = true`,
-    [user.id]
+    [userId]
   );
   const plans = plansResult.rows.filter((item) => String(item.id) !== String(changedPlanId));
   plans.push(changedPlan);
@@ -510,7 +511,7 @@ async function assertPlannedMutationCapacityWithQueryable(queryable, user, chang
 
 The existing `assertPlannedMutationCapacity` may retain its test-double guard, but recreate must call `assertPlannedMutationCapacityWithQueryable(client, ...)` so every reserve query and INSERT uses the same transaction client.
 
-- [ ] **Step 5: Implement source preflight, locked recheck, validation, insert, and safe event**
+- [x] **Step 5: Implement source preflight, locked recheck, validation, insert, and safe event**
 
 Add `recreatePlannedExpense` with this control shape:
 
@@ -591,7 +592,7 @@ async function readOwnedArchivedPlannedExpense(queryable, telegramUserId, archiv
 }
 ```
 
-- [ ] **Step 6: Write and implement the recreate route contract**
+- [x] **Step 6: Write and implement the recreate route contract**
 
 Add security assertions, then implement before the ordinary item matcher:
 
@@ -620,7 +621,7 @@ if (req.method === "POST" && recreateMatch) {
 }
 ```
 
-- [ ] **Step 7: Run focused tests and verify GREEN**
+- [x] **Step 7: Run focused tests and verify GREEN**
 
 ```powershell
 npm.cmd test -- apps/api/test/repository.test.js apps/api/test/security.test.js apps/api/test/budgetReserveIntegration.test.js

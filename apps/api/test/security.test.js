@@ -259,6 +259,30 @@ test("planned expense archive has a separate authenticated read contract before 
   assert.doesNotMatch(archiveBlock, /createPlannedExpense|updatePlannedExpense|deactivatePlannedExpense/);
 });
 
+test("planned expense recreate has a separate authenticated POST contract and explicit errors", async () => {
+  const source = await readFile(new URL("../src/server.js", import.meta.url), "utf8");
+  const recreateStart = source.indexOf("const recreateMatch = url.pathname.match");
+  const itemStart = source.indexOf("const plannedMatch = url.pathname.match");
+
+  assert.notEqual(recreateStart, -1, "planned recreate route is registered");
+  assert.ok(recreateStart < itemStart, "recreate matcher precedes ordinary item mutations");
+
+  const block = source.slice(recreateStart, itemStart);
+  assert.match(block, /\^\\\/api\\\/planned-expenses\\\/\(\\d\+\)\\\/recreate\$/);
+  assert.match(block, /req\.method === "POST"/);
+  assert.match(block, /apiSecurity\.resolveTelegramUserId\(req, url, body\)/);
+  assert.match(block, /repository\.recreatePlannedExpense\([\s\S]*body\.plannedExpense,[\s\S]*body\.startsOn/);
+  assert.match(block, /return sendJson\(res, 201, \{ plannedExpense \}\);/);
+  assert.match(block, /return sendJson\(res, 404, \{ error: "planned_expense_not_found" \}\);/);
+  for (const code of [
+    "invalid_planned_start_date",
+    "planned_start_date_in_past",
+    "invalid_planned_due_date",
+    "planned_due_date_before_start",
+    "reserve_conflicts_with_planned_change"
+  ]) assert.match(block, new RegExp(code));
+});
+
 test("planned expense mutation routes keep PATCH and DELETE response contracts explicit", async () => {
   const source = await readFile(new URL("../src/server.js", import.meta.url), "utf8");
   const routeStart = source.indexOf("const plannedMatch = url.pathname.match");

@@ -2774,6 +2774,85 @@ export function createRepository(pool, options = {}) {
       });
     },
 
+    async recreatePlannedExpense(telegramUserId, archivedId, input, startsOn, now = new Date()) {
+      const source = await readOwnedArchivedPlannedExpense(pool, telegramUserId, archivedId, false);
+      if (!source) return null;
+
+      const planned = normalizePlannedExpense(input);
+      const startsOnKey = typeof startsOn === "string" && /^\d{4}-\d{2}-\d{2}$/.test(startsOn)
+        ? normalizePlannedDateKey(startsOn)
+        : null;
+      if (!startsOnKey) throw codedError("Invalid planned start date", "invalid_planned_start_date");
+      const todayKey = localDayKey(now, userTimezone(source));
+      if (startsOnKey < todayKey) {
+        throw codedError("Planned start date is in the past", "planned_start_date_in_past");
+      }
+      const dueDateKey = normalizePlannedDateKey(planned.due_date);
+      if (planned.recurrence === "one_off" && !dueDateKey) {
+        throw codedError("Invalid planned due date", "invalid_planned_due_date");
+      }
+      if (planned.recurrence === "one_off" && dueDateKey < startsOnKey) {
+        throw codedError("Planned due date is before start", "planned_due_date_before_start");
+      }
+      const money = await buildMoneyAmounts(exchangeRates, planned.amount, planned.currency, now, source);
+
+      const client = await pool.connect();
+      let created = null;
+      try {
+        await client.query("BEGIN");
+        const locked = await readOwnedArchivedPlannedExpense(client, telegramUserId, archivedId, true);
+        if (!locked) {
+          await client.query("ROLLBACK");
+          return null;
+        }
+        const candidate = {
+          ...planned,
+          amount_base: money.amountBase,
+          active: true,
+          starts_on: startsOnKey
+        };
+        await assertPlannedMutationCapacityWithQueryable(client, locked, candidate, null);
+        const result = await client.query(
+          `INSERT INTO planned_expenses (
+             user_id, amount, currency, amount_base, description, category_slug, tags,
+             recurrence, due_day, due_days, weekday, due_date, starts_on, active
+           )
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, true)
+           RETURNING *`,
+          [
+            locked.user_id,
+            planned.amount,
+            planned.currency,
+            money.amountBase,
+            planned.description,
+            planned.category_slug,
+            planned.tags,
+            planned.recurrence,
+            planned.due_day,
+            planned.due_days,
+            planned.weekday,
+            planned.due_date,
+            startsOnKey
+          ]
+        );
+        created = result.rows[0] ?? null;
+        await client.query("COMMIT");
+      } catch (error) {
+        try { await client.query("ROLLBACK"); } catch { /* preserve original transaction error */ }
+        throw error;
+      } finally {
+        client.release();
+      }
+      if (created) {
+        try {
+          await this.recordAppEvent(created.user_id, "planned_expense_created", { source: "miniapp", mode: "recreate" });
+        } catch (error) {
+          console.warn("[repository] recreate event failed after commit", { message: error?.message });
+        }
+      }
+      return created;
+    },
+
     async createPlannedExpense(telegramUserId, input, now = new Date()) {
       const user = await this.getUserByTelegramId(telegramUserId);
       if (!user) return null;
@@ -3809,6 +3888,24 @@ async function listPlannedExpensesForTelegramUserAt(pool, telegramUserId, now, p
   return result.rows;
 }
 
+async function readOwnedArchivedPlannedExpense(queryable, telegramUserId, archivedId, lock) {
+  const result = await queryable.query(
+    `SELECT planned_expenses.*,
+            users.base_currency,
+            users.display_currency,
+            users.usd_thb_rate,
+            users.timezone
+     FROM planned_expenses
+     JOIN users ON users.id = planned_expenses.user_id
+     WHERE planned_expenses.id = $1
+       AND users.telegram_user_id = $2
+       AND planned_expenses.active = false
+     ${lock ? "FOR UPDATE" : ""}`,
+    [archivedId, telegramUserId]
+  );
+  return result.rows[0] ?? null;
+}
+
 function normalizeDraftItem(item) {
   const amount = Number(item.amount);
   if (!Number.isFinite(amount) || amount <= 0) {
@@ -4065,19 +4162,24 @@ async function assertReserveCurrencyChangeAllowed(pool, userId) {
 
 async function assertPlannedMutationCapacity(pool, user, changedPlan, changedPlanId, now) {
   if (typeof pool.connect !== "function" || changedPlan.active === false) return;
-  const reserveResult = await pool.query(
+  return assertPlannedMutationCapacityWithQueryable(pool, user, changedPlan, changedPlanId);
+}
+
+async function assertPlannedMutationCapacityWithQueryable(queryable, user, changedPlan, changedPlanId) {
+  const userId = user.user_id ?? user.id;
+  const reserveResult = await queryable.query(
     `SELECT * FROM monthly_reserve_instances
      WHERE user_id = $1 AND status = 'active'
      ORDER BY period DESC
      LIMIT 1`,
-    [user.id]
+    [userId]
   );
   const reserve = reserveResult.rows[0];
   if (!reserve) return;
-  const plansResult = await pool.query(
+  const plansResult = await queryable.query(
     `SELECT * FROM planned_expenses
      WHERE user_id = $1 AND active = true`,
-    [user.id]
+    [userId]
   );
   const plans = plansResult.rows.filter((item) => String(item.id) !== String(changedPlanId));
   plans.push(changedPlan);
@@ -4090,9 +4192,7 @@ async function assertPlannedMutationCapacity(pool, user, changedPlan, changedPla
     reserveAmount: reserve.reserve_amount
   });
   if (!capacity.valid) {
-    throw Object.assign(new Error("reserve_conflicts_with_planned_change"), {
-      code: "reserve_conflicts_with_planned_change"
-    });
+    throw codedError("reserve_conflicts_with_planned_change", "reserve_conflicts_with_planned_change");
   }
 }
 

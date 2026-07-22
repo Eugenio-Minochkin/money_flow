@@ -422,6 +422,36 @@ async function route(req, res) {
     return sendJson(res, 201, { plannedExpense });
   }
 
+  const recreateMatch = url.pathname.match(/^\/api\/planned-expenses\/(\d+)\/recreate$/);
+  if (req.method === "POST" && recreateMatch) {
+    const body = await readJson(req);
+    const auth = apiSecurity.resolveTelegramUserId(req, url, body);
+    if (auth.error) return sendJson(res, 400, { error: auth.error });
+    try {
+      const plannedExpense = await repository.recreatePlannedExpense(
+        auth.telegramUserId,
+        Number(recreateMatch[1]),
+        body.plannedExpense,
+        body.startsOn
+      );
+      if (!plannedExpense) return sendJson(res, 404, { error: "planned_expense_not_found" });
+      return sendJson(res, 201, { plannedExpense });
+    } catch (error) {
+      if ([
+        "invalid_planned_start_date",
+        "planned_start_date_in_past",
+        "invalid_planned_due_date",
+        "planned_due_date_before_start"
+      ].includes(error.code)) {
+        return sendJson(res, 400, { error: error.code });
+      }
+      if (error.code === "reserve_conflicts_with_planned_change") {
+        return sendJson(res, 409, { error: error.code });
+      }
+      throw error;
+    }
+  }
+
   const plannedMatch = url.pathname.match(/^\/api\/planned-expenses\/(\d+)$/);
   if (plannedMatch && (req.method === "PATCH" || req.method === "DELETE")) {
     const body = await readJson(req);

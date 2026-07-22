@@ -2708,6 +2708,148 @@ test("lists archived planned expenses with deduplicated same-user payment facts"
   assert.match(sql, /ORDER BY planned_expenses\.disabled_at DESC NULLS LAST, planned_expenses\.id DESC/);
 });
 
+test("recreates the same archived plan twice as independent active plans without copying history", async () => {
+  const fixture = recreateRepositoryFixture();
+  const input = {
+    amount: 1000,
+    currency: "THB",
+    description: "weekly class",
+    category_slug: "education",
+    recurrence: "weekly",
+    weekday: 3
+  };
+  const now = new Date("2026-07-22T10:00:00+07:00");
+  const originalDisabledAt = new Date(fixture.source.disabled_at);
+
+  const first = await fixture.repository.recreatePlannedExpense(100, 7, input, "2026-07-23", now);
+  const second = await fixture.repository.recreatePlannedExpense(100, 7, input, "2026-07-23", now);
+
+  assert.notEqual(first.id, second.id);
+  assert.equal(first.active, true);
+  assert.equal(first.starts_on, "2026-07-23");
+  assert.equal(fixture.source.active, false);
+  assert.equal(new Date(fixture.source.disabled_at).toISOString(), originalDisabledAt.toISOString());
+  assert.equal(fixture.insertedPayments.length, 0);
+  assert.equal(fixture.insertedExpenses.length, 0);
+  assert.equal(fixture.created.length, 2);
+  assert.deepEqual(fixture.events.map((event) => event.metadata), [
+    { source: "miniapp", mode: "recreate" },
+    { source: "miniapp", mode: "recreate" }
+  ]);
+  assert.doesNotMatch(JSON.stringify(fixture.events), /archived|plannedExpenseId|1000|weekly class/);
+});
+
+test("recreate checks archived ownership and state before payload, date, or rates", async () => {
+  for (const source of [null, { active: true }, { active: false, owned: false }]) {
+    const fixture = recreateRepositoryFixture({ source });
+    const result = await fixture.repository.recreatePlannedExpense(
+      100,
+      7,
+      { amount: "bad", recurrence: "one_off", due_date: "bad" },
+      "bad",
+      new Date("2026-07-22T10:00:00+07:00")
+    );
+    assert.equal(result, null);
+    assert.equal(fixture.rateCalls, 0);
+    assert.equal(fixture.statements.length, 1);
+  }
+});
+
+test("recreate validates start and one-off dates with stable domain codes", async () => {
+  const cases = [
+    { startsOn: "bad", dueDate: "2026-07-25", code: "invalid_planned_start_date" },
+    { startsOn: "2026-07-23T00:00:00Z", dueDate: "2026-07-25", code: "invalid_planned_start_date" },
+    { startsOn: "2026-07-21", dueDate: "2026-07-25", code: "planned_start_date_in_past" },
+    { startsOn: "2026-07-23", dueDate: null, code: "invalid_planned_due_date" },
+    { startsOn: "2026-07-23", dueDate: "2026-02-31", code: "invalid_planned_due_date" },
+    { startsOn: "2026-07-23", dueDate: "2026-07-22", code: "planned_due_date_before_start" }
+  ];
+  for (const { startsOn, dueDate, code } of cases) {
+    const fixture = recreateRepositoryFixture();
+    await assert.rejects(
+      fixture.repository.recreatePlannedExpense(100, 7, {
+        amount: 1000,
+        currency: "THB",
+        description: "insurance",
+        recurrence: "one_off",
+        due_date: dueDate
+      }, startsOn, new Date("2026-07-22T10:00:00+07:00")),
+      (error) => error.code === code
+    );
+    assert.equal(fixture.created.length, 0);
+  }
+});
+
+test("recreate returns not found when the archived source no longer qualifies after locking", async () => {
+  const fixture = recreateRepositoryFixture({ disappearOnLock: true });
+
+  const result = await fixture.repository.recreatePlannedExpense(100, 7, {
+    amount: 1000,
+    currency: "THB",
+    description: "insurance",
+    recurrence: "monthly",
+    due_day: 30
+  }, "2026-07-23", new Date("2026-07-22T10:00:00+07:00"));
+
+  assert.equal(result, null);
+  assert.ok(fixture.statements.includes("ROLLBACK"));
+  assert.ok(!fixture.statements.includes("COMMIT"));
+  assert.equal(fixture.created.length, 0);
+  assert.equal(fixture.events.length, 0);
+});
+
+test("recreate rolls back reserve conflicts on the transaction client", async () => {
+  const fixture = recreateRepositoryFixture({
+    reserve: {
+      id: "9",
+      user_id: "1",
+      period: "2026-07",
+      budget_amount: "1000",
+      reserve_amount: "500",
+      status: "active"
+    }
+  });
+
+  await assert.rejects(
+    fixture.repository.recreatePlannedExpense(100, 7, {
+      amount: 1000,
+      currency: "THB",
+      description: "insurance",
+      recurrence: "monthly",
+      due_day: 30
+    }, "2026-07-23", new Date("2026-07-22T10:00:00+07:00")),
+    (error) => error.code === "reserve_conflicts_with_planned_change"
+  );
+
+  assert.ok(fixture.statements.includes("ROLLBACK"));
+  assert.ok(!fixture.statements.includes("COMMIT"));
+  assert.equal(fixture.created.length, 0);
+  assert.equal(fixture.events.length, 0);
+  assert.ok(fixture.clientStatements.some((sql) => sql.includes("FROM monthly_reserve_instances")));
+  assert.ok(fixture.clientStatements.some((sql) => sql.includes("FROM planned_expenses") && sql.includes("active = true")));
+  const reserveRead = fixture.clientQueries.find(({ sql }) => sql.includes("FROM monthly_reserve_instances"));
+  const activePlansRead = fixture.clientQueries.find(({ sql }) => sql.includes("FROM planned_expenses") && sql.includes("active = true"));
+  assert.deepEqual(reserveRead.params, [fixture.source.user_id]);
+  assert.deepEqual(activePlansRead.params, [fixture.source.user_id]);
+});
+
+test("recreate keeps a committed plan successful when analytics fails", async () => {
+  const fixture = recreateRepositoryFixture({ eventFailure: new Error("analytics unavailable") });
+
+  const created = await fixture.repository.recreatePlannedExpense(100, 7, {
+    amount: 1000,
+    currency: "THB",
+    description: "insurance",
+    recurrence: "monthly",
+    due_day: 30
+  }, "2026-07-23", new Date("2026-07-22T10:00:00+07:00"));
+
+  assert.equal(created.id, "100");
+  assert.equal(fixture.created.length, 1);
+  assert.ok(fixture.statements.includes("COMMIT"));
+  assert.ok(!fixture.statements.includes("ROLLBACK"));
+});
+
 test("checks successful report delivery for an exact user type and key", async () => {
   const queries = [];
   const repo = createRepository(fakePool((sql, params) => {
@@ -5429,6 +5571,112 @@ function fakePool(handler) {
     async query(sql, params = []) {
       return handler(sql, params);
     }
+  };
+}
+
+function recreateRepositoryFixture({
+  source: sourceOverride,
+  reserve = null,
+  eventFailure = null,
+  disappearOnLock = false
+} = {}) {
+  const defaultSource = {
+    id: "7",
+    user_id: "1",
+    active: false,
+    owned: true,
+    disabled_at: "2026-07-01T03:00:00.000Z",
+    base_currency: "THB",
+    display_currency: "USD",
+    usd_thb_rate: "32.6",
+    timezone: "Asia/Bangkok"
+  };
+  const source = sourceOverride === undefined ? defaultSource : sourceOverride;
+  const statements = [];
+  const clientStatements = [];
+  const clientQueries = [];
+  const created = [];
+  const insertedPayments = [];
+  const insertedExpenses = [];
+  const events = [];
+  let rateCalls = 0;
+
+  const archivedRow = () => source && source.active === false && source.owned !== false ? source : null;
+  const client = {
+    async query(sql, params = []) {
+      const query = String(sql);
+      statements.push(query);
+      clientStatements.push(query);
+      clientQueries.push({ sql: query, params });
+      if (["BEGIN", "COMMIT", "ROLLBACK"].includes(query)) return { rows: [] };
+      if (query.includes("planned_expenses.active = false") && query.includes("FOR UPDATE")) {
+        return { rows: !disappearOnLock && archivedRow() ? [{ ...archivedRow() }] : [] };
+      }
+      if (query.includes("FROM monthly_reserve_instances") && query.includes("status = 'active'")) {
+        return { rows: reserve ? [reserve] : [] };
+      }
+      if (query.includes("FROM planned_expenses") && query.includes("active = true")) return { rows: [] };
+      if (query.startsWith("INSERT INTO planned_expenses")) {
+        const row = {
+          id: String(100 + created.length),
+          user_id: params[0],
+          amount: params[1],
+          currency: params[2],
+          amount_base: params[3],
+          description: params[4],
+          category_slug: params[5],
+          tags: params[6],
+          recurrence: params[7],
+          due_day: params[8],
+          due_days: params[9],
+          weekday: params[10],
+          due_date: params[11],
+          starts_on: params[12],
+          active: true
+        };
+        created.push(row);
+        return { rows: [row] };
+      }
+      if (query.includes("INSERT INTO planned_expense_payments")) insertedPayments.push(params);
+      if (query.includes("INSERT INTO expenses")) insertedExpenses.push(params);
+      throw new Error(`Unexpected SQL: ${query}`);
+    },
+    release() {}
+  };
+  const pool = {
+    async query(sql) {
+      const query = String(sql);
+      statements.push(query);
+      if (query.includes("planned_expenses.active = false") && !query.includes("FOR UPDATE")) {
+        return { rows: archivedRow() ? [{ ...archivedRow() }] : [] };
+      }
+      throw new Error(`Unexpected pool SQL: ${query}`);
+    },
+    async connect() { return client; }
+  };
+  const repository = createRepository(pool, {
+    exchangeRates: {
+      async ratesFor() {
+        rateCalls += 1;
+        return fixedRates().ratesFor();
+      }
+    }
+  });
+  repository.recordAppEvent = async (userId, eventName, metadata) => {
+    events.push({ userId, eventName, metadata });
+    if (eventFailure) throw eventFailure;
+  };
+  return {
+    repository,
+    source,
+    statements,
+    clientStatements,
+    clientQueries,
+    created,
+    insertedPayments,
+    insertedExpenses,
+    events,
+    get rateCalls() { return rateCalls; }
   };
 }
 
