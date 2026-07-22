@@ -243,27 +243,36 @@ test("account deletion request and advance map null repository results to contro
 
 test("planned expense mutation routes keep PATCH and DELETE response contracts explicit", async () => {
   const source = await readFile(new URL("../src/server.js", import.meta.url), "utf8");
-  const start = source.indexOf("const plannedMatch = url.pathname.match");
-  const end = source.indexOf('if (req.method === "PATCH" && url.pathname === "/api/settings/budget")', start);
+  const routeStart = source.indexOf("const plannedMatch = url.pathname.match");
+  const patchStart = source.indexOf('if (req.method === "PATCH") {', routeStart);
+  const reserveHandler = source.indexOf('error.code === "reserve_conflicts_with_planned_change"', patchStart);
+  const deleteStart = source.indexOf("const result = await repository.deactivatePlannedExpense", patchStart);
+  const blockEnd = source.indexOf('if (req.method === "PATCH" && url.pathname === "/api/settings/budget")', deleteStart);
 
-  assert.notEqual(start, -1, "planned expense item route is registered");
-  assert.notEqual(end, -1, "planned expense item route has a bounded source block");
-  const block = source.slice(start, end);
+  assert.notEqual(routeStart, -1, "planned expense item route is registered");
+  assert.notEqual(patchStart, -1, "planned expense PATCH branch is explicit");
+  assert.notEqual(reserveHandler, -1, "PATCH reserve conflict handler is registered");
+  assert.notEqual(deleteStart, -1, "planned expense DELETE branch is explicit");
+  assert.notEqual(blockEnd, -1, "planned expense item route has a bounded source block");
+  assert.ok(routeStart < patchStart, "PATCH branch follows the item route matcher");
+  assert.ok(patchStart < reserveHandler, "reserve conflicts are handled inside PATCH");
+  assert.ok(reserveHandler < deleteStart, "DELETE starts after PATCH reserve handling");
+  assert.ok(deleteStart < blockEnd, "DELETE remains inside the planned expense item route");
 
-  assert.match(block, /if \(req\.method === "PATCH"\) \{/);
-  assert.match(block, /const plannedExpense = await repository\.updatePlannedExpense\([\s\S]*body\.plannedExpense\s*\);/);
-  assert.match(block, /if \(!plannedExpense\) return sendJson\(res, 404, \{ error: "planned_expense_not_found" \}\);/);
-  assert.match(block, /return sendJson\(res, 200, \{ plannedExpense \}\);/);
+  const patchBlock = source.slice(patchStart, deleteStart);
+  const deleteBlock = source.slice(deleteStart, blockEnd);
 
-  assert.match(block, /const result = await repository\.deactivatePlannedExpense\(/);
-  assert.match(block, /if \(!result\) return sendJson\(res, 404, \{ error: "planned_expense_not_found" \}\);/);
-  assert.match(block, /return sendJson\(res, 200, result\);/);
-  assert.doesNotMatch(block, /return sendJson\(res, 200, \{ plannedExpense: result \}\);/);
-  assert.equal(block.match(/planned_expense_not_found/g)?.length, 2, "PATCH and DELETE each map missing plans to 404");
-  assert.ok(
-    block.indexOf('error.code === "reserve_conflicts_with_planned_change"') < block.indexOf("const result = await repository.deactivatePlannedExpense"),
-    "reserve conflicts remain handled in the PATCH branch before DELETE"
-  );
+  assert.match(patchBlock, /const plannedExpense = await repository\.updatePlannedExpense\([\s\S]*body\.plannedExpense\s*\);/);
+  assert.match(patchBlock, /if \(!plannedExpense\) return sendJson\(res, 404, \{ error: "planned_expense_not_found" \}\);/);
+  assert.match(patchBlock, /return sendJson\(res, 200, \{ plannedExpense \}\);/);
+  assert.match(patchBlock, /error\.code === "reserve_conflicts_with_planned_change"/);
+  assert.doesNotMatch(patchBlock, /deactivatePlannedExpense/);
+
+  assert.match(deleteBlock, /const result = await repository\.deactivatePlannedExpense\(/);
+  assert.match(deleteBlock, /if \(!result\) return sendJson\(res, 404, \{ error: "planned_expense_not_found" \}\);/);
+  assert.match(deleteBlock, /return sendJson\(res, 200, result\);/);
+  assert.doesNotMatch(deleteBlock, /sendJson\(res,\s*200,\s*\{\s*plannedExpense\b/);
+  assert.doesNotMatch(deleteBlock, /reserve_conflicts_with_planned_change/);
 });
 
 test("API security rejects invalid Telegram init data hash", () => {
