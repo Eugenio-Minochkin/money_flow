@@ -377,6 +377,6 @@ git add docs/DOMAIN_RULES.md docs/DECISIONS.md docs/TESTING_GUIDE.md docs/superp
 git commit -m "docs: record planned snapshot lifecycle"
 ```
 
-- [ ] **Step 7: Push and open a draft PR**
+- [x] **Step 7: Push and open a draft PR**
 
 Push `codex/planned-expense-snapshot-lifecycle` and open a draft PR into `master`. Include root cause, changed domain rules, English 2/5 and unpaid-rent before/after examples, same-day and next-day snapshot evidence, RU/EN screenshots, unit/Postgres results, additive DB impact, forward-fix plan, assumptions, and `## User Release Notes`. Do not merge or deploy.
