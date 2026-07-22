@@ -145,6 +145,34 @@ test("runs an optional archive callback after dashboard refresh and before succe
   assert.deepEqual(events, ["disable", "loadDashboard", "afterDashboard", "showResult"]);
 });
 
+test("keeps a successful disable result when the archive refresh fails", async () => {
+  const events = [];
+  const button = { disabled: false, isConnected: true };
+
+  const result = await runPlannedDisable({
+    button,
+    item,
+    confirm: () => true,
+    disableRequest: async () => {
+      events.push("disable");
+      return { plannedExpense: { ...item, active: false }, impact };
+    },
+    loadDashboard: async () => { events.push("loadDashboard"); },
+    afterDashboard: async () => {
+      events.push("afterDashboard");
+      throw new Error("archive_refresh_failed");
+    },
+    showResult: () => { events.push("showResult"); },
+    language: "en",
+    translate: createTranslator("en"),
+    formatMoney
+  });
+
+  assert.equal(result.status, "disabled");
+  assert.equal(button.disabled, false);
+  assert.deepEqual(events, ["disable", "loadDashboard", "afterDashboard", "showResult"]);
+});
+
 test("propagates request errors, restores a connected button, and never shows success", async () => {
   const button = { disabled: false, isConnected: true };
   let resultMessages = 0;
