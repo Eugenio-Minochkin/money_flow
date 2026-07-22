@@ -1853,6 +1853,58 @@ test("builds report data with paid actual planned amount and unpaid planned occu
   assert.doesNotMatch(paidFactsQuery, /planned_expenses\.active = true/);
 });
 
+test("report excludes unpaid weekly occurrences before starts_on", async () => {
+  const user = {
+    id: 1,
+    telegram_user_id: 100,
+    monthly_budget_amount: 50000,
+    base_currency: "THB",
+    display_currency: "THB",
+    timezone: "America/New_York",
+    interface_language: "en"
+  };
+  const repo = createRepository(fakePool((sql) => {
+    const query = String(sql);
+    if (query.includes("FROM expenses") && query.includes("ORDER BY spent_at ASC")) return { rows: [] };
+    if (query.includes("FROM planned_expenses") && query.includes("JOIN users")) {
+      return {
+        rows: [{
+          id: "7",
+          description: "weekly class",
+          amount_base: 1000,
+          recurrence: "weekly",
+          weekday: 3,
+          starts_on: "2026-07-23",
+          timezone: "America/New_York",
+          paid_count: 0,
+          paid_occurrence_dates: [],
+          paid_occurrences: {}
+        }]
+      };
+    }
+    if (query.includes("FROM planned_expense_payments") && query.includes("JOIN planned_expenses")) return { rows: [] };
+    if (query.includes("FROM budget_topups") && query.includes("occurred_at")) return { rows: [] };
+    if (query.includes("GROUP BY category_slug")) return { rows: [] };
+    if (query === "SELECT timezone FROM users WHERE telegram_user_id = $1") return { rows: [{ timezone: user.timezone }] };
+    if (query.includes("FROM monthly_budget_overrides")) return { rows: [] };
+    if (query.includes("COALESCE(SUM(amount_base)") && query.includes("month_key")) return { rows: [{ total: 0 }] };
+    if (query.includes("FROM budget_topups") && query.includes("month_key")) return { rows: [] };
+    if (query.includes("FROM month_baselines")) return { rows: [] };
+    return { rows: [] };
+  }));
+
+  const report = await repo.buildReportDataForDelivery(user, "monthly", {
+    periodKey: "2026-07",
+    periodStartUtc: new Date("2026-07-01T04:00:00Z"),
+    periodEndUtc: new Date("2026-08-01T04:00:00Z"),
+    timezoneUsed: user.timezone,
+    localStartDate: "2026-07-01",
+    localEndDate: "2026-07-31"
+  }, new Date("2026-08-01T05:00:00Z"));
+
+  assert.deepEqual(report.plannedPayments.map((payment) => payment.dueDate), ["2026-07-29"]);
+});
+
 test("report data includes display equivalents for budget amount and remaining", async () => {
   const user = {
     id: 1,
@@ -3776,6 +3828,46 @@ test("paying with an invalid occurrenceDate rejects with invalid_occurrence", as
   assert.ok(!queries.some((query) => String(query.sql).includes("INSERT INTO expenses")));
 });
 
+test("paying a weekly planned expense rejects occurrences before starts_on and accepts later due dates", async () => {
+  const queries = [];
+  const repo = createRepository({
+    async connect() {
+      return fakePayClient({
+        planned: {
+          id: "5",
+          user_id: "1",
+          amount: "1000",
+          currency: "THB",
+          amount_base: "1000",
+          description: "weekly class",
+          category_slug: "education",
+          tags: [],
+          recurrence: "weekly",
+          weekday: 3,
+          starts_on: "2026-07-23",
+          base_currency: "THB",
+          timezone: "Asia/Bangkok"
+        },
+        queries
+      });
+    }
+  }, { exchangeRates: fixedRates() });
+
+  await assert.rejects(
+    repo.payPlannedExpenseForTelegramUser(5, 100, new Date("2026-07-30T09:00:00+07:00"), { occurrenceDate: "2026-07-22" }),
+    (error) => error.code === "invalid_occurrence"
+  );
+  await repo.payPlannedExpenseForTelegramUser(
+    5,
+    100,
+    new Date("2026-07-30T09:00:00+07:00"),
+    { occurrenceDate: "2026-07-29" }
+  );
+
+  const paymentInsert = queries.find((query) => String(query.sql).includes("INSERT INTO planned_expense_payments"));
+  assert.equal(paymentInsert.params[4], "2026-07-29");
+});
+
 test("paying a weekly planned expense pays the earliest overdue occurrence", async () => {
   const queries = [];
   const repo = createRepository({
@@ -4319,6 +4411,30 @@ test("dashboard subtracts unpaid planned expenses due this week from weekly rema
   assert.equal(dashboard.snapshot.weekRemaining, 7000);
 });
 
+test("dashboard excludes weekly occurrences before starts_on in the user calendar", async () => {
+  const repo = createRepository(dashboardPoolWithPlannedExpenses([{
+    id: "5",
+    user_id: "1",
+    amount: "1000",
+    amount_base: "1000",
+    currency: "THB",
+    description: "weekly class",
+    category_slug: "education",
+    recurrence: "weekly",
+    weekday: 3,
+    starts_on: "2026-07-23",
+    paid_count: 0,
+    paid_occurrence_dates: []
+  }], {
+    user: { timezone: "Asia/Bangkok", monthly_budget_amount: "45000", weekly_budget_amount: "12000" }
+  }));
+
+  const dashboard = await repo.dashboard(100, new Date("2026-07-23T10:00:00+07:00"));
+
+  assert.equal(dashboard.snapshot.plannedRemaining, 1000);
+  assert.equal(dashboard.snapshot.plannedThisWeek, 0);
+});
+
 test("dashboard excludes current-month paid planned expenses from reserve", async () => {
   const repo = createRepository(fakePool((sql) => {
     if (String(sql).startsWith("SELECT * FROM users")) {
@@ -4503,7 +4619,7 @@ test("reserve capacity counts only valid paid occurrences from inactive plans", 
         && /expenses\.user_id = planned_expenses\.user_id/.test(statement);
       return {
         rows: [
-          { id: "5", active: false, recurrence: "monthly", due_day: 10, amount_base: "2000", paid_count: validatesExpenseOwner ? 1 : 2 },
+          { id: "5", active: false, recurrence: "monthly", due_day: 10, starts_on: "2026-07-01", amount_base: "2000", paid_count: validatesExpenseOwner ? 1 : 2 },
           { id: "6", active: false, recurrence: "monthly", due_day: 20, amount_base: "4000", paid_count: validatesExpenseOwner ? 0 : 1 },
           { id: "7", active: true, recurrence: "monthly", due_day: 30, amount_base: "3000", paid_count: 0 }
         ]

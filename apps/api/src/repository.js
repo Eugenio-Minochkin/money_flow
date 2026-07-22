@@ -6,7 +6,6 @@ import {
   localMonthDay,
   localMonthKey,
   localPeriodBounds,
-  localWeekday as sharedLocalWeekday,
   normalizeTimeZone,
   resolveUserTimeZone,
   timeZoneDayKey,
@@ -16,6 +15,10 @@ import {
 } from "../../../packages/shared/src/time.js";
 import { calculateReserveState, validateReserveCapacity } from "../../../packages/shared/src/reserve.js";
 import { createExchangeRateProvider } from "./exchangeRates.js";
+import {
+  normalizePlannedDateKey,
+  plannedOccurrenceDateKeysForPeriod
+} from "./plannedOccurrenceDates.js";
 import { normalizeAcquisitionSource, SINGLETON_ONBOARDING_EVENTS } from "./productAnalytics.js";
 import { buildReportMetrics } from "./reportService.js";
 
@@ -4140,36 +4143,16 @@ async function plannedObligationsForPeriod(client, userId, period, timeZone) {
     ]
   );
   return roundMoney(plansResult.rows.reduce((sum, item) => {
-    const occurrenceCount = plannedOccurrenceCountForPeriod(item, period);
-    const paidCount = Math.min(Number(item.paid_count ?? 0), occurrenceCount);
-    const includedCount = item.active === false ? paidCount : occurrenceCount;
+    const scheduledCount = plannedOccurrenceCountForPeriod(item, period);
+    const validPaidCount = Number(item.paid_count ?? 0);
+    const includedCount = item.active === false ? validPaidCount : scheduledCount;
     return sum + Number(item.amount_base) * includedCount;
   }, 0));
 }
 
 function plannedOccurrenceCountForPeriod(item, period) {
-  const [year, month] = period.split("-").map(Number);
-  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
-  if (item.recurrence === "weekly") {
-    let count = 0;
-    for (let day = 1; day <= daysInMonth; day += 1) {
-      const weekday = new Date(Date.UTC(year, month - 1, day)).getUTCDay() || 7;
-      if (weekday === Number(item.weekday)) count += 1;
-    }
-    return count;
-  }
-  if (item.recurrence === "one_off" || item.recurrence === "one_time") {
-    const dueDateKey = normalizeOccurrenceKey(item.due_date);
-    if (!dueDateKey) {
-      if (item.due_date) logInvalidPlannedDueDate(item);
-      return 0;
-    }
-    return dueDateKey.slice(0, 7) === period ? 1 : 0;
-  }
-  const days = Array.isArray(item.due_days) && item.due_days.length
-    ? item.due_days
-    : [Number(item.due_day ?? 1)];
-  return new Set(days.map(Number).filter((day) => day >= 1).map((day) => Math.min(day, daysInMonth))).size;
+  logInvalidOneOffDueDate(item);
+  return plannedOccurrenceDateKeysForPeriod(item, period).length;
 }
 
 function calculatePlannedThisWeek(plannedExpenses, now, timeZone = "Asia/Bangkok") {
@@ -4236,17 +4219,10 @@ function localFullWeekBounds(now, timeZone = "Asia/Bangkok") {
 }
 
 function plannedDueDatesThisMonth(item, now, timeZone = userTimezone(item)) {
-  if (item.recurrence === "weekly") return weeklyDueDatesThisMonth(now, Number(item.weekday ?? localWeekday(now, timeZone)), timeZone);
-  if (item.recurrence === "one_off" || item.recurrence === "one_time") {
-    if (!item.due_date) return [];
-    const dueDate = plannedLocalDate(item.due_date, timeZone);
-    if (!dueDate) {
-      logInvalidPlannedDueDate(item);
-      return [];
-    }
-    return monthKey(dueDate, timeZone) === monthKey(now, timeZone) ? [dueDate] : [];
-  }
-  return dueDaysInMonthValues(item, now, timeZone).map((day) => plannedLocalDateForMonthDay(now, day, timeZone));
+  logInvalidOneOffDueDate(item);
+  return plannedOccurrenceDateKeysForPeriod(item, monthKey(now, timeZone))
+    .map((key) => plannedLocalDate(key, timeZone))
+    .filter(Boolean);
 }
 
 function unpaidPlannedDueDatesThisMonth(item, now, timeZone = userTimezone(item)) {
@@ -4260,58 +4236,12 @@ function unpaidPlannedDueDatesThisMonth(item, now, timeZone = userTimezone(item)
   return dueDates.slice(paidCount);
 }
 
-function occurrencesThisMonth(item, now) {
-  const timeZone = userTimezone(item);
-  if (item.recurrence === "weekly") return weekdaysInMonth(now, Number(item.weekday ?? localWeekday(now, timeZone)), timeZone);
-  if (item.recurrence === "twice_monthly") return dueDaysInMonth(item);
-  if (item.recurrence === "one_off" || item.recurrence === "one_time") {
-    const dueDate = plannedLocalDate(item.due_date, timeZone);
-    if (!dueDate) {
-      if (item.due_date) logInvalidPlannedDueDate(item);
-      return 0;
-    }
-    return monthKey(dueDate, timeZone) === monthKey(now, timeZone) ? 1 : 0;
+function logInvalidOneOffDueDate(item) {
+  if ((item.recurrence === "one_off" || item.recurrence === "one_time")
+      && item.due_date
+      && !normalizePlannedDateKey(item.due_date)) {
+    logInvalidPlannedDueDate(item);
   }
-  return dueDaysInMonth(item);
-}
-
-function dueDaysInMonth(item) {
-  const days = Array.isArray(item.due_days) && item.due_days.length ? item.due_days : [Number(item.due_day ?? 1)];
-  return days.filter((day) => Number(day) >= 1 && Number(day) <= 31).length;
-}
-
-function dueDaysInMonthValues(item, now, timeZone = userTimezone(item)) {
-  const days = Array.isArray(item.due_days) && item.due_days.length ? item.due_days : [Number(item.due_day ?? 1)];
-  const [year, month] = monthKey(now, timeZone).split("-").map(Number);
-  const daysInCurrentMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
-  return [...new Set(days.map(Number).filter((day) => day >= 1).map((day) => Math.min(day, daysInCurrentMonth)))]
-    .sort((left, right) => left - right);
-}
-
-function weekdaysInMonth(now, weekday, timeZone = "Asia/Bangkok") {
-  const [year, monthKeyValue] = monthKey(now, timeZone).split("-").map(Number);
-  const month = monthKeyValue - 1;
-  const daysInMonth = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
-  let count = 0;
-  for (let currentDay = 1; currentDay <= daysInMonth; currentDay += 1) {
-    const current = new Date(Date.UTC(year, month, currentDay));
-    const currentWeekday = current.getUTCDay() === 0 ? 7 : current.getUTCDay();
-    if (currentWeekday === weekday) count += 1;
-  }
-  return count;
-}
-
-function weeklyDueDatesThisMonth(now, weekday, timeZone = "Asia/Bangkok") {
-  const [year, monthKeyValue] = monthKey(now, timeZone).split("-").map(Number);
-  const month = monthKeyValue - 1;
-  const daysInMonth = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
-  const dates = [];
-  for (let currentDay = 1; currentDay <= daysInMonth; currentDay += 1) {
-    const current = new Date(Date.UTC(year, month, currentDay));
-    const currentWeekday = current.getUTCDay() === 0 ? 7 : current.getUTCDay();
-    if (currentWeekday === weekday) dates.push(plannedLocalDateForMonthDay(now, currentDay, timeZone));
-  }
-  return dates;
 }
 
 function plannedLocalDate(value, timeZone = "Asia/Bangkok") {
@@ -4338,10 +4268,6 @@ function plannedExpenseSpentAt(occurrenceDate, paidAt = new Date(), timeZone = "
 function plannedLocalDateForMonthDay(now, day, timeZone = "Asia/Bangkok") {
   const [year, month] = monthKey(now, timeZone).split("-").map(Number);
   return localPeriodBounds(new Date(Date.UTC(year, month - 1, day, 12)), "today", timeZone).start;
-}
-
-function localWeekday(now, timeZone = "Asia/Bangkok") {
-  return sharedLocalWeekday(now, timeZone);
 }
 
 function startOfLocalDay(now, timeZone = "Asia/Bangkok") {

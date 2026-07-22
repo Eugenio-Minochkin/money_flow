@@ -212,7 +212,7 @@ npm.cmd test -- apps/api/test/plannedOccurrenceDates.test.js
 
 Expected: all canonical date-key tests pass.
 
-- [ ] **Step 6: Commit the pure occurrence foundation**
+- [x] **Step 6: Commit the pure occurrence foundation**
 
 ```powershell
 git add apps/api/migrations/012_planned_expense_starts_on.sql apps/api/src/plannedOccurrenceDates.js apps/api/test/plannedOccurrenceDates.test.js
@@ -227,7 +227,7 @@ git commit -m "feat: add planned expense start dates"
 - Modify: `apps/api/test/budgetReserveIntegration.test.js`
 - Modify: `apps/api/test/reportService.test.js`
 
-- [ ] **Step 1: Write failing financial regression tests**
+- [x] **Step 1: Write failing financial regression tests**
 
 Add repository/budget/report cases using a weekly plan with `starts_on: "2026-07-23"` in `Asia/Bangkok` and a second boundary in `America/New_York`:
 
@@ -241,7 +241,7 @@ assert.ok(!report.plannedPayments.some((item) => item.dueDate < "2026-07-23" && 
 
 Add Pay assertions that `2026-07-22` throws `invalid_occurrence`, `2026-07-29` is accepted when due, and a valid historical payment link before `starts_on` remains included in factual paid totals. Add reserve-capacity and reserve-closure assertions using the same canonical count.
 
-- [ ] **Step 2: Run focused tests and verify RED**
+- [x] **Step 2: Run focused tests and verify RED**
 
 ```powershell
 npm.cmd test -- apps/api/test/repository.test.js apps/api/test/budgetReserveIntegration.test.js apps/api/test/reportService.test.js
@@ -249,7 +249,7 @@ npm.cmd test -- apps/api/test/repository.test.js apps/api/test/budgetReserveInte
 
 Expected: pre-start dates still appear in remaining, reserve, report, or Pay calculations.
 
-- [ ] **Step 3: Import and use the canonical generator**
+- [x] **Step 3: Import and use the canonical generator**
 
 At the top of `apps/api/src/repository.js` add:
 
@@ -280,7 +280,7 @@ function occurrencesThisMonth(item, now) {
 
 Keep `unpaidPlannedDueDatesThisMonth`, `calculatePlannedRemaining`, `calculatePlannedTotal`, `calculatePlannedThisWeek`, `reportUnpaidPlannedPayments`, `nextUnpaidOccurrenceDate`, and `resolveOccurrenceDate` consuming `plannedDueDatesThisMonth`. Remove now-unused `weekdaysInMonth`, `weeklyDueDatesThisMonth`, and count-only due-day helpers only after `rg` confirms zero callers.
 
-- [ ] **Step 4: Preserve factual payment history explicitly**
+- [x] **Step 4: Preserve factual payment history explicitly**
 
 Keep factual paid aggregates driven by valid `planned_expense_payments` joined to same-user `expenses`. Do not filter existing payment rows by `starts_on`. In `plannedObligationsForPeriod`, apply canonical counts only to active scheduled obligations; inactive plans use every valid paid link rather than capping factual count by the filtered schedule:
 
@@ -293,7 +293,7 @@ return roundMoney(plansResult.rows.reduce((sum, item) => {
 }, 0));
 ```
 
-- [ ] **Step 5: Run focused tests and verify GREEN**
+- [x] **Step 5: Run focused tests and verify GREEN**
 
 ```powershell
 npm.cmd test -- apps/api/test/plannedOccurrenceDates.test.js apps/api/test/repository.test.js apps/api/test/budgetReserveIntegration.test.js apps/api/test/reportService.test.js
