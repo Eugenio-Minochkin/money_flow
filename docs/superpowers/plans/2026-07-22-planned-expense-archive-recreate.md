@@ -1031,7 +1031,7 @@ Never assign `sourcePlannedExpenseId` to `plannedId`. Keep ordinary create/edit 
 npm.cmd test -- apps/miniapp/test/plannedRecreate.test.js apps/miniapp/test/plannedArchive.test.js apps/miniapp/test/planned.test.js apps/miniapp/test/formatters.test.js apps/miniapp/test/i18n.test.js apps/miniapp/test/smokeAssets.test.js
 ```
 
-- [ ] **Step 7: Commit recreate UX**
+- [x] **Step 7: Commit recreate UX**
 
 ```powershell
 git add apps/miniapp/src/plannedRecreate.js apps/miniapp/src/app.js apps/miniapp/src/i18n.js apps/miniapp/test/plannedRecreate.test.js apps/miniapp/test/i18n.test.js apps/miniapp/test/smokeAssets.test.js
@@ -1043,7 +1043,7 @@ git commit -m "feat: recreate disabled planned expenses"
 **Files:**
 - Modify: `apps/api/integration/postgres-smoke.js:20-35, 238-330`
 
-- [ ] **Step 1: Update the expected migration ledger and add the real flow**
+- [x] **Step 1: Update the expected migration ledger and add the real flow**
 
 Extend the expected list through `012_planned_expense_starts_on.sql`. In the planned lifecycle smoke:
 
@@ -1059,7 +1059,7 @@ Extend the expected list through `012_planned_expense_starts_on.sql`. In the pla
 
 Use invented IDs and amounts already local to the disposable test suite; print no financial rows.
 
-- [ ] **Step 2: Run the completed Postgres smoke**
+- [x] **Step 2: Run the completed Postgres smoke**
 
 ```powershell
 npm.cmd run test:integration:postgres
@@ -1067,7 +1067,7 @@ npm.cmd run test:integration:postgres
 
 Expected: the safety guard confirms localhost and a database name containing `test`; migrations 001-012 apply idempotently; archive aggregates, recreate transaction, reserve, and snapshot assertions pass.
 
-- [ ] **Step 3: Commit integration coverage**
+- [x] **Step 3: Commit integration coverage**
 
 ```powershell
 git add apps/api/integration/postgres-smoke.js

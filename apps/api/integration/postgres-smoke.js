@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import pg from "pg";
 
 import { migrate } from "../src/db.js";
+import { normalizePlannedDateKey } from "../src/plannedOccurrenceDates.js";
 import { createRepository } from "../src/repository.js";
 
 const { Pool } = pg;
@@ -25,7 +26,7 @@ test.before(async () => {
   const applied = await pool.query("SELECT filename FROM schema_migrations ORDER BY filename");
   assert.deepEqual(
     applied.rows.map((row) => row.filename),
-    ["001_initial.sql", "002_draft_confirm_flow.sql", "003_budget_topups.sql", "004_report_deliveries.sql", "005_exchange_rates.sql", "006_feedback.sql", "007_account_deletion.sql", "008_product_analytics.sql", "009_telegram_expense_editor.sql", "010_telegram_editor_prompt_message.sql", "011_planned_expense_disabled_at.sql"]
+    ["001_initial.sql", "002_draft_confirm_flow.sql", "003_budget_topups.sql", "004_report_deliveries.sql", "005_exchange_rates.sql", "006_feedback.sql", "007_account_deletion.sql", "008_product_analytics.sql", "009_telegram_expense_editor.sql", "010_telegram_editor_prompt_message.sql", "011_planned_expense_disabled_at.sql", "012_planned_expense_starts_on.sql"]
   );
 
   const sessions = await pool.query(`
@@ -235,7 +236,7 @@ test("recalculates dashboard budget summary from real expense rows", async () =>
   assert.equal(dashboard.topCategories[0].category_slug, "food_groceries");
 });
 
-test("disables a partially paid weekly plan idempotently while preserving paid history and today's snapshot", async () => {
+test("archives and recreates a partially paid weekly plan without rewriting history or today's snapshot", async () => {
   await createSmokeUser(990004);
   const planned = await repo.createPlannedExpense(990004, {
     amount: 1000,
@@ -314,8 +315,66 @@ test("disables a partially paid weekly plan idempotently while preserving paid h
   assert.equal(afterDisableDashboard.snapshot.freeRemaining, 43000);
   assert.equal(afterDisableDashboard.snapshot.forecastMonthTotal, 2000);
 
+  const archived = await repo.listArchivedPlannedExpensesForTelegramUser(990004);
+  assert.equal(archived.length, 1);
+  assert.equal(archived[0].id, planned.id);
+  assert.equal(archived[0].active, false);
+  assert.equal(archived[0].disabled_at.toISOString(), now.toISOString());
+  assert.equal(archived[0].paid_count, 2);
+  assert.equal(archived[0].paid_amount_base, 2000);
+
+  await repo.upsertCurrentReserve(990004, {
+    amount: 42000,
+    title: "buffer",
+    scope: "current"
+  }, now);
+  const beforeRecreateDashboard = await repo.dashboard(990004, now);
+  assert.equal(beforeRecreateDashboard.snapshot.plannedRemaining, 0);
+
+  const recreated = await repo.recreatePlannedExpense(990004, planned.id, {
+    amount: 1000,
+    currency: "THB",
+    description: "weekly lesson restarted",
+    category_slug: "home",
+    recurrence: "weekly",
+    weekday: 3,
+    tags: ["fixed"]
+  }, "2026-07-23", now);
+  assert.notEqual(recreated.id, planned.id);
+  assert.equal(recreated.active, true);
+  assert.equal(normalizePlannedDateKey(recreated.starts_on), "2026-07-23");
+
+  const activeAfterRecreate = await repo.listPlannedExpensesForTelegramUser(990004);
+  assert.equal(activeAfterRecreate.length, 1);
+  assert.equal(activeAfterRecreate[0].id, recreated.id);
+  assert.equal(activeAfterRecreate[0].paid_count, 0);
+  assert.deepEqual(activeAfterRecreate[0].paid_occurrence_dates, []);
+  assert.equal((await pool.query(
+    "SELECT COUNT(*)::int AS count FROM planned_expense_payments WHERE planned_expense_id = $1",
+    [recreated.id]
+  )).rows[0].count, 0);
+  assert.deepEqual({
+    expenses: Number((await pool.query("SELECT COUNT(*)::int AS count FROM expenses WHERE user_id = $1", [planned.user_id])).rows[0].count),
+    sourcePayments: Number((await pool.query("SELECT COUNT(*)::int AS count FROM planned_expense_payments WHERE planned_expense_id = $1", [planned.id])).rows[0].count)
+  }, { expenses: beforeRows.expenses, sourcePayments: beforeRows.payments });
+
+  const sourceAfterRecreate = await repo.listArchivedPlannedExpensesForTelegramUser(990004);
+  assert.equal(sourceAfterRecreate.length, 1);
+  assert.equal(sourceAfterRecreate[0].id, planned.id);
+  assert.equal(sourceAfterRecreate[0].disabled_at.toISOString(), now.toISOString());
+  assert.equal(sourceAfterRecreate[0].paid_count, 2);
+  assert.equal(sourceAfterRecreate[0].paid_amount_base, 2000);
+
+  const afterRecreateDashboard = await repo.dashboard(990004, now);
+  assert.equal(afterRecreateDashboard.plannedMonthSummary.remaining, 1000);
+  assert.equal(afterRecreateDashboard.snapshot.plannedRemaining, 1000);
+  assert.equal(afterRecreateDashboard.snapshot.forecastMonthTotal, 3000);
+  assert.equal(afterRecreateDashboard.snapshot.dayPlanLimit, beforeRecreateDashboard.snapshot.dayPlanLimit);
+
   const nextDayDashboard = await repo.dashboard(990004, new Date("2026-07-23T10:00:00+07:00"));
-  assert.ok(nextDayDashboard.snapshot.dayPlanLimit > afterDisableDashboard.snapshot.dayPlanLimit);
+  assert.equal(nextDayDashboard.snapshot.plannedRemaining, 1000);
+  assert.equal(nextDayDashboard.snapshot.dayPlanLimit, 0);
+  assert.ok(nextDayDashboard.snapshot.dayPlanLimit < afterRecreateDashboard.snapshot.dayPlanLimit);
   const dailySnapshots = await pool.query(
     `SELECT day_key::text, budget_amount_base
      FROM daily_budget_snapshots
@@ -324,7 +383,7 @@ test("disables a partially paid weekly plan idempotently while preserving paid h
     [planned.user_id]
   );
   assert.deepEqual(dailySnapshots.rows.map((row) => row.day_key), ["2026-07-22", "2026-07-23"]);
-  assert.equal(Number(dailySnapshots.rows[0].budget_amount_base), beforeDisableDashboard.snapshot.dayPlanLimit);
+  assert.equal(Number(dailySnapshots.rows[0].budget_amount_base), beforeRecreateDashboard.snapshot.dayPlanLimit);
   assert.equal(Number(dailySnapshots.rows[1].budget_amount_base), nextDayDashboard.snapshot.dayPlanLimit);
   assert.equal((await pool.query(
     "SELECT COUNT(*)::int AS count FROM app_events WHERE user_id = $1 AND event_name = 'planned_expense_deleted'",
