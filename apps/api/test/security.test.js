@@ -259,8 +259,14 @@ test("planned expense mutation routes keep PATCH and DELETE response contracts e
   assert.ok(reserveHandler < deleteStart, "DELETE starts after PATCH reserve handling");
   assert.ok(deleteStart < blockEnd, "DELETE remains inside the planned expense item route");
 
+  const routePrelude = source.slice(routeStart, patchStart);
   const patchBlock = source.slice(patchStart, deleteStart);
   const deleteBlock = source.slice(deleteStart, blockEnd);
+
+  assert.match(routePrelude, /if \(plannedMatch && \(req\.method === "PATCH" \|\| req\.method === "DELETE"\)\) \{/);
+  assert.match(routePrelude, /const body = await readJson\(req\);/);
+  assert.match(routePrelude, /const auth = apiSecurity\.resolveTelegramUserId\(req, url, body\);/);
+  assert.match(routePrelude, /if \(auth\.error\) return sendJson\(res, 400, \{ error: auth\.error \}\);/);
 
   assert.match(patchBlock, /const plannedExpense = await repository\.updatePlannedExpense\([\s\S]*body\.plannedExpense\s*\);/);
   assert.match(patchBlock, /if \(!plannedExpense\) return sendJson\(res, 404, \{ error: "planned_expense_not_found" \}\);/);
