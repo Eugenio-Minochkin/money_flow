@@ -2650,7 +2650,9 @@ test("records a safe event after planned expense update", async () => {
     active: true
   });
   const updateQuery = queries.find((query) => query.sql.startsWith("UPDATE planned_expenses") && query.sql.includes("amount ="));
-  assert.doesNotMatch(updateQuery.sql, /\bactive\s*=/);
+  const updateSetClause = updateQuery.sql.slice(updateQuery.sql.indexOf("SET"), updateQuery.sql.indexOf("WHERE"));
+  assert.doesNotMatch(updateSetClause, /\bactive\s*=/);
+  assert.match(updateQuery.sql, /AND active = true/);
   assert.equal(updateQuery.params.length, 13);
   assert.ok(!queries.some((query) => query.sql.includes("DELETE FROM daily_budget_snapshots")));
 
@@ -2661,8 +2663,36 @@ test("records a safe event after planned expense update", async () => {
   assert.doesNotMatch(JSON.stringify(events), /Private description|20/);
 });
 
-test("deactivates an owned weekly planned expense transactionally and returns stable current-month impact", async () => {
-  const now = new Date("2026-07-22T10:00:00+07:00");
+test("updating an inactive planned expense returns null without recording an event", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    const query = String(sql);
+    queries.push({ sql: query, params });
+    if (query.startsWith("SELECT * FROM users")) {
+      return { rows: [{ id: "7", telegram_user_id: "100", base_currency: "THB", timezone: "Asia/Bangkok" }] };
+    }
+    if (query.startsWith("UPDATE planned_expenses") && query.includes("amount =")) return { rows: [] };
+    return { rows: [], rowCount: 0 };
+  }));
+
+  const result = await repo.updatePlannedExpense(100, 5, {
+    amount: 20,
+    currency: "THB",
+    description: "Private description",
+    category_slug: "subscriptions",
+    recurrence: "monthly",
+    due_day: 10
+  });
+
+  assert.equal(result, null);
+  const updateQuery = queries.find((query) => query.sql.startsWith("UPDATE planned_expenses") && query.sql.includes("amount ="));
+  assert.match(updateQuery.sql, /AND active = true/);
+  assert.ok(!queries.some((query) => query.sql.includes("INSERT INTO app_events")));
+});
+
+test("deactivates an owned weekly plan transactionally and keeps retry impact stable across a month rollover", async () => {
+  const now = new Date("2026-07-31T10:00:00+07:00");
+  const retryNow = new Date("2026-08-01T10:00:00+07:00");
   const queries = [];
   const events = [];
   let active = true;
@@ -2725,7 +2755,7 @@ test("deactivates an owned weekly planned expense transactionally and returns st
   });
 
   const first = await repo.deactivatePlannedExpense(100, 5, now);
-  const second = await repo.deactivatePlannedExpense(100, 5, now);
+  const second = await repo.deactivatePlannedExpense(100, 5, retryNow);
 
   const expectedImpact = {
     paidOccurrencesKept: 2,
@@ -2757,10 +2787,11 @@ test("deactivates an owned weekly planned expense transactionally and returns st
   assert.match(lockQueries[0].sql, /JOIN users ON users\.id = planned_expenses\.user_id/);
   assert.match(lockQueries[0].sql, /planned_expenses\.id = \$1/);
   assert.match(lockQueries[0].sql, /users\.telegram_user_id = \$2/);
-  const paymentQuery = queries.find((query) => query.sql.includes("FROM planned_expense_payments"));
+  const paymentQueries = queries.filter((query) => query.sql.includes("FROM planned_expense_payments"));
+  const paymentQuery = paymentQueries[0];
   assert.match(paymentQuery.sql, /JOIN expenses/);
   assert.match(paymentQuery.sql, /e\.user_id = \$2/);
-  assert.equal(paymentQuery.params[2], "2026-07");
+  assert.deepEqual(paymentQueries.map((query) => query.params[2]), ["2026-07", "2026-07"]);
 
   const updates = queries.filter((query) => query.sql.startsWith("UPDATE planned_expenses") && query.sql.includes("active = false"));
   assert.equal(updates.length, 1);

@@ -2781,6 +2781,7 @@ export function createRepository(pool, options = {}) {
              due_date = $11
          WHERE id = $12
            AND user_id = (SELECT id FROM users WHERE telegram_user_id = $13)
+           AND active = true
          RETURNING *`,
         [
           planned.amount,
@@ -2826,8 +2827,11 @@ export function createRepository(pool, options = {}) {
         }
 
         const timeZone = userTimezone(planned);
-        const currentMonth = timeZoneMonthKey(currentNow, timeZone);
-        const occurrenceDates = plannedDueDatesThisMonth(planned, currentNow, timeZone)
+        const impactNow = planned.active || !planned.disabled_at
+          ? currentNow
+          : normalizeNow(planned.disabled_at);
+        const currentMonth = timeZoneMonthKey(impactNow, timeZone);
+        const occurrenceDates = plannedDueDatesThisMonth(planned, impactNow, timeZone)
           .map((date) => localDayKey(date, timeZone));
         const occurrenceDateSet = new Set(occurrenceDates);
         const paidResult = await client.query(
