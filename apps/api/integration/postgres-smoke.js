@@ -391,6 +391,58 @@ test("archives and recreates a partially paid weekly plan without rewriting hist
   )).rows[0].count, 1);
 });
 
+test("undoes one exact planned payment without changing today's opening snapshot", async () => {
+  const telegramUserId = 990010;
+  const user = await createSmokeUser(telegramUserId);
+  const planned = await repo.createPlannedExpense(telegramUserId, {
+    amount: 1000,
+    currency: "THB",
+    description: "weekly undo smoke",
+    category_slug: "home",
+    recurrence: "weekly",
+    weekday: 3
+  }, new Date("2026-07-01T00:00:00+07:00"));
+
+  await repo.payPlannedExpenseForTelegramUser(planned.id, telegramUserId, new Date("2026-07-01T10:00:00+07:00"), { occurrenceDate: "2026-07-01" });
+  await repo.payPlannedExpenseForTelegramUser(planned.id, telegramUserId, new Date("2026-07-08T10:00:00+07:00"), { occurrenceDate: "2026-07-08" });
+  const now = new Date("2026-07-22T10:00:00+07:00");
+  const before = await repo.dashboard(telegramUserId, now);
+  const snapshotBefore = await pool.query(
+    "SELECT day_key::text, budget_amount_base FROM daily_budget_snapshots WHERE user_id = $1",
+    [user.id]
+  );
+
+  const undone = await repo.undoPlannedExpensePaymentForTelegramUser(planned.id, telegramUserId, "2026-07-08", now);
+  const repeated = await repo.undoPlannedExpensePaymentForTelegramUser(planned.id, telegramUserId, "2026-07-08", now);
+  assert.deepEqual(undone, { status: "undone", occurrenceDate: "2026-07-08" });
+  assert.deepEqual(repeated, { status: "already_unpaid", occurrenceDate: "2026-07-08" });
+  assert.equal(Number((await pool.query("SELECT COUNT(*)::int AS count FROM planned_expense_payments WHERE planned_expense_id = $1", [planned.id])).rows[0].count), 1);
+  assert.equal(Number((await pool.query("SELECT COUNT(*)::int AS count FROM expenses WHERE user_id = $1", [user.id])).rows[0].count), 1);
+
+  const after = await repo.dashboard(telegramUserId, now);
+  assert.equal(after.plannedMonthSummary.paid, 1000);
+  assert.equal(after.plannedMonthSummary.remaining, 4000);
+  assert.equal(after.snapshot.dayPlanLimit, before.snapshot.dayPlanLimit);
+  const snapshotAfter = await pool.query(
+    "SELECT day_key::text, budget_amount_base FROM daily_budget_snapshots WHERE user_id = $1",
+    [user.id]
+  );
+  assert.deepEqual(snapshotAfter.rows, snapshotBefore.rows);
+
+  await pool.query(
+    `INSERT INTO monthly_reserve_instances (
+       user_id, period, timezone, currency, budget_amount, reserve_amount, status, closed_at
+     ) VALUES ($1, '2026-07', 'Asia/Bangkok', 'THB', 45000, 1000, 'closed', now())`,
+    [user.id]
+  );
+  await assert.rejects(
+    () => repo.undoPlannedExpensePaymentForTelegramUser(planned.id, telegramUserId, "2026-07-01", now),
+    { code: "planned_payment_undo_blocked" }
+  );
+  assert.equal(Number((await pool.query("SELECT COUNT(*)::int AS count FROM planned_expense_payments WHERE planned_expense_id = $1", [planned.id])).rows[0].count), 1);
+  assert.equal(Number((await pool.query("SELECT COUNT(*)::int AS count FROM expenses WHERE user_id = $1", [user.id])).rows[0].count), 1);
+});
+
 test("creates and reads a current reserve through dashboard state", async () => {
   await createSmokeUser(990005);
   await repo.updateMonthlyBudget(990005, 45000, new Date("2026-06-01T00:00:00+07:00"));

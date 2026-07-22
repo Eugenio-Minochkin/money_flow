@@ -1,5 +1,9 @@
 # Money Flow Decision Log
 
+## 2026-07-22 - Planned Payment Undo Targets One Factual Link
+
+Undo is a separate exact-occurrence transaction, not ordinary expense deletion or a plan mutation. It locks the owned plan, the payment link selected by `planned_expense_id` plus `occurrence_date`, and then its linked expense. Only a same-user linked expense may be removed. A missing link is an idempotent success, while an inconsistent link or closed reserve month rolls back without mutation. The transaction deliberately does not invalidate today's opening budget snapshot; analytics is post-commit and privacy-minimal.
+
 This is a lightweight log for product and domain decisions that future agents should preserve unless the user explicitly asks to revisit them.
 
 ## 2026-07-22 - Planned Archive Is Read-only And Recreate Is Independent

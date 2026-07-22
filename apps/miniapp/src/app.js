@@ -31,6 +31,7 @@ import { createTranslator } from "./i18n.js";
 import { inboxCountLabel, inboxDraftDescription, inboxDraftTotal, shouldShowInboxOnDashboard, updateFirstInboxItemCategory } from "./inbox.js";
 import { buildReserveSettingsView } from "./reserveSettings.js";
 import { runPlannedDisable } from "./plannedDisable.js";
+import { paidPlannedPaymentUndoOccurrences, runPlannedPaymentUndo } from "./plannedPaymentUndo.js";
 import { createPlannedRecreateSession, runPlannedRecreate } from "./plannedRecreate.js";
 import {
   buildArchivedPlanView,
@@ -1176,6 +1177,12 @@ function renderPlannedExpenses(items) {
   list.innerHTML = items.map((item) => {
     const paid = isPlannedPaid(item);
     const progress = plannedPaymentProgressLabel(item);
+    const undoButtons = paidPlannedPaymentUndoOccurrences(item)
+      .map((occurrenceDate) => {
+        const date = formatDateOnly(`${occurrenceDate}T12:00:00.000Z`, currentLanguage, "UTC");
+        return `<button type="button" class="ghost-button" data-undo-planned="${escapeAttribute(item.id)}" data-occurrence-date="${escapeAttribute(occurrenceDate)}">${escapeHtml(t("actions.undoPayment", { date }))}</button>`;
+      })
+      .join("");
     return `
     <article class="expense-row" style="--category-color: ${categoryColor(item.category_slug)}">
       <div class="expense-main">
@@ -1191,6 +1198,7 @@ function renderPlannedExpenses(items) {
           <button type="button" class="ghost-button" data-edit-planned="${item.id}">${t("actions.edit")}</button>
           <button type="button" class="danger-button" data-delete-planned="${item.id}">${t("actions.disable")}</button>
         </div>
+        ${undoButtons ? `<div class="button-row compact">${undoButtons}</div>` : ""}
       </div>
     </article>
   `;
@@ -1373,6 +1381,28 @@ function bindPlannedActions(container, items) {
                   : code;
         showToast(message);
       }
+    });
+  });
+  container.querySelectorAll("[data-undo-planned]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const item = items.find((planned) => String(planned.id) === button.dataset.undoPlanned);
+      if (!item) return;
+      await runPlannedPaymentUndo({
+        button,
+        item,
+        occurrenceDate: button.dataset.occurrenceDate,
+        confirm: window.confirm.bind(window),
+        undoRequest: (id, occurrenceDate) => api(`/api/planned-expenses/${id}/payments/${encodeURIComponent(occurrenceDate)}`, {
+          method: "DELETE",
+          body: { telegramUserId }
+        }),
+        loadDashboard,
+        loadHistory,
+        showToast,
+        showError: showToast,
+        translate: t,
+        formatOccurrenceDate: (value) => formatDateOnly(`${value}T12:00:00.000Z`, currentLanguage, "UTC")
+      });
     });
   });
   container.querySelectorAll("[data-planned-menu]").forEach((button) => {
