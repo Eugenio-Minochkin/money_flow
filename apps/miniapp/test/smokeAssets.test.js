@@ -405,6 +405,7 @@ test("planned disable uses the focused helper and prefers the server-owned month
   assert.match(app, /import\s*{[^}]*runPlannedDisable[^}]*}\s*from "\.\/plannedDisable\.js"/s);
   assert.match(app, /dashboardState\?\.plannedMonthSummary\s*\?\?\s*calculatePlannedMonthSummary\(items\)/);
   assert.match(app, /runPlannedDisable\(\{[^]*?confirm:\s*window\.confirm[^]*?disableRequest:[^]*?method:\s*"DELETE"[^]*?loadDashboard[^]*?showResult:\s*showToast/s);
+  assert.match(app, /runPlannedDisable\(\{[^]*?language:\s*currentLanguage,[^]*?createTranslator,/s);
 });
 
 test("settings expose interface theme as a visible select", async () => {

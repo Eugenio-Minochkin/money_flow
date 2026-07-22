@@ -1196,6 +1196,7 @@ function bindPlannedActions(container, items) {
           loadDashboard,
           showResult: showToast,
           language: currentLanguage,
+          createTranslator,
           translate: t,
           formatMoney
         });

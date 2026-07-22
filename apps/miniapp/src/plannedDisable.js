@@ -31,10 +31,15 @@ export async function runPlannedDisable({
   showResult,
   language,
   translate,
+  createTranslator,
   formatMoney
 }) {
   if (button.disabled || button.busy === true || button.dataset?.busy === "true") return { status: "busy" };
-  if (!confirm(buildPlannedDisableConfirmation(item, { translate }))) return { status: "cancelled" };
+  const actionLanguage = language === "ru" ? "ru" : "en";
+  const actionTranslate = typeof createTranslator === "function"
+    ? createTranslator(actionLanguage)
+    : translate;
+  if (!confirm(buildPlannedDisableConfirmation(item, { translate: actionTranslate }))) return { status: "cancelled" };
 
   button.disabled = true;
   button.busy = true;
@@ -42,7 +47,11 @@ export async function runPlannedDisable({
   try {
     const result = await disableRequest(item.id);
     await loadDashboard();
-    showResult(buildPlannedDisableResult(item, result.impact, { language, translate, formatMoney }));
+    showResult(buildPlannedDisableResult(item, result.impact, {
+      language: actionLanguage,
+      translate: actionTranslate,
+      formatMoney
+    }));
     return { status: "disabled", result };
   } finally {
     if (button.isConnected) {

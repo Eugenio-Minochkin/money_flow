@@ -166,3 +166,39 @@ test("does not mutate a detached button after a successful dashboard rerender", 
 
   assert.equal(button.disabled, true);
 });
+
+test("keeps one language when the interface changes while disable is pending", async () => {
+  const button = { disabled: false, isConnected: true };
+  let activeTranslate = createTranslator("ru");
+  let releaseRequest;
+  let shownMessage = "";
+  const requestGate = new Promise((resolve) => { releaseRequest = resolve; });
+
+  const pending = runPlannedDisable({
+    button,
+    item,
+    confirm: (message) => {
+      assert.match(message, /^Отключить/);
+      return true;
+    },
+    disableRequest: async () => {
+      await requestGate;
+      return { plannedExpense: { ...item, active: false }, impact };
+    },
+    loadDashboard: async () => {},
+    showResult: (message) => { shownMessage = message; },
+    language: "ru",
+    translate: (...args) => activeTranslate(...args),
+    createTranslator,
+    formatMoney
+  });
+
+  activeTranslate = createTranslator("en");
+  releaseRequest();
+  await pending;
+
+  assert.equal(
+    shownMessage,
+    "English отключён.\n\n2 оплаты на 2 000 THB сохранены.\n3 будущие оплаты на 3 000 THB больше не учитываются.\n\nПлан месяца обновлён.\nСегодняшний бюджет дня не изменился."
+  );
+});
