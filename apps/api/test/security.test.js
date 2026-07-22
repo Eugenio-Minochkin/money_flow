@@ -241,6 +241,31 @@ test("account deletion request and advance map null repository results to contro
   assert.match(source, /error\.code === "account_deletion_expired"[\s\S]*return 410/);
 });
 
+test("planned expense mutation routes keep PATCH and DELETE response contracts explicit", async () => {
+  const source = await readFile(new URL("../src/server.js", import.meta.url), "utf8");
+  const start = source.indexOf("const plannedMatch = url.pathname.match");
+  const end = source.indexOf('if (req.method === "PATCH" && url.pathname === "/api/settings/budget")', start);
+
+  assert.notEqual(start, -1, "planned expense item route is registered");
+  assert.notEqual(end, -1, "planned expense item route has a bounded source block");
+  const block = source.slice(start, end);
+
+  assert.match(block, /if \(req\.method === "PATCH"\) \{/);
+  assert.match(block, /const plannedExpense = await repository\.updatePlannedExpense\([\s\S]*body\.plannedExpense\s*\);/);
+  assert.match(block, /if \(!plannedExpense\) return sendJson\(res, 404, \{ error: "planned_expense_not_found" \}\);/);
+  assert.match(block, /return sendJson\(res, 200, \{ plannedExpense \}\);/);
+
+  assert.match(block, /const result = await repository\.deactivatePlannedExpense\(/);
+  assert.match(block, /if \(!result\) return sendJson\(res, 404, \{ error: "planned_expense_not_found" \}\);/);
+  assert.match(block, /return sendJson\(res, 200, result\);/);
+  assert.doesNotMatch(block, /return sendJson\(res, 200, \{ plannedExpense: result \}\);/);
+  assert.equal(block.match(/planned_expense_not_found/g)?.length, 2, "PATCH and DELETE each map missing plans to 404");
+  assert.ok(
+    block.indexOf('error.code === "reserve_conflicts_with_planned_change"') < block.indexOf("const result = await repository.deactivatePlannedExpense"),
+    "reserve conflicts remain handled in the PATCH branch before DELETE"
+  );
+});
+
 test("API security rejects invalid Telegram init data hash", () => {
   const botToken = "123456:test-token";
   const authDate = String(Math.floor(Date.now() / 1000));

@@ -218,17 +218,17 @@ git commit -m "feat: add planned month summary"
 - Modify: `apps/api/src/server.js`
 - Modify: `apps/api/test/security.test.js`
 
-- [ ] **Step 1: Add a failing route-contract test**
+- [x] **Step 1: Add a failing route-contract test**
 
 Use the repository result contract and a source-level route assertion to prove DELETE responds with both `plannedExpense` and `impact`, PATCH still responds with only its updated `plannedExpense`, and not-found remains HTTP 404.
 
-- [ ] **Step 2: Run the focused server contract test and verify RED**
+- [x] **Step 2: Run the focused server contract test and verify RED**
 
 ```powershell
 npm.cmd test -- apps/api/test/security.test.js
 ```
 
-- [ ] **Step 3: Implement the additive DELETE response**
+- [x] **Step 3: Implement the additive DELETE response**
 
 Keep PATCH and DELETE branches explicit:
 
@@ -242,13 +242,13 @@ if (!result) return sendJson(res, 404, { error: "planned_expense_not_found" });
 return sendJson(res, 200, result);
 ```
 
-- [ ] **Step 4: Run the focused test and verify GREEN**
+- [x] **Step 4: Run the focused test and verify GREEN**
 
 ```powershell
 npm.cmd test -- apps/api/test/security.test.js
 ```
 
-- [ ] **Step 5: Commit the API contract**
+- [x] **Step 5: Commit the API contract**
 
 ```powershell
 git add apps/api/src/server.js apps/api/test/security.test.js

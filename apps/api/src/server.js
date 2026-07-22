@@ -420,19 +420,26 @@ async function route(req, res) {
     const body = await readJson(req);
     const auth = apiSecurity.resolveTelegramUserId(req, url, body);
     if (auth.error) return sendJson(res, 400, { error: auth.error });
-    let plannedExpense;
-    try {
-      plannedExpense = req.method === "PATCH"
-        ? await repository.updatePlannedExpense(auth.telegramUserId, Number(plannedMatch[1]), body.plannedExpense)
-        : await repository.deactivatePlannedExpense(auth.telegramUserId, Number(plannedMatch[1]));
-    } catch (error) {
-      if (error.code === "reserve_conflicts_with_planned_change") {
-        return sendJson(res, 409, { error: error.code });
+    if (req.method === "PATCH") {
+      try {
+        const plannedExpense = await repository.updatePlannedExpense(
+          auth.telegramUserId,
+          Number(plannedMatch[1]),
+          body.plannedExpense
+        );
+        if (!plannedExpense) return sendJson(res, 404, { error: "planned_expense_not_found" });
+        return sendJson(res, 200, { plannedExpense });
+      } catch (error) {
+        if (error.code === "reserve_conflicts_with_planned_change") {
+          return sendJson(res, 409, { error: error.code });
+        }
+        throw error;
       }
-      throw error;
     }
-    if (!plannedExpense) return sendJson(res, 404, { error: "planned_expense_not_found" });
-    return sendJson(res, 200, { plannedExpense });
+
+    const result = await repository.deactivatePlannedExpense(auth.telegramUserId, Number(plannedMatch[1]));
+    if (!result) return sendJson(res, 404, { error: "planned_expense_not_found" });
+    return sendJson(res, 200, result);
   }
 
   if (req.method === "PATCH" && url.pathname === "/api/settings/budget") {
