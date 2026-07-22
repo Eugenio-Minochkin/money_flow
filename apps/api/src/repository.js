@@ -3060,15 +3060,19 @@ export function createRepository(pool, options = {}) {
       const plannedRemainingDisplayTotal = displayFromBase(plannedRemaining, user);
       const plannedThisWeekDisplayTotal = displayFromBase(plannedThisWeekTotal, user);
       const paidPlannedMonthDisplayTotal = displayFromBase(paidPlannedMonthTotal, user);
+      const plannedMonthPaid = roundMoney(paidPlannedMonthTotal);
+      const plannedMonthRemaining = roundMoney(plannedRemaining);
+      const plannedMonthDisplayPaid = roundMoney(paidPlannedMonthDisplayTotal);
+      const plannedMonthDisplayRemaining = roundMoney(plannedRemainingDisplayTotal);
       const plannedMonthSummary = {
-        paid: roundMoney(paidPlannedMonthTotal),
-        remaining: roundMoney(plannedRemaining),
-        total: roundMoney(paidPlannedMonthTotal + plannedRemaining),
+        paid: plannedMonthPaid,
+        remaining: plannedMonthRemaining,
+        total: roundMoney(plannedMonthPaid + plannedMonthRemaining),
         display: {
           currency: user.display_currency ?? "USD",
-          paid: roundMoney(paidPlannedMonthDisplayTotal),
-          remaining: roundMoney(plannedRemainingDisplayTotal),
-          total: roundMoney(paidPlannedMonthDisplayTotal + plannedRemainingDisplayTotal)
+          paid: plannedMonthDisplayPaid,
+          remaining: plannedMonthDisplayRemaining,
+          total: roundMoney(plannedMonthDisplayPaid + plannedMonthDisplayRemaining)
         }
       };
       const manualWeeklyBudget = user.weekly_budget_amount == null ? null : Number(user.weekly_budget_amount);

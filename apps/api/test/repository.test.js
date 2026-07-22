@@ -4444,6 +4444,43 @@ test("dashboard returns a factual planned month summary while keeping the planne
   assert.deepEqual(paidQuery.params, ["1", "2026-06"]);
 });
 
+test("planned month summary totals reconcile to their returned rounded components", async () => {
+  const repo = createRepository(dashboardPoolWithPlannedExpenses([{
+    id: "8",
+    user_id: "1",
+    amount: "64.53",
+    amount_base: "64.53",
+    currency: "USD",
+    description: "active plan",
+    category_slug: "other",
+    recurrence: "monthly",
+    due_day: 30,
+    due_days: [30],
+    active: true,
+    paid_count: 0,
+    paid_occurrence_dates: [],
+    paid_occurrences: {}
+  }], {
+    paidTotal: 2.135,
+    user: { base_currency: "USD", display_currency: "USD" }
+  }));
+
+  const dashboard = await repo.dashboard(100, new Date("2026-06-10T10:00:00+07:00"));
+
+  assert.equal(dashboard.plannedMonthSummary.paid, 2.13);
+  assert.equal(dashboard.plannedMonthSummary.remaining, 64.53);
+  assert.equal(dashboard.plannedMonthSummary.total, 66.66);
+  assert.equal(
+    dashboard.plannedMonthSummary.total,
+    dashboard.plannedMonthSummary.paid + dashboard.plannedMonthSummary.remaining
+  );
+  assert.equal(
+    dashboard.plannedMonthSummary.display.total,
+    dashboard.plannedMonthSummary.display.paid + dashboard.plannedMonthSummary.display.remaining
+  );
+  assert.equal(dashboard.snapshot.plannedRemaining, 64.53);
+});
+
 test("reserve capacity counts only valid paid occurrences from inactive plans", async () => {
   const queries = [];
   const user = {
@@ -5299,7 +5336,7 @@ function fakeConfirmClient({ draftRow, onQuery = () => {} }) {
   };
 }
 
-function dashboardPoolWithPlannedExpenses(plannedExpenses) {
+function dashboardPoolWithPlannedExpenses(plannedExpenses, options = {}) {
   return fakePool((sql) => {
     const query = String(sql);
     if (query.startsWith("SELECT * FROM users")) {
@@ -5309,9 +5346,14 @@ function dashboardPoolWithPlannedExpenses(plannedExpenses) {
           telegram_user_id: "100",
           monthly_budget_amount: "45000",
           display_currency: "USD",
-          usd_thb_rate: "30"
+          usd_thb_rate: "30",
+          ...options.user
         }]
       };
+    }
+    if (query.includes("FROM planned_expenses") && query.includes("JOIN users")) return { rows: plannedExpenses };
+    if (query.includes("FROM planned_expense_payments") && query.includes("AS total")) {
+      return { rows: [{ total: options.paidTotal ?? 0 }] };
     }
     if (query.includes("planned_expense_payments")) return { rows: plannedExpenses };
     if (query.includes("COALESCE(SUM(amount_base)") && query.includes("display_total")) {
