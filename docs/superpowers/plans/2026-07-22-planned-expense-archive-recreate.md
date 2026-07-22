@@ -627,7 +627,7 @@ if (req.method === "POST" && recreateMatch) {
 npm.cmd test -- apps/api/test/repository.test.js apps/api/test/security.test.js apps/api/test/budgetReserveIntegration.test.js
 ```
 
-- [ ] **Step 8: Commit transactional recreate**
+- [x] **Step 8: Commit transactional recreate**
 
 ```powershell
 git add apps/api/src/repository.js apps/api/src/server.js apps/api/test/repository.test.js apps/api/test/security.test.js apps/api/test/budgetReserveIntegration.test.js
@@ -642,7 +642,7 @@ git commit -m "feat: recreate archived planned expenses safely"
 - Modify: `apps/miniapp/src/formatters.js:45-110`
 - Modify: `apps/miniapp/test/formatters.test.js`
 
-- [ ] **Step 1: Write failing client compatibility tests**
+- [x] **Step 1: Write failing client compatibility tests**
 
 Add the same weekly/monthly/twice-monthly/one-off date-key examples used by the server and prove `active = false` remains empty and `starts_on = null` remains unchanged:
 
@@ -656,13 +656,13 @@ assert.deepEqual(
 
 In formatter tests inject `2026-07-22T18:30:00.000Z` and assert `Asia/Bangkok` gives `2026-07-23` while `America/New_York` gives `2026-07-22`.
 
-- [ ] **Step 2: Run tests and verify RED**
+- [x] **Step 2: Run tests and verify RED**
 
 ```powershell
 npm.cmd test -- apps/miniapp/test/planned.test.js apps/miniapp/test/formatters.test.js
 ```
 
-- [ ] **Step 3: Filter client keys and add a timezone formatter**
+- [x] **Step 3: Filter client keys and add a timezone formatter**
 
 In `buildPlannedOccurrences`, after recurrence generation and before paid mapping:
 
@@ -685,7 +685,7 @@ export function localDateKeyInTimeZone(value = new Date(), timeZone = "Asia/Bang
 }
 ```
 
-- [ ] **Step 4: Run tests and verify GREEN**
+- [x] **Step 4: Run tests and verify GREEN**
 
 ```powershell
 npm.cmd test -- apps/miniapp/test/planned.test.js apps/miniapp/test/formatters.test.js

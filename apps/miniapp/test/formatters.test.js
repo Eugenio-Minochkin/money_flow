@@ -8,6 +8,7 @@ import {
   formatMoney,
   formatDate,
   formatDateOnly,
+  localDateKeyInTimeZone,
   moneyBase,
   moneyDisplay,
   moneyDisplaySigned
@@ -55,6 +56,13 @@ test("formats dates in Bangkok timezone", () => {
 
 test("formats datetime-local values in a supplied timezone", () => {
   assert.equal(dateTimeLocal("2026-06-01T03:30:00.000Z", "America/New_York"), "2026-05-31T23:30");
+});
+
+test("formats user-local calendar keys independently of the browser timezone", () => {
+  const value = new Date("2026-07-22T18:30:00.000Z");
+
+  assert.equal(localDateKeyInTimeZone(value, "Asia/Bangkok"), "2026-07-23");
+  assert.equal(localDateKeyInTimeZone(value, "America/New_York"), "2026-07-22");
 });
 
 function normalizeSpaces(value) {
