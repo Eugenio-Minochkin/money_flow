@@ -1507,7 +1507,8 @@ export function createRepository(pool, options = {}) {
         const priorTopCategories = await reportTopCategoriesForPeriod(pool, user, priorBounds);
         const priorTotal = priorTopCategories.reduce((total, category) => total + Number(category.total ?? 0), 0);
         comparison = weeklyComparison({ currentTotal: metrics.totalSpent, priorTotal });
-        firstWeek = !comparison.available;
+        const hasEarlierHistory = await reportHasExpensesBefore(pool, user, period.periodStartUtc);
+        firstWeek = !comparison.available && !hasEarlierHistory;
         changes = comparison.available
           ? categoryChanges({ current: topCategories, prior: priorTopCategories, language, currency })
           : [];
@@ -3847,6 +3848,14 @@ async function reportTopCategoriesForPeriod(pool, user, bounds) {
     [user.id, bounds.start, bounds.end]
   );
   return result.rows;
+}
+
+async function reportHasExpensesBefore(pool, user, beforeUtc) {
+  const result = await pool.query(
+    `SELECT EXISTS(SELECT 1 FROM expenses WHERE user_id = $1 AND spent_at < $2) AS exists`,
+    [user.id, beforeUtc]
+  );
+  return Boolean(result.rows[0]?.exists);
 }
 
 function deterministicReportInsight(metrics, topCategories, language) {
