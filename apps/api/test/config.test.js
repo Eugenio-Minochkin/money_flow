@@ -83,10 +83,11 @@ test("admin alert config defaults and rejects invalid values", () => {
   assert.equal(config.adminAlertMaxMessageLength, 900);
 });
 
-test("daily reminders are always enabled in production and remain configurable elsewhere", () => {
+test("daily reminders default on in production while preserving an explicit kill switch", () => {
+  assert.equal(buildConfig({ NODE_ENV: "production" }).dailyReminderGlobalEnabled, true);
   assert.equal(
     buildConfig({ NODE_ENV: "production", DAILY_REMINDER_GLOBAL_ENABLED: "false" }).dailyReminderGlobalEnabled,
-    true
+    false
   );
   assert.equal(buildConfig({ NODE_ENV: "development" }).dailyReminderGlobalEnabled, false);
   assert.equal(
