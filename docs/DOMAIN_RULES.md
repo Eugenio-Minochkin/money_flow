@@ -94,6 +94,11 @@ This file records stable product and business rules. Read it before changing bud
 - Report backfills may only send closed months. Current and future months are rejected.
 - Empty report snapshots with no spending, planned payments, budget top-ups, reserve, baseline, or category activity are marked `no_activity` and skipped instead of being sent.
 - Weekly reports that cross a month boundary include planned payment occurrences from every local month touched by the report period, not just the send-date month.
+- Reports must never expose internal category keys or enum names. Category display names resolve through the shared localized label (`categoryLabel(slug, language)`), falling back to a de-slugged human-readable string only when no translation exists.
+- The weekly report week-over-week comparison appears only when the previous full week had spending. The first week, any gap, or a period with missing data hides the comparison, the "what changed" block, and any derived takeaway.
+- The weekly "what changed" block shows only category changes that clear both an absolute and a relative threshold, so small noisy changes are never surfaced.
+- The weekly takeaway must be data-grounded (a dominant single expense, the leading category delta, or a needs-attention pointer). It never invents a cause it cannot support from the data, and it is hidden entirely when no defensible takeaway exists.
+- Unpaid planned payments in the weekly report surface only as actionable "needs attention" items (with the specific due date). A payment that remains unmarked into the following week gets stronger wording; redundant "paid/not marked" totals are not repeated.
 
 ## Currencies And Rounding
 

@@ -26,6 +26,7 @@ Use this guide when changing business logic or UI around the main Money Flow sur
 - Budget top-up month boundaries: current-month confirmation is allowed, previous-month button confirmation is rejected, and no leftover/top-up rolls over automatically.
 - Weekly and monthly report period boundaries, delivery idempotency, dry-run backfill, and blocked-bot behavior.
 - Report accounting: paid planned actual linked amounts, budget top-ups as capacity, large one-offs inside total but outside daily projection, and hidden outside-budget block unless an existing model supplies it.
+- Weekly report presentation: localized category names (no internal keys leaked in RU or EN), top-3 categories with percentages, up to five largest expenses, week-over-week comparison only when the previous week had spending, first-week handling, threshold-gated "what changed", needs-attention from unpaid planned payments (with stronger overdue wording), and a data-grounded takeaway that hides when unsupported.
 
 ## Practical Test Pointers
 
@@ -35,7 +36,7 @@ Use this guide when changing business logic or UI around the main Money Flow sur
 - Timezone helpers live in `packages/shared/src/time.js` and are covered by `packages/shared/test/time.test.js`.
 - Daily reminder behavior is covered by `apps/api/test/dailyReminderService.test.js`, repository tests, and Telegram callback tests.
 - Telegram editor text-input changes must cover prompt persistence, retry after validation errors, session cleanup on Cancel/Save/terminal actions, and a fresh editor card after successful input.
-- Report behavior is covered by `apps/api/test/reportPeriods.test.js`, `apps/api/test/reportService.test.js`, `apps/api/test/reportFormat.test.js`, `apps/api/test/reportKeyboards.test.js`, `apps/api/test/reportScheduler.test.js`, and repository delivery tests.
+- Report behavior is covered by `apps/api/test/reportPeriods.test.js`, `apps/api/test/reportService.test.js`, `apps/api/test/reportFormat.test.js`, `apps/api/test/reportAnalytics.test.js`, `apps/api/test/reportKeyboards.test.js`, `apps/api/test/reportScheduler.test.js`, and repository delivery tests. Weekly comparison/changes/takeaway/needs-attention logic is unit-tested in `apps/api/test/reportAnalytics.test.js`, and the bilingual category label resolver in `packages/shared/test/categories.test.js`.
 - Dashboard presentation is covered by Mini App dashboard and smoke asset tests.
 - Settings behavior, including current-month budget display and timezone controls, is covered by Mini App settings tests.
 - Voice budget top-up coverage should use digit transcriptions for MVP behavior; amount-word parsing needs a dedicated parser or LLM fallback test before being claimed.
