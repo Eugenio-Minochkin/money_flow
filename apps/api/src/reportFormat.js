@@ -302,7 +302,8 @@ function formatWhatChanged(changes = [], currency, language) {
 
 function formatChangeLine(change, currency, language) {
   const labels = language === "en" ? enLabels : ruLabels;
-  const name = escapeHtml(change.name);
+  const rawName = language === "en" ? change.name : lowerFirst(change.name);
+  const name = escapeHtml(rawName);
   if (change.isNew) {
     return labels.changeNew(name, formatReportMoney(change.currentTotal, currency, language));
   }
@@ -310,6 +311,11 @@ function formatChangeLine(change, currency, language) {
     return labels.changeUp(name, formatReportMoney(Math.abs(change.delta), currency, language));
   }
   return labels.changeDown(name, Math.abs(Number(change.percentDelta ?? 0)));
+}
+
+function lowerFirst(value) {
+  const text = String(value ?? "");
+  return text.charAt(0).toLowerCase() + text.slice(1);
 }
 
 function formatNeedsAttention(needsAttention, currency, language) {

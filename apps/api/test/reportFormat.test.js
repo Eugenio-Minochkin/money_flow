@@ -18,7 +18,7 @@ test("formats RU weekly report with localized categories, comparison and takeawa
   assert.match(text, /🧾 Самые большие расходы/);
   assert.match(text, /1. Аренда квартиры — 15 000 THB/);
   assert.match(text, /🔄 Что изменилось/);
-  assert.match(text, /• На Подарки \/ помощь потрачено на 1 200 THB больше/);
+  assert.match(text, /• На подарки \/ помощь потрачено на 1 200 THB больше/);
   assert.doesNotMatch(text, /Общие расходы выросли/);
   assert.doesNotMatch(text, /Внутри этой суммы/);
   assert.doesNotMatch(text, /Заметные разовые траты/);
