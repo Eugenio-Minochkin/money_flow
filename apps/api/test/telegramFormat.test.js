@@ -255,6 +255,88 @@ test("formats saved summary month plan delta from forecast minus monthly budget"
   assert.doesNotMatch(normalized, /5 635 THB/);
 });
 
+test("saved summary month block separates reserved planned and free money after planned (ru)", () => {
+  // Production snapshot fields drive the displayed amounts; no formula is recomputed here.
+  // Sanity math: 51000 − 46691 − 3273 = 1036  and  55453 − 51000 = 4453.
+  const text = formatSavedSummary(10, {
+    month: 46691,
+    monthlyBudget: 51000,
+    plannedRemaining: 3273,
+    freeRemaining: 1036,
+    budgetProgressPercent: 91.55,
+    forecastMonthTotal: 55453,
+    recoveryAdvice: {
+      active: true,
+      state: "warn",
+      requiredPerDay: 130,
+      forecastOverBudget: 4453
+    }
+  }, { language: "ru" });
+  const normalized = normalizeSpaces(text);
+
+  assert.match(normalized, /46 691 THB \/ 51 000 THB \(91,55%\)/);
+  assert.match(normalized, /В резерве на плановые:<\/b> 3 273 THB/);
+  assert.match(normalized, /Свободно после плановых:<\/b> 1 036 THB/);
+  assert.match(normalized, /Прогноз:<\/b> 55 453 THB/);
+  assert.match(normalized, /По прогнозу:<\/b> выше бюджета на 4 453 THB/);
+
+  // The free amount is no longer shown under the ambiguous bare "Осталось" label.
+  assert.doesNotMatch(normalized, /Осталось: <b>1 036 THB<\/b>/);
+
+  // Order: spent, reserved planned, then free after planned.
+  assert.ok(
+    normalized.indexOf("В резерве на плановые") < normalized.indexOf("Свободно после плановых"),
+    "reserved planned must appear before free after planned"
+  );
+
+  // Recovery advice must refer to ordinary (regular) spending.
+  assert.match(normalized, /Вернуться в бюджет:<\/b> прогноз выше бюджета на 4 453 THB/);
+  assert.match(normalized, /Чтобы уложиться в бюджет, держи обычные расходы в пределах <b>130 THB\/день<\/b>/);
+});
+
+test("saved summary month block separates reserved planned and free money after planned (en)", () => {
+  const text = formatSavedSummary(10, {
+    month: 46691,
+    monthlyBudget: 51000,
+    plannedRemaining: 3273,
+    freeRemaining: 1036,
+    budgetProgressPercent: 91.55,
+    forecastMonthTotal: 55453,
+    recoveryAdvice: {
+      active: true,
+      state: "warn",
+      requiredPerDay: 130,
+      forecastOverBudget: 4453
+    }
+  }, { language: "en" });
+  const normalized = normalizeSpaces(text);
+
+  assert.match(normalized, /46,691 THB \/ 51,000 THB \(91.55%\)/);
+  assert.match(normalized, /Reserved for planned payments:<\/b> 3,273 THB/);
+  assert.match(normalized, /Free after planned payments:<\/b> 1,036 THB/);
+  assert.match(normalized, /Forecast:<\/b> 55,453 THB/);
+  assert.match(normalized, /Forecast status:<\/b> over budget by 4,453 THB/);
+
+  assert.ok(
+    normalized.indexOf("Reserved for planned payments") < normalized.indexOf("Free after planned payments"),
+    "reserved planned must appear before free after planned"
+  );
+
+  assert.match(normalized, /Get back on budget:<\/b> forecast is over budget by 4,453 THB/);
+  assert.match(normalized, /To stay within budget, keep regular spending within <b>130 THB\/day<\/b>/);
+});
+
+test("saved summary month block shows a green below-budget forecast status line", () => {
+  const text = formatSavedSummary(10, {
+    ...snapshot(),
+    monthlyBudget: 51000,
+    forecastMonthTotal: 48000
+  }, { language: "ru" });
+  const normalized = normalizeSpaces(text);
+
+  assert.match(normalized, /🟢 <b>По прогнозу:<\/b> ниже бюджета на 3 000 THB/);
+});
+
 test("formats saved summary with planned and large daily aggregates", () => {
   const text = formatSavedSummary(80, {
     ...snapshot(),
