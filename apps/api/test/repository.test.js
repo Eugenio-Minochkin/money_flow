@@ -2287,15 +2287,15 @@ test("weekly report marks first week when the previous week had no spending", as
     base_currency: "THB",
     display_currency: "USD",
     timezone: "Asia/Bangkok",
-    interface_language: "ru"
+    interface_language: "ru",
+    created_at: new Date("2026-07-15T03:00:00Z")
   };
-  const repo = createRepository(fakePool((sql, params = []) => {
+  const repo = createRepository(fakePool((sql) => {
     const query = String(sql);
     if (query.includes("FROM expenses") && query.includes("ORDER BY spent_at ASC")) {
       return { rows: [{ id: "1", amount_base: 1000, converted_amounts: { USD: 30 }, description: "Кофе", category_slug: "food_cafe", budget_impact: "regular", spent_at: new Date("2026-07-13T03:00:00Z"), local_date: "2026-07-13" }] };
     }
     if (query.includes("GROUP BY category_slug")) return { rows: [] };
-    if (query.includes("SELECT EXISTS(SELECT 1 FROM expenses")) return { rows: [{ exists: false }] };
     if (query.includes("FROM planned_expenses") && query.includes("JOIN users")) return { rows: [] };
     if (query.includes("FROM planned_expense_payments") && query.includes("JOIN planned_expenses")) return { rows: [] };
     if (query.includes("FROM budget_topups") && query.includes("occurred_at")) return { rows: [] };
@@ -2332,7 +2332,8 @@ test("weekly report treats an empty prior week with older history as a quiet wee
     base_currency: "THB",
     display_currency: "USD",
     timezone: "Asia/Bangkok",
-    interface_language: "ru"
+    interface_language: "ru",
+    created_at: new Date("2026-06-01T03:00:00Z")
   };
   const repo = createRepository(fakePool((sql) => {
     const query = String(sql);
@@ -2340,7 +2341,6 @@ test("weekly report treats an empty prior week with older history as a quiet wee
       return { rows: [{ id: "1", amount_base: 1000, converted_amounts: { USD: 30 }, description: "Кофе", category_slug: "food_cafe", budget_impact: "regular", spent_at: new Date("2026-07-13T03:00:00Z"), local_date: "2026-07-13" }] };
     }
     if (query.includes("GROUP BY category_slug")) return { rows: [] };
-    if (query.includes("SELECT EXISTS(SELECT 1 FROM expenses")) return { rows: [{ exists: true }] };
     if (query.includes("FROM planned_expenses") && query.includes("JOIN users")) return { rows: [] };
     if (query.includes("FROM planned_expense_payments") && query.includes("JOIN planned_expenses")) return { rows: [] };
     if (query.includes("FROM budget_topups") && query.includes("occurred_at")) return { rows: [] };
@@ -2364,6 +2364,62 @@ test("weekly report treats an empty prior week with older history as a quiet wee
   assert.equal(report.firstWeek, false);
   assert.equal(report.comparison.available, false);
   assert.equal(report.takeaway, null);
+});
+
+test("weekly report hides comparison when the user started tracking mid-prior-week", async () => {
+  const periodStartUtc = new Date("2026-07-12T17:00:00Z");
+  const periodEndUtc = new Date("2026-07-19T17:00:00Z");
+  const priorWeekStartUtc = new Date("2026-07-05T17:00:00Z");
+  const user = {
+    id: 1,
+    telegram_user_id: 100,
+    monthly_budget_amount: 50000,
+    base_currency: "THB",
+    display_currency: "USD",
+    timezone: "Asia/Bangkok",
+    interface_language: "ru",
+    created_at: new Date("2026-07-08T03:00:00Z")
+  };
+  const repo = createRepository(fakePool((sql, params = []) => {
+    const query = String(sql);
+    if (query.includes("FROM expenses") && query.includes("ORDER BY spent_at ASC")) {
+      return { rows: [{ id: "1", amount_base: 2000, converted_amounts: { USD: 60 }, description: "Билеты", category_slug: "travel", budget_impact: "regular", spent_at: new Date("2026-07-14T03:00:00Z"), local_date: "2026-07-14" }] };
+    }
+    if (query.includes("GROUP BY category_slug")) {
+      const end = params[2];
+      if (end && end.getTime() === periodEndUtc.getTime()) {
+        return { rows: [{ category_slug: "travel", total: 2000 }] };
+      }
+      if (end && end.getTime() === periodStartUtc.getTime()) {
+        return { rows: [{ category_slug: "travel", total: 1500 }] };
+      }
+      return { rows: [] };
+    }
+    if (query.includes("FROM planned_expenses") && query.includes("JOIN users")) return { rows: [] };
+    if (query.includes("FROM planned_expense_payments") && query.includes("JOIN planned_expenses")) return { rows: [] };
+    if (query.includes("FROM budget_topups") && query.includes("occurred_at")) return { rows: [] };
+    if (query === "SELECT timezone FROM users WHERE telegram_user_id = $1") return { rows: [{ timezone: "Asia/Bangkok" }] };
+    if (query.includes("FROM monthly_budget_overrides")) return { rows: [] };
+    if (query.includes("COALESCE(SUM(amount_base)") && query.includes("month_key")) return { rows: [{ total: 0 }] };
+    if (query.includes("FROM budget_topups") && query.includes("month_key")) return { rows: [] };
+    if (query.includes("FROM month_baselines")) return { rows: [] };
+    return { rows: [] };
+  }));
+
+  const report = await repo.buildReportDataForDelivery(user, "weekly", {
+    periodKey: "2026-W29",
+    periodStartUtc,
+    periodEndUtc,
+    timezoneUsed: "Asia/Bangkok",
+    localStartDate: "2026-07-13",
+    localEndDate: "2026-07-19"
+  }, new Date("2026-07-20T03:00:00Z"));
+
+  assert.ok(user.created_at > priorWeekStartUtc, "fixture sanity: user started mid-prior-week");
+  assert.equal(report.comparison.available, false);
+  assert.deepEqual(report.changes, []);
+  assert.equal(report.takeaway, null);
+  assert.equal(report.firstWeek, false);
 });
 
 test("weekly report flags overdue unpaid planned payments in needs-attention", async () => {

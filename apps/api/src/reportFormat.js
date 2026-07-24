@@ -23,12 +23,16 @@ export function formatWeeklyReport(report, options = {}) {
   if (Number(metrics.totalSpent ?? 0) > 0) {
     lines.push(formatAverageLine(metrics.averagePerDay, currency, language));
   }
+  if (Number(metrics.budgetTopupsTotal ?? 0) > 0) {
+    lines.push(labels.topupLine(formatReportMoney(metrics.budgetTopupsTotal, currency, language)));
+  }
+  if (metrics.showOutsideBudget && Number(metrics.outOfBudgetTotal ?? 0) > 0) {
+    lines.push(labels.outsideLine(formatReportMoney(metrics.outOfBudgetTotal, currency, language)));
+  }
 
   pushOptional(lines, formatWeeklyTopCategories(report.topCategories, report.topTwoCategoryShare, currency, language));
   pushOptional(lines, formatLargestExpenses(report.largestExpenses, currency, language));
-  if (comparison.available) {
-    pushOptional(lines, formatWhatChanged(comparison, report.changes, currency, language));
-  }
+  pushOptional(lines, formatWhatChanged(report.changes, currency, language));
   pushOptional(lines, formatNeedsAttention(report.needsAttention, currency, language));
   if (report.takeaway) {
     pushOptional(lines, `${labels.takeawayHeading}\n${escapeHtml(report.takeaway)}`);
@@ -286,17 +290,10 @@ function formatLargestExpenses(items = [], currency, language) {
   return lines.join("\n");
 }
 
-function formatWhatChanged(comparison = {}, changes = [], currency, language) {
+function formatWhatChanged(changes = [], currency, language) {
+  if (!Array.isArray(changes) || changes.length === 0) return null;
   const labels = language === "en" ? enLabels : ruLabels;
   const lines = [labels.whatChangedHeading];
-  const totalPct = Math.abs(Number(comparison.percentDelta ?? 0));
-  if (comparison.direction === "down") {
-    lines.push(`• ${labels.totalChangeDown(totalPct)}`);
-  } else if (comparison.direction === "up") {
-    lines.push(`• ${labels.totalChangeUp(totalPct)}`);
-  } else {
-    lines.push(`• ${labels.totalChangeFlat}`);
-  }
   changes.slice(0, 3).forEach((change) => {
     lines.push(`• ${formatChangeLine(change, currency, language)}`);
   });
@@ -338,12 +335,14 @@ function formatPeriodLabel(period = {}, language) {
   const start = dateParts(period.localStartDate);
   const end = dateParts(period.localEndDate);
   if (language === "en") {
-    const month = monthName(start.month, language);
+    const startMonth = monthName(start.month, language);
     const endMonth = start.month === end.month ? "" : `${monthName(end.month, language)} `;
-    return `${month} ${start.day}–${endMonth}${end.day}`;
+    return `${startMonth} ${start.day}–${endMonth}${end.day}`;
   }
-  const month = monthName(end.month, language);
-  return `${start.day}–${end.day} ${month}`;
+  if (start.month === end.month) {
+    return `${start.day}–${end.day} ${monthName(end.month, language)}`;
+  }
+  return `${start.day} ${monthName(start.month, language)} — ${end.day} ${monthName(end.month, language)}`;
 }
 
 function monthNameFromPeriod(periodKey, language) {
@@ -418,6 +417,8 @@ const ruLabels = {
   monthlyPace: "📊 Темп месяца",
   everydaySpending: "Повседневные расходы",
   includingPlanned: "Всего с плановыми",
+  topupLine: (money) => `➕ Бюджет пополнен на ${money}`,
+  outsideLine: (money) => `🚧 Вне бюджета: ${money}`,
   comparisonUp: (pct) => `📈 На ${pct}% больше, чем неделей ранее`,
   comparisonDown: (pct) => `📈 На ${pct}% меньше, чем неделей ранее`,
   comparisonFlat: "📈 Примерно на уровне прошлой недели",
@@ -425,9 +426,6 @@ const ruLabels = {
   topTwoShare: (share) => `Две главные категории составили <b>${share}% всех расходов недели</b>.`,
   largestExpensesHeading: "🧾 Самые большие расходы",
   whatChangedHeading: "🔄 Что изменилось",
-  totalChangeUp: (pct) => `Общие расходы выросли на ${pct}%`,
-  totalChangeDown: (pct) => `Общие расходы снизились на ${pct}%`,
-  totalChangeFlat: "Общие расходы примерно не изменились",
   changeUp: (name, delta) => `На ${name} потрачено на ${delta} больше`,
   changeDown: (name, pct) => `Расходы на ${name} снизились на ${pct}%`,
   changeNew: (name, current) => `Появились расходы на ${name}: ${current}`,
@@ -435,7 +433,7 @@ const ruLabels = {
   notMarkedTotal: "Не отмечено",
   notMarked: (date) => `Оплата за ${date} не отмечена и не входит в расходы недели.`,
   stillUnpaid: (date) => `Оплата за ${date} всё ещё не отмечена.`,
-  morePayments: (count) => `И ещё ${count} оплат`,
+  morePayments: (count) => `И ещё ${count} ${ruPluralPayments(count)}`,
   takeawayHeading: "💡 Главное за неделю",
   firstWeekLine: "Первая неделя учёта завершена. По мере накопления истории здесь появится сравнение расходов по неделям."
 };
@@ -455,6 +453,8 @@ const enLabels = {
   monthlyPace: "📊 Monthly pace",
   everydaySpending: "Everyday spending",
   includingPlanned: "Including planned payments",
+  topupLine: (money) => `➕ Budget increased by ${money}`,
+  outsideLine: (money) => `🚧 Outside budget: ${money}`,
   comparisonUp: (pct) => `📈 ${pct}% more than the previous week`,
   comparisonDown: (pct) => `📈 ${pct}% less than the previous week`,
   comparisonFlat: "📈 Roughly in line with the previous week",
@@ -462,9 +462,6 @@ const enLabels = {
   topTwoShare: (share) => `The top two categories accounted for <b>${share}% of all spending this week</b>.`,
   largestExpensesHeading: "🧾 Largest expenses",
   whatChangedHeading: "🔄 What changed",
-  totalChangeUp: (pct) => `Total spending increased by ${pct}%`,
-  totalChangeDown: (pct) => `Total spending decreased by ${pct}%`,
-  totalChangeFlat: "Total spending was roughly unchanged",
   changeUp: (name, delta) => `Spending on ${name} increased by ${delta}`,
   changeDown: (name, pct) => `Spending on ${name} decreased by ${pct}%`,
   changeNew: (name, current) => `New spending on ${name}: ${current}`,
@@ -472,11 +469,20 @@ const enLabels = {
   notMarkedTotal: "Not marked",
   notMarked: (date) => `The payment due on ${date} has not been marked as paid and is not included in this week's spending.`,
   stillUnpaid: (date) => `The payment due on ${date} is still not marked as paid.`,
-  morePayments: (count) => `And ${count} more payments`,
+  morePayments: (count) => `And ${count} more payment${count === 1 ? "" : "s"}`,
   takeawayHeading: "💡 This week's takeaway",
   firstWeekLine: "Your first week of tracking is complete. Weekly comparisons will appear as more history becomes available."
 };
 
 function capitalize(value) {
   return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function ruPluralPayments(count) {
+  const n = Math.abs(Number(count) || 0);
+  const mod10 = n % 10;
+  const mod100 = n % 100;
+  if (mod10 === 1 && mod100 !== 11) return "оплата";
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return "оплаты";
+  return "оплат";
 }

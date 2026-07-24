@@ -140,6 +140,47 @@ test("categoryChanges is capped at three and sorted by absolute delta", () => {
   assert.deepEqual(changes.map((c) => c.slug), ["home", "gifts_help", "food_cafe"]);
 });
 
+test("categoryChanges uses the full category set, so a category ranked below top five is not treated as new", () => {
+  const changes = categoryChanges({
+    current: [{ category_slug: "entertainment", total: 2000 }],
+    prior: [{ category_slug: "entertainment", total: 500 }],
+    language: "en",
+    currency: "THB"
+  });
+  assert.equal(changes.length, 1);
+  assert.equal(changes[0].isNew, false);
+  assert.equal(changes[0].direction, "up");
+});
+
+test("categoryChanges reports a category that dropped to zero as a decrease", () => {
+  const changes = categoryChanges({
+    current: [],
+    prior: [{ category_slug: "travel", total: 2000 }],
+    language: "en",
+    currency: "THB"
+  });
+  assert.equal(changes.length, 1);
+  assert.equal(changes[0].slug, "travel");
+  assert.equal(changes[0].direction, "down");
+  assert.equal(changes[0].currentTotal, 0);
+  assert.equal(changes[0].priorTotal, 2000);
+  assert.equal(changes[0].percentDelta, -100);
+});
+
+test("categoryPercentages computes the top-two share from raw amounts, not summed rounded percents", () => {
+  const { items, topTwoShare } = categoryPercentages(
+    [
+      { category_slug: "home", total: 1 },
+      { category_slug: "food_cafe", total: 1 },
+      { category_slug: "travel", total: 1 }
+    ],
+    3,
+    { language: "en", limit: 3 }
+  );
+  assert.deepEqual(items.map((item) => item.percent), [33, 33, 33]);
+  assert.equal(topTwoShare, 67);
+});
+
 test("needsAttentionFromUnpaid prioritizes overdue items and collapses the rest", () => {
   const { total, shown, moreCount, count } = needsAttentionFromUnpaid([
     { name: "internet", amount: 700, dueDate: "2026-07-16", overdue: false },

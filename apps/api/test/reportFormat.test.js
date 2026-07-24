@@ -18,7 +18,8 @@ test("formats RU weekly report with localized categories, comparison and takeawa
   assert.match(text, /🧾 Самые большие расходы/);
   assert.match(text, /1. Аренда квартиры — 15 000 THB/);
   assert.match(text, /🔄 Что изменилось/);
-  assert.match(text, /• Общие расходы выросли на 18%/);
+  assert.match(text, /• На Подарки \/ помощь потрачено на 1 200 THB больше/);
+  assert.doesNotMatch(text, /Общие расходы выросли/);
   assert.doesNotMatch(text, /Внутри этой суммы/);
   assert.doesNotMatch(text, /Заметные разовые траты/);
   assert.doesNotMatch(text, /Пополнения бюджета/);
@@ -105,7 +106,8 @@ test("comparable week shows the comparison and what-changed blocks", () => {
   const text = formatWeeklyReport(weeklyFixture({ language: "en" }), { language: "en" });
   assert.match(text, /18% more than the previous week/);
   assert.match(text, /🔄 What changed/);
-  assert.match(text, /• Total spending increased by 18%/);
+  assert.match(text, /• Spending on Gifts &amp; Help increased by 1,200 THB/);
+  assert.doesNotMatch(text, /Total spending increased by/);
 });
 
 test("needs-attention block renders unpaid payments and excludes them from the spent total", () => {
@@ -158,19 +160,44 @@ test("needs-attention collapses extra payments into a summary line", () => {
   });
   const text = formatWeeklyReport(report, { language: "ru" });
   assert.match(text, /Не отмечено: 3 000 THB/);
-  assert.match(text, /И ещё 2 оплат/);
+  assert.match(text, /И ещё 2 оплаты/);
 });
 
-test("what-changed hides insignificant category changes", () => {
-  const report = weeklyFixture({
+test("needs-attention more-payments line pluralizes correctly in RU and EN", () => {
+  const ruOne = formatWeeklyReport(weeklyFixture({
+    language: "ru",
+    needsAttention: { total: 1000, count: 4, moreCount: 1, shown: [{ name: "A", amount: 1000, dueDate: "2026-07-15", overdue: false }] }
+  }), { language: "ru" });
+  assert.match(ruOne, /И ещё 1 оплата/);
+
+  const ruFive = formatWeeklyReport(weeklyFixture({
+    language: "ru",
+    needsAttention: { total: 5000, count: 8, moreCount: 5, shown: [{ name: "A", amount: 1000, dueDate: "2026-07-15", overdue: false }] }
+  }), { language: "ru" });
+  assert.match(ruFive, /И ещё 5 оплат/);
+
+  const enTwo = formatWeeklyReport(weeklyFixture({
     language: "en",
-    changes: [
-      { slug: "food_cafe", name: "Food & Cafés", direction: "up", delta: 50, percentDelta: 5, currentTotal: 1050, priorTotal: 1000, isNew: false }
-    ]
-  });
-  const text = formatWeeklyReport(report, { language: "en" });
-  assert.match(text, /🔄 What changed/);
-  assert.doesNotMatch(text, /Food & Cafés increased/);
+    needsAttention: { total: 2000, count: 5, moreCount: 2, shown: [{ name: "A", amount: 1000, dueDate: "2026-07-15", overdue: false }] }
+  }), { language: "en" });
+  assert.match(enTwo, /And 2 more payments/);
+
+  const enOne = formatWeeklyReport(weeklyFixture({
+    language: "en",
+    needsAttention: { total: 1000, count: 4, moreCount: 1, shown: [{ name: "A", amount: 1000, dueDate: "2026-07-15", overdue: false }] }
+  }), { language: "en" });
+  assert.match(enOne, /And 1 more payment/);
+});
+
+test("what-changed block renders provided category changes and hides when there are none", () => {
+  const withChanges = formatWeeklyReport(weeklyFixture({
+    language: "en",
+    changes: [{ slug: "food_cafe", name: "Food & Cafés", direction: "down", delta: -900, percentDelta: 25, currentTotal: 2700, priorTotal: 3600, isNew: false }]
+  }), { language: "en" });
+  assert.match(withChanges, /• Spending on Food &amp; Cafés decreased by 25%/);
+
+  const withoutChanges = formatWeeklyReport(weeklyFixture({ language: "en", changes: [] }), { language: "en" });
+  assert.doesNotMatch(withoutChanges, /What changed/);
 });
 
 test("weekly report formats numbers and dates correctly per language", () => {
@@ -180,6 +207,30 @@ test("weekly report formats numbers and dates correctly per language", () => {
   assert.match(en, /8,713 THB/);
   assert.match(ru, /13–19 июля/);
   assert.match(en, /July 13–19/);
+});
+
+test("weekly report formats a cross-month period label correctly", () => {
+  const period = { periodKey: "2026-W31", localStartDate: "2026-07-29", localEndDate: "2026-08-04" };
+  const ru = formatWeeklyReport(weeklyFixture({ language: "ru", period }), { language: "ru" });
+  const en = formatWeeklyReport(weeklyFixture({ language: "en", period }), { language: "en" });
+  assert.match(ru, /29 июля — 4 августа/);
+  assert.match(en, /July 29–August 4/);
+});
+
+test("weekly report shows budget top-up and outside-budget lines when present and hides them when absent", () => {
+  const metrics = { ...weeklyFixture().metrics, budgetTopupsTotal: 5000, outOfBudgetTotal: 1200, showOutsideBudget: true };
+
+  const ru = formatWeeklyReport(weeklyFixture({ language: "ru", metrics }), { language: "ru" });
+  assert.match(ru, /➕ Бюджет пополнен на 5 000 THB/);
+  assert.match(ru, /🚧 Вне бюджета: 1 200 THB/);
+
+  const en = formatWeeklyReport(weeklyFixture({ language: "en", metrics }), { language: "en" });
+  assert.match(en, /➕ Budget increased by 5,000 THB/);
+  assert.match(en, /🚧 Outside budget: 1,200 THB/);
+
+  const hidden = formatWeeklyReport(weeklyFixture({ language: "ru" }), { language: "ru" });
+  assert.doesNotMatch(hidden, /Бюджет пополнен/);
+  assert.doesNotMatch(hidden, /Вне бюджета/);
 });
 
 // --- Monthly report (unchanged structure, localized category names via DTO) ---

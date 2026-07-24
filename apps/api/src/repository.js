@@ -1450,11 +1450,11 @@ export function createRepository(pool, options = {}) {
       const bounds = { start: period.periodStartUtc, end: period.periodEndUtc };
       const reportDate = reportType === "monthly" ? new Date(period.periodStartUtc.getTime() + 12 * 60 * 60_000) : now;
       const paidMonths = reportPeriodMonthKeys(period, timeZone);
-      const [expenses, paidPlannedPayments, budgetTopups, topCategories, plannedExpenses] = await Promise.all([
+      const [expenses, paidPlannedPayments, budgetTopups, allCategories, plannedExpenses] = await Promise.all([
         reportExpensesForPeriod(pool, user, bounds, timeZone),
         reportPaidPlannedPaymentsForPeriod(pool, user, bounds, timeZone),
         reportBudgetTopupsForPeriod(pool, user, bounds, timeZone),
-        reportTopCategoriesForPeriod(pool, user, bounds),
+        reportAllCategoriesForPeriod(pool, user, bounds),
         listPlannedExpensesForTelegramUserAt(pool, user.telegram_user_id, reportDate, paidMonths)
       ]);
       const budgetDate = reportDate;
@@ -1491,7 +1491,7 @@ export function createRepository(pool, options = {}) {
         })),
         ...unpaidPlanned
       ];
-      const topCategoryResult = categoryPercentages(topCategories, metrics.totalSpent, { language, limit: isWeekly ? 3 : 5 });
+      const topCategoryResult = categoryPercentages(allCategories, metrics.totalSpent, { language, limit: isWeekly ? 3 : 5 });
 
       let comparison = { available: false };
       let changes = [];
@@ -1504,13 +1504,15 @@ export function createRepository(pool, options = {}) {
           start: new Date(period.periodStartUtc.getTime() - 7 * 24 * 60 * 60_000),
           end: period.periodStartUtc
         };
-        const priorTopCategories = await reportTopCategoriesForPeriod(pool, user, priorBounds);
-        const priorTotal = priorTopCategories.reduce((total, category) => total + Number(category.total ?? 0), 0);
+        const priorAllCategories = await reportAllCategoriesForPeriod(pool, user, priorBounds);
+        const priorTotal = priorAllCategories.reduce((total, category) => total + Number(category.total ?? 0), 0);
         comparison = weeklyComparison({ currentTotal: metrics.totalSpent, priorTotal });
-        const hasEarlierHistory = await reportHasExpensesBefore(pool, user, period.periodStartUtc);
-        firstWeek = !comparison.available && !hasEarlierHistory;
+        const usageStart = user.created_at ? new Date(user.created_at) : null;
+        const priorFullyObservable = !usageStart || usageStart.getTime() <= priorBounds.start.getTime();
+        comparison.available = comparison.available && priorFullyObservable;
+        firstWeek = Boolean(usageStart && usageStart.getTime() >= period.periodStartUtc.getTime());
         changes = comparison.available
-          ? categoryChanges({ current: topCategories, prior: priorTopCategories, language, currency })
+          ? categoryChanges({ current: allCategories, prior: priorAllCategories, language, currency })
           : [];
         weeklyLargest = largestExpenses(expenses, { language, limit: 5 });
         takeaway = weeklyTakeaway({
@@ -1556,7 +1558,7 @@ export function createRepository(pool, options = {}) {
         needsAttention,
         takeaway,
         firstWeek,
-        insight: isWeekly ? "" : deterministicReportInsight(metrics, topCategories, language),
+        insight: isWeekly ? "" : deterministicReportInsight(metrics, allCategories, language),
         generatedAt: now
       };
     },
@@ -3834,7 +3836,7 @@ async function reportBudgetTopupsForPeriod(pool, user, bounds, timeZone) {
   return result.rows.map((row) => withDisplay(row, user));
 }
 
-async function reportTopCategoriesForPeriod(pool, user, bounds) {
+async function reportAllCategoriesForPeriod(pool, user, bounds) {
   const result = await pool.query(
     `SELECT category_slug,
             COALESCE(SUM(amount_base), 0)::float AS total
@@ -3842,20 +3844,10 @@ async function reportTopCategoriesForPeriod(pool, user, bounds) {
      WHERE user_id = $1
        AND spent_at >= $2
        AND spent_at < $3
-     GROUP BY category_slug
-     ORDER BY total DESC
-     LIMIT 5`,
+     GROUP BY category_slug`,
     [user.id, bounds.start, bounds.end]
   );
   return result.rows;
-}
-
-async function reportHasExpensesBefore(pool, user, beforeUtc) {
-  const result = await pool.query(
-    `SELECT EXISTS(SELECT 1 FROM expenses WHERE user_id = $1 AND spent_at < $2) AS exists`,
-    [user.id, beforeUtc]
-  );
-  return Boolean(result.rows[0]?.exists);
 }
 
 function deterministicReportInsight(metrics, topCategories, language) {

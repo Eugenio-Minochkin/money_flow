@@ -35,18 +35,19 @@ export function largestExpenses(expenses = [], { language = "ru", limit = 5 } = 
 
 export function categoryPercentages(rawCategories = [], totalSpent = 0, { language = "ru", limit = 3 } = {}) {
   const total = num(totalSpent);
-  const items = [...rawCategories]
+  const sorted = [...rawCategories]
     .map((category) => ({ slug: slugOf(category), amount: amountOf(category) }))
     .filter((category) => category.amount > 0)
-    .sort((left, right) => right.amount - left.amount)
-    .slice(0, limit)
-    .map((category) => ({
-      name: categoryLabel(category.slug, language),
-      amount: category.amount,
-      percent: total > 0 ? Math.round((category.amount / total) * 100) : 0
-    }));
-  const topTwo = items.slice(0, 2);
-  const topTwoShare = topTwo.length >= 2 ? topTwo.reduce((sum, item) => sum + item.percent, 0) : null;
+    .sort((left, right) => right.amount - left.amount);
+  const items = sorted.slice(0, limit).map((category) => ({
+    name: categoryLabel(category.slug, language),
+    amount: category.amount,
+    percent: total > 0 ? Math.round((category.amount / total) * 100) : 0
+  }));
+  const topTwo = sorted.slice(0, 2);
+  const topTwoShare = topTwo.length >= 2 && total > 0
+    ? Math.round(((topTwo[0].amount + topTwo[1].amount) / total) * 100)
+    : null;
   return { items, topTwoShare };
 }
 
@@ -61,33 +62,34 @@ export function weeklyComparison({ currentTotal = 0, priorTotal = 0 } = {}) {
 }
 
 export function categoryChanges({ current = [], prior = [], language = "ru", currency = "THB" } = {}) {
-  const priorBySlug = new Map(prior.map((category) => [slugOf(category), amountOf(category)]));
+  const currentMap = new Map(current.map((category) => [slugOf(category), amountOf(category)]));
+  const priorMap = new Map(prior.map((category) => [slugOf(category), amountOf(category)]));
   const absoluteMin = CHANGE_ABSOLUTE_BY_CURRENCY[String(currency || "").toUpperCase()] ?? CHANGE_ABSOLUTE_DEFAULT;
-
-  return current
-    .map((category) => {
-      const slug = slugOf(category);
-      const currentTotal = amountOf(category);
-      const priorTotal = priorBySlug.get(slug) ?? 0;
-      const delta = currentTotal - priorTotal;
-      const isNew = priorTotal <= 0 && currentTotal > 0;
-      const passesAbsolute = Math.abs(delta) >= absoluteMin;
-      const passesRelative = isNew
-        ? currentTotal >= absoluteMin
-        : priorTotal > 0 && Math.abs(delta) / priorTotal >= CHANGE_RELATIVE_MIN;
-      if (!passesAbsolute || !passesRelative) return null;
-      return {
-        slug,
-        name: categoryLabel(slug, language),
-        direction: delta > 0 ? "up" : "down",
-        delta,
-        percentDelta: priorTotal > 0 ? Math.round((delta / priorTotal) * 100) : null,
-        currentTotal,
-        priorTotal,
-        isNew
-      };
-    })
-    .filter(Boolean)
+  const slugs = new Set([...currentMap.keys(), ...priorMap.keys()]);
+  const changes = [];
+  for (const slug of slugs) {
+    const currentTotal = currentMap.get(slug) ?? 0;
+    const priorTotal = priorMap.get(slug) ?? 0;
+    const delta = currentTotal - priorTotal;
+    if (delta === 0) continue;
+    const isNew = priorTotal <= 0 && currentTotal > 0;
+    const passesAbsolute = Math.abs(delta) >= absoluteMin;
+    const passesRelative = isNew
+      ? currentTotal >= absoluteMin
+      : priorTotal > 0 && Math.abs(delta) / priorTotal >= CHANGE_RELATIVE_MIN;
+    if (!passesAbsolute || !passesRelative) continue;
+    changes.push({
+      slug,
+      name: categoryLabel(slug, language),
+      direction: delta > 0 ? "up" : "down",
+      delta,
+      percentDelta: priorTotal > 0 ? Math.round((delta / priorTotal) * 100) : null,
+      currentTotal,
+      priorTotal,
+      isNew
+    });
+  }
+  return changes
     .sort((left, right) => Math.abs(right.delta) - Math.abs(left.delta))
     .slice(0, 3);
 }
