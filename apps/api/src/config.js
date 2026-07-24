@@ -31,6 +31,9 @@ export const config = buildConfig(process.env);
 
 export function buildConfig(env) {
   const nodeEnv = env.NODE_ENV ?? "development";
+  const dailyReminderGlobalEnabled = env.DAILY_REMINDER_GLOBAL_ENABLED === undefined
+    ? nodeEnv === "production"
+    : env.DAILY_REMINDER_GLOBAL_ENABLED === "true";
   return {
     nodeEnv,
     port: Number(env.PORT ?? 3000),
@@ -83,7 +86,7 @@ export function buildConfig(env) {
     ),
     githubToken: env.GITHUB_TOKEN,
     githubRepository: env.GITHUB_REPOSITORY,
-    dailyReminderGlobalEnabled: env.DAILY_REMINDER_GLOBAL_ENABLED === "true",
+    dailyReminderGlobalEnabled,
     dailyReminderRolloutPercent: Number(env.DAILY_REMINDER_ROLLOUT_PERCENT ?? 0),
     dailyReminderIntervalMs: Number(env.DAILY_REMINDER_INTERVAL_MS ?? 10 * 60_000)
   };
