@@ -83,6 +83,18 @@ test("admin alert config defaults and rejects invalid values", () => {
   assert.equal(config.adminAlertMaxMessageLength, 900);
 });
 
+test("daily reminders are always enabled in production and remain configurable elsewhere", () => {
+  assert.equal(
+    buildConfig({ NODE_ENV: "production", DAILY_REMINDER_GLOBAL_ENABLED: "false" }).dailyReminderGlobalEnabled,
+    true
+  );
+  assert.equal(buildConfig({ NODE_ENV: "development" }).dailyReminderGlobalEnabled, false);
+  assert.equal(
+    buildConfig({ NODE_ENV: "development", DAILY_REMINDER_GLOBAL_ENABLED: "true" }).dailyReminderGlobalEnabled,
+    true
+  );
+});
+
 test("expense parser LLM timeout defaults only when absent and fails fast on explicit invalid values", () => {
   assert.equal(buildConfig({}).expenseParserLlmTimeoutMs, 20000);
   assert.equal(buildConfig({ EXPENSE_PARSER_LLM_TIMEOUT_MS: "15000" }).expenseParserLlmTimeoutMs, 15000);
