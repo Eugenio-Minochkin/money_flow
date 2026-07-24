@@ -83,7 +83,8 @@ export function buildConfig(env) {
     ),
     githubToken: env.GITHUB_TOKEN,
     githubRepository: env.GITHUB_REPOSITORY,
-    dailyReminderGlobalEnabled: env.DAILY_REMINDER_GLOBAL_ENABLED === "true",
+    // Daily reminders are a core production feature; users can opt out in Mini App settings.
+    dailyReminderGlobalEnabled: nodeEnv === "production" || env.DAILY_REMINDER_GLOBAL_ENABLED === "true",
     dailyReminderRolloutPercent: Number(env.DAILY_REMINDER_ROLLOUT_PERCENT ?? 0),
     dailyReminderIntervalMs: Number(env.DAILY_REMINDER_INTERVAL_MS ?? 10 * 60_000)
   };
