@@ -200,22 +200,23 @@ test("weeklyTakeaway returns null when not comparable", () => {
   assert.equal(weeklyTakeaway({ comparable: false }), null);
 });
 
-test("weeklyTakeaway attributes a rise to a dominant single expense and notes flat everyday spending", () => {
+test("weeklyTakeaway attributes a rise to a dominant single expense", () => {
   const takeaway = weeklyTakeaway({
     comparable: true,
+    comparisonDirection: "up",
     currentTotal: 8713,
     priorTotal: 3800,
     largestExpense: { name: "Аренда квартиры", amount: 5000 },
     changes: [],
     language: "ru"
   });
-  assert.match(takeaway, /главным образом из-за «Аренда квартиры»/);
-  assert.match(takeaway, /примерно на уровне прошлой недели/);
+  assert.equal(takeaway, "Рост расходов в основном связан с операцией «Аренда квартиры».");
 });
 
-test("weeklyTakeaway notes a dominant expense when everyday spending did not stay flat", () => {
+test("weeklyTakeaway notes a dominant expense in English without claiming a decline", () => {
   const takeaway = weeklyTakeaway({
     comparable: true,
+    comparisonDirection: "up",
     currentTotal: 8713,
     priorTotal: 7400,
     largestExpense: { name: "Rent", amount: 5000 },
@@ -225,9 +226,10 @@ test("weeklyTakeaway notes a dominant expense when everyday spending did not sta
   assert.match(takeaway, /More than half of this week's spending went to Rent/);
 });
 
-test("weeklyTakeaway attributes a rise to the leading category change", () => {
+test("weeklyTakeaway attributes a rise to the leading up category change", () => {
   const takeaway = weeklyTakeaway({
     comparable: true,
+    comparisonDirection: "up",
     currentTotal: 8713,
     priorTotal: 7400,
     largestExpense: { name: "Coffee", amount: 200 },
@@ -239,13 +241,71 @@ test("weeklyTakeaway attributes a rise to the leading category change", () => {
   assert.match(takeaway, /Spending rose mainly because of Gifts & Help/);
 });
 
+test("weeklyTakeaway attributes a decline to the leading down category change", () => {
+  const takeaway = weeklyTakeaway({
+    comparable: true,
+    comparisonDirection: "down",
+    currentTotal: 5000,
+    priorTotal: 8000,
+    largestExpense: { name: "Coffee", amount: 200 },
+    changes: [
+      { name: "Travel", direction: "down", delta: -3000, percentDelta: -60 }
+    ],
+    language: "ru"
+  });
+  assert.equal(takeaway, "Основное снижение пришлось на категорию «Travel».");
+});
+
 test("weeklyTakeaway is hidden when no defensible cause exists", () => {
   const takeaway = weeklyTakeaway({
     comparable: true,
+    comparisonDirection: "up",
     currentTotal: 8713,
     priorTotal: 8500,
     largestExpense: { name: "Coffee", amount: 200 },
     changes: [{ name: "Food", direction: "up", delta: 100, percentDelta: 5 }],
+    language: "ru"
+  });
+  assert.equal(takeaway, null);
+});
+
+test("weeklyTakeaway does not attribute an overall rise to a negative category change", () => {
+  const takeaway = weeklyTakeaway({
+    comparable: true,
+    comparisonDirection: "up",
+    currentTotal: 9000,
+    priorTotal: 8000,
+    largestExpense: { name: "Coffee", amount: 200 },
+    changes: [{ name: "Food", direction: "down", delta: -2000, percentDelta: -40 }],
+    language: "ru"
+  });
+  assert.equal(takeaway, null);
+});
+
+test("weeklyTakeaway does not name a positive change as the cause of an overall decline", () => {
+  const takeaway = weeklyTakeaway({
+    comparable: true,
+    comparisonDirection: "down",
+    currentTotal: 7000,
+    priorTotal: 9000,
+    largestExpense: { name: "Coffee", amount: 200 },
+    changes: [{ name: "Food", direction: "up", delta: 2000, percentDelta: 40 }],
+    language: "en"
+  });
+  assert.equal(takeaway, null);
+});
+
+test("weeklyTakeaway produces no growth or decline wording on a flat comparison", () => {
+  const takeaway = weeklyTakeaway({
+    comparable: true,
+    comparisonDirection: "flat",
+    currentTotal: 8000,
+    priorTotal: 7900,
+    largestExpense: { name: "Rent", amount: 5000 },
+    changes: [
+      { name: "Food", direction: "up", delta: 2000, percentDelta: 40 },
+      { name: "Travel", direction: "down", delta: -1900, percentDelta: -38 }
+    ],
     language: "ru"
   });
   assert.equal(takeaway, null);

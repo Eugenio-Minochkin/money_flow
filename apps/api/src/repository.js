@@ -21,6 +21,7 @@ import {
 } from "./plannedOccurrenceDates.js";
 import { normalizeAcquisitionSource, SINGLETON_ONBOARDING_EVENTS } from "./productAnalytics.js";
 import { buildReportMetrics } from "./reportService.js";
+import { priorWeeklyBounds } from "./reportPeriods.js";
 import { categoryLabel } from "../../../packages/shared/src/categories.js";
 import {
   categoryChanges,
@@ -1500,10 +1501,7 @@ export function createRepository(pool, options = {}) {
       let takeaway = null;
       let firstWeek = false;
       if (isWeekly) {
-        const priorBounds = {
-          start: new Date(period.periodStartUtc.getTime() - 7 * 24 * 60 * 60_000),
-          end: period.periodStartUtc
-        };
+        const priorBounds = priorWeeklyBounds(period, timeZone);
         const priorAllCategories = await reportAllCategoriesForPeriod(pool, user, priorBounds);
         const priorTotal = priorAllCategories.reduce((total, category) => total + Number(category.total ?? 0), 0);
         comparison = weeklyComparison({ currentTotal: metrics.totalSpent, priorTotal });
@@ -1517,6 +1515,7 @@ export function createRepository(pool, options = {}) {
         weeklyLargest = largestExpenses(expenses, { language, limit: 5 });
         takeaway = weeklyTakeaway({
           comparable: comparison.available,
+          comparisonDirection: comparison.direction,
           currentTotal: metrics.totalSpent,
           priorTotal,
           largestExpense: weeklyLargest[0] ?? null,
@@ -3844,14 +3843,17 @@ async function reportAllCategoriesForPeriod(pool, user, bounds) {
      WHERE user_id = $1
        AND spent_at >= $2
        AND spent_at < $3
-     GROUP BY category_slug`,
+     GROUP BY category_slug
+     ORDER BY total DESC`,
     [user.id, bounds.start, bounds.end]
   );
   return result.rows;
 }
 
-function deterministicReportInsight(metrics, topCategories, language) {
-  const topSlug = topCategories?.[0]?.category_slug;
+function deterministicReportInsight(metrics, categories, language) {
+  const topSlug = (Array.isArray(categories) ? categories : [])
+    .map((category) => ({ slug: category.category_slug, total: Number(category.total ?? category.amount ?? 0) }))
+    .sort((left, right) => right.total - left.total)[0]?.slug;
   const topCategory = topSlug ? categoryLabel(topSlug, language) : (language === "en" ? "spending" : "расходов");
   if (language === "en") {
     if (!metrics.totalSpent) return "No expenses were found for this period.";

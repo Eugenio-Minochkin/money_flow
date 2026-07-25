@@ -5,7 +5,6 @@ export const CHANGE_RELATIVE_MIN = 0.25;
 export const CHANGE_ABSOLUTE_BY_CURRENCY = { THB: 1000, RUB: 2500, USD: 30, EUR: 30 };
 export const CHANGE_ABSOLUTE_DEFAULT = 30;
 export const TAKEAWAY_DOMINANT_EXPENSE_SHARE = 0.5;
-export const TAKEAWAY_FLAT_BAND = 0.15;
 export const TAKEAWAY_CATEGORY_SHARE_OF_DELTA = 0.6;
 export const NEEDS_ATTENTION_MAX_SHOWN = 3;
 
@@ -107,6 +106,7 @@ export function needsAttentionFromUnpaid(unpaidItems = []) {
 
 export function weeklyTakeaway({
   comparable = false,
+  comparisonDirection = "flat",
   currentTotal = 0,
   priorTotal = 0,
   largestExpense = null,
@@ -121,34 +121,26 @@ export function weeklyTakeaway({
 
   const dominantAmount = largestExpense ? num(largestExpense.amount) : 0;
   const dominant = current > 0 && dominantAmount >= TAKEAWAY_DOMINANT_EXPENSE_SHARE * current ? largestExpense : null;
-
-  if (dominant && delta > 0) {
+  if (dominant && comparisonDirection === "up") {
     const name = dominant.name;
-    const excluding = current - dominantAmount;
-    const stayedFlat = prior > 0 && Math.abs(excluding - prior) / prior <= TAKEAWAY_FLAT_BAND;
-    if (stayedFlat) {
-      return en
-        ? `Spending rose mainly because of ${name}. Excluding it, everyday spending stayed close to the previous week.`
-        : `Расходы выросли главным образом из-за «${name}». Без этой траты повседневные расходы остались примерно на уровне прошлой недели.`;
-    }
     return en
       ? `More than half of this week's spending went to ${name}.`
-      : `Больше половины расходов недели пришлось на «${name}».`;
+      : `Рост расходов в основном связан с операцией «${name}».`;
   }
 
   const totalAbsDelta = Math.abs(delta);
-  const attribution = totalAbsDelta > 0
-    ? changes.find((change) => Math.abs(change.delta) >= TAKEAWAY_CATEGORY_SHARE_OF_DELTA * totalAbsDelta) ?? null
+  const attribution = comparisonDirection !== "flat" && totalAbsDelta > 0
+    ? changes.find((change) => change.direction === comparisonDirection && Math.abs(change.delta) >= TAKEAWAY_CATEGORY_SHARE_OF_DELTA * totalAbsDelta) ?? null
     : null;
   if (attribution) {
     if (attribution.direction === "up") {
       return en
         ? `Spending rose mainly because of ${attribution.name}.`
-        : `Расходы выросли главным образом за счёт «${attribution.name}».`;
+        : `Основной рост пришёлся на категорию «${attribution.name}».`;
     }
     return en
       ? `Spending fell mainly because of ${attribution.name}.`
-      : `Расходы снизились главным образом за счёт «${attribution.name}».`;
+      : `Основное снижение пришлось на категорию «${attribution.name}».`;
   }
 
   return null;

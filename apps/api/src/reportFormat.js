@@ -302,8 +302,7 @@ function formatWhatChanged(changes = [], currency, language) {
 
 function formatChangeLine(change, currency, language) {
   const labels = language === "en" ? enLabels : ruLabels;
-  const rawName = language === "en" ? change.name : lowerFirst(change.name);
-  const name = escapeHtml(rawName);
+  const name = escapeHtml(change.name);
   if (change.isNew) {
     return labels.changeNew(name, formatReportMoney(change.currentTotal, currency, language));
   }
@@ -311,11 +310,6 @@ function formatChangeLine(change, currency, language) {
     return labels.changeUp(name, formatReportMoney(Math.abs(change.delta), currency, language));
   }
   return labels.changeDown(name, Math.abs(Number(change.percentDelta ?? 0)));
-}
-
-function lowerFirst(value) {
-  const text = String(value ?? "");
-  return text.charAt(0).toLowerCase() + text.slice(1);
 }
 
 function formatNeedsAttention(needsAttention, currency, language) {
@@ -432,9 +426,9 @@ const ruLabels = {
   topTwoShare: (share) => `Две главные категории составили <b>${share}% всех расходов недели</b>.`,
   largestExpensesHeading: "🧾 Самые большие расходы",
   whatChangedHeading: "🔄 Что изменилось",
-  changeUp: (name, delta) => `На ${name} потрачено на ${delta} больше`,
-  changeDown: (name, pct) => `Расходы на ${name} снизились на ${pct}%`,
-  changeNew: (name, current) => `Появились расходы на ${name}: ${current}`,
+  changeUp: (name, delta) => `${name} — на ${delta} больше`,
+  changeDown: (name, pct) => `${name} — на ${pct}% меньше`,
+  changeNew: (name, current) => `Новая категория: ${name} — ${current}`,
   needsAttentionHeading: "⚠️ Требует внимания",
   notMarkedTotal: "Не отмечено",
   notMarked: (date) => `Оплата за ${date} не отмечена и не входит в расходы недели.`,

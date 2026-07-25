@@ -1,4 +1,5 @@
 import {
+  localDateRangeBounds,
   localHour,
   localMonthDay,
   localWeekday,
@@ -58,8 +59,39 @@ export function monthlyPeriodForSend(now = new Date(), timeZoneValue) {
   };
 }
 
-export function isoWeekKeyForLocalDate(year, month, day) {
-  const date = new Date(Date.UTC(year, month - 1, day));
+export function priorWeeklyBounds(period, timeZoneValue) {
+  const timeZone = normalizeTimeZone(timeZoneValue).timeZone;
+  const reportStart = period.localStartDate ?? localWeekStartKey(period, timeZone);
+  const priorMonday = shiftDayKey(reportStart, -7);
+  const priorSunday = shiftDayKey(reportStart, -1);
+  const bounds = localDateRangeBounds(priorMonday, priorSunday, timeZone);
+  return {
+    start: bounds.start,
+    end: bounds.end,
+    localStartDate: priorMonday,
+    localEndDate: priorSunday
+  };
+}
+
+function localWeekStartKey(period, timeZone) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric", month: "2-digit", day: "2-digit"
+  }).formatToParts(period.periodStartUtc);
+  const values = {};
+  for (const part of parts) {
+    if (part.type !== "literal") values[part.type] = part.value;
+  }
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
+function shiftDayKey(dayKey, deltaDays) {
+  const [year, month, day] = String(dayKey).split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day + deltaDays));
+  return `${date.getUTCFullYear()}-${pad2(date.getUTCMonth() + 1)}-${pad2(date.getUTCDate())}`;
+}
+
+export function isoWeekKeyForLocalDate(year, month, day) {  const date = new Date(Date.UTC(year, month - 1, day));
   const weekday = date.getUTCDay() || 7;
   date.setUTCDate(date.getUTCDate() + 4 - weekday);
   const isoYear = date.getUTCFullYear();

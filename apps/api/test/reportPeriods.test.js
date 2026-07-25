@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   monthlyPeriodForSend,
+  priorWeeklyBounds,
   shouldSendMonthlyReportForUser,
   shouldSendWeeklyReportForUser,
   weeklyPeriodForSend
@@ -58,4 +59,52 @@ test("period helpers fall back to project timezone for invalid user timezone", (
 
   assert.equal(weekly.timezoneUsed, "Asia/Bangkok");
   assert.equal(monthly.timezoneUsed, "Asia/Bangkok");
+});
+
+function berlinWeekdayHour(date) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Europe/Berlin", weekday: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23"
+  }).formatToParts(date);
+  const values = {};
+  for (const part of parts) if (part.type !== "literal") values[part.type] = part.value;
+  return { weekday: values.weekday, hour: Number(values.hour) };
+}
+
+test("priorWeeklyBounds spans a normal summer week as two local Mondays at 00:00", () => {
+  const report = weeklyPeriodForSend(new Date("2026-07-20T08:00:00Z"), "Europe/Berlin");
+  const prior = priorWeeklyBounds(report, "Europe/Berlin");
+
+  assert.equal(prior.localStartDate, "2026-07-06");
+  assert.equal(prior.localEndDate, "2026-07-12");
+  assert.equal(prior.start.toISOString(), "2026-07-05T22:00:00.000Z");
+  assert.equal(prior.end.toISOString(), "2026-07-12T22:00:00.000Z");
+  assert.equal((prior.end - prior.start) / 3_600_000, 168);
+  assert.deepEqual(berlinWeekdayHour(prior.start), { weekday: "Mon", hour: 0 });
+  assert.deepEqual(berlinWeekdayHour(prior.end), { weekday: "Mon", hour: 0 });
+});
+
+test("priorWeeklyBounds is 167 hours across the Berlin spring DST transition", () => {
+  const report = weeklyPeriodForSend(new Date("2026-04-06T08:00:00Z"), "Europe/Berlin");
+  const prior = priorWeeklyBounds(report, "Europe/Berlin");
+
+  assert.equal(report.localStartDate, "2026-03-30");
+  assert.equal(prior.localStartDate, "2026-03-23");
+  assert.equal(prior.start.toISOString(), "2026-03-22T23:00:00.000Z");
+  assert.equal(prior.end.toISOString(), "2026-03-29T22:00:00.000Z");
+  assert.equal((prior.end - prior.start) / 3_600_000, 167);
+  assert.deepEqual(berlinWeekdayHour(prior.start), { weekday: "Mon", hour: 0 });
+  assert.deepEqual(berlinWeekdayHour(prior.end), { weekday: "Mon", hour: 0 });
+});
+
+test("priorWeeklyBounds is 169 hours across the Berlin autumn DST transition", () => {
+  const report = weeklyPeriodForSend(new Date("2026-11-02T08:00:00Z"), "Europe/Berlin");
+  const prior = priorWeeklyBounds(report, "Europe/Berlin");
+
+  assert.equal(report.localStartDate, "2026-10-26");
+  assert.equal(prior.localStartDate, "2026-10-19");
+  assert.equal(prior.start.toISOString(), "2026-10-18T22:00:00.000Z");
+  assert.equal(prior.end.toISOString(), "2026-10-25T23:00:00.000Z");
+  assert.equal((prior.end - prior.start) / 3_600_000, 169);
+  assert.deepEqual(berlinWeekdayHour(prior.start), { weekday: "Mon", hour: 0 });
+  assert.deepEqual(berlinWeekdayHour(prior.end), { weekday: "Mon", hour: 0 });
 });
