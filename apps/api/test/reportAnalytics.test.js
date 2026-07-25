@@ -1,7 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+import { SUPPORTED_CURRENCY_CODES } from "../../../packages/shared/src/currencies.js";
 import {
+  CHANGE_ABSOLUTE_BY_CURRENCY,
   NEEDS_ATTENTION_MAX_SHOWN,
   categoryChanges,
   categoryPercentages,
@@ -10,6 +12,19 @@ import {
   weeklyComparison,
   weeklyTakeaway
 } from "../src/reportAnalytics.js";
+
+test("every supported base currency has an explicit positive change threshold", () => {
+  assert.ok(SUPPORTED_CURRENCY_CODES.length > 0, "expected supported currencies to be defined");
+  for (const code of SUPPORTED_CURRENCY_CODES) {
+    const threshold = CHANGE_ABSOLUTE_BY_CURRENCY[code];
+    assert.ok(
+      Number.isFinite(threshold) && threshold > 0,
+      `currency ${code} must have an explicit positive absolute threshold (got ${threshold})`
+    );
+  }
+  // High-magnitude currencies must not silently fall back to the tiny default.
+  assert.ok(CHANGE_ABSOLUTE_BY_CURRENCY.IDR > 100_000, "IDR threshold must reflect its magnitude");
+});
 
 test("largestExpenses sorts by amount desc, caps at limit, and falls back to localized category", () => {
   const result = largestExpenses(
@@ -210,7 +225,24 @@ test("weeklyTakeaway attributes a rise to a dominant single expense", () => {
     changes: [],
     language: "ru"
   });
-  assert.equal(takeaway, "Рост расходов в основном связан с операцией «Аренда квартиры».");
+  assert.equal(takeaway, "Больше половины расходов недели пришлось на операцию «Аренда квартиры».");
+});
+
+test("weeklyTakeaway dominant-expense line states the share, not an unproven cause of the change", () => {
+  // The largest operation is more than half of THIS week, but prior week had a comparable
+  // large operation too — so it cannot be proven as the cause of the rise. The takeaway must
+  // only report the share, never causal wording like "рост ... связан с".
+  const takeaway = weeklyTakeaway({
+    comparable: true,
+    comparisonDirection: "up",
+    currentTotal: 9000,
+    priorTotal: 8800,
+    largestExpense: { name: "Аренда квартиры", amount: 5000 },
+    changes: [],
+    language: "ru"
+  });
+  assert.equal(takeaway, "Больше половины расходов недели пришлось на операцию «Аренда квартиры».");
+  assert.doesNotMatch(takeaway, /связан|из-за|причиной|вызвал/);
 });
 
 test("weeklyTakeaway notes a dominant expense in English without claiming a decline", () => {

@@ -1,8 +1,17 @@
 import { categoryLabel } from "../../../packages/shared/src/categories.js";
+import { SUPPORTED_CURRENCY_CODES } from "../../../packages/shared/src/currencies.js";
 
 export const COMPARISON_FLAT_PERCENT = 5;
 export const CHANGE_RELATIVE_MIN = 0.25;
-export const CHANGE_ABSOLUTE_BY_CURRENCY = { THB: 1000, RUB: 2500, USD: 30, EUR: 30 };
+export const CHANGE_ABSOLUTE_BY_CURRENCY = {
+  THB: 1000,
+  RUB: 2500,
+  USD: 30,
+  EUR: 30,
+  IDR: 500_000,
+  BYN: 100,
+  GEL: 80
+};
 export const CHANGE_ABSOLUTE_DEFAULT = 30;
 export const TAKEAWAY_DOMINANT_EXPENSE_SHARE = 0.5;
 export const TAKEAWAY_CATEGORY_SHARE_OF_DELTA = 0.6;
@@ -125,7 +134,7 @@ export function weeklyTakeaway({
     const name = dominant.name;
     return en
       ? `More than half of this week's spending went to ${name}.`
-      : `Рост расходов в основном связан с операцией «${name}».`;
+      : `Больше половины расходов недели пришлось на операцию «${name}».`;
   }
 
   const totalAbsDelta = Math.abs(delta);
