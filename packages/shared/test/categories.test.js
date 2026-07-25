@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { categoryName, inferCategory } from "../src/categories.js";
+import { CATEGORIES, categoryLabel, categoryName, inferCategory } from "../src/categories.js";
 
 test("adds education category for learning expenses", () => {
   assert.equal(categoryName("education"), "Образование");
@@ -110,4 +110,30 @@ test("matches safe Cyrillic morphology stems", () => {
   for (const [description, category] of examples) {
     assert.equal(inferCategory(description), category, description);
   }
+});
+
+test("categoryLabel returns localized names for every slug without internal keys", () => {
+  const slugs = CATEGORIES.map((category) => category.slug);
+  assert.ok(slugs.length >= 13, "expected the full category taxonomy");
+
+  for (const slug of slugs) {
+    const ru = categoryLabel(slug, "ru");
+    const en = categoryLabel(slug, "en");
+    assert.ok(ru && typeof ru === "string", `ru label missing for ${slug}`);
+    assert.ok(en && typeof en === "string", `en label missing for ${slug}`);
+    assert.ok(!ru.includes("_"), `ru label leaked internal key: ${slug} -> ${ru}`);
+    assert.ok(!en.includes("_"), `en label leaked internal key: ${slug} -> ${en}`);
+  }
+
+  assert.equal(categoryLabel("food_cafe", "en"), "Food & Cafés");
+  assert.equal(categoryLabel("home", "en"), "Home");
+  assert.equal(categoryLabel("gifts_help", "en"), "Gifts & Help");
+  assert.equal(categoryLabel("food_cafe", "ru"), categoryName("food_cafe"));
+});
+
+test("categoryLabel falls back safely for unknown slugs and unsupported languages", () => {
+  assert.equal(categoryLabel("food_cafe"), categoryName("food_cafe"));
+  assert.equal(categoryLabel("food_cafe", "fr"), categoryName("food_cafe"));
+  const fallback = categoryLabel("something_unexpected", "en");
+  assert.ok(!fallback.includes("_"), "fallback must not leak underscores");
 });

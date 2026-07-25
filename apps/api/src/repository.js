@@ -21,6 +21,16 @@ import {
 } from "./plannedOccurrenceDates.js";
 import { normalizeAcquisitionSource, SINGLETON_ONBOARDING_EVENTS } from "./productAnalytics.js";
 import { buildReportMetrics } from "./reportService.js";
+import { priorWeeklyBounds } from "./reportPeriods.js";
+import { categoryLabel } from "../../../packages/shared/src/categories.js";
+import {
+  categoryChanges,
+  categoryPercentages,
+  largestExpenses,
+  needsAttentionFromUnpaid,
+  weeklyComparison,
+  weeklyTakeaway
+} from "./reportAnalytics.js";
 
 const INVALID_PLANNED_DUE_DATE_LOGGED = Symbol("invalidPlannedDueDateLogged");
 const ACCOUNT_DELETION_TTL_MINUTES = 15;
@@ -1441,11 +1451,11 @@ export function createRepository(pool, options = {}) {
       const bounds = { start: period.periodStartUtc, end: period.periodEndUtc };
       const reportDate = reportType === "monthly" ? new Date(period.periodStartUtc.getTime() + 12 * 60 * 60_000) : now;
       const paidMonths = reportPeriodMonthKeys(period, timeZone);
-      const [expenses, paidPlannedPayments, budgetTopups, topCategories, plannedExpenses] = await Promise.all([
+      const [expenses, paidPlannedPayments, budgetTopups, allCategories, plannedExpenses] = await Promise.all([
         reportExpensesForPeriod(pool, user, bounds, timeZone),
         reportPaidPlannedPaymentsForPeriod(pool, user, bounds, timeZone),
         reportBudgetTopupsForPeriod(pool, user, bounds, timeZone),
-        reportTopCategoriesForPeriod(pool, user, bounds),
+        reportAllCategoriesForPeriod(pool, user, bounds),
         listPlannedExpensesForTelegramUserAt(pool, user.telegram_user_id, reportDate, paidMonths)
       ]);
       const budgetDate = reportDate;
@@ -1455,8 +1465,11 @@ export function createRepository(pool, options = {}) {
         : 0;
       const days = Math.max(Math.round((period.periodEndUtc.getTime() - period.periodStartUtc.getTime()) / 86_400_000), 1);
       const largeThreshold = reportLargeExpenseThreshold(user, budget);
+      const language = user.interface_language === "en" ? "en" : "ru";
+      const currency = user.base_currency ?? "THB";
+      const isWeekly = reportType === "weekly";
       const metrics = buildReportMetrics({
-        currency: user.base_currency ?? "THB",
+        currency,
         displayCurrency: user.display_currency ?? "USD",
         expenses,
         paidPlannedPayments,
@@ -1468,11 +1481,54 @@ export function createRepository(pool, options = {}) {
       metrics.averagePerDay = roundMoney(metrics.totalSpent / days);
       metrics.regularAveragePerDay = roundMoney(metrics.regularTotal / days);
       const remaining = roundMoney(budget.amount - metrics.totalSpent);
-      const notableExpenses = reportNotableExpenses(expenses, paidPlannedPayments, largeThreshold, reportType === "monthly" ? 5 : 3);
+      const notableExpenses = reportNotableExpenses(expenses, paidPlannedPayments, largeThreshold, reportType === "monthly" ? 5 : 3, language);
+      const unpaidPlanned = reportUnpaidPlannedPayments(plannedExpenses, user, budgetDate, timeZone, period, isWeekly ? 7 : 0);
+      const plannedPayments = [
+        ...paidPlannedPayments.map((payment) => ({
+          name: payment.name,
+          amount: Number(payment.amount_base ?? 0),
+          paid: true,
+          dueDate: payment.occurrence_date
+        })),
+        ...unpaidPlanned
+      ];
+      const topCategoryResult = categoryPercentages(allCategories, metrics.totalSpent, { language, limit: isWeekly ? 3 : 5 });
+
+      let comparison = { available: false };
+      let changes = [];
+      let weeklyLargest = [];
+      let needsAttention = null;
+      let takeaway = null;
+      let firstWeek = false;
+      if (isWeekly) {
+        const priorBounds = priorWeeklyBounds(period, timeZone);
+        const priorAllCategories = await reportAllCategoriesForPeriod(pool, user, priorBounds);
+        const priorTotal = priorAllCategories.reduce((total, category) => total + Number(category.total ?? 0), 0);
+        comparison = weeklyComparison({ currentTotal: metrics.totalSpent, priorTotal });
+        const usageStart = user.created_at ? new Date(user.created_at) : null;
+        const priorFullyObservable = !usageStart || usageStart.getTime() <= priorBounds.start.getTime();
+        comparison.available = comparison.available && priorFullyObservable;
+        firstWeek = Boolean(usageStart && usageStart.getTime() >= period.periodStartUtc.getTime());
+        changes = comparison.available
+          ? categoryChanges({ current: allCategories, prior: priorAllCategories, language, currency })
+          : [];
+        weeklyLargest = largestExpenses(expenses, { language, limit: 5 });
+        takeaway = weeklyTakeaway({
+          comparable: comparison.available,
+          comparisonDirection: comparison.direction,
+          currentTotal: metrics.totalSpent,
+          priorTotal,
+          largestExpense: weeklyLargest[0] ?? null,
+          changes,
+          language
+        });
+        const unpaidForAttention = plannedPayments.filter((payment) => !payment.paid);
+        needsAttention = unpaidForAttention.length > 0 ? needsAttentionFromUnpaid(unpaidForAttention) : null;
+      }
 
       return {
         reportType,
-        currency: user.base_currency ?? "THB",
+        currency,
         period,
         metrics,
         budget: {
@@ -1485,15 +1541,7 @@ export function createRepository(pool, options = {}) {
             remaining: displayFromBase(remaining, user)
           }
         },
-        plannedPayments: [
-          ...paidPlannedPayments.map((payment) => ({
-            name: payment.name,
-            amount: Number(payment.amount_base ?? 0),
-            paid: true,
-            dueDate: payment.occurrence_date
-          })),
-          ...reportUnpaidPlannedPayments(plannedExpenses, user, budgetDate, timeZone, period)
-        ],
+        plannedPayments,
         largeExpenses: notableExpenses.items,
         largeExpensesTotal: notableExpenses.total,
         largeExpensesCount: notableExpenses.count,
@@ -1501,11 +1549,15 @@ export function createRepository(pool, options = {}) {
           date: topup.local_date,
           amount: Number(topup.amount_base ?? 0)
         })),
-        topCategories: topCategories.map((category) => ({
-          name: category.category_slug,
-          amount: Number(category.total ?? 0)
-        })),
-        insight: deterministicReportInsight(metrics, topCategories, user.interface_language),
+        topCategories: topCategoryResult.items,
+        topTwoCategoryShare: topCategoryResult.topTwoShare,
+        comparison,
+        changes,
+        largestExpenses: weeklyLargest,
+        needsAttention,
+        takeaway,
+        firstWeek,
+        insight: isWeekly ? "" : deterministicReportInsight(metrics, allCategories, language),
         generatedAt: now
       };
     },
@@ -3783,7 +3835,7 @@ async function reportBudgetTopupsForPeriod(pool, user, bounds, timeZone) {
   return result.rows.map((row) => withDisplay(row, user));
 }
 
-async function reportTopCategoriesForPeriod(pool, user, bounds) {
+async function reportAllCategoriesForPeriod(pool, user, bounds) {
   const result = await pool.query(
     `SELECT category_slug,
             COALESCE(SUM(amount_base), 0)::float AS total
@@ -3792,15 +3844,17 @@ async function reportTopCategoriesForPeriod(pool, user, bounds) {
        AND spent_at >= $2
        AND spent_at < $3
      GROUP BY category_slug
-     ORDER BY total DESC
-     LIMIT 5`,
+     ORDER BY total DESC`,
     [user.id, bounds.start, bounds.end]
   );
   return result.rows;
 }
 
-function deterministicReportInsight(metrics, topCategories, language) {
-  const topCategory = topCategories?.[0]?.category_slug ?? (language === "en" ? "spending" : "расходы");
+function deterministicReportInsight(metrics, categories, language) {
+  const topSlug = (Array.isArray(categories) ? categories : [])
+    .map((category) => ({ slug: category.category_slug, total: Number(category.total ?? category.amount ?? 0) }))
+    .sort((left, right) => right.total - left.total)[0]?.slug;
+  const topCategory = topSlug ? categoryLabel(topSlug, language) : (language === "en" ? "spending" : "расходов");
   if (language === "en") {
     if (!metrics.totalSpent) return "No expenses were found for this period.";
     if (metrics.largeTotal > 0) return `The main spending area was ${topCategory}; large one-off expenses also mattered.`;
@@ -3825,7 +3879,7 @@ function reportLargeExpenseThreshold(user, budget = {}) {
   return Math.max(fixed, budgetThreshold);
 }
 
-function reportNotableExpenses(expenses = [], paidPlannedPayments = [], threshold = 0, limit = 5) {
+function reportNotableExpenses(expenses = [], paidPlannedPayments = [], threshold = 0, limit = 5, language = "ru") {
   const plannedExpenseIds = new Set(
     paidPlannedPayments
       .map((payment) => payment.expense_id ?? payment.expenseId)
@@ -3842,7 +3896,7 @@ function reportNotableExpenses(expenses = [], paidPlannedPayments = [], threshol
   const total = roundMoney(notable.reduce((sum, expense) => sum + Number(expense.amount_base ?? 0), 0));
   const items = notable.slice(0, limit).map((expense) => ({
     date: expense.local_date,
-    name: expense.description || expense.category_slug,
+    name: String(expense.description ?? "").trim() || categoryLabel(expense.category_slug, language),
     amount: Number(expense.amount_base ?? 0)
   }));
   items.totalAmount = total;
@@ -4399,21 +4453,25 @@ function calculatePlannedThisWeek(plannedExpenses, now, timeZone = "Asia/Bangkok
   }, 0);
 }
 
-function reportUnpaidPlannedPayments(plannedExpenses, user, now, timeZone, period) {
+function reportUnpaidPlannedPayments(plannedExpenses, user, now, timeZone, period, lookbackDays = 0) {
   const periodStart = period.localStartDate ?? localDayKey(period.periodStartUtc, timeZone);
   const periodEnd = period.localEndDate ?? localDayKey(new Date(period.periodEndUtc.getTime() - 1), timeZone);
-  const monthDates = reportPeriodMonthReferenceDates(period, timeZone);
+  const windowStart = lookbackDays > 0 && period.periodStartUtc
+    ? localDayKey(new Date(period.periodStartUtc.getTime() - lookbackDays * 24 * 60 * 60_000), timeZone)
+    : periodStart;
+  const monthDates = reportPeriodMonthReferenceDates({ localStartDate: windowStart, localEndDate: periodEnd }, timeZone);
   return plannedExpenses.flatMap((planned) => {
     const dueDateKeys = monthDates.flatMap((monthDate) => unpaidPlannedDueDatesThisMonth(planned, monthDate, timeZone))
       .map((date) => localDayKey(date, timeZone))
       .filter((dateKey, index, all) => all.indexOf(dateKey) === index);
     return dueDateKeys
-      .filter((dateKey) => dateKey >= periodStart && dateKey <= periodEnd)
+      .filter((dateKey) => dateKey >= windowStart && dateKey <= periodEnd)
       .map((dateKey) => ({
         name: planned.description,
         amount: Number(planned.amount_base ?? 0),
         paid: false,
         dueDate: dateKey,
+        overdue: lookbackDays > 0 && dateKey < periodStart,
         display: {
           currency: user.display_currency ?? "USD",
           amount: displayFromBase(planned.amount_base, user)

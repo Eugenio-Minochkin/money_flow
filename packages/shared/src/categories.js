@@ -138,6 +138,36 @@ export function categoryName(slug) {
   return CATEGORIES.find((category) => category.slug === slug)?.name ?? "Другое";
 }
 
+export const CATEGORY_LABELS_EN = {
+  food_cafe: "Food & Cafés",
+  groceries: "Groceries",
+  home: "Home",
+  transport: "Transport",
+  health: "Health",
+  sport_activities: "Sport & activities",
+  gear: "Gear",
+  travel: "Travel",
+  subscriptions: "Subscriptions",
+  education: "Education",
+  gifts_help: "Gifts & Help",
+  entertainment: "Entertainment",
+  other: "Other"
+};
+
+export function categoryLabel(slug, language = "ru") {
+  if (language === "en") {
+    return CATEGORY_LABELS_EN[slug] ?? safeFallbackLabel(slug, "Other");
+  }
+  return categoryName(slug);
+}
+
+function safeFallbackLabel(slug, fallback) {
+  const value = CATEGORY_LABELS_EN[slug];
+  if (value) return value;
+  const deSlugged = String(slug ?? "").replace(/_/g, " ").trim();
+  return deSlugged || fallback;
+}
+
 export function inferCategory(description) {
   const normalized = normalizeText(description);
   const exactCategory = CATEGORIES.find((category) =>

@@ -2206,6 +2206,320 @@ test("weekly report data includes unpaid planned occurrences from previous month
   ]);
 });
 
+test("weekly report localizes categories and computes comparison, largest expenses and takeaway", async () => {
+  const periodStartUtc = new Date("2026-07-12T17:00:00Z");
+  const periodEndUtc = new Date("2026-07-19T17:00:00Z");
+  const user = {
+    id: 1,
+    telegram_user_id: 100,
+    monthly_budget_amount: 50000,
+    base_currency: "THB",
+    display_currency: "USD",
+    timezone: "Asia/Bangkok",
+    interface_language: "en"
+  };
+  const repo = createRepository(fakePool((sql, params = []) => {
+    const query = String(sql);
+    if (query.includes("FROM expenses") && query.includes("ORDER BY spent_at ASC")) {
+      return {
+        rows: [
+          { id: "1", amount_base: 5000, converted_amounts: { USD: 150 }, description: "Rent", category_slug: "home", budget_impact: "regular", spent_at: new Date("2026-07-13T03:00:00Z"), local_date: "2026-07-13" },
+          { id: "2", amount_base: 2600, converted_amounts: { USD: 78 }, description: "", category_slug: "food_cafe", budget_impact: "regular", spent_at: new Date("2026-07-14T03:00:00Z"), local_date: "2026-07-14" },
+          { id: "3", amount_base: 800, converted_amounts: { USD: 24 }, description: "Coffee", category_slug: "food_cafe", budget_impact: "regular", spent_at: new Date("2026-07-15T03:00:00Z"), local_date: "2026-07-15" }
+        ]
+      };
+    }
+    if (query.includes("GROUP BY category_slug")) {
+      const end = params[2];
+      if (end && end.getTime() === periodEndUtc.getTime()) {
+        return { rows: [{ category_slug: "home", total: 5000 }, { category_slug: "food_cafe", total: 3400 }] };
+      }
+      if (end && end.getTime() === periodStartUtc.getTime()) {
+        return { rows: [{ category_slug: "food_cafe", total: 1400 }] };
+      }
+      return { rows: [] };
+    }
+    if (query.includes("FROM planned_expenses") && query.includes("JOIN users")) return { rows: [] };
+    if (query.includes("FROM planned_expense_payments") && query.includes("JOIN planned_expenses")) return { rows: [] };
+    if (query.includes("FROM budget_topups") && query.includes("occurred_at")) return { rows: [] };
+    if (query === "SELECT timezone FROM users WHERE telegram_user_id = $1") return { rows: [{ timezone: "Asia/Bangkok" }] };
+    if (query.includes("FROM monthly_budget_overrides")) return { rows: [] };
+    if (query.includes("COALESCE(SUM(amount_base)") && query.includes("month_key")) return { rows: [{ total: 0 }] };
+    if (query.includes("FROM budget_topups") && query.includes("month_key")) return { rows: [] };
+    if (query.includes("FROM month_baselines")) return { rows: [] };
+    return { rows: [] };
+  }));
+
+  const report = await repo.buildReportDataForDelivery(user, "weekly", {
+    periodKey: "2026-W29",
+    periodStartUtc,
+    periodEndUtc,
+    timezoneUsed: "Asia/Bangkok",
+    localStartDate: "2026-07-13",
+    localEndDate: "2026-07-19"
+  }, new Date("2026-07-20T03:00:00Z"));
+
+  assert.equal(report.firstWeek, false);
+  assert.equal(report.comparison.available, true);
+  assert.equal(report.comparison.direction, "up");
+  assert.deepEqual(report.topCategories, [
+    { name: "Home", amount: 5000, percent: 60 },
+    { name: "Food & Cafés", amount: 3400, percent: 40 }
+  ]);
+  assert.equal(report.topTwoCategoryShare, 100);
+  assert.deepEqual(report.largestExpenses.map((item) => ({ name: item.name, amount: item.amount })), [
+    { name: "Rent", amount: 5000 },
+    { name: "Food & Cafés", amount: 2600 },
+    { name: "Coffee", amount: 800 }
+  ]);
+  assert.equal(report.needsAttention, null);
+  assert.match(report.takeaway, /More than half of this week's spending went to Rent/);
+  assert.equal(report.insight, "");
+});
+
+test("weekly report marks first week when the previous week had no spending", async () => {
+  const periodStartUtc = new Date("2026-07-12T17:00:00Z");
+  const periodEndUtc = new Date("2026-07-19T17:00:00Z");
+  const user = {
+    id: 1,
+    telegram_user_id: 100,
+    monthly_budget_amount: 50000,
+    base_currency: "THB",
+    display_currency: "USD",
+    timezone: "Asia/Bangkok",
+    interface_language: "ru",
+    created_at: new Date("2026-07-15T03:00:00Z")
+  };
+  const repo = createRepository(fakePool((sql) => {
+    const query = String(sql);
+    if (query.includes("FROM expenses") && query.includes("ORDER BY spent_at ASC")) {
+      return { rows: [{ id: "1", amount_base: 1000, converted_amounts: { USD: 30 }, description: "Кофе", category_slug: "food_cafe", budget_impact: "regular", spent_at: new Date("2026-07-13T03:00:00Z"), local_date: "2026-07-13" }] };
+    }
+    if (query.includes("GROUP BY category_slug")) return { rows: [] };
+    if (query.includes("FROM planned_expenses") && query.includes("JOIN users")) return { rows: [] };
+    if (query.includes("FROM planned_expense_payments") && query.includes("JOIN planned_expenses")) return { rows: [] };
+    if (query.includes("FROM budget_topups") && query.includes("occurred_at")) return { rows: [] };
+    if (query === "SELECT timezone FROM users WHERE telegram_user_id = $1") return { rows: [{ timezone: "Asia/Bangkok" }] };
+    if (query.includes("FROM monthly_budget_overrides")) return { rows: [] };
+    if (query.includes("COALESCE(SUM(amount_base)") && query.includes("month_key")) return { rows: [{ total: 0 }] };
+    if (query.includes("FROM budget_topups") && query.includes("month_key")) return { rows: [] };
+    if (query.includes("FROM month_baselines")) return { rows: [] };
+    return { rows: [] };
+  }));
+
+  const report = await repo.buildReportDataForDelivery(user, "weekly", {
+    periodKey: "2026-W29",
+    periodStartUtc,
+    periodEndUtc,
+    timezoneUsed: "Asia/Bangkok",
+    localStartDate: "2026-07-13",
+    localEndDate: "2026-07-19"
+  }, new Date("2026-07-20T03:00:00Z"));
+
+  assert.equal(report.firstWeek, true);
+  assert.equal(report.comparison.available, false);
+  assert.deepEqual(report.changes, []);
+  assert.equal(report.takeaway, null);
+});
+
+test("weekly report treats an empty prior week with older history as a quiet week, not a first week", async () => {
+  const periodStartUtc = new Date("2026-07-12T17:00:00Z");
+  const periodEndUtc = new Date("2026-07-19T17:00:00Z");
+  const user = {
+    id: 1,
+    telegram_user_id: 100,
+    monthly_budget_amount: 50000,
+    base_currency: "THB",
+    display_currency: "USD",
+    timezone: "Asia/Bangkok",
+    interface_language: "ru",
+    created_at: new Date("2026-06-01T03:00:00Z")
+  };
+  const repo = createRepository(fakePool((sql) => {
+    const query = String(sql);
+    if (query.includes("FROM expenses") && query.includes("ORDER BY spent_at ASC")) {
+      return { rows: [{ id: "1", amount_base: 1000, converted_amounts: { USD: 30 }, description: "Кофе", category_slug: "food_cafe", budget_impact: "regular", spent_at: new Date("2026-07-13T03:00:00Z"), local_date: "2026-07-13" }] };
+    }
+    if (query.includes("GROUP BY category_slug")) return { rows: [] };
+    if (query.includes("FROM planned_expenses") && query.includes("JOIN users")) return { rows: [] };
+    if (query.includes("FROM planned_expense_payments") && query.includes("JOIN planned_expenses")) return { rows: [] };
+    if (query.includes("FROM budget_topups") && query.includes("occurred_at")) return { rows: [] };
+    if (query === "SELECT timezone FROM users WHERE telegram_user_id = $1") return { rows: [{ timezone: "Asia/Bangkok" }] };
+    if (query.includes("FROM monthly_budget_overrides")) return { rows: [] };
+    if (query.includes("COALESCE(SUM(amount_base)") && query.includes("month_key")) return { rows: [{ total: 0 }] };
+    if (query.includes("FROM budget_topups") && query.includes("month_key")) return { rows: [] };
+    if (query.includes("FROM month_baselines")) return { rows: [] };
+    return { rows: [] };
+  }));
+
+  const report = await repo.buildReportDataForDelivery(user, "weekly", {
+    periodKey: "2026-W29",
+    periodStartUtc,
+    periodEndUtc,
+    timezoneUsed: "Asia/Bangkok",
+    localStartDate: "2026-07-13",
+    localEndDate: "2026-07-19"
+  }, new Date("2026-07-20T03:00:00Z"));
+
+  assert.equal(report.firstWeek, false);
+  assert.equal(report.comparison.available, false);
+  assert.equal(report.takeaway, null);
+});
+
+test("weekly report hides comparison when the user started tracking mid-prior-week", async () => {
+  const periodStartUtc = new Date("2026-07-12T17:00:00Z");
+  const periodEndUtc = new Date("2026-07-19T17:00:00Z");
+  const priorWeekStartUtc = new Date("2026-07-05T17:00:00Z");
+  const user = {
+    id: 1,
+    telegram_user_id: 100,
+    monthly_budget_amount: 50000,
+    base_currency: "THB",
+    display_currency: "USD",
+    timezone: "Asia/Bangkok",
+    interface_language: "ru",
+    created_at: new Date("2026-07-08T03:00:00Z")
+  };
+  const repo = createRepository(fakePool((sql, params = []) => {
+    const query = String(sql);
+    if (query.includes("FROM expenses") && query.includes("ORDER BY spent_at ASC")) {
+      return { rows: [{ id: "1", amount_base: 2000, converted_amounts: { USD: 60 }, description: "Билеты", category_slug: "travel", budget_impact: "regular", spent_at: new Date("2026-07-14T03:00:00Z"), local_date: "2026-07-14" }] };
+    }
+    if (query.includes("GROUP BY category_slug")) {
+      const end = params[2];
+      if (end && end.getTime() === periodEndUtc.getTime()) {
+        return { rows: [{ category_slug: "travel", total: 2000 }] };
+      }
+      if (end && end.getTime() === periodStartUtc.getTime()) {
+        return { rows: [{ category_slug: "travel", total: 1500 }] };
+      }
+      return { rows: [] };
+    }
+    if (query.includes("FROM planned_expenses") && query.includes("JOIN users")) return { rows: [] };
+    if (query.includes("FROM planned_expense_payments") && query.includes("JOIN planned_expenses")) return { rows: [] };
+    if (query.includes("FROM budget_topups") && query.includes("occurred_at")) return { rows: [] };
+    if (query === "SELECT timezone FROM users WHERE telegram_user_id = $1") return { rows: [{ timezone: "Asia/Bangkok" }] };
+    if (query.includes("FROM monthly_budget_overrides")) return { rows: [] };
+    if (query.includes("COALESCE(SUM(amount_base)") && query.includes("month_key")) return { rows: [{ total: 0 }] };
+    if (query.includes("FROM budget_topups") && query.includes("month_key")) return { rows: [] };
+    if (query.includes("FROM month_baselines")) return { rows: [] };
+    return { rows: [] };
+  }));
+
+  const report = await repo.buildReportDataForDelivery(user, "weekly", {
+    periodKey: "2026-W29",
+    periodStartUtc,
+    periodEndUtc,
+    timezoneUsed: "Asia/Bangkok",
+    localStartDate: "2026-07-13",
+    localEndDate: "2026-07-19"
+  }, new Date("2026-07-20T03:00:00Z"));
+
+  assert.ok(user.created_at > priorWeekStartUtc, "fixture sanity: user started mid-prior-week");
+  assert.equal(report.comparison.available, false);
+  assert.deepEqual(report.changes, []);
+  assert.equal(report.takeaway, null);
+  assert.equal(report.firstWeek, false);
+});
+
+test("weekly report flags overdue unpaid planned payments in needs-attention", async () => {
+  const periodStartUtc = new Date("2026-06-28T17:00:00Z");
+  const periodEndUtc = new Date("2026-07-05T17:00:00Z");
+  const user = {
+    id: 1,
+    telegram_user_id: 100,
+    monthly_budget_amount: 50000,
+    base_currency: "THB",
+    display_currency: "THB",
+    timezone: "Asia/Bangkok",
+    interface_language: "ru"
+  };
+  const repo = createRepository(fakePool((sql) => {
+    const query = String(sql);
+    if (query.includes("FROM expenses") && query.includes("ORDER BY spent_at ASC")) return { rows: [] };
+    if (query.includes("FROM planned_expenses") && query.includes("JOIN users")) {
+      return {
+        rows: [{
+          id: "9",
+          description: "English",
+          amount_base: 1000,
+          recurrence: "one_off",
+          due_date: "2026-06-22",
+          timezone: "Asia/Bangkok",
+          paid_count: 0,
+          paid_occurrence_dates: [],
+          paid_occurrences: {}
+        }]
+      };
+    }
+    if (query.includes("FROM planned_expense_payments") && query.includes("JOIN planned_expenses")) return { rows: [] };
+    if (query.includes("FROM budget_topups") && query.includes("occurred_at")) return { rows: [] };
+    if (query.includes("GROUP BY category_slug")) return { rows: [] };
+    if (query === "SELECT timezone FROM users WHERE telegram_user_id = $1") return { rows: [{ timezone: "Asia/Bangkok" }] };
+    if (query.includes("FROM monthly_budget_overrides")) return { rows: [] };
+    if (query.includes("COALESCE(SUM(amount_base)") && query.includes("month_key")) return { rows: [{ total: 0 }] };
+    if (query.includes("FROM budget_topups") && query.includes("month_key")) return { rows: [] };
+    if (query.includes("FROM month_baselines")) return { rows: [] };
+    return { rows: [] };
+  }));
+
+  const report = await repo.buildReportDataForDelivery(user, "weekly", {
+    periodKey: "2026-W27",
+    periodStartUtc,
+    periodEndUtc,
+    timezoneUsed: "Asia/Bangkok",
+    localStartDate: "2026-06-29",
+    localEndDate: "2026-07-05"
+  }, new Date("2026-07-06T03:00:00Z"));
+
+  assert.equal(report.metrics.totalSpent, 0);
+  assert.ok(report.needsAttention);
+  assert.equal(report.needsAttention.shown[0].name, "English");
+  assert.equal(report.needsAttention.shown[0].overdue, true);
+});
+
+test("monthly insight names the highest-total category regardless of row order", async () => {
+  const user = {
+    id: 1,
+    telegram_user_id: 100,
+    monthly_budget_amount: 50000,
+    base_currency: "THB",
+    display_currency: "USD",
+    timezone: "Asia/Bangkok",
+    interface_language: "en"
+  };
+  const repo = createRepository(fakePool((sql) => {
+    const query = String(sql);
+    if (query.includes("FROM expenses") && query.includes("ORDER BY spent_at ASC")) {
+      return { rows: [{ id: "1", amount_base: 500, converted_amounts: { USD: 15 }, description: "rent", category_slug: "home", budget_impact: "regular", spent_at: new Date("2026-06-10T03:00:00Z"), local_date: "2026-06-10" }] };
+    }
+    if (query.includes("GROUP BY category_slug")) {
+      return { rows: [{ category_slug: "food_cafe", total: 100 }, { category_slug: "home", total: 500 }] };
+    }
+    if (query.includes("FROM planned_expenses") && query.includes("JOIN users")) return { rows: [] };
+    if (query.includes("FROM planned_expense_payments") && query.includes("JOIN planned_expenses")) return { rows: [] };
+    if (query.includes("FROM budget_topups") && query.includes("occurred_at")) return { rows: [] };
+    if (query === "SELECT timezone FROM users WHERE telegram_user_id = $1") return { rows: [{ timezone: "Asia/Bangkok" }] };
+    if (query.includes("FROM monthly_budget_overrides")) return { rows: [] };
+    if (query.includes("COALESCE(SUM(amount_base)") && query.includes("month_key")) return { rows: [{ total: 0 }] };
+    if (query.includes("FROM budget_topups") && query.includes("month_key")) return { rows: [] };
+    if (query.includes("FROM month_baselines")) return { rows: [] };
+    return { rows: [] };
+  }));
+
+  const report = await repo.buildReportDataForDelivery(user, "monthly", {
+    periodKey: "2026-06",
+    periodStartUtc: new Date("2026-05-31T17:00:00Z"),
+    periodEndUtc: new Date("2026-06-30T17:00:00Z"),
+    timezoneUsed: "Asia/Bangkok",
+    localStartDate: "2026-06-01",
+    localEndDate: "2026-06-30"
+  }, new Date("2026-07-01T03:00:00Z"));
+
+  assert.match(report.insight, /Home/);
+  assert.doesNotMatch(report.insight, /Cafés|Food/);
+});
+
 test("checks confirmed financial activity using supplied local bounds", async () => {
   const bounds = { start: new Date("2026-06-24T17:00:00Z"), end: new Date("2026-06-25T17:00:00Z") };
   const repo = createRepository(fakePool((sql, params) => {
