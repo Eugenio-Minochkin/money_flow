@@ -17,6 +17,13 @@ export const TAKEAWAY_DOMINANT_EXPENSE_SHARE = 0.5;
 export const TAKEAWAY_CATEGORY_SHARE_OF_DELTA = 0.6;
 export const NEEDS_ATTENTION_MAX_SHOWN = 3;
 
+export const MONTHLY_CHANGE_RELATIVE_MIN = 0.20;
+export const MONTHLY_CHANGE_ABSOLUTE_TOTAL_SHARE = 0.05;
+export const MONTHLY_TAKEAWAY_DOMINANT_EXPENSE_SHARE = 0.25;
+export const MONTHLY_TAKEAWAY_CONCENTRATION_MIN = 50;
+export const MONTHLY_BUDGET_HIGH_USAGE_MIN_PCT = 90;
+export const MONTHLY_BUDGET_EXCEEDED_PCT = 100;
+
 function num(value) {
   const amount = Number(value ?? 0);
   return Number.isFinite(amount) ? amount : 0;
@@ -31,14 +38,26 @@ function amountOf(category) {
 }
 
 export function largestExpenses(expenses = [], { language = "ru", limit = 5 } = {}) {
-  return [...expenses]
+  const ranked = [...expenses]
     .map((expense) => ({
       name: String(expense.description ?? "").trim() || categoryLabel(expense.category_slug, language),
-      amount: num(expense.amount_base ?? expense.amount)
+      amount: num(expense.amount_base ?? expense.amount),
+      date: String(expense.local_date ?? expense.date ?? ""),
+      id: String(expense.id ?? "")
     }))
     .filter((item) => item.amount > 0)
-    .sort((left, right) => right.amount - left.amount)
-    .slice(0, limit);
+    .sort((left, right) =>
+      right.amount - left.amount
+      || left.date.localeCompare(right.date)
+      || compareIds(left.id, right.id));
+  return ranked.slice(0, limit).map(({ name, amount }) => ({ name, amount }));
+}
+
+function compareIds(left, right) {
+  const leftNum = Number(left);
+  const rightNum = Number(right);
+  if (Number.isFinite(leftNum) && Number.isFinite(rightNum)) return leftNum - rightNum;
+  return String(left).localeCompare(String(right));
 }
 
 export function categoryPercentages(rawCategories = [], totalSpent = 0, { language = "ru", limit = 3 } = {}) {
@@ -69,10 +88,19 @@ export function weeklyComparison({ currentTotal = 0, priorTotal = 0 } = {}) {
   return { available: true, direction, percentDelta, currentTotal: current, priorTotal: prior, delta };
 }
 
-export function categoryChanges({ current = [], prior = [], language = "ru", currency = "THB" } = {}) {
+export function categoryChanges({
+  current = [],
+  prior = [],
+  language = "ru",
+  currency = "THB",
+  relativeMin = CHANGE_RELATIVE_MIN,
+  absoluteFloor = null
+} = {}) {
   const currentMap = new Map(current.map((category) => [slugOf(category), amountOf(category)]));
   const priorMap = new Map(prior.map((category) => [slugOf(category), amountOf(category)]));
-  const absoluteMin = CHANGE_ABSOLUTE_BY_CURRENCY[String(currency || "").toUpperCase()] ?? CHANGE_ABSOLUTE_DEFAULT;
+  const floor = CHANGE_ABSOLUTE_BY_CURRENCY[String(currency || "").toUpperCase()] ?? CHANGE_ABSOLUTE_DEFAULT;
+  const absoluteMin = absoluteFloor != null ? Math.max(floor, absoluteFloor) : floor;
+  const relativeThreshold = Number(relativeMin) > 0 ? Number(relativeMin) : CHANGE_RELATIVE_MIN;
   const slugs = new Set([...currentMap.keys(), ...priorMap.keys()]);
   const changes = [];
   for (const slug of slugs) {
@@ -84,7 +112,7 @@ export function categoryChanges({ current = [], prior = [], language = "ru", cur
     const passesAbsolute = Math.abs(delta) >= absoluteMin;
     const passesRelative = isNew
       ? currentTotal >= absoluteMin
-      : priorTotal > 0 && Math.abs(delta) / priorTotal >= CHANGE_RELATIVE_MIN;
+      : priorTotal > 0 && Math.abs(delta) / priorTotal >= relativeThreshold;
     if (!passesAbsolute || !passesRelative) continue;
     changes.push({
       slug,
@@ -113,6 +141,14 @@ export function needsAttentionFromUnpaid(unpaidItems = []) {
   return { total, shown, moreCount, count: items.length };
 }
 
+export function findDominantAttribution(changes = [], comparisonDirection, totalAbsDelta) {
+  if (comparisonDirection === "flat" || !(Number(totalAbsDelta) > 0)) return null;
+  return changes.find(
+    (change) => change.direction === comparisonDirection
+      && Math.abs(change.delta) >= TAKEAWAY_CATEGORY_SHARE_OF_DELTA * Number(totalAbsDelta)
+  ) ?? null;
+}
+
 export function weeklyTakeaway({
   comparable = false,
   comparisonDirection = "flat",
@@ -137,10 +173,7 @@ export function weeklyTakeaway({
       : `Больше половины расходов недели пришлось на операцию «${name}».`;
   }
 
-  const totalAbsDelta = Math.abs(delta);
-  const attribution = comparisonDirection !== "flat" && totalAbsDelta > 0
-    ? changes.find((change) => change.direction === comparisonDirection && Math.abs(change.delta) >= TAKEAWAY_CATEGORY_SHARE_OF_DELTA * totalAbsDelta) ?? null
-    : null;
+  const attribution = findDominantAttribution(changes, comparisonDirection, Math.abs(delta));
   if (attribution) {
     if (attribution.direction === "up") {
       return en
@@ -153,4 +186,60 @@ export function weeklyTakeaway({
   }
 
   return null;
+}
+
+export function monthlyTakeaway({
+  comparable = false,
+  comparisonDirection = "flat",
+  currentTotal = 0,
+  priorTotal = 0,
+  budget = null,
+  topTwoShare = null,
+  largestExpense = null,
+  changes = [],
+  language = "ru",
+  formatMoney = (value) => String(Math.round(Number(value ?? 0)))
+} = {}) {
+  const en = language === "en";
+  const current = num(currentTotal);
+  const prior = num(priorTotal);
+  const sentences = [];
+
+  if (budget && budget.available) {
+    const usedPct = Number.isFinite(Number(budget.usedPercent)) ? Math.round(Number(budget.usedPercent)) : null;
+    const overAmount = num(budget.overAmount);
+    if (overAmount > 0) {
+      const money = formatMoney(overAmount);
+      sentences.push(en ? `The budget was exceeded by ${money}.` : `Бюджет был превышен на ${money}.`);
+    } else if (usedPct != null && usedPct >= MONTHLY_BUDGET_HIGH_USAGE_MIN_PCT && usedPct <= MONTHLY_BUDGET_EXCEEDED_PCT) {
+      sentences.push(en
+        ? `You stayed within budget but used ${usedPct}% of the available amount.`
+        : `Вы уложились в бюджет, но использовали ${usedPct}% доступной суммы.`);
+    }
+  }
+
+  const secondary = [];
+  if (topTwoShare != null && Number(topTwoShare) >= MONTHLY_TAKEAWAY_CONCENTRATION_MIN) {
+    secondary.push(en
+      ? `The top two categories accounted for ${topTwoShare}% of this month's spending.`
+      : `Две главные категории составили ${topTwoShare}% расходов месяца.`);
+  }
+  if (comparable) {
+    const attribution = findDominantAttribution(changes, comparisonDirection, Math.abs(current - prior));
+    if (attribution) {
+      secondary.push(attribution.direction === "up"
+        ? (en ? `Most of the increase came from ${attribution.name}.` : `Основной рост пришёлся на категорию «${attribution.name}».`)
+        : (en ? `Most of the decrease came from ${attribution.name}.` : `Основное снижение пришлось на категорию «${attribution.name}».`));
+    }
+  }
+  const dominantAmount = largestExpense ? num(largestExpense.amount) : 0;
+  if (current > 0 && dominantAmount > MONTHLY_TAKEAWAY_DOMINANT_EXPENSE_SHARE * current) {
+    const name = largestExpense.name;
+    secondary.push(en
+      ? `More than a quarter of this month's spending went to ${name}.`
+      : `Больше четверти расходов месяца пришлось на операцию «${name}».`);
+  }
+
+  const ordered = [...sentences, ...secondary].slice(0, 2);
+  return ordered.length > 0 ? ordered.join(" ") : null;
 }

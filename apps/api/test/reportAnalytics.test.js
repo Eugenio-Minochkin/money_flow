@@ -4,10 +4,14 @@ import assert from "node:assert/strict";
 import { SUPPORTED_CURRENCY_CODES } from "../../../packages/shared/src/currencies.js";
 import {
   CHANGE_ABSOLUTE_BY_CURRENCY,
+  MONTHLY_CHANGE_ABSOLUTE_TOTAL_SHARE,
+  MONTHLY_CHANGE_RELATIVE_MIN,
   NEEDS_ATTENTION_MAX_SHOWN,
   categoryChanges,
   categoryPercentages,
+  findDominantAttribution,
   largestExpenses,
+  monthlyTakeaway,
   needsAttentionFromUnpaid,
   weeklyComparison,
   weeklyTakeaway
@@ -339,6 +343,249 @@ test("weeklyTakeaway produces no growth or decline wording on a flat comparison"
       { name: "Travel", direction: "down", delta: -1900, percentDelta: -38 }
     ],
     language: "ru"
+  });
+  assert.equal(takeaway, null);
+});
+
+// --- Monthly change thresholds ---
+
+test("categoryChanges defaults keep the weekly thresholds when no monthly options are passed", () => {
+  // 14% relative, 250 THB absolute -> hidden under weekly rules too (absolute floor 1000 THB).
+  const changes = categoryChanges({
+    current: [{ category_slug: "food_cafe", total: 1140 }],
+    prior: [{ category_slug: "food_cafe", total: 1000 }],
+    language: "en",
+    currency: "THB"
+  });
+  assert.deepEqual(changes, []);
+});
+
+test("monthly categoryChanges uses 20% relative and a scaled absolute threshold", () => {
+  // Dom: +3200 on ~46500 base. relative 3200/11700 ≈ 27% >= 20%; absolute >= max(1000, 5%*46500=2325). Passes.
+  const changes = categoryChanges({
+    current: [{ category_slug: "home", total: 14920 }],
+    prior: [{ category_slug: "home", total: 11720 }],
+    language: "ru",
+    currency: "THB",
+    relativeMin: MONTHLY_CHANGE_RELATIVE_MIN,
+    absoluteFloor: MONTHLY_CHANGE_ABSOLUTE_TOTAL_SHARE * 46500
+  });
+  assert.equal(changes.length, 1);
+  assert.equal(changes[0].slug, "home");
+  assert.equal(changes[0].delta, 3200);
+
+  // 14% relative noise on a small base -> hidden (relative fails).
+  const noise = categoryChanges({
+    current: [{ category_slug: "food_cafe", total: 1140 }],
+    prior: [{ category_slug: "food_cafe", total: 1000 }],
+    language: "ru",
+    currency: "THB",
+    relativeMin: MONTHLY_CHANGE_RELATIVE_MIN,
+    absoluteFloor: MONTHLY_CHANGE_ABSOLUTE_TOTAL_SHARE * 1140
+  });
+  assert.deepEqual(noise, []);
+});
+
+test("monthly categoryChanges never falls below the currency floor even for tiny totals", () => {
+  const changes = categoryChanges({
+    current: [{ category_slug: "home", total: 60 }],
+    prior: [{ category_slug: "home", total: 30 }],
+    language: "en",
+    currency: "THB",
+    relativeMin: MONTHLY_CHANGE_RELATIVE_MIN,
+    absoluteFloor: MONTHLY_CHANGE_ABSOLUTE_TOTAL_SHARE * 60
+  });
+  assert.deepEqual(changes, []);
+});
+
+// --- largestExpenses stable tie-break ---
+
+test("largestExpenses breaks amount ties by earlier date then id", () => {
+  const result = largestExpenses(
+    [
+      { id: "3", description: "later", category_slug: "other", amount_base: 2000, local_date: "2026-06-20" },
+      { id: "1", description: "earlier", category_slug: "other", amount_base: 2000, local_date: "2026-06-05" },
+      { id: "2", description: "biggest", category_slug: "other", amount_base: 5000, local_date: "2026-06-10" }
+    ],
+    { language: "en", limit: 3 }
+  );
+  assert.deepEqual(result, [
+    { name: "biggest", amount: 5000 },
+    { name: "earlier", amount: 2000 },
+    { name: "later", amount: 2000 }
+  ]);
+});
+
+test("largestExpenses breaks id ties numerically, not lexicographically", () => {
+  const result = largestExpenses(
+    [
+      { id: "10", description: "ten", category_slug: "other", amount_base: 2000, local_date: "2026-06-05" },
+      { id: "2", description: "two", category_slug: "other", amount_base: 2000, local_date: "2026-06-05" }
+    ],
+    { language: "en", limit: 2 }
+  );
+  assert.deepEqual(result, [
+    { name: "two", amount: 2000 },
+    { name: "ten", amount: 2000 }
+  ]);
+});
+
+// --- findDominantAttribution ---
+
+test("findDominantAttribution requires direction match and >= 60% of the delta", () => {
+  const change = { name: "Home", direction: "up", delta: 3200 };
+  assert.equal(findDominantAttribution([change], "up", 5000)?.name, "Home");
+  assert.equal(findDominantAttribution([change], "up", 6000), null);
+  assert.equal(findDominantAttribution([change], "down", 5000), null);
+  assert.equal(findDominantAttribution([change], "flat", 5000), null);
+});
+
+// --- monthlyTakeaway ---
+
+const monthlyMoney = (value) => `${Math.round(Number(value ?? 0))} THB`;
+
+test("monthlyTakeaway notes high budget usage and concentration together", () => {
+  const takeaway = monthlyTakeaway({
+    comparable: true,
+    comparisonDirection: "up",
+    currentTotal: 49765,
+    priorTotal: 44000,
+    budget: { available: true, usedPercent: 98, overAmount: 0 },
+    topTwoShare: 56,
+    largestExpense: { name: "Оплата квартиры", amount: 13000 },
+    changes: [],
+    language: "ru",
+    formatMoney: monthlyMoney
+  });
+  assert.equal(
+    takeaway,
+    "Вы уложились в бюджет, но использовали 98% доступной суммы. Две главные категории составили 56% расходов месяца."
+  );
+});
+
+test("monthlyTakeaway states the exceeded amount as a fact", () => {
+  const takeaway = monthlyTakeaway({
+    comparable: false,
+    comparisonDirection: "flat",
+    currentTotal: 54200,
+    priorTotal: 0,
+    budget: { available: true, usedPercent: 108, overAmount: 4200 },
+    topTwoShare: 40,
+    largestExpense: { name: "Rent", amount: 4000 },
+    changes: [],
+    language: "en",
+    formatMoney: monthlyMoney
+  });
+  assert.equal(takeaway, "The budget was exceeded by 4200 THB.");
+});
+
+test("monthlyTakeaway attributes a rise to a direction-consistent category", () => {
+  const takeaway = monthlyTakeaway({
+    comparable: true,
+    comparisonDirection: "up",
+    currentTotal: 12000,
+    priorTotal: 8000,
+    budget: { available: true, usedPercent: 50, overAmount: 0 },
+    topTwoShare: 30,
+    largestExpense: { name: "Coffee", amount: 200 },
+    changes: [{ name: "Travel", direction: "up", delta: 3500 }],
+    language: "ru",
+    formatMoney: monthlyMoney
+  });
+  assert.equal(takeaway, "Основной рост пришёлся на категорию «Travel».");
+});
+
+test("monthlyTakeaway describes a dominant single operation as a share, not a cause", () => {
+  const takeaway = monthlyTakeaway({
+    comparable: true,
+    comparisonDirection: "up",
+    currentTotal: 10000,
+    priorTotal: 9800,
+    budget: { available: true, usedPercent: 40, overAmount: 0 },
+    topTwoShare: 35,
+    largestExpense: { name: "Оплата квартиры", amount: 4000 },
+    changes: [],
+    language: "ru",
+    formatMoney: monthlyMoney
+  });
+  assert.equal(takeaway, "Больше четверти расходов месяца пришлось на операцию «Оплата квартиры».");
+  assert.doesNotMatch(takeaway, /из-за|связан|причиной|вызвал/);
+});
+
+test("monthlyTakeaway does not claim 'more than a quarter' at exactly 25%", () => {
+  const exact = monthlyTakeaway({
+    comparable: false,
+    comparisonDirection: "flat",
+    currentTotal: 10000,
+    priorTotal: 0,
+    budget: { available: true, usedPercent: 40, overAmount: 0 },
+    topTwoShare: 30,
+    largestExpense: { name: "Rent", amount: 2500 },
+    changes: [],
+    language: "ru",
+    formatMoney: monthlyMoney
+  });
+  assert.equal(exact, null);
+
+  const above = monthlyTakeaway({
+    comparable: false,
+    comparisonDirection: "flat",
+    currentTotal: 10000,
+    priorTotal: 0,
+    budget: { available: true, usedPercent: 40, overAmount: 0 },
+    topTwoShare: 30,
+    largestExpense: { name: "Rent", amount: 2501 },
+    changes: [],
+    language: "ru",
+    formatMoney: monthlyMoney
+  });
+  assert.match(above, /Больше четверти/);
+});
+
+test("monthlyTakeaway is hidden on a flat comparison with no defensible fact", () => {
+  const takeaway = monthlyTakeaway({
+    comparable: true,
+    comparisonDirection: "flat",
+    currentTotal: 10000,
+    priorTotal: 9800,
+    budget: { available: true, usedPercent: 40, overAmount: 0 },
+    topTwoShare: 35,
+    largestExpense: { name: "Coffee", amount: 200 },
+    changes: [{ name: "Food", direction: "up", delta: 200 }],
+    language: "ru",
+    formatMoney: monthlyMoney
+  });
+  assert.equal(takeaway, null);
+});
+
+test("monthlyTakeaway is hidden when not comparable and no budget/concentration fact", () => {
+  const takeaway = monthlyTakeaway({
+    comparable: false,
+    comparisonDirection: "flat",
+    currentTotal: 3000,
+    priorTotal: 0,
+    budget: { available: true, usedPercent: 30, overAmount: 0 },
+    topTwoShare: 40,
+    largestExpense: { name: "Coffee", amount: 200 },
+    changes: [],
+    language: "en",
+    formatMoney: monthlyMoney
+  });
+  assert.equal(takeaway, null);
+});
+
+test("monthlyTakeaway does not attribute an overall rise to a declining category", () => {
+  const takeaway = monthlyTakeaway({
+    comparable: true,
+    comparisonDirection: "up",
+    currentTotal: 12000,
+    priorTotal: 8000,
+    budget: null,
+    topTwoShare: 30,
+    largestExpense: { name: "Coffee", amount: 200 },
+    changes: [{ name: "Food", direction: "down", delta: -3500 }],
+    language: "en",
+    formatMoney: monthlyMoney
   });
   assert.equal(takeaway, null);
 });
