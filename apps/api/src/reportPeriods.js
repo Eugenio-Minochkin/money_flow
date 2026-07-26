@@ -3,7 +3,8 @@ import {
   localHour,
   localMonthDay,
   localWeekday,
-  normalizeTimeZone
+  normalizeTimeZone,
+  timeZoneMonthBounds
 } from "../../../packages/shared/src/time.js";
 
 const SEND_START_HOUR = 9;
@@ -71,6 +72,35 @@ export function priorWeeklyBounds(period, timeZoneValue) {
     localStartDate: priorMonday,
     localEndDate: priorSunday
   };
+}
+
+export function priorMonthlyBounds(period, timeZoneValue) {
+  const timeZone = normalizeTimeZone(timeZoneValue).timeZone;
+  const priorKey = priorMonthKeyFromPeriod(period);
+  if (!priorKey) return null;
+  const bounds = timeZoneMonthBounds(priorKey, timeZone);
+  const [year, month] = priorKey.split("-").map(Number);
+  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  return {
+    start: bounds.start,
+    end: bounds.end,
+    localStartDate: `${priorKey}-01`,
+    localEndDate: `${priorKey}-${pad2(lastDay)}`,
+    periodKey: priorKey
+  };
+}
+
+function priorMonthKeyFromPeriod(period) {
+  const key = String(period?.periodKey ?? "");
+  const match = /^(\d{4})-(\d{2})$/.exec(key);
+  if (!match) return null;
+  let year = Number(match[1]);
+  let month = Number(match[2]) - 1;
+  if (month < 1) {
+    month = 12;
+    year -= 1;
+  }
+  return `${year}-${pad2(month)}`;
 }
 
 function localWeekStartKey(period, timeZone) {

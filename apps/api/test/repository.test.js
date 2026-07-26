@@ -2047,7 +2047,8 @@ test("report data includes display equivalents for budget amount and remaining",
     amount: 1250,
     baseBudget: 1250,
     topupsTotal: 0,
-    remaining: 50
+    remaining: 50,
+    overAmount: 0
   });
 });
 
@@ -2478,26 +2479,13 @@ test("weekly report flags overdue unpaid planned payments in needs-attention", a
   assert.equal(report.needsAttention.shown[0].overdue, true);
 });
 
-test("monthly insight names the highest-total category regardless of row order", async () => {
-  const user = {
-    id: 1,
-    telegram_user_id: 100,
-    monthly_budget_amount: 50000,
-    base_currency: "THB",
-    display_currency: "USD",
-    timezone: "Asia/Bangkok",
-    interface_language: "en"
-  };
-  const repo = createRepository(fakePool((sql) => {
+function monthlyReportFakePool(handler) {
+  return fakePool((sql, params = []) => {
     const query = String(sql);
-    if (query.includes("FROM expenses") && query.includes("ORDER BY spent_at ASC")) {
-      return { rows: [{ id: "1", amount_base: 500, converted_amounts: { USD: 15 }, description: "rent", category_slug: "home", budget_impact: "regular", spent_at: new Date("2026-06-10T03:00:00Z"), local_date: "2026-06-10" }] };
-    }
-    if (query.includes("GROUP BY category_slug")) {
-      return { rows: [{ category_slug: "food_cafe", total: 100 }, { category_slug: "home", total: 500 }] };
-    }
-    if (query.includes("FROM planned_expenses") && query.includes("JOIN users")) return { rows: [] };
-    if (query.includes("FROM planned_expense_payments") && query.includes("JOIN planned_expenses")) return { rows: [] };
+    if (query.includes("FROM expenses") && query.includes("ORDER BY spent_at ASC")) return handler.expenses?.() ?? { rows: [] };
+    if (query.includes("GROUP BY category_slug")) return handler.categories?.(params) ?? { rows: [] };
+    if (query.includes("FROM planned_expenses") && query.includes("JOIN users")) return handler.plannedExpenses?.() ?? { rows: [] };
+    if (query.includes("FROM planned_expense_payments") && query.includes("JOIN planned_expenses")) return handler.paidPlanned?.() ?? { rows: [] };
     if (query.includes("FROM budget_topups") && query.includes("occurred_at")) return { rows: [] };
     if (query === "SELECT timezone FROM users WHERE telegram_user_id = $1") return { rows: [{ timezone: "Asia/Bangkok" }] };
     if (query.includes("FROM monthly_budget_overrides")) return { rows: [] };
@@ -2505,19 +2493,160 @@ test("monthly insight names the highest-total category regardless of row order",
     if (query.includes("FROM budget_topups") && query.includes("month_key")) return { rows: [] };
     if (query.includes("FROM month_baselines")) return { rows: [] };
     return { rows: [] };
+  });
+}
+
+const monthlyJunePeriod = {
+  periodKey: "2026-06",
+  periodStartUtc: new Date("2026-05-31T17:00:00Z"),
+  periodEndUtc: new Date("2026-06-30T17:00:00Z"),
+  timezoneUsed: "Asia/Bangkok",
+  localStartDate: "2026-06-01",
+  localEndDate: "2026-06-30"
+};
+const priorMayEndUtc = new Date("2026-05-31T17:00:00Z");
+
+test("monthly report ranks categories by total, surfaces the real largest operation and computes budget usage", async () => {
+  const user = {
+    id: 1, telegram_user_id: 100, monthly_budget_amount: 50000,
+    base_currency: "THB", display_currency: "USD", timezone: "Asia/Bangkok", interface_language: "en"
+  };
+  const repo = createRepository(monthlyReportFakePool({
+    expenses: () => ({
+      rows: [{ id: "1", amount_base: 500, converted_amounts: { USD: 15 }, description: "rent", category_slug: "home", budget_impact: "planned", spent_at: new Date("2026-06-10T03:00:00Z"), local_date: "2026-06-10" }]
+    }),
+    categories: () => ({ rows: [{ category_slug: "food_cafe", total: 100 }, { category_slug: "home", total: 500 }] })
   }));
 
-  const report = await repo.buildReportDataForDelivery(user, "monthly", {
-    periodKey: "2026-06",
-    periodStartUtc: new Date("2026-05-31T17:00:00Z"),
-    periodEndUtc: new Date("2026-06-30T17:00:00Z"),
-    timezoneUsed: "Asia/Bangkok",
-    localStartDate: "2026-06-01",
-    localEndDate: "2026-06-30"
-  }, new Date("2026-07-01T03:00:00Z"));
+  const report = await repo.buildReportDataForDelivery(user, "monthly", monthlyJunePeriod, new Date("2026-07-01T03:00:00Z"));
 
-  assert.match(report.insight, /Home/);
-  assert.doesNotMatch(report.insight, /Cafés|Food/);
+  assert.equal(report.topCategories[0].name, "Home");
+  assert.deepEqual(report.largestExpenses.map((item) => ({ name: item.name, amount: item.amount })), [{ name: "rent", amount: 500 }]);
+  assert.equal(report.insight, "");
+  assert.equal(report.budget.available, true);
+  assert.equal(report.budget.usedPercent, 1);
+  assert.equal(report.budget.overAmount, 0);
+  assert.equal(report.comparison.available, true);
+});
+
+test("monthly report compares two fully observable months and computes category changes", async () => {
+  const user = {
+    id: 1, telegram_user_id: 100, monthly_budget_amount: 50000,
+    base_currency: "THB", display_currency: "USD", timezone: "Asia/Bangkok", interface_language: "ru",
+    created_at: new Date("2026-01-01T00:00:00Z")
+  };
+  const repo = createRepository(monthlyReportFakePool({
+    expenses: () => ({
+      rows: [{ id: "1", amount_base: 14920, converted_amounts: { USD: 450 }, description: "Аренда", category_slug: "home", budget_impact: "regular", spent_at: new Date("2026-06-05T03:00:00Z"), local_date: "2026-06-05" }]
+    }),
+    categories: (params) => {
+      const end = params[2];
+      if (end && end.getTime() === monthlyJunePeriod.periodEndUtc.getTime()) {
+        return { rows: [{ category_slug: "home", total: 14920 }] };
+      }
+      if (end && end.getTime() === priorMayEndUtc.getTime()) {
+        return { rows: [{ category_slug: "home", total: 11720 }] };
+      }
+      return { rows: [] };
+    }
+  }));
+
+  const report = await repo.buildReportDataForDelivery(user, "monthly", monthlyJunePeriod, new Date("2026-07-01T03:00:00Z"));
+
+  assert.equal(report.comparison.available, true);
+  assert.equal(report.comparison.direction, "up");
+  assert.equal(report.comparison.priorMonthKey, "2026-05");
+  assert.equal(report.firstMonth, false);
+  assert.deepEqual(report.changes.map((change) => change.slug), ["home"]);
+  assert.deepEqual(report.largestExpenses.map((item) => item.name), ["Аренда"]);
+});
+
+test("monthly report hides comparison and takeaway on the first full month", async () => {
+  const user = {
+    id: 1, telegram_user_id: 100, monthly_budget_amount: 50000,
+    base_currency: "THB", display_currency: "USD", timezone: "Asia/Bangkok", interface_language: "ru",
+    created_at: new Date("2026-06-05T03:00:00Z")
+  };
+  const repo = createRepository(monthlyReportFakePool({
+    expenses: () => ({
+      rows: [{ id: "1", amount_base: 5000, converted_amounts: { USD: 150 }, description: "Кофе", category_slug: "food_cafe", budget_impact: "regular", spent_at: new Date("2026-06-10T03:00:00Z"), local_date: "2026-06-10" }]
+    }),
+    categories: () => ({ rows: [{ category_slug: "food_cafe", total: 5000 }] })
+  }));
+
+  const report = await repo.buildReportDataForDelivery(user, "monthly", monthlyJunePeriod, new Date("2026-07-01T03:00:00Z"));
+
+  assert.equal(report.firstMonth, true);
+  assert.equal(report.comparison.available, false);
+  assert.deepEqual(report.changes, []);
+  assert.equal(report.takeaway, null);
+});
+
+test("monthly report hides comparison when the user started mid-prior-month but is not the first month", async () => {
+  const user = {
+    id: 1, telegram_user_id: 100, monthly_budget_amount: 50000,
+    base_currency: "THB", display_currency: "USD", timezone: "Asia/Bangkok", interface_language: "ru",
+    created_at: new Date("2026-05-15T03:00:00Z")
+  };
+  const repo = createRepository(monthlyReportFakePool({
+    expenses: () => ({
+      rows: [{ id: "1", amount_base: 2000, converted_amounts: { USD: 60 }, description: "Билеты", category_slug: "travel", budget_impact: "regular", spent_at: new Date("2026-06-10T03:00:00Z"), local_date: "2026-06-10" }]
+    }),
+    categories: () => ({ rows: [{ category_slug: "travel", total: 2000 }] })
+  }));
+
+  const report = await repo.buildReportDataForDelivery(user, "monthly", monthlyJunePeriod, new Date("2026-07-01T03:00:00Z"));
+
+  assert.equal(report.firstMonth, false);
+  assert.equal(report.comparison.available, false);
+  assert.deepEqual(report.changes, []);
+});
+
+test("monthly report largest expenses include a paid planned operation", async () => {
+  const user = {
+    id: 1, telegram_user_id: 100, monthly_budget_amount: 50000,
+    base_currency: "THB", display_currency: "THB", timezone: "Asia/Bangkok", interface_language: "en"
+  };
+  const repo = createRepository(monthlyReportFakePool({
+    expenses: () => ({
+      rows: [
+        { id: "10", amount_base: 13000, converted_amounts: { THB: 13000 }, description: "Оплата квартиры", category_slug: "home", budget_impact: "planned", spent_at: new Date("2026-06-01T03:00:00Z"), local_date: "2026-06-01" },
+        { id: "11", amount_base: 800, converted_amounts: { THB: 800 }, description: "Coffee", category_slug: "food_cafe", budget_impact: "regular", spent_at: new Date("2026-06-10T03:00:00Z"), local_date: "2026-06-10" }
+      ]
+    }),
+    paidPlanned: () => ({
+      rows: [{ expense_id: "10", name: "Оплата квартиры", planned_amount_base: 13000, amount_base: 13000, occurrence_date: "2026-06-01", local_date: "2026-06-01" }]
+    }),
+    categories: () => ({ rows: [{ category_slug: "home", total: 13000 }, { category_slug: "food_cafe", total: 800 }] })
+  }));
+
+  const report = await repo.buildReportDataForDelivery(user, "monthly", monthlyJunePeriod, new Date("2026-07-01T03:00:00Z"));
+
+  assert.equal(report.largestExpenses[0].name, "Оплата квартиры");
+  assert.equal(report.metrics.plannedPaidTotal, 13000);
+  assert.equal(report.metrics.totalSpent, 13800);
+});
+
+test("monthly report flags an exceeded budget with the over amount", async () => {
+  const user = {
+    id: 1, telegram_user_id: 100, monthly_budget_amount: 50000,
+    base_currency: "THB", display_currency: "USD", usd_thb_rate: 40, timezone: "Asia/Bangkok", interface_language: "ru",
+    created_at: new Date("2026-01-01T00:00:00Z")
+  };
+  const repo = createRepository(monthlyReportFakePool({
+    expenses: () => ({
+      rows: [{ id: "1", amount_base: 54200, converted_amounts: { USD: 1355 }, description: "rent", category_slug: "home", budget_impact: "regular", spent_at: new Date("2026-06-10T03:00:00Z"), local_date: "2026-06-10" }]
+    }),
+    categories: () => ({ rows: [{ category_slug: "home", total: 54200 }] })
+  }));
+
+  const report = await repo.buildReportDataForDelivery(user, "monthly", monthlyJunePeriod, new Date("2026-07-01T03:00:00Z"));
+
+  assert.equal(report.budget.available, true);
+  assert.equal(report.budget.usedPercent, 108);
+  assert.equal(report.budget.overAmount, 4200);
+  assert.equal(report.budget.remaining, -4200);
+  assert.match(report.takeaway, /Бюджет был превышен на 4 200 THB/);
 });
 
 test("checks confirmed financial activity using supplied local bounds", async () => {

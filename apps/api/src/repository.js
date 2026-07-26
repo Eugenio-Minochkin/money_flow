@@ -21,12 +21,16 @@ import {
 } from "./plannedOccurrenceDates.js";
 import { normalizeAcquisitionSource, SINGLETON_ONBOARDING_EVENTS } from "./productAnalytics.js";
 import { buildReportMetrics } from "./reportService.js";
-import { priorWeeklyBounds } from "./reportPeriods.js";
+import { formatReportMoney } from "./reportFormat.js";
+import { priorMonthlyBounds, priorWeeklyBounds } from "./reportPeriods.js";
 import { categoryLabel } from "../../../packages/shared/src/categories.js";
 import {
+  MONTHLY_CHANGE_ABSOLUTE_TOTAL_SHARE,
+  MONTHLY_CHANGE_RELATIVE_MIN,
   categoryChanges,
   categoryPercentages,
   largestExpenses,
+  monthlyTakeaway,
   needsAttentionFromUnpaid,
   weeklyComparison,
   weeklyTakeaway
@@ -1481,6 +1485,12 @@ export function createRepository(pool, options = {}) {
       metrics.averagePerDay = roundMoney(metrics.totalSpent / days);
       metrics.regularAveragePerDay = roundMoney(metrics.regularTotal / days);
       const remaining = roundMoney(budget.amount - metrics.totalSpent);
+      const budgetAvailable = Number(budget.amount ?? 0) > 0;
+      const budgetUsedPercent = budgetAvailable
+        ? Math.round((metrics.totalSpent / Number(budget.amount)) * 100)
+        : null;
+      const budgetExceeded = budgetAvailable && metrics.totalSpent > Number(budget.amount);
+      const budgetOverAmount = budgetExceeded ? roundMoney(metrics.totalSpent - Number(budget.amount)) : 0;
       const notableExpenses = reportNotableExpenses(expenses, paidPlannedPayments, largeThreshold, reportType === "monthly" ? 5 : 3, language);
       const unpaidPlanned = reportUnpaidPlannedPayments(plannedExpenses, user, budgetDate, timeZone, period, isWeekly ? 7 : 0);
       const plannedPayments = [
@@ -1496,10 +1506,11 @@ export function createRepository(pool, options = {}) {
 
       let comparison = { available: false };
       let changes = [];
-      let weeklyLargest = [];
+      let reportLargest = [];
       let needsAttention = null;
       let takeaway = null;
       let firstWeek = false;
+      let firstMonth = false;
       if (isWeekly) {
         const priorBounds = priorWeeklyBounds(period, timeZone);
         const priorAllCategories = await reportAllCategoriesForPeriod(pool, user, priorBounds);
@@ -1512,20 +1523,69 @@ export function createRepository(pool, options = {}) {
         changes = comparison.available
           ? categoryChanges({ current: allCategories, prior: priorAllCategories, language, currency })
           : [];
-        weeklyLargest = largestExpenses(expenses, { language, limit: 5 });
+        reportLargest = largestExpenses(expenses, { language, limit: 5 });
         takeaway = weeklyTakeaway({
           comparable: comparison.available,
           comparisonDirection: comparison.direction,
           currentTotal: metrics.totalSpent,
           priorTotal,
-          largestExpense: weeklyLargest[0] ?? null,
+          largestExpense: reportLargest[0] ?? null,
           changes,
           language
         });
         const unpaidForAttention = plannedPayments.filter((payment) => !payment.paid);
         needsAttention = unpaidForAttention.length > 0 ? needsAttentionFromUnpaid(unpaidForAttention) : null;
+      } else {
+        const priorBoundsObj = priorMonthlyBounds(period, timeZone);
+        let priorAllCategories = [];
+        let priorTotal = 0;
+        if (priorBoundsObj) {
+          priorAllCategories = await reportAllCategoriesForPeriod(pool, user, priorBoundsObj);
+          priorTotal = priorAllCategories.reduce((total, category) => total + Number(category.total ?? 0), 0);
+        }
+        comparison = weeklyComparison({ currentTotal: metrics.totalSpent, priorTotal });
+        const usageStart = user.created_at ? new Date(user.created_at) : null;
+        const priorFullyObservable = Boolean(priorBoundsObj)
+          && (!usageStart || usageStart.getTime() <= priorBoundsObj.start.getTime());
+        comparison.available = comparison.available && priorFullyObservable;
+        if (comparison.available && priorBoundsObj) comparison.priorMonthKey = priorBoundsObj.periodKey;
+        firstMonth = Boolean(usageStart && usageStart.getTime() >= period.periodStartUtc.getTime());
+        reportLargest = largestExpenses(expenses, { language, limit: 5 });
+        changes = comparison.available
+          ? categoryChanges({
+            current: allCategories,
+            prior: priorAllCategories,
+            language,
+            currency,
+            relativeMin: MONTHLY_CHANGE_RELATIVE_MIN,
+            absoluteFloor: MONTHLY_CHANGE_ABSOLUTE_TOTAL_SHARE * Math.max(metrics.totalSpent, priorTotal)
+          })
+          : [];
+        const unpaidForAttention = plannedPayments.filter((payment) => !payment.paid);
+        needsAttention = unpaidForAttention.length > 0 ? needsAttentionFromUnpaid(unpaidForAttention) : null;
+        if (firstMonth) {
+          takeaway = null;
+        } else {
+          takeaway = monthlyTakeaway({
+            comparable: comparison.available,
+            comparisonDirection: comparison.direction,
+            currentTotal: metrics.totalSpent,
+            priorTotal,
+            budget: {
+              available: budgetAvailable,
+              usedPercent: budgetUsedPercent,
+              overAmount: budgetOverAmount
+            },
+            topTwoShare: topCategoryResult.topTwoShare,
+            largestExpense: reportLargest[0] ?? null,
+            changes,
+            language,
+            formatMoney: (value) => formatReportMoney(value, currency, language)
+          });
+        }
       }
 
+      const budgetDisplayRemaining = displayFromBase(remaining, user);
       return {
         reportType,
         currency,
@@ -1536,9 +1596,13 @@ export function createRepository(pool, options = {}) {
           topupsTotal: budget.topupsTotal,
           amount: budget.amount,
           remaining,
+          available: budgetAvailable,
+          usedPercent: budgetUsedPercent,
+          overAmount: budgetOverAmount,
           display: {
             ...budget.display,
-            remaining: displayFromBase(remaining, user)
+            remaining: budgetDisplayRemaining,
+            overAmount: displayFromBase(budgetOverAmount, user)
           }
         },
         plannedPayments,
@@ -1553,11 +1617,12 @@ export function createRepository(pool, options = {}) {
         topTwoCategoryShare: topCategoryResult.topTwoShare,
         comparison,
         changes,
-        largestExpenses: weeklyLargest,
+        largestExpenses: reportLargest,
         needsAttention,
         takeaway,
         firstWeek,
-        insight: isWeekly ? "" : deterministicReportInsight(metrics, allCategories, language),
+        firstMonth,
+        insight: "",
         generatedAt: now
       };
     },
@@ -3848,21 +3913,6 @@ async function reportAllCategoriesForPeriod(pool, user, bounds) {
     [user.id, bounds.start, bounds.end]
   );
   return result.rows;
-}
-
-function deterministicReportInsight(metrics, categories, language) {
-  const topSlug = (Array.isArray(categories) ? categories : [])
-    .map((category) => ({ slug: category.category_slug, total: Number(category.total ?? category.amount ?? 0) }))
-    .sort((left, right) => right.total - left.total)[0]?.slug;
-  const topCategory = topSlug ? categoryLabel(topSlug, language) : (language === "en" ? "spending" : "расходов");
-  if (language === "en") {
-    if (!metrics.totalSpent) return "No expenses were found for this period.";
-    if (metrics.largeTotal > 0) return `The main spending area was ${topCategory}; large one-off expenses also mattered.`;
-    return `The main spending area was ${topCategory}.`;
-  }
-  if (!metrics.totalSpent) return "За период расходов не найдено.";
-  if (metrics.largeTotal > 0) return `Главная зона расходов — ${topCategory}; крупные разовые траты тоже повлияли на итог.`;
-  return `Главная зона расходов — ${topCategory}.`;
 }
 
 function reportLargeExpenseThreshold(user, budget = {}) {

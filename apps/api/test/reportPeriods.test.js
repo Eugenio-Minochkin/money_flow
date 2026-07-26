@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   monthlyPeriodForSend,
+  priorMonthlyBounds,
   priorWeeklyBounds,
   shouldSendMonthlyReportForUser,
   shouldSendWeeklyReportForUser,
@@ -107,4 +108,36 @@ test("priorWeeklyBounds is 169 hours across the Berlin autumn DST transition", (
   assert.equal((prior.end - prior.start) / 3_600_000, 169);
   assert.deepEqual(berlinWeekdayHour(prior.start), { weekday: "Mon", hour: 0 });
   assert.deepEqual(berlinWeekdayHour(prior.end), { weekday: "Mon", hour: 0 });
+});
+
+test("priorMonthlyBounds spans the previous local calendar month with timezone-aware UTC edges", () => {
+  const report = monthlyPeriodForSend(new Date("2026-07-01T03:00:00Z"), "Asia/Bangkok");
+  assert.equal(report.periodKey, "2026-06");
+  const prior = priorMonthlyBounds(report, "Asia/Bangkok");
+
+  assert.equal(prior.periodKey, "2026-05");
+  assert.equal(prior.localStartDate, "2026-05-01");
+  assert.equal(prior.localEndDate, "2026-05-31");
+  assert.equal(prior.start.toISOString(), "2026-04-30T17:00:00.000Z");
+  assert.equal(prior.end.toISOString(), "2026-05-31T17:00:00.000Z");
+  assert.equal((prior.end - prior.start) / 3_600_000, 744);
+});
+
+test("priorMonthlyBounds rolls back across the year boundary", () => {
+  const prior = priorMonthlyBounds({ periodKey: "2026-01" }, "Asia/Bangkok");
+  assert.equal(prior.periodKey, "2025-12");
+  assert.equal(prior.localStartDate, "2025-12-01");
+  assert.equal(prior.localEndDate, "2025-12-31");
+});
+
+test("priorMonthlyBounds spans the DST transition month in Europe/Berlin as 743 hours", () => {
+  // Reporting April 2026 -> prior month March 2026 contains the CET->CEST spring transition.
+  const prior = priorMonthlyBounds({ periodKey: "2026-04" }, "Europe/Berlin");
+
+  assert.equal(prior.periodKey, "2026-03");
+  assert.equal(prior.localStartDate, "2026-03-01");
+  assert.equal(prior.localEndDate, "2026-03-31");
+  assert.equal(prior.start.toISOString(), "2026-02-28T23:00:00.000Z");
+  assert.equal(prior.end.toISOString(), "2026-03-31T22:00:00.000Z");
+  assert.equal((prior.end - prior.start) / 3_600_000, 743);
 });
