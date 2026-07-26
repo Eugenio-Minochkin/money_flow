@@ -374,6 +374,18 @@ test("monthly budget block shows the exceeded status and over amount instead of 
   assert.doesNotMatch(text, /Осталось: -|Осталось: <b>-/);
 });
 
+test("monthly budget block at exactly 100% reads as almost used and never 'exceeded by zero'", () => {
+  const text = formatMonthlyReport(monthlyFixture({
+    language: "ru",
+    metrics: { ...monthlyMetricsBase(), totalSpent: 51000, averagePerDay: 1700 },
+    budget: { amount: 51000, topupsTotal: 0, remaining: 0, available: true, usedPercent: 100, overAmount: 0, display: { currency: "USD", amount: 1530, remaining: 0 } }
+  }), { language: "ru" });
+  assert.match(text, /⚠️ Бюджет почти использован/);
+  assert.match(text, /Использовано 100% из <b>51 000 THB<\/b>/);
+  assert.match(text, /Осталось: <b>0 THB<\/b>/);
+  assert.doesNotMatch(text, /превышен|Перерасход/);
+});
+
 test("monthly budget block shows the including-top-ups line and keeps top-ups out of spending", () => {
   const text = formatMonthlyReport(monthlyFixture({
     language: "ru",

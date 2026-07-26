@@ -2561,11 +2561,12 @@ test("monthly report compares two fully observable months and computes category 
   assert.deepEqual(report.largestExpenses.map((item) => item.name), ["Аренда"]);
 });
 
-test("monthly report hides comparison and takeaway on the first full month", async () => {
+test("monthly report marks the first fully observable month and hides comparison and takeaway", async () => {
+  // Account created mid-May: June is the first fully observable calendar month.
   const user = {
     id: 1, telegram_user_id: 100, monthly_budget_amount: 50000,
     base_currency: "THB", display_currency: "USD", timezone: "Asia/Bangkok", interface_language: "ru",
-    created_at: new Date("2026-06-05T03:00:00Z")
+    created_at: new Date("2026-05-15T03:00:00Z")
   };
   const repo = createRepository(monthlyReportFakePool({
     expenses: () => ({
@@ -2582,11 +2583,12 @@ test("monthly report hides comparison and takeaway on the first full month", asy
   assert.equal(report.takeaway, null);
 });
 
-test("monthly report hides comparison when the user started mid-prior-month but is not the first month", async () => {
+test("monthly report does not claim a full month when the user registered during the report month", async () => {
+  // Account created on June 5: June is only partially observed, so it is not the first FULL month.
   const user = {
     id: 1, telegram_user_id: 100, monthly_budget_amount: 50000,
     base_currency: "THB", display_currency: "USD", timezone: "Asia/Bangkok", interface_language: "ru",
-    created_at: new Date("2026-05-15T03:00:00Z")
+    created_at: new Date("2026-06-05T03:00:00Z")
   };
   const repo = createRepository(monthlyReportFakePool({
     expenses: () => ({
@@ -2647,6 +2649,29 @@ test("monthly report flags an exceeded budget with the over amount", async () =>
   assert.equal(report.budget.overAmount, 4200);
   assert.equal(report.budget.remaining, -4200);
   assert.match(report.takeaway, /Бюджет был превышен на 4 200 THB/);
+});
+
+test("monthly budget treats a sub-display-unit overage as fully used, not exceeded by zero", async () => {
+  // 51 000.40 THB over a 51 000 THB budget: THB displays as integers, so the 0.40 overage
+  // must not render as "exceeded by 0 THB".
+  const user = {
+    id: 1, telegram_user_id: 100, monthly_budget_amount: 51000,
+    base_currency: "THB", display_currency: "USD", usd_thb_rate: 40, timezone: "Asia/Bangkok", interface_language: "ru",
+    created_at: new Date("2026-01-01T00:00:00Z")
+  };
+  const repo = createRepository(monthlyReportFakePool({
+    expenses: () => ({
+      rows: [{ id: "1", amount_base: 51000.40, converted_amounts: { USD: 1275 }, description: "rent", category_slug: "home", budget_impact: "regular", spent_at: new Date("2026-06-10T03:00:00Z"), local_date: "2026-06-10" }]
+    }),
+    categories: () => ({ rows: [{ category_slug: "home", total: 51000.40 }] })
+  }));
+
+  const report = await repo.buildReportDataForDelivery(user, "monthly", monthlyJunePeriod, new Date("2026-07-01T03:00:00Z"));
+
+  assert.equal(report.budget.overAmount, 0);
+  assert.equal(report.budget.usedPercent, 100);
+  assert.equal(report.budget.remaining, 0);
+  assert.doesNotMatch(report.takeaway || "", /превышен/);
 });
 
 test("checks confirmed financial activity using supplied local bounds", async () => {

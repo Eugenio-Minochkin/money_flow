@@ -1484,13 +1484,15 @@ export function createRepository(pool, options = {}) {
       });
       metrics.averagePerDay = roundMoney(metrics.totalSpent / days);
       metrics.regularAveragePerDay = roundMoney(metrics.regularTotal / days);
-      const remaining = roundMoney(budget.amount - metrics.totalSpent);
-      const budgetAvailable = Number(budget.amount ?? 0) > 0;
+      const displaySpent = roundForDisplayCurrency(metrics.totalSpent, currency);
+      const displayBudget = roundForDisplayCurrency(Number(budget.amount ?? 0), currency);
+      const remaining = roundMoney(displayBudget - displaySpent);
+      const budgetAvailable = displayBudget > 0;
       const budgetUsedPercent = budgetAvailable
-        ? Math.round((metrics.totalSpent / Number(budget.amount)) * 100)
+        ? Math.round((displaySpent / displayBudget) * 100)
         : null;
-      const budgetExceeded = budgetAvailable && metrics.totalSpent > Number(budget.amount);
-      const budgetOverAmount = budgetExceeded ? roundMoney(metrics.totalSpent - Number(budget.amount)) : 0;
+      const budgetExceeded = budgetAvailable && displaySpent > displayBudget;
+      const budgetOverAmount = budgetExceeded ? roundMoney(displaySpent - displayBudget) : 0;
       const notableExpenses = reportNotableExpenses(expenses, paidPlannedPayments, largeThreshold, reportType === "monthly" ? 5 : 3, language);
       const unpaidPlanned = reportUnpaidPlannedPayments(plannedExpenses, user, budgetDate, timeZone, period, isWeekly ? 7 : 0);
       const plannedPayments = [
@@ -1545,11 +1547,12 @@ export function createRepository(pool, options = {}) {
         }
         comparison = weeklyComparison({ currentTotal: metrics.totalSpent, priorTotal });
         const usageStart = user.created_at ? new Date(user.created_at) : null;
+        const currentFullyObservable = !usageStart || usageStart.getTime() <= period.periodStartUtc.getTime();
         const priorFullyObservable = Boolean(priorBoundsObj)
           && (!usageStart || usageStart.getTime() <= priorBoundsObj.start.getTime());
         comparison.available = comparison.available && priorFullyObservable;
         if (comparison.available && priorBoundsObj) comparison.priorMonthKey = priorBoundsObj.periodKey;
-        firstMonth = Boolean(usageStart && usageStart.getTime() >= period.periodStartUtc.getTime());
+        firstMonth = currentFullyObservable && !priorFullyObservable;
         reportLargest = largestExpenses(expenses, { language, limit: 5 });
         changes = comparison.available
           ? categoryChanges({

@@ -416,6 +416,20 @@ test("largestExpenses breaks amount ties by earlier date then id", () => {
   ]);
 });
 
+test("largestExpenses breaks id ties numerically, not lexicographically", () => {
+  const result = largestExpenses(
+    [
+      { id: "10", description: "ten", category_slug: "other", amount_base: 2000, local_date: "2026-06-05" },
+      { id: "2", description: "two", category_slug: "other", amount_base: 2000, local_date: "2026-06-05" }
+    ],
+    { language: "en", limit: 2 }
+  );
+  assert.deepEqual(result, [
+    { name: "two", amount: 2000 },
+    { name: "ten", amount: 2000 }
+  ]);
+});
+
 // --- findDominantAttribution ---
 
 test("findDominantAttribution requires direction match and >= 60% of the delta", () => {
@@ -496,6 +510,36 @@ test("monthlyTakeaway describes a dominant single operation as a share, not a ca
   });
   assert.equal(takeaway, "Больше четверти расходов месяца пришлось на операцию «Оплата квартиры».");
   assert.doesNotMatch(takeaway, /из-за|связан|причиной|вызвал/);
+});
+
+test("monthlyTakeaway does not claim 'more than a quarter' at exactly 25%", () => {
+  const exact = monthlyTakeaway({
+    comparable: false,
+    comparisonDirection: "flat",
+    currentTotal: 10000,
+    priorTotal: 0,
+    budget: { available: true, usedPercent: 40, overAmount: 0 },
+    topTwoShare: 30,
+    largestExpense: { name: "Rent", amount: 2500 },
+    changes: [],
+    language: "ru",
+    formatMoney: monthlyMoney
+  });
+  assert.equal(exact, null);
+
+  const above = monthlyTakeaway({
+    comparable: false,
+    comparisonDirection: "flat",
+    currentTotal: 10000,
+    priorTotal: 0,
+    budget: { available: true, usedPercent: 40, overAmount: 0 },
+    topTwoShare: 30,
+    largestExpense: { name: "Rent", amount: 2501 },
+    changes: [],
+    language: "ru",
+    formatMoney: monthlyMoney
+  });
+  assert.match(above, /Больше четверти/);
 });
 
 test("monthlyTakeaway is hidden on a flat comparison with no defensible fact", () => {

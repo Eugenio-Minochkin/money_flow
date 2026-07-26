@@ -49,8 +49,15 @@ export function largestExpenses(expenses = [], { language = "ru", limit = 5 } = 
     .sort((left, right) =>
       right.amount - left.amount
       || left.date.localeCompare(right.date)
-      || left.id.localeCompare(right.id));
+      || compareIds(left.id, right.id));
   return ranked.slice(0, limit).map(({ name, amount }) => ({ name, amount }));
+}
+
+function compareIds(left, right) {
+  const leftNum = Number(left);
+  const rightNum = Number(right);
+  if (Number.isFinite(leftNum) && Number.isFinite(rightNum)) return leftNum - rightNum;
+  return String(left).localeCompare(String(right));
 }
 
 export function categoryPercentages(rawCategories = [], totalSpent = 0, { language = "ru", limit = 3 } = {}) {
@@ -226,7 +233,7 @@ export function monthlyTakeaway({
     }
   }
   const dominantAmount = largestExpense ? num(largestExpense.amount) : 0;
-  if (current > 0 && dominantAmount >= MONTHLY_TAKEAWAY_DOMINANT_EXPENSE_SHARE * current) {
+  if (current > 0 && dominantAmount > MONTHLY_TAKEAWAY_DOMINANT_EXPENSE_SHARE * current) {
     const name = largestExpense.name;
     secondary.push(en
       ? `More than a quarter of this month's spending went to ${name}.`
