@@ -39,6 +39,7 @@ export function createDailyReminderService({
     const bounds = localPeriodBounds(current, "today", timeZone);
     if (await repository.hasConfirmedFinancialActivity(user.id, bounds)) return "skipped";
     if (await repository.hasNoSpendingMark(user.id, localDate)) return "skipped";
+    if (await repository.hasDailyReminderDelivery(user.id, localDate, "planned_payment")) return "skipped";
     if (await repository.hasDailyReminderDelivery(user.id, localDate, REMINDER_TYPE)) return "skipped";
     if (await repository.hasRecentDailyReminderDelivery(user.id, new Date(current.getTime() - 48 * 60 * 60_000), REMINDER_TYPE)) return "skipped";
 

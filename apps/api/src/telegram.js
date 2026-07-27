@@ -18,8 +18,24 @@ import { formatTechnicalStatsSections } from "./technicalStatsService.js";
 import { createExpenseExportService } from "./expenseExportService.js";
 import { createTelegramJobQueue } from "./telegramJobQueue.js";
 import { renderDraftPreview } from "./draftPreview.js";
+import { formatPlannedPaymentReminder } from "./plannedPaymentReminderService.js";
 import { formatBudgetTopupDraft, formatBudgetTopupSuccess, formatBudgetTopupUndoSuccess, formatPlannedDraft, formatReserveClosedEvent, formatSavedSummary, formatTotals, formatWeeklyReport } from "./telegramFormat.js";
-import { appKeyboard, budgetTopupDraftKeyboard, budgetTopupMiniAppKeyboard, budgetTopupSuccessKeyboard, draftKeyboard, inboxDraftKeyboard, plannedDraftKeyboard, savedExpenseKeyboard, parseBudgetTopupCallback, parseDraftCallback, categorySlugFromCode } from "./telegramKeyboards.js";
+import {
+  appKeyboard,
+  budgetTopupDraftKeyboard,
+  budgetTopupMiniAppKeyboard,
+  budgetTopupSuccessKeyboard,
+  categorySlugFromCode,
+  draftKeyboard,
+  inboxDraftKeyboard,
+  parseBudgetTopupCallback,
+  parseDraftCallback,
+  plannedDraftKeyboard,
+  plannedPaymentDisableConfirmationKeyboard,
+  plannedPaymentReminderKeyboard,
+  plannedPaymentSuccessKeyboard,
+  savedExpenseKeyboard
+} from "./telegramKeyboards.js";
 import { DraftCanceledError, CategoryRequiredError } from "./repository.js";
 import { normalizeAcquisitionSource } from "./productAnalytics.js";
 import { parseEditorText } from "./telegramExpenseInput.js";
@@ -1688,6 +1704,24 @@ export async function handleCallback({ update, repository, token, miniAppUrl, te
     return handleDraftCallback({ callback, parsed: draftCallback, repository, token, miniAppUrl, telegramClient, adminAlertService, language, user, trace, now });
   }
 
+  if (action === "ppr") {
+    return handlePlannedPaymentReminderCallback({
+      callback,
+      action: draftId,
+      plannedExpenseId: Number(itemIndex),
+      occurrenceDate: decodePlannedReminderDate(value),
+      user,
+      telegramUserId,
+      language,
+      repository,
+      token,
+      miniAppUrl,
+      telegramClient,
+      trace,
+      now
+    });
+  }
+
   if (action === "export") {
     const period = draftId === "all" ? "all" : "month";
     return sendTelegramResponse(trace, async () => {
@@ -2224,6 +2258,279 @@ async function handleDailyReminderCallback({ callback, action, user, telegramUse
   });
 }
 
+async function handlePlannedPaymentReminderCallback({
+  callback,
+  action,
+  plannedExpenseId,
+  occurrenceDate,
+  user,
+  telegramUserId,
+  language,
+  repository,
+  token,
+  miniAppUrl,
+  telegramClient,
+  trace,
+  now
+}) {
+  const chatId = callback.message.chat.id;
+  const messageId = callback.message.message_id;
+  const context = occurrenceDate
+    ? await repository.getPlannedPaymentReminderForTelegramUser?.(
+      plannedExpenseId,
+      telegramUserId,
+      occurrenceDate
+    )
+    : null;
+  if (!context) {
+    return sendTelegramResponse(trace, async () => {
+      await answerCallback(token, callback.id, plannedReminderText(language, "unavailable"), telegramClient);
+      return editMessageText(
+        token,
+        chatId,
+        messageId,
+        plannedReminderText(language, "unavailable"),
+        { inline_keyboard: [] },
+        telegramClient
+      );
+    });
+  }
+
+  if (action === "p") {
+    await answerCallback(token, callback.id, plannedReminderText(language, "saving"), telegramClient)
+      .catch((error) => console.error("[planned-reminder] callback acknowledgement failed", error.message));
+    let expense;
+    try {
+      expense = await repository.payPlannedExpenseForTelegramUser(
+        plannedExpenseId,
+        telegramUserId,
+        now(),
+        { occurrenceDate }
+      );
+    } catch (error) {
+      const terminalKey = error.code === "already_paid"
+        ? "alreadyPaid"
+        : ["invalid_occurrence", "future_occurrence"].includes(error.code)
+          ? "invalidOccurrence"
+          : "unavailable";
+      if (error.code !== "already_paid" && !["invalid_occurrence", "future_occurrence", "not_found"].includes(error.code)) {
+        throw error;
+      }
+      if (error.code === "already_paid") {
+        await repository.markPlannedPaymentReminderTerminal?.(plannedExpenseId, occurrenceDate, "paid");
+      }
+      return safeReplacePlannedReminder({
+        token,
+        chatId,
+        messageId,
+        text: plannedReminderText(language, terminalKey),
+        replyMarkup: { inline_keyboard: [] },
+        telegramClient
+      });
+    }
+
+    let dashboardSnapshot = null;
+    try {
+      dashboardSnapshot = (await repository.dashboard(telegramUserId, now()))?.snapshot ?? null;
+    } catch (error) {
+      console.warn("[planned-reminder] dashboard summary unavailable after commit", {
+        plannedExpenseId,
+        occurrenceDate,
+        message: error?.message
+      });
+    }
+    const text = formatSavedSummary(Number(expense.amount_base), dashboardSnapshot, {
+      language,
+      expenses: [expense]
+    });
+    await repository.markPlannedPaymentReminderTerminal?.(plannedExpenseId, occurrenceDate, "paid");
+    await safeRecordAppEvent(repository, user?.id, "planned_payment_reminder_paid_clicked", {
+      local_date: occurrenceDate,
+      recurrence: context.recurrence,
+      source: "telegram",
+      outcome: "paid"
+    });
+    return safeReplacePlannedReminder({
+      token,
+      chatId,
+      messageId,
+      text,
+      replyMarkup: plannedPaymentSuccessKeyboard(miniAppUrl, telegramUserId, language),
+      telegramClient
+    });
+  }
+
+  if (action === "s") {
+    const timezoneUsed = normalizeTimeZone(user?.timezone ?? context.timezone).timeZone;
+    const nextReminderLocalDate = nextDateKey(timezoneLocalDateKey(now(), timezoneUsed));
+    const snoozed = await repository.snoozePlannedPaymentReminderForTelegramUser?.(
+      plannedExpenseId,
+      telegramUserId,
+      occurrenceDate,
+      nextReminderLocalDate,
+      timezoneUsed
+    );
+    await safeRecordAppEvent(repository, user?.id, "planned_payment_reminder_snoozed", {
+      local_date: occurrenceDate,
+      recurrence: context.recurrence,
+      source: "telegram",
+      outcome: snoozed ? "snoozed" : "stale"
+    });
+    return sendTelegramResponse(trace, async () => {
+      await answerCallback(token, callback.id, plannedReminderText(language, "snoozedToast"), telegramClient);
+      return editMessageText(
+        token,
+        chatId,
+        messageId,
+        plannedReminderText(language, snoozed ? "snoozed" : "unavailable"),
+        { inline_keyboard: [] },
+        telegramClient
+      );
+    });
+  }
+
+  if (action === "d") {
+    await safeRecordAppEvent(repository, user?.id, "planned_payment_reminder_disable_started", {
+      local_date: occurrenceDate,
+      recurrence: context.recurrence,
+      source: "telegram"
+    });
+    return sendTelegramResponse(trace, async () => {
+      await answerCallback(token, callback.id, plannedReminderText(language, "confirmDisableToast"), telegramClient);
+      return editMessageText(
+        token,
+        chatId,
+        messageId,
+        plannedDisableConfirmationText(language, context.description),
+        plannedPaymentDisableConfirmationKeyboard(plannedExpenseId, occurrenceDate, language),
+        telegramClient
+      );
+    });
+  }
+
+  if (action === "c") {
+    const timezoneUsed = normalizeTimeZone(user?.timezone ?? context.timezone).timeZone;
+    const sentLocalDate = String(
+      context.last_sent_local_date ?? timezoneLocalDateKey(now(), timezoneUsed)
+    ).slice(0, 10);
+    const deliveryReason = occurrenceDate === sentLocalDate ? "due_today" : "snoozed";
+    return sendTelegramResponse(trace, async () => {
+      await answerCallback(token, callback.id, plannedReminderText(language, "cancelled"), telegramClient);
+      return editMessageText(
+        token,
+        chatId,
+        messageId,
+        formatPlannedPaymentReminder(context, language, {
+          occurrenceDate,
+          localDate: sentLocalDate,
+          deliveryReason
+        }),
+        plannedPaymentReminderKeyboard(plannedExpenseId, occurrenceDate, miniAppUrl, telegramUserId, language),
+        telegramClient
+      );
+    });
+  }
+
+  if (action === "y") {
+    await answerCallback(token, callback.id, plannedReminderText(language, "disabling"), telegramClient);
+    const disabled = await repository.deactivatePlannedExpense(telegramUserId, plannedExpenseId, now());
+    if (!disabled) {
+      return safeReplacePlannedReminder({
+        token,
+        chatId,
+        messageId,
+        text: plannedReminderText(language, "unavailable"),
+        replyMarkup: { inline_keyboard: [] },
+        telegramClient
+      });
+    }
+    const outstanding = await repository.listOutstandingPlannedPaymentReminders(plannedExpenseId);
+    if (!outstanding.some((reminder) =>
+      Number(reminder.tg_chat_id) === Number(chatId)
+      && Number(reminder.tg_message_id) === Number(messageId))) {
+      outstanding.push({
+        ...context,
+        tg_chat_id: chatId,
+        tg_message_id: messageId,
+        interface_language: language
+      });
+    }
+    await updatePlannedPaymentReminderMessages({
+      token,
+      reminders: outstanding,
+      outcome: "disabled",
+      source: "telegram",
+      telegramClient
+    });
+    await repository.markAllPlannedPaymentRemindersTerminal(plannedExpenseId, "disabled");
+    await safeRecordAppEvent(repository, user?.id, "planned_payment_reminder_disabled", {
+      local_date: occurrenceDate,
+      recurrence: context.recurrence,
+      source: "telegram",
+      outcome: "disabled"
+    });
+    return { ok: true };
+  }
+
+  return answerCallback(token, callback.id, plannedReminderText(language, "unavailable"), telegramClient);
+}
+
+function decodePlannedReminderDate(value) {
+  const match = /^(\d{4})(\d{2})(\d{2})$/.exec(String(value ?? ""));
+  return match ? `${match[1]}-${match[2]}-${match[3]}` : null;
+}
+
+function nextDateKey(value) {
+  const [year, month, day] = String(value).split("-").map(Number);
+  const next = new Date(Date.UTC(year, month - 1, day + 1));
+  return next.toISOString().slice(0, 10);
+}
+
+function plannedDisableConfirmationText(language, description) {
+  const safeDescription = escapeTelegramHtml(description);
+  return language === "ru"
+    ? `Отключить плановую оплату «${safeDescription}»?\n\nБудущие неоплаченные вхождения исчезнут из плана. Уже оплаченные расходы сохранятся. Сегодняшний уже зафиксированный дневной лимит не изменится.`
+    : `Disable planned payment “${safeDescription}”?\n\nFuture unpaid occurrences will leave the plan. Paid expenses will remain. Today’s fixed daily limit will not change.`;
+}
+
+function plannedReminderText(language, key) {
+  const messages = language === "ru"
+    ? {
+      saving: "Сохраняю…",
+      alreadyPaid: "Эта оплата уже отмечена.",
+      invalidOccurrence: "Эту плановую оплату сейчас нельзя отметить.",
+      unavailable: "Эта плановая оплата больше недоступна.",
+      snoozedToast: "Напомню завтра",
+      snoozed: "⏰ Напомню завтра вечером.",
+      confirmDisableToast: "Нужно подтверждение",
+      cancelled: "Отменено",
+      disabling: "Отключаю…",
+      disabled: "🔕 Плановая оплата отключена."
+    }
+    : {
+      saving: "Saving…",
+      alreadyPaid: "This payment is already marked as paid.",
+      invalidOccurrence: "This planned payment cannot be marked now.",
+      unavailable: "This planned payment is no longer available.",
+      snoozedToast: "I’ll remind you tomorrow",
+      snoozed: "⏰ I’ll remind you tomorrow evening.",
+      confirmDisableToast: "Confirmation required",
+      cancelled: "Cancelled",
+      disabling: "Disabling…",
+      disabled: "🔕 Planned payment disabled."
+    };
+  return messages[key] ?? messages.unavailable;
+}
+
+async function safeReplacePlannedReminder({ token, chatId, messageId, text, replyMarkup, telegramClient }) {
+  try {
+    return await editMessageText(token, chatId, messageId, text, replyMarkup, telegramClient);
+  } catch (error) {
+    console.error("[planned-reminder] message edit failed after commit", error.message);
+    return sendMessage(token, chatId, text, replyMarkup, telegramClient);
+  }
+}
+
 function dailyReminderText(language, key) {
   const ru = language === "ru";
   const messages = {
@@ -2399,6 +2706,44 @@ export async function updateTelegramMessageAfterExpenseDelete({ token, draft, re
     text = botText(language, "expenseDeletedMessage");
   }
   await updateDraftMessageToSaved({ token, draft, text, replyMarkup, telegramClient });
+}
+
+export async function updatePlannedPaymentReminderMessages({
+  token,
+  reminders,
+  outcome,
+  source = "mini_app",
+  telegramClient
+}) {
+  for (const reminder of reminders ?? []) {
+    const language = reminder.interface_language === "ru" ? "ru" : "en";
+    const text = outcome === "disabled"
+      ? language === "ru"
+        ? source === "telegram"
+          ? "🔕 Плановая оплата отключена."
+          : "🔕 Плановая оплата отключена в Mini App."
+        : source === "telegram"
+          ? "🔕 Planned payment disabled."
+          : "🔕 Planned payment disabled in Mini App."
+      : language === "ru"
+        ? "✅ Оплата отмечена в Mini App."
+        : "✅ Payment marked as paid in Mini App.";
+    try {
+      await editMessageText(
+        token,
+        reminder.tg_chat_id,
+        reminder.tg_message_id,
+        text,
+        { inline_keyboard: [] },
+        telegramClient
+      );
+    } catch (error) {
+      console.warn("[planned-reminder] Mini App sync edit failed", {
+        outcome,
+        message: error?.message
+      });
+    }
+  }
 }
 
 export async function updateDraftMessageToDraftState({ token, draft, items, miniAppUrl, telegramUserId, language, repository, user, telegramClient }) {

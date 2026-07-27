@@ -1,5 +1,11 @@
 # Money Flow Decision Log
 
+## 2026-07-27 - Planned Payment Reminders Use Exact Durable Occurrence State
+
+Telegram planned-payment reminders reuse the repository's canonical pay and disable transactions. Delivery state is durable and unique per planned expense plus occurrence date, with exact-occurrence snooze and a Telegram message reference for best-effort Mini App synchronization. The scheduler uses the user's IANA timezone and runs before the empty-day reminder so a successful planned reminder suppresses the latter for that local date.
+
+A pay callback treats the planned-payment transaction as the commit boundary. Dashboard formatting, analytics, and Telegram edits are post-commit and best-effort. The successful card reuses the shared saved-expense summary but exposes only the Mini App button, because editing or ordinary deletion would misrepresent ownership of planned fields and exact-occurrence undo.
+
 ## 2026-07-22 - Planned Payment Undo Targets One Factual Link
 
 Undo is a separate exact-occurrence transaction, not ordinary expense deletion or a plan mutation. It locks the owned plan, the payment link selected by `planned_expense_id` plus `occurrence_date`, and then its linked expense. Only a same-user linked expense may be removed. A missing link is an idempotent success, while an inconsistent link or closed reserve month rolls back without mutation. The transaction deliberately does not invalidate today's opening budget snapshot; analytics is post-commit and privacy-minimal.

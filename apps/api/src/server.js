@@ -16,6 +16,7 @@ import { createExpenseParser } from "./expenseParser.js";
 import { createJsonReader, createStaticHandler, sendJson } from "./http.js";
 import { handleDevRoute } from "./devRoutes.js";
 import { createMiniAppLaunchService } from "./miniAppLaunchService.js";
+import { createPlannedPaymentReminderService } from "./plannedPaymentReminderService.js";
 import { createRateLimiter, getRateLimitKey } from "./rateLimit.js";
 import { createReleaseDigestScheduler } from "./releaseDigestScheduler.js";
 import { createReleaseNotesService } from "./releaseNotesService.js";
@@ -32,6 +33,7 @@ import {
   updateDraftMessageToCanceled,
   updateDraftMessageToDraftState,
   updateDraftMessageToSaved,
+  updatePlannedPaymentReminderMessages,
   updateTelegramMessageAfterExpenseDelete
 } from "./telegram.js";
 import { syncTelegramCommandMenu } from "./telegramCommands.js";
@@ -130,6 +132,16 @@ const dailyReminderService = createDailyReminderService({
   globalEnabled: config.dailyReminderGlobalEnabled,
   rolloutPercent: config.dailyReminderRolloutPercent
 });
+const plannedPaymentReminderService = createPlannedPaymentReminderService({
+  repository,
+  sendMessage: (message) => sendTelegramMessage({
+    token: config.telegramBotToken,
+    ...message
+  }),
+  globalEnabled: config.plannedPaymentReminderGlobalEnabled,
+  sendHour: config.plannedPaymentReminderSendHour,
+  miniAppUrl: config.miniAppUrl
+});
 const reportService = createReportService({
   repository,
   miniAppUrl: config.miniAppUrl,
@@ -201,8 +213,21 @@ server.listen(config.port, () => {
 });
 
 function startDailyReminderScheduler() {
-  if (!config.telegramBotToken || !config.dailyReminderGlobalEnabled) return;
+  if (
+    !config.telegramBotToken
+    || (!config.dailyReminderGlobalEnabled && !config.plannedPaymentReminderGlobalEnabled)
+  ) return;
   const run = async () => {
+    try {
+      await plannedPaymentReminderService.runOnce();
+    } catch (error) {
+      console.error("[planned-payment-reminder] failed", error);
+      void safeNotifyAdminError(adminAlertService, error, {
+        source: "scheduler",
+        jobName: "planned-payment-reminder",
+        operation: "run_once"
+      });
+    }
     try {
       await dailyReminderService.runOnce();
     } catch (error) {
@@ -223,6 +248,33 @@ async function safeNotifyAdminError(adminAlertService, error, context) {
   await adminAlertService.notifyAdminError(error, context).catch((alertError) => {
     console.error("[admin-alerts] notify failed", alertError.message);
   });
+}
+
+async function syncPlannedPaymentReminderMessages(plannedExpenseId, occurrenceDate, outcome) {
+  if (outcome === "paid" && !occurrenceDate) return;
+  try {
+    const reminders = await repository.listOutstandingPlannedPaymentReminders(
+      plannedExpenseId,
+      occurrenceDate
+    );
+    await updatePlannedPaymentReminderMessages({
+      token: config.telegramBotToken,
+      reminders,
+      outcome
+    });
+    for (const reminder of reminders) {
+      await repository.markPlannedPaymentReminderTerminal(
+        plannedExpenseId,
+        String(reminder.occurrence_date).slice(0, 10),
+        outcome
+      );
+    }
+  } catch (error) {
+    console.warn("[planned-reminder] Mini App sync failed after commit", {
+      outcome,
+      message: error?.message
+    });
+  }
 }
 
 function routePath(req) {
@@ -498,6 +550,7 @@ async function route(req, res) {
 
     const result = await repository.deactivatePlannedExpense(auth.telegramUserId, Number(plannedMatch[1]));
     if (!result) return sendJson(res, 404, { error: "planned_expense_not_found" });
+    await syncPlannedPaymentReminderMessages(Number(plannedMatch[1]), null, "disabled");
     return sendJson(res, 200, result);
   }
 
@@ -641,6 +694,11 @@ async function route(req, res) {
         auth.telegramUserId,
         body.paidAt ? new Date(body.paidAt) : new Date(),
         { occurrenceDate: body.occurrenceDate }
+      );
+      await syncPlannedPaymentReminderMessages(
+        Number(plannedPayMatch[1]),
+        body.occurrenceDate,
+        "paid"
       );
       return sendJson(res, 200, { expense });
     } catch (error) {

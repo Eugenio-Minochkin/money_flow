@@ -17,6 +17,7 @@ Use this guide when changing business logic or UI around the main Money Flow sur
 - Planned payment undo: exact occurrence selection across weekly/twice-monthly/monthly/one-off plans; same-user link integrity; idempotent retry; closed reserve month rollback; archive-capable repository route; unchanged current-day opening snapshot; post-commit privacy-minimal analytics; exact-date Mini App controls with one-request lifecycle and RU/EN error text.
 - User timezone behavior for today/yesterday, weeks, months, daily budget snapshots, planned payment dates, and reminders.
 - Daily empty-day reminder guardrails: kill switch, rollout, 48-hour cap, idempotency, no-spending marks, and Telegram blocked/forbidden errors.
+- Planned-payment reminder guardrails: production-default kill switch, configured local send hour, exact-occurrence idempotency, snooze-only notification changes, stale callbacks, RU/EN copy and styles, shared saved summary, Mini App best-effort card sync, and same-evening empty-day suppression.
 - Disabled planned payments.
 - Weekly recurrence deduplication.
 - Reserve logic.
@@ -35,6 +36,7 @@ Use this guide when changing business logic or UI around the main Money Flow sur
 - Planned payment behavior is spread across shared parsing, API repository logic, Telegram callbacks, Mini App planned UI, and related tests. Lifecycle changes need canonical occurrence tests, repository and budget/reserve coverage, server archive/recreate/DELETE/PATCH contract coverage, pure Mini App interaction tests in RU and EN, and narrow-width visual verification of archive and recreate states.
 - Timezone helpers live in `packages/shared/src/time.js` and are covered by `packages/shared/test/time.test.js`.
 - Daily reminder behavior is covered by `apps/api/test/dailyReminderService.test.js`, repository tests, and Telegram callback tests.
+- Planned-payment reminder behavior is covered by `apps/api/test/plannedPaymentReminderService.test.js`, `apps/api/test/plannedPaymentReminderCallback.test.js`, `apps/api/test/plannedPaymentReminderSync.test.js`, keyboard/config/repository tests, and the PostgreSQL smoke.
 - Telegram editor text-input changes must cover prompt persistence, retry after validation errors, session cleanup on Cancel/Save/terminal actions, and a fresh editor card after successful input.
 - Report behavior is covered by `apps/api/test/reportPeriods.test.js`, `apps/api/test/reportService.test.js`, `apps/api/test/reportFormat.test.js`, `apps/api/test/reportAnalytics.test.js`, `apps/api/test/reportKeyboards.test.js`, `apps/api/test/reportScheduler.test.js`, and repository delivery tests. Weekly comparison/changes/takeaway/needs-attention logic is unit-tested in `apps/api/test/reportAnalytics.test.js`, and the bilingual category label resolver in `packages/shared/test/categories.test.js`.
 - Dashboard presentation is covered by Mini App dashboard and smoke asset tests.
@@ -74,7 +76,7 @@ The suite refuses to run unless `DATABASE_URL` points at localhost/127.0.0.1 and
 - new Telegram user persistence and defaults;
 - confirmed draft expense save/read;
 - dashboard budget summary over real rows;
-- planned payment create/list/pay/undo/deactivate/archive/recreate, including migrations `011` and `012`, `disabled_at`, nullable `starts_on`, exact payment-link undo with closed-month rollback and idempotent retry, transactional and idempotent disable, archive aggregates, independent recreate with transaction-client reserve validation, preserved paid history, PostgreSQL calendar-date semantics, same-day snapshot stability, immediate live month recalculation, and next-local-day snapshot creation;
+- planned payment create/list/pay/undo/deactivate/archive/recreate/reminder state, including migrations `011`–`013`, `disabled_at`, nullable `starts_on`, durable exact-occurrence delivery and snooze, exact payment-link undo with closed-month rollback and idempotent retry, transactional and idempotent disable, archive aggregates, independent recreate with transaction-client reserve validation, preserved paid history, PostgreSQL calendar-date semantics, same-day snapshot stability, immediate live month recalculation, and next-local-day snapshot creation;
 - reserve create/read through dashboard state;
 - expense edit/delete and recalculated totals;
 - transactional account deletion, privacy-sensitive row cleanup, safe audit metadata, and global exchange-rate preservation;

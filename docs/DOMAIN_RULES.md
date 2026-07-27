@@ -55,6 +55,15 @@ This file records stable product and business rules. Read it before changing bud
 - Enforce both one delivery per `user_id + local_date + reminder_type` and a 48-hour frequency cap.
 - Telegram blocked/forbidden errors must be logged and should mark the user as bot-blocked.
 
+## Planned Payment Telegram Reminder
+
+- At or after the configured local hour, one actionable Telegram card may be sent for an exact unpaid occurrence due on the user's local date.
+- Delivery, snooze, and Telegram message references are durable per planned expense plus occurrence date. An ignored occurrence is not repeated automatically; snooze changes only the next notification date.
+- Pay and disable callbacks recheck ownership and current DB state and reuse the canonical planned-payment lifecycle methods. Paying creates the same linked planned expense used by Mini App.
+- A successful planned reminder suppresses the empty-day reminder for that user and local date.
+- Paying or disabling in Mini App clears an outstanding Telegram card best-effort after commit. Telegram failures never roll back the financial mutation.
+- Reminder analytics contains only safe enums, dates, recurrence, source, and outcome; it never contains descriptions, amounts, Telegram IDs, or callback payloads.
+
 ## Budget Top-ups
 
 - A budget top-up increases the effective budget for its `month_key`: `base month budget + active top-ups`.

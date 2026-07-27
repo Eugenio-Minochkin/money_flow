@@ -23,6 +23,12 @@ Money Flow UI should feel light and direct. Favor quick comprehension over dense
 - Recreate is an explicit form mode with a user-local `Start counting from` date. A successful creation closes the form before refresh; a refresh failure shows a warning without inviting a duplicate submit.
 - On narrow screens, long descriptions, large amounts, metadata, and the action button wrap within the card without horizontal scrolling or clipping.
 
+## Telegram Planned Payment Reminder
+
+- Use one card per exact occurrence with explicit `planned payment` wording in RU and EN.
+- Pay, snooze, disable, and Mini App actions stay on separate rows. Disable requires a confirmation step.
+- After payment, reuse the common saved-expense summary and show only the primary Mini App button; do not expose ordinary expense edit or delete controls.
+
 ## Responsive Behavior
 
 - Support both small and large iPhone screens, including iPhone 11 and iPhone 14 Pro.

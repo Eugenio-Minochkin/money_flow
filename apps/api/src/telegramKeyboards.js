@@ -190,6 +190,59 @@ export function dailyReminderKeyboard(language = "ru") {
   };
 }
 
+export function plannedPaymentReminderKeyboard(
+  plannedExpenseId,
+  occurrenceDate,
+  miniAppUrl,
+  telegramUserId,
+  language = "ru"
+) {
+  const dateCode = String(occurrenceDate).replaceAll("-", "");
+  const ru = language === "ru";
+  return {
+    inline_keyboard: [
+      [{
+        text: ru ? "✅ Оплачено" : "✅ Paid",
+        callback_data: `ppr:p:${plannedExpenseId}:${dateCode}`,
+        style: "success"
+      }],
+      [{
+        text: ru ? "⏰ Напомнить завтра" : "⏰ Remind me tomorrow",
+        callback_data: `ppr:s:${plannedExpenseId}:${dateCode}`
+      }],
+      [{
+        text: ru ? "🔕 Отключить плановую оплату" : "🔕 Disable planned payment",
+        callback_data: `ppr:d:${plannedExpenseId}:${dateCode}`
+      }],
+      [miniAppHomeButton({ miniAppUrl, telegramUserId, language })]
+    ]
+  };
+}
+
+export function plannedPaymentDisableConfirmationKeyboard(plannedExpenseId, occurrenceDate, language = "ru") {
+  const dateCode = String(occurrenceDate).replaceAll("-", "");
+  const ru = language === "ru";
+  return {
+    inline_keyboard: [
+      [{
+        text: ru ? "🔕 Да, отключить" : "🔕 Yes, disable",
+        callback_data: `ppr:y:${plannedExpenseId}:${dateCode}`,
+        style: "danger"
+      }],
+      [{
+        text: ru ? "Отмена" : "Cancel",
+        callback_data: `ppr:c:${plannedExpenseId}:${dateCode}`
+      }]
+    ]
+  };
+}
+
+export function plannedPaymentSuccessKeyboard(miniAppUrl, telegramUserId, language = "ru") {
+  return {
+    inline_keyboard: [[miniAppHomeButton({ miniAppUrl, telegramUserId, language })]]
+  };
+}
+
 function keyboardText(language) {
   if (language === "en") {
     return {

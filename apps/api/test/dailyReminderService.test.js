@@ -98,6 +98,30 @@ test("logs timezone fallback events and blocked Telegram errors", async () => {
   assert.equal(repo.events.some((event) => event.eventName === "daily_reminder_blocked_or_forbidden"), true);
 });
 
+test("skips empty-day reminder after a planned-payment reminder on the same local date", async () => {
+  const user = {
+    id: 1,
+    telegram_user_id: 100,
+    timezone: "Asia/Bangkok",
+    interface_language: "en",
+    created_at: "2026-06-20T00:00:00Z"
+  };
+  const repo = fakeRepo([user]);
+  repo.hasDailyReminderDelivery = async (_userId, _localDate, reminderType) =>
+    reminderType === "planned_payment";
+  const sent = [];
+
+  const result = await createDailyReminderService({
+    repository: repo,
+    sendMessage: async (message) => sent.push(message),
+    globalEnabled: true,
+    now: () => new Date("2026-06-25T15:30:00Z")
+  }).runOnce();
+
+  assert.equal(result.sent, 0);
+  assert.equal(sent.length, 0);
+});
+
 function fakeRepo(users) {
   return {
     users,

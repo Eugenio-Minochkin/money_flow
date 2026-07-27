@@ -96,6 +96,26 @@ test("daily reminders default on in production while preserving an explicit kill
   );
 });
 
+test("planned payment reminders default on only in production and use a validated send hour", () => {
+  assert.equal(buildConfig({ NODE_ENV: "production" }).plannedPaymentReminderGlobalEnabled, true);
+  assert.equal(buildConfig({ NODE_ENV: "development" }).plannedPaymentReminderGlobalEnabled, false);
+  assert.equal(buildConfig({
+    NODE_ENV: "production",
+    PLANNED_PAYMENT_REMINDER_GLOBAL_ENABLED: "false"
+  }).plannedPaymentReminderGlobalEnabled, false);
+  assert.equal(buildConfig({ PLANNED_PAYMENT_REMINDER_SEND_HOUR: "18" }).plannedPaymentReminderSendHour, 18);
+  assert.equal(buildConfig({ PLANNED_PAYMENT_REMINDER_SEND_HOUR: "24" }).plannedPaymentReminderSendHour, 21);
+});
+
+test("server wires planned reminder scheduler with admin alert containment", async () => {
+  const source = await readFile(new URL("../src/server.js", import.meta.url), "utf8");
+
+  assert.match(source, /createPlannedPaymentReminderService/);
+  assert.match(source, /plannedPaymentReminderService\.runOnce\(\)/);
+  assert.match(source, /jobName:\s*"planned-payment-reminder"/);
+  assert.match(source, /plannedPaymentReminderGlobalEnabled/);
+});
+
 test("expense parser LLM timeout defaults only when absent and fails fast on explicit invalid values", () => {
   assert.equal(buildConfig({}).expenseParserLlmTimeoutMs, 20000);
   assert.equal(buildConfig({ EXPENSE_PARSER_LLM_TIMEOUT_MS: "15000" }).expenseParserLlmTimeoutMs, 15000);

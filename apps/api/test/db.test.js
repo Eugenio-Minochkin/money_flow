@@ -150,6 +150,20 @@ test("product analytics migration adds first-touch fields and singleton onboardi
   assert.doesNotMatch(sql, /INSERT\s+INTO\s+app_events/i);
 });
 
+test("planned reminder migration stores exact occurrence state without financial text", async () => {
+  const dir = resolve(dirname(fileURLToPath(import.meta.url)), "..", "migrations");
+  const sql = await readFile(resolve(dir, "013_planned_payment_reminders.sql"), "utf8");
+
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS planned_payment_reminders/i);
+  assert.match(sql, /user_id BIGINT NOT NULL REFERENCES users\(id\) ON DELETE CASCADE/i);
+  assert.match(sql, /planned_expense_id BIGINT NOT NULL REFERENCES planned_expenses\(id\) ON DELETE CASCADE/i);
+  assert.match(sql, /occurrence_date DATE NOT NULL/i);
+  assert.match(sql, /UNIQUE\s*\(planned_expense_id,\s*occurrence_date\)/i);
+  assert.match(sql, /tg_chat_id BIGINT/i);
+  assert.match(sql, /tg_message_id BIGINT/i);
+  assert.doesNotMatch(sql, /description|amount|source_text|token/i);
+});
+
 test("migrate records applied files and skips them on the second run", async () => {
   const dir = await createTempMigrations({
     "001_create_sample.sql": "CREATE TABLE sample_migration_probe (id integer PRIMARY KEY);",
