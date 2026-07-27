@@ -1,10 +1,12 @@
+import { webAppButton } from "./telegramWebAppButtons.js";
+
 export function weeklyReportKeyboard(miniAppUrl, telegramUserId, period, language = "ru") {
   const text = language === "en"
     ? { open: "Open week" }
     : { open: "Открыть неделю" };
   return {
     inline_keyboard: [[
-      webAppButton(text.open, weeklyHistoryUrl(miniAppUrl, telegramUserId, period), "primary")
+      webAppButton({ text: text.open, url: weeklyHistoryUrl(miniAppUrl, telegramUserId, period) })
     ]]
   };
 }
@@ -15,8 +17,8 @@ export function monthlyReportKeyboard(miniAppUrl, telegramUserId, period, langua
     : { open: "Открыть месяц", budget: "Бюджет на новый месяц" };
   return {
     inline_keyboard: [[
-      webAppButton(text.open, monthlyHistoryUrl(miniAppUrl, telegramUserId, period), "primary"),
-      webAppButton(text.budget, `${miniAppUrl}?telegramUserId=${telegramUserId}&view=settings&focus=budget`, "primary")
+      webAppButton({ text: text.open, url: monthlyHistoryUrl(miniAppUrl, telegramUserId, period) }),
+      webAppButton({ text: text.budget, url: `${miniAppUrl}?telegramUserId=${telegramUserId}&view=settings&focus=budget` })
     ]]
   };
 }
@@ -33,7 +35,6 @@ function weeklyHistoryUrl(miniAppUrl, telegramUserId, period) {
   url.searchParams.set("reportKey", period.periodKey);
   return url.toString();
 }
-
 function monthlyHistoryUrl(miniAppUrl, telegramUserId, period) {
   const url = new URL(miniAppUrl);
   url.searchParams.set("telegramUserId", String(telegramUserId));
@@ -46,8 +47,4 @@ function monthlyHistoryUrl(miniAppUrl, telegramUserId, period) {
   url.searchParams.set("reportType", "monthly");
   url.searchParams.set("reportKey", period.periodKey);
   return url.toString();
-}
-
-function webAppButton(text, url, style) {
-  return { text, ...(style ? { style } : {}), web_app: { url } };
 }

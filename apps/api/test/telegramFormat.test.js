@@ -82,13 +82,13 @@ test("marks overflowed draft totals unavailable instead of rendering them as zer
   assert.doesNotMatch(singleCurrency, /<b>Total:<\/b> 0\.00 USD/);
 });
 
-test("formats a draft with total and review warning", () => {
+test("guides a single unresolved draft expense to choose a category", () => {
   const text = formatDraft([
     {
       amount: 70,
       currency: "THB",
       description: "coffee",
-      category_slug: "food_cafe",
+      category_slug: "other",
       spent_at: "2026-06-02T09:30:00+07:00",
       needs_review: true
     }
@@ -98,6 +98,27 @@ test("formats a draft with total and review warning", () => {
   assert.match(text, /02 июн|Jun 02/);
   assert.match(text, /70 THB/);
   assert.match(text, /<b>/);
+  assert.match(text, /Не уверен в категории\./);
+  assert.match(text, /Выбери подходящую ниже\. Если неверны название или сумма — нажми «Исправить»\./);
+  assert.doesNotMatch(text, /Есть сомнительные строки/);
+});
+
+test("guides multiple reviewable draft expenses to edit before saving", () => {
+  const text = formatDraft([
+    { amount: 70, currency: "THB", description: "coffee", category_slug: "other", needs_review: true },
+    { amount: 90, currency: "THB", description: "ride", category_slug: "transport", needs_review: true }
+  ], { language: "en" });
+
+  assert.match(text, /I may have misunderstood some expenses\./);
+  assert.match(text, /Tap “Edit” and review them before saving\./);
+});
+
+test("does not show a review warning for a confident draft expense", () => {
+  const text = formatDraft([
+    { amount: 70, currency: "THB", description: "coffee", category_slug: "food_cafe", needs_review: false }
+  ], { language: "en" });
+
+  assert.doesNotMatch(text, /Not sure about the category|misunderstood some expenses/);
 });
 
 test("explains the selected budget treatment for a single draft expense", () => {

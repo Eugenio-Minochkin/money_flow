@@ -1,4 +1,5 @@
 import { categoryName } from "../../../packages/shared/src/categories.js";
+import { draftNeedsCategoryChoice } from "./draftCategory.js";
 
 export function formatDraft(expenses, options = {}) {
   const language = normalizeLanguage(options.language);
@@ -20,9 +21,7 @@ export function formatDraft(expenses, options = {}) {
   const unavailableTotalWarning = !singleCurrency && !convertedPreview
     ? `\n\n⚠️ ${formatDraftUnavailableTotalWarning(totalCurrency, language)}`
     : "";
-  const review = expenses.some((expense) => expense.needs_review)
-    ? `\n\n⚠️ ${t(language, "draftReview")}`
-    : "";
+  const review = formatDraftReviewWarning(expenses, language);
   const treatment = expenses.length === 1
     ? `\n\n${formatDraftTreatmentExplanation(expenses[0]?.budget_impact, language)}`
     : "";
@@ -35,6 +34,14 @@ export function formatDraft(expenses, options = {}) {
     "",
     t(language, "isCorrect")
   ].join("\n");
+}
+
+function formatDraftReviewWarning(expenses, language) {
+  if (!expenses.some((expense) => expense.needs_review)) return "";
+  const key = expenses.length === 1 && draftNeedsCategoryChoice(expenses[0])
+    ? "draftReviewCategoryChoice"
+    : "draftReviewEdit";
+  return `\n\n⚠️ ${t(language, key)}`;
 }
 
 function isConvertedDraftPreview(preview, baseCurrency) {
@@ -369,7 +376,8 @@ const messages = {
     budget: "Бюджет",
     budgetSummaryUnavailable: "Сводка по бюджету временно недоступна.",
     day: "день",
-    draftReview: "Есть сомнительные строки, проверь перед сохранением.",
+    draftReviewCategoryChoice: "Не уверен в категории.\nВыбери подходящую ниже. Если неверны название или сумма — нажми «Исправить».",
+    draftReviewEdit: "Не уверен, что правильно понял некоторые расходы.\nНажми «Исправить» и проверь их перед сохранением.",
     draftTitle: "Я понял так:",
     forecast: "Прогноз",
     free: "Осталось",
@@ -410,7 +418,8 @@ const messages = {
     budget: "Budget",
     budgetSummaryUnavailable: "Budget summary is temporarily unavailable.",
     day: "day",
-    draftReview: "Some lines need review before saving.",
+    draftReviewCategoryChoice: "Not sure about the category.\nChoose one below. If the name or amount is wrong, tap “Edit”.",
+    draftReviewEdit: "I may have misunderstood some expenses.\nTap “Edit” and review them before saving.",
     draftTitle: "I understood this:",
     forecast: "Forecast",
     free: "Remaining",
