@@ -74,14 +74,23 @@ test("saved expense keyboard keeps editor actions and the final Mini App row", (
   assert.equal(keyboard.inline_keyboard.at(-1)[0].web_app.url, "http://localhost:3000?telegramUserId=100");
 });
 
-test("daily reminder keyboard includes lean MVP actions", () => {
-  const keyboard = dailyReminderKeyboard("en");
-  const buttons = keyboard.inline_keyboard.flat();
+test("daily reminder keyboard uses localized labels, styles, and separate action rows", () => {
+  for (const [language, labels] of [["en", ["➕ Add expense", "✅ No spending today", "🔕 Turn off reminders"]], ["ru", ["➕ Добавить расход", "✅ Сегодня без трат", "🔕 Отключить напоминания"]]]) {
+    const keyboard = dailyReminderKeyboard(language);
+    const buttons = keyboard.inline_keyboard.flat();
 
-  assert.equal(buttons[0].callback_data, "daily_reminder:add");
-  assert.equal(buttons[1].callback_data, "daily_reminder:no_spending");
-  assert.equal(buttons[2].callback_data, "daily_reminder:disable");
-  assert.equal(buttons[0].text, "Add expense");
+    assert.equal(keyboard.inline_keyboard.length, 3);
+    assert.ok(keyboard.inline_keyboard.every((row) => row.length === 1));
+    assert.deepEqual(buttons.map((button) => button.text), labels);
+    assert.deepEqual(buttons.map((button) => button.callback_data), [
+      "daily_reminder:add",
+      "daily_reminder:no_spending",
+      "daily_reminder:disable"
+    ]);
+    assert.equal(buttons[0].style, "primary");
+    assert.equal(buttons[1].style, "success");
+    assert.equal("style" in buttons[2], false);
+  }
 });
 
 test("all draft keyboard callback_data are at most 64 bytes", () => {
