@@ -1,20 +1,35 @@
 import { treatmentLabels } from "./telegramExpenseEditor.js";
+import { CATEGORIES } from "../../../packages/shared/src/categories.js";
 
-const QUICK_CATEGORY_CODES = [
-  { code: "food", slug: "food_cafe", label: "food" },
-  { code: "home", slug: "home", label: "home" },
-  { code: "transport", slug: "transport", label: "transport" },
-  { code: "health", slug: "health", label: "health" },
-  { code: "sport", slug: "sport_activities", label: "sport" },
-  { code: "other", slug: "other", label: "other" }
-];
+const LEGACY_CATEGORY_CODES = {
+  food: "food_cafe",
+  sport: "sport_activities"
+};
+
+const CATEGORY_BUTTON_LABELS = {
+  food_cafe: { ru: "🍽 Еда и кафе", en: "🍽 Food" },
+  groceries: { ru: "🛒 Продукты", en: "🛒 Groceries" },
+  home: { ru: "🏠 Дом", en: "🏠 Home" },
+  transport: { ru: "🛵 Транспорт", en: "🛵 Transport" },
+  health: { ru: "❤️ Здоровье", en: "❤️ Health" },
+  sport_activities: { ru: "🏃 Спорт", en: "🏃 Sport" },
+  gear: { ru: "🎒 Вещи", en: "🎒 Gear" },
+  travel: { ru: "✈️ Путешествия", en: "✈️ Travel" },
+  subscriptions: { ru: "📡 Подписки", en: "📡 Subscriptions" },
+  education: { ru: "📚 Образование", en: "📚 Education" },
+  gifts_help: { ru: "🎁 Подарки", en: "🎁 Gifts" },
+  entertainment: { ru: "🎭 Развлечения", en: "🎭 Entertainment" },
+  other: { ru: "••• Другое", en: "••• Other" }
+};
 
 export function categorySlugFromCode(code) {
-  return QUICK_CATEGORY_CODES.find((entry) => entry.code === code)?.slug ?? null;
+  if (CATEGORIES.some((category) => category.slug === code)) return code;
+  return LEGACY_CATEGORY_CODES[code] ?? null;
 }
 
 export function categoryCodeFromSlug(slug) {
-  return QUICK_CATEGORY_CODES.find((entry) => entry.slug === slug)?.code ?? null;
+  return Object.entries(LEGACY_CATEGORY_CODES).find(([, legacySlug]) => legacySlug === slug)?.[0]
+    ?? (CATEGORIES.some((category) => category.slug === slug) ? slug : null);
 }
 
 export function parseDraftCallback(data) {
@@ -77,6 +92,8 @@ export function draftKeyboard(draftId, items = [], miniAppUrl, telegramUserId, l
   const text = keyboardText(language);
   const rows = [[{ text: `✅ ${text.draftSave ?? text.confirm}`, callback_data: `d:${draftId}:confirm` }]];
 
+  rows[0][0].style = "success";
+
   if (Array.isArray(items) && items.length === 1) {
     const item = items[0];
     const impact = item.budget_impact;
@@ -89,10 +106,13 @@ export function draftKeyboard(draftId, items = [], miniAppUrl, telegramUserId, l
       item.category_source === "user" ||
       (item.category_slug !== "other" && !item.needs_review);
     if (!categoryIsResolved) {
-      rows.push(QUICK_CATEGORY_CODES.slice(0, 3).map((entry) =>
-        categoryButton(text[entry.label], false, draftId, entry.code)));
-      rows.push(QUICK_CATEGORY_CODES.slice(3).map((entry) =>
-        categoryButton(text[entry.label], false, draftId, entry.code)));
+      const categories = CATEGORIES.filter((category) => category.slug !== "other");
+      for (let index = 0; index < categories.length; index += 2) {
+        rows.push(categories.slice(index, index + 2).map((category) =>
+          categoryButton(categoryButtonLabel(category.slug, language), draftId, category.slug)));
+      }
+      const other = CATEGORIES.find((category) => category.slug === "other");
+      if (other) rows.push([categoryButton(categoryButtonLabel(other.slug, language), draftId, other.slug)]);
     }
   }
 
@@ -102,20 +122,24 @@ export function draftKeyboard(draftId, items = [], miniAppUrl, telegramUserId, l
   ]);
   rows.push([{ text: `📥 ${text.later}`, callback_data: `d:${draftId}:review` }]);
   rows.push([{ text: "📱 Mini App", web_app: { url: `${miniAppUrl}?telegramUserId=${telegramUserId}` } }]);
-  return { inline_keyboard: rows };
+  return withPrimaryMiniAppButtons({ inline_keyboard: rows });
 }
 
 function typeButton(label, draftId, code) {
   return { text: label, callback_data: `d:${draftId}:t:${code}` };
 }
 
-function categoryButton(label, selected, draftId, code) {
-  return { text: `${selected ? "✅" : "⬜"} ${label}`, callback_data: `d:${draftId}:c:${code}` };
+function categoryButton(label, draftId, slug) {
+  return { text: label, callback_data: `d:${draftId}:c:${slug}` };
+}
+
+function categoryButtonLabel(slug, language) {
+  return CATEGORY_BUTTON_LABELS[slug]?.[language] ?? CATEGORY_BUTTON_LABELS.other[language];
 }
 
 export function plannedDraftKeyboard(plannedDraftId, miniAppUrl, telegramUserId, language = "ru") {
   const text = keyboardText(language);
-  return {
+  return withPrimaryMiniAppButtons({
     inline_keyboard: [
       [{ text: `✅ ${text.addPlanned}`, callback_data: `plan_confirm:${plannedDraftId}` }],
       [
@@ -124,19 +148,19 @@ export function plannedDraftKeyboard(plannedDraftId, miniAppUrl, telegramUserId,
       ],
       [{ text: "📱 Mini App", web_app: { url: `${miniAppUrl}?telegramUserId=${telegramUserId}` } }]
     ]
-  };
+  });
 }
 
 export function appKeyboard(miniAppUrl, telegramUserId, language = "ru") {
   const text = keyboardText(language);
-  return {
+  return withPrimaryMiniAppButtons({
     inline_keyboard: [[{ text: `📱 ${text.openApp}`, web_app: { url: `${miniAppUrl}?telegramUserId=${telegramUserId}` } }]]
-  };
+  });
 }
 
 export function savedExpenseKeyboard(expenseId, miniAppUrl, telegramUserId, language = "ru") {
   const text = keyboardText(language);
-  return {
+  return withPrimaryMiniAppButtons({
     inline_keyboard: [
       [
         { text: `✏️ ${text.editorEdit ?? text.edit}`, callback_data: `ee:x:${expenseId}:o` },
@@ -144,22 +168,29 @@ export function savedExpenseKeyboard(expenseId, miniAppUrl, telegramUserId, lang
       ],
       [miniAppButton(miniAppUrl, telegramUserId, language)]
     ]
-  };
+  });
 }
 
 function miniAppButton(miniAppUrl, telegramUserId, language = "ru") {
   const text = keyboardText(language);
-  return { text: text.budgetTopupOpenMiniApp ?? `\ud83d\udcf1 ${text.openApp}`, web_app: { url: `${miniAppUrl}?telegramUserId=${telegramUserId}` } };
+  return { text: text.budgetTopupOpenMiniApp ?? `\ud83d\udcf1 ${text.openApp}`, style: "primary", web_app: { url: `${miniAppUrl}?telegramUserId=${telegramUserId}` } };
 }
 
 export function inboxDraftKeyboard(miniAppUrl, telegramUserId, draftId, language = "ru") {
   const text = keyboardText(language);
-  return {
+  return withPrimaryMiniAppButtons({
     inline_keyboard: [
       [{ text: `📥 ${text.openDraft}`, web_app: { url: `${miniAppUrl}?telegramUserId=${telegramUserId}&draftId=${draftId}` } }],
       [{ text: `📱 ${text.openApp}`, web_app: { url: `${miniAppUrl}?telegramUserId=${telegramUserId}` } }]
     ]
-  };
+  });
+}
+
+function withPrimaryMiniAppButtons(keyboard) {
+  for (const button of keyboard.inline_keyboard.flat()) {
+    if (button.web_app) button.style = "primary";
+  }
+  return keyboard;
 }
 
 export function dailyReminderKeyboard(language = "ru") {

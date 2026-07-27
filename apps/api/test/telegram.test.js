@@ -3219,7 +3219,7 @@ test("impact callback updates the draft item and edits the existing Telegram mes
   }
 });
 
-test("draft category callback (d: scheme) maps quick code to slug, marks user source and edits in place", async () => {
+test("draft category callback accepts a canonical slug, marks user source and edits in place", async () => {
   const calls = [];
   const repo = fakeRepository();
   const bot = createTelegramBot({
@@ -3237,19 +3237,39 @@ test("draft category callback (d: scheme) maps quick code to slug, marks user so
   await bot.handleUpdate({
     callback_query: {
       id: "callback-d-cat",
-      data: "d:42:c:food",
+      data: "d:42:c:groceries",
       from: { id: 100 },
       message: { chat: { id: 10 }, message_id: 71 }
     }
   });
 
-  assert.equal(repo.updatedItems[0].category_slug, "food_cafe");
+  assert.equal(repo.updatedItems[0].category_slug, "groceries");
   assert.equal(repo.updatedItems[0].category_source, "user");
   const edit = calls.find((call) => call.method === "editMessageText");
   assert.ok(edit);
   assert.equal(edit.messageId, 71);
   assert.equal(calls.some((call) => call.method === "sendMessage"), false);
   assert.ok(calls.some((call) => call.method === "answerCallbackQuery"));
+});
+
+test("draft category callback keeps legacy food and sport callbacks working end to end", async (t) => {
+  for (const [legacyCode, slug] of [["food", "food_cafe"], ["sport", "sport_activities"]]) {
+    await t.test(legacyCode, async () => {
+      const calls = [];
+      const repo = fakeRepository();
+      const bot = createTelegramBot({
+        token: "test-token",
+        miniAppUrl: "http://localhost:3000",
+        repository: repo,
+        telegramClient: capturingClient(calls)
+      });
+
+      await bot.handleUpdate(callbackUpdate(`d:42:c:${legacyCode}`, 100));
+
+      assert.equal(repo.updatedItems[0].category_slug, slug);
+      assert.ok(calls.some((call) => call.method === "editMessageText"));
+    });
+  }
 });
 
 test("draft callback redraw prepares a fresh mixed-currency total after the update", async () => {
@@ -3492,7 +3512,7 @@ test("unclear draft includes category quick actions", async () => {
     });
 
     const keyboard = calls[1][1].replyMarkup.inline_keyboard.flat();
-    assert.ok(keyboard.some((button) => button.callback_data === "d:42:c:food"));
+    assert.ok(keyboard.some((button) => button.callback_data === "d:42:c:food_cafe"));
   } finally {
     console.log = originalLog;
   }
