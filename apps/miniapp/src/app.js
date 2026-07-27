@@ -19,10 +19,12 @@ import {
 import {
   buildCalendarMonth,
   canNavigateToMonth,
+  buildHistoryRequestParams,
   createCalendarDraft,
   expenseCountLabel,
   formatCustomRangeLabel,
   groupByDay,
+  historyFilterFromLaunchParams,
   periodTotal,
   selectRangeDate,
   shiftCalendarMonth
@@ -67,7 +69,8 @@ let draftReturnTab = "dashboard";
 let expenseReturnTab = "dashboard";
 let historyState = [];
 let inboxState = [];
-let historyFilterState = { period: "month", fromDate: "", toDate: "" };
+let historyFilterState = historyFilterFromLaunchParams(params);
+let skipNextHistoryTabLoad = false;
 let historyCalendarDraft = null;
 let currentLanguage = "en";
 let translate = createTranslator(currentLanguage);
@@ -192,6 +195,11 @@ async function load() {
   const dashboard = await loadDashboard();
   if (isOnboardingDashboardResponse(dashboard)) return;
   await loadHistory();
+  if (params.get("view") === "history") {
+    skipNextHistoryTabLoad = true;
+    switchTab("history");
+  }
+  if (params.get("view") === "settings") switchTab("settings");
   if (draftId) await openDraftInline(draftId, {
     returnTab: "dashboard",
     row: document.querySelector(`[data-inbox-location="dashboard"][data-draft-row="${draftId}"]`)
@@ -376,16 +384,7 @@ function renderMonthlyForecast(snapshot, analytics) {
 async function loadHistory() {
   if (accountDeleted) return;
   const search = document.querySelector("#historySearch").value.trim();
-  const params = new URLSearchParams({
-    telegramUserId: String(telegramUserId),
-    search
-  });
-  if (historyFilterState.period === "custom" && historyFilterState.fromDate && historyFilterState.toDate) {
-    params.set("fromDate", historyFilterState.fromDate);
-    params.set("toDate", historyFilterState.toDate);
-  } else {
-    params.set("period", historyFilterState.period || "month");
-  }
+  const params = buildHistoryRequestParams(telegramUserId, search, historyFilterState);
   const [data, inbox] = await Promise.all([
     api(`/api/expenses?${params.toString()}`),
     api(`/api/drafts?telegramUserId=${encodeURIComponent(telegramUserId)}&status=inbox`)
@@ -400,7 +399,7 @@ async function loadHistory() {
 }
 
 function selectHistoryPeriod(period) {
-  historyFilterState = { period, fromDate: "", toDate: "" };
+  historyFilterState = { period, monthKey: "", fromDate: "", toDate: "" };
   updateHistoryFilterChips();
   loadHistory().catch(showError);
 }
@@ -411,14 +410,14 @@ function applyHistoryCustomRange() {
   if (!fromDate || !toDate) {
     return;
   }
-  historyFilterState = { period: "custom", fromDate, toDate };
+  historyFilterState = { period: "custom", monthKey: "", fromDate, toDate };
   closeHistoryDatePicker();
   updateHistoryFilterChips();
   loadHistory().catch(showError);
 }
 
 function resetHistoryPeriod() {
-  historyFilterState = { period: "month", fromDate: "", toDate: "" };
+  historyFilterState = { period: "month", monthKey: "", fromDate: "", toDate: "" };
   closeHistoryDatePicker();
   updateHistoryFilterChips();
   loadHistory().catch(showError);
@@ -585,7 +584,13 @@ function switchTab(tab) {
   document.querySelectorAll("[data-tab]").forEach((button) => {
     button.classList.toggle("active", button.dataset.tab === tab);
   });
-  if (tab === "history") loadHistory().catch(showError);
+  if (tab === "history") {
+    if (skipNextHistoryTabLoad) {
+      skipNextHistoryTabLoad = false;
+      return;
+    }
+    loadHistory().catch(showError);
+  }
 }
 
 function renderSnapshot(snapshot) {

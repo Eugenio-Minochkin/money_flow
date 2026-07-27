@@ -3,15 +3,79 @@ import assert from "node:assert/strict";
 
 import {
   buildCalendarMonth,
+  buildHistoryRequestParams,
   canNavigateToMonth,
   createCalendarDraft,
   expenseCountLabel,
   formatCustomRangeLabel,
   groupByDay,
+  historyFilterFromLaunchParams,
   periodTotal,
   selectRangeDate,
   shiftCalendarMonth
 } from "../src/history.js";
+
+test("history launch uses the exact weekly report range as a custom filter", () => {
+  assert.deepEqual(historyFilterFromLaunchParams(new URLSearchParams({
+    view: "history",
+    period: "custom",
+    fromDate: "2026-06-15",
+    toDate: "2026-06-21"
+  })), {
+    period: "custom",
+    fromDate: "2026-06-15",
+    toDate: "2026-06-21",
+    monthKey: ""
+  });
+});
+
+test("history launch keeps the month chip while using the exact monthly report range", () => {
+  assert.deepEqual(historyFilterFromLaunchParams(new URLSearchParams({
+    view: "history",
+    period: "month",
+    monthKey: "2026-06",
+    fromDate: "2026-06-01",
+    toDate: "2026-06-30"
+  })), {
+    period: "month",
+    monthKey: "2026-06",
+    fromDate: "2026-06-01",
+    toDate: "2026-06-30"
+  });
+});
+
+test("invalid history launch parameters fall back to the current-month filter", () => {
+  assert.deepEqual(historyFilterFromLaunchParams(new URLSearchParams({
+    view: "history",
+    period: "month",
+    monthKey: "2026-06",
+    fromDate: "2026-06-01",
+    toDate: "2026-07-01"
+  })), {
+    period: "month",
+    monthKey: "",
+    fromDate: "",
+    toDate: ""
+  });
+});
+
+test("historical month sends its report dates in the first history request while keeping the month filter", () => {
+  assert.equal(buildHistoryRequestParams(100, "", {
+    period: "month",
+    monthKey: "2026-06",
+    fromDate: "2026-06-01",
+    toDate: "2026-06-30"
+  }).toString(), "telegramUserId=100&search=&fromDate=2026-06-01&toDate=2026-06-30");
+});
+
+test("manual month filter has no launch dates and requests the current local month", () => {
+  assert.equal(buildHistoryRequestParams(100, "coffee", {
+    period: "month",
+    monthKey: "",
+    fromDate: "",
+    toDate: ""
+  }).toString(), "telegramUserId=100&search=coffee&period=month");
+});
 
 test("groups expenses by local calendar day and sums base amounts", () => {
   const groups = groupByDay([

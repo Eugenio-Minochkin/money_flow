@@ -40,6 +40,34 @@ export function formatCustomRangeLabel(fromDate, toDate, language = "ru") {
   return `${format(from)} \u2014 ${format(to)}`;
 }
 
+export function historyFilterFromLaunchParams(params) {
+  const fallback = { period: "month", monthKey: "", fromDate: "", toDate: "" };
+  if (params?.get("view") !== "history") return fallback;
+  const period = params.get("period");
+  const fromDate = params.get("fromDate");
+  const toDate = params.get("toDate");
+  if (!isValidRange(fromDate, toDate)) return fallback;
+  if (period === "custom") {
+    return { period: "custom", monthKey: "", fromDate, toDate };
+  }
+  const monthKey = params.get("monthKey");
+  if (period === "month" && parseYm(monthKey) && fromDate.startsWith(`${monthKey}-`) && toDate.startsWith(`${monthKey}-`)) {
+    return { period: "month", monthKey, fromDate, toDate };
+  }
+  return fallback;
+}
+
+export function buildHistoryRequestParams(telegramUserId, search, filter) {
+  const params = new URLSearchParams({ telegramUserId: String(telegramUserId), search: String(search ?? "") });
+  if (isValidRange(filter?.fromDate, filter?.toDate)) {
+    params.set("fromDate", filter.fromDate);
+    params.set("toDate", filter.toDate);
+  } else {
+    params.set("period", filter?.period || "month");
+  }
+  return params;
+}
+
 export function selectRangeDate(state = {}, date) {
   if (!parseYmd(date)) return { ...state };
   if (!state.startDate || state.selectionComplete) {
@@ -130,8 +158,12 @@ export function createCalendarDraft(filter, today) {
 function parseYmd(value) {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value ?? ""));
   if (!match) return null;
-  const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
-  return Number.isNaN(date.getTime()) ? null : date;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(year, month - 1, day);
+  if (Number.isNaN(date.getTime()) || date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) return null;
+  return date;
 }
 
 function parseYm(value) {
@@ -141,4 +173,8 @@ function parseYm(value) {
   const month = Number(match[2]);
   if (month < 1 || month > 12) return null;
   return { year, month };
+}
+
+function isValidRange(fromDate, toDate) {
+  return Boolean(parseYmd(fromDate) && parseYmd(toDate) && compareYmd(fromDate, toDate) <= 0);
 }
