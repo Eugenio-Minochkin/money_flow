@@ -109,7 +109,23 @@ test("admin Rich Message falls back to multipart HTML after a deterministic 400"
   assert.ok(calls.some((call) => call.method === "sendMessage"));
 });
 
-test("admin Rich Message uses multipart HTML before sending an oversized report", async () => {
+test("admin Rich Message keeps a 4000-character report in Rich transport", async () => {
+  const calls = [];
+  const bot = createTelegramBot({
+    token: "test-token", miniAppUrl: "http://localhost:3000", repository: fakeRepository(),
+    adminTelegramIds: new Set([100]),
+    adminStatsService: { async getAdminStats() { return emptyProductAdminStats({ sources: [{ source: "x".repeat(4000), started: 1, activated: 1, activationRate: 1 }] }); } },
+    telegramClient: {
+      async sendRichMessage(message) { calls.push({ method: "sendRichMessage", ...message }); return { ok: true }; },
+      async sendMessage(message) { calls.push({ method: "sendMessage", ...message }); return { ok: true }; }
+    }
+  });
+  await bot.handleUpdate(textUpdate("/admin_stats", 100));
+
+  assert.deepEqual(calls.map((call) => call.method), ["sendRichMessage"]);
+});
+
+test("admin Rich Message uses multipart HTML only above the 32768-character limit", async () => {
   const calls = [];
   const originalWarn = console.warn;
   console.warn = () => {};
@@ -117,7 +133,7 @@ test("admin Rich Message uses multipart HTML before sending an oversized report"
     const bot = createTelegramBot({
       token: "test-token", miniAppUrl: "http://localhost:3000", repository: fakeRepository(),
       adminTelegramIds: new Set([100]),
-      adminStatsService: { async getAdminStats() { return emptyProductAdminStats({ sources: [{ source: "x".repeat(4000), started: 1, activated: 1, activationRate: 1 }] }); } },
+      adminStatsService: { async getAdminStats() { return emptyProductAdminStats({ sources: [{ source: "x".repeat(32769), started: 1, activated: 1, activationRate: 1 }] }); } },
       telegramClient: {
         async sendRichMessage(message) { calls.push({ method: "sendRichMessage", ...message }); return { ok: true }; },
         async sendMessage(message) { calls.push({ method: "sendMessage", ...message }); return { ok: true }; }
@@ -129,6 +145,30 @@ test("admin Rich Message uses multipart HTML before sending an oversized report"
   }
   assert.equal(calls.some((call) => call.method === "sendRichMessage"), false);
   assert.ok(calls.some((call) => call.method === "sendMessage"));
+});
+
+test("full technical report is sent as one Rich Message", async () => {
+  const calls = [];
+  const bot = createTelegramBot({
+    token: "test-token", miniAppUrl: "http://localhost:3000", repository: fakeRepository(),
+    adminTelegramIds: new Set([100]),
+    adminStatsService: {
+      async getTechnicalStats() {
+        return { generatedAt: new Date("2026-07-27T10:00:00Z"), today: fullTechnicalPeriod(), last7Days: fullTechnicalPeriod() };
+      }
+    },
+    telegramClient: {
+      async sendRichMessage(message) { calls.push({ method: "sendRichMessage", ...message }); return { ok: true }; },
+      async sendMessage(message) { calls.push({ method: "sendMessage", ...message }); return { ok: true }; }
+    }
+  });
+
+  await bot.handleUpdate(textUpdate("/admin_stats_tech", 100));
+
+  assert.deepEqual(calls.map((call) => call.method), ["sendRichMessage"]);
+  assert.match(calls[0].html, /Confirm P95/);
+  assert.match(calls[0].html, /Parser routing/);
+  assert.match(calls[0].html, /Shadow fields/);
 });
 
 test("admin Rich Message does not retry after network, 429, or 5xx errors", async () => {
@@ -4714,6 +4754,32 @@ function emptyAdminPeriod(overrides = {}) {
     parseFailedRate: null,
     ...overrides
   };
+}
+
+function fullTechnicalPeriod() {
+  return emptyAdminPeriod({
+    activeUsers: 1, newUsers: 1, messagesTotal: 3, textMessages: 2, voiceMessages: 1,
+    expensesSaved: 1, draftsCreated: 2, draftsConfirmed: 1, avgTextProcessingSeconds: 1, avgVoiceProcessingSeconds: 2,
+    p95TextProcessingSeconds: 3, p95VoiceProcessingSeconds: 4, confirmRate: 0.5, parseFailedRate: 0,
+    confirmFlow: {
+      attempts: 2, success: 1, alreadySaved: 0, cancelled: 0, categoryRequired: 1, failed: 0,
+      avgCallbackAckSeconds: 0.1, p95CallbackAckSeconds: 0.2, avgUserResultSeconds: 0.3, p95UserResultSeconds: 0.4,
+      avgTotalSeconds: 0.5, p95TotalSeconds: 0.6, avgDbSaveSeconds: 0.1, p95DbSaveSeconds: 0.2,
+      avgTelegramUpdateSeconds: 0.1, p95TelegramUpdateSeconds: 0.2
+    },
+    avgTextStageSeconds: {}, avgVoiceStageSeconds: {}, p95TextStageSeconds: {}, p95VoiceStageSeconds: {},
+    localFastPathCount: 1, llmCount: 2, llmSkippedCount: 0, localPrimaryCount: 1, localRejectedFallbackCount: 1,
+    llmPrimaryCount: 1, localExceptionFallbackCount: 0, rolloutExcludedCount: 0, nonExpenseGuardCount: 0,
+    avgLocalFastPathProcessingSeconds: 0.1, avgLlmProcessingSeconds: 0.2, localCandidateCount: 2, localAcceptedCount: 1,
+    localSafeCount: 1, localReviewableCount: 0, localRejectedCount: 1, llmFallbackCount: 1,
+    avgLocalParseSeconds: 0.01, p95LocalParseSeconds: 0.02, avgLlmHttpSeconds: 0.3, p95LlmHttpSeconds: 0.4,
+    categoryNeedsReviewCount: 1, shadowDisagreementCount: 2, shadowComparedCount: 120,
+    criticalShadowDisagreementCount: 1, criticalShadowDisagreementRate: 0.8,
+    categoryOnlyShadowDisagreementCount: 1, categoryOnlyShadowDisagreementRate: 0.8,
+    amountShadowDisagreementCount: 1, amountShadowDisagreementRate: 0.8,
+    currencyShadowDisagreementCount: 1, currencyShadowDisagreementRate: 0.8,
+    localFastPathRejectReasons: { amount: 1 }, shadowDisagreementFields: { category: "food" }
+  });
 }
 
 function emptyProductPeriod(overrides = {}) {

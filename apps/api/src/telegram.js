@@ -60,7 +60,7 @@ import {
 const ONBOARDING_STEPS = ["language", "budget_setup", "base_currency", "monthly_budget", "current_month_budget", "month_opening_spend"];
 const FEEDBACK_PENDING_TTL_MS = 30 * 60_000;
 const MIN_FEEDBACK_MESSAGE_LENGTH = 3;
-const RICH_MESSAGE_MAX_LENGTH = 3900;
+const RICH_MESSAGE_MAX_LENGTH = 32768;
 const pendingFeedbackByTelegramUser = new Map();
 const ACCOUNT_DELETION_SOURCE_TELEGRAM = "telegram";
 
@@ -2678,10 +2678,10 @@ async function sendAdminStatsMessage({ token, chatId, sections, command, reportT
 }
 
 function richMessageTextLength(html) {
-  return String(html)
+  const text = String(html)
     .replace(/<[^>]*>/g, "")
-    .replace(/&(amp|lt|gt|quot|#39);/g, "x")
-    .length;
+    .replace(/&(amp|lt|gt|quot|#39);/g, "x");
+  return Array.from(text).length;
 }
 
 async function sendAdminStatsHtmlFallback({ token, chatId, sections, telegramClient }) {
