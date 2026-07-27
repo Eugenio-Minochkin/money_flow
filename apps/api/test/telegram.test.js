@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 
 import { parseAdminTelegramIds } from "../src/adminAccess.js";
 import { createExpenseParser } from "../src/expenseParser.js";
-import { createTelegramBot, processQueuedMessage, sendTelegramMessage, sendWeeklyReports } from "../src/telegram.js";
+import { createTelegramBot, processQueuedMessage, sendTelegramMessage, sendTelegramRichMessage, sendWeeklyReports } from "../src/telegram.js";
 import { buildTelegramCommandMenu } from "../src/telegramCommands.js";
 import { CategoryRequiredError, DraftCanceledError } from "../src/repository.js";
 
@@ -28,6 +28,124 @@ test("exports the Telegram message sender used by the production server", async 
 
   assert.deepEqual(calls, [{ chatId: 100, text: "Release digest", replyMarkup }]);
   assert.deepEqual(result, { ok: true, result: { message_id: 42 } });
+});
+
+test("exports a Rich Message sender that preserves the injected response", async () => {
+  const calls = [];
+  const result = await sendTelegramRichMessage({
+    token: "unused-with-client",
+    chatId: 100,
+    html: "<h1>Stats</h1>",
+    replyMarkup: { inline_keyboard: [] },
+    telegramClient: {
+      async sendRichMessage(message) {
+        calls.push(message);
+        return { ok: true, result: { message_id: 43 } };
+      }
+    }
+  });
+
+  assert.deepEqual(calls, [{ chatId: 100, html: "<h1>Stats</h1>", replyMarkup: { inline_keyboard: [] } }]);
+  assert.deepEqual(result, { ok: true, result: { message_id: 43 } });
+});
+
+test("Rich Message sender calls the Bot API with one HTML content source", async () => {
+  const requests = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options) => {
+    requests.push({ url, body: JSON.parse(options.body) });
+    return { ok: true, async json() { return { ok: true, result: { message_id: 44 } }; } };
+  };
+
+  try {
+    const result = await sendTelegramRichMessage({
+      token: "test-token", chatId: 100, html: "<h1>Stats</h1>", replyMarkup: { inline_keyboard: [] }
+    });
+    assert.deepEqual(result, { ok: true, result: { message_id: 44 } });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  assert.match(requests[0].url, /\/sendRichMessage$/);
+  assert.deepEqual(requests[0].body, {
+    chat_id: 100,
+    rich_message: { html: "<h1>Stats</h1>", skip_entity_detection: true },
+    reply_markup: { inline_keyboard: [] }
+  });
+});
+
+test("Rich Message sender returns a synthetic message id without a token", async () => {
+  const calls = [];
+  const originalLog = console.log;
+  console.log = (...args) => calls.push(args);
+  try {
+    const result = await sendTelegramRichMessage({ token: "", chatId: 100, html: "<h1>Stats</h1>" });
+    assert.equal(result.ok, true);
+    assert.equal(Number.isInteger(result.result.message_id), true);
+  } finally {
+    console.log = originalLog;
+  }
+  assert.equal(calls[0][0], "[telegram:sendRichMessage]");
+});
+
+test("admin Rich Message falls back to multipart HTML after a deterministic 400", async () => {
+  const calls = [];
+  const originalWarn = console.warn;
+  console.warn = () => {};
+  try {
+    const bot = createTelegramBot({
+      token: "test-token", miniAppUrl: "http://localhost:3000", repository: fakeRepository(),
+      adminTelegramIds: new Set([100]), adminStatsService: { async getAdminStats() { return emptyProductAdminStats(); } },
+      telegramClient: {
+        async sendRichMessage(message) { calls.push({ method: "sendRichMessage", ...message }); throw Object.assign(new Error("bad rich HTML"), { status: 400 }); },
+        async sendMessage(message) { calls.push({ method: "sendMessage", ...message }); return { ok: true }; }
+      }
+    });
+    await bot.handleUpdate(textUpdate("/admin_stats", 100));
+  } finally {
+    console.warn = originalWarn;
+  }
+  assert.equal(calls.filter((call) => call.method === "sendRichMessage").length, 1);
+  assert.ok(calls.some((call) => call.method === "sendMessage"));
+});
+
+test("admin Rich Message uses multipart HTML before sending an oversized report", async () => {
+  const calls = [];
+  const originalWarn = console.warn;
+  console.warn = () => {};
+  try {
+    const bot = createTelegramBot({
+      token: "test-token", miniAppUrl: "http://localhost:3000", repository: fakeRepository(),
+      adminTelegramIds: new Set([100]),
+      adminStatsService: { async getAdminStats() { return emptyProductAdminStats({ sources: [{ source: "x".repeat(4000), started: 1, activated: 1, activationRate: 1 }] }); } },
+      telegramClient: {
+        async sendRichMessage(message) { calls.push({ method: "sendRichMessage", ...message }); return { ok: true }; },
+        async sendMessage(message) { calls.push({ method: "sendMessage", ...message }); return { ok: true }; }
+      }
+    });
+    await bot.handleUpdate(textUpdate("/admin_stats", 100));
+  } finally {
+    console.warn = originalWarn;
+  }
+  assert.equal(calls.some((call) => call.method === "sendRichMessage"), false);
+  assert.ok(calls.some((call) => call.method === "sendMessage"));
+});
+
+test("admin Rich Message does not retry after network, 429, or 5xx errors", async () => {
+  for (const status of [undefined, 429, 500]) {
+    const calls = [];
+    const bot = createTelegramBot({
+      token: "test-token", miniAppUrl: "http://localhost:3000", repository: fakeRepository(),
+      adminTelegramIds: new Set([100]), adminStatsService: { async getAdminStats() { return emptyProductAdminStats(); } },
+      telegramClient: {
+        async sendRichMessage(message) { calls.push({ method: "sendRichMessage", ...message }); throw Object.assign(new Error("delivery uncertain"), { status }); },
+        async sendMessage(message) { calls.push({ method: "sendMessage", ...message }); return { ok: true }; }
+      }
+    });
+
+    await assert.rejects(bot.handleUpdate(textUpdate("/admin_stats", 100)), /admin rich message delivery is ambiguous/);
+    assert.deepEqual(calls.map((call) => call.method), ["sendRichMessage"]);
+  }
 });
 
 test("new /start records the entry before showing and recording onboarding", async () => {
@@ -2010,10 +2128,10 @@ test("admin stats shows non-zero metrics after message draft and confirm flow", 
     }
   });
 
-  const statsMessage = messages.at(-1).text;
-  assert.match(statsMessage, /Active users: <b>1<\/b>/);
-  assert.match(statsMessage, /Expenses saved: <b>1<\/b>/);
-  assert.match(statsMessage, /Drafts: <b>1 created \/ 1 confirmed/);
+  const statsMessage = messages.at(-1).html;
+  assert.match(statsMessage, /Active users: <\/td><td><b>1<\/b>/);
+  assert.match(statsMessage, /Expenses saved: <\/td><td><b>1<\/b>/);
+  assert.match(statsMessage, /Drafts: <\/td><td><b>1 created \/ 1 confirmed/);
 });
 
 test("empty parse records a parse failure event", async () => {
@@ -2451,9 +2569,10 @@ test("admin stats command sends stats only to configured admin ids", async () =>
   }
 
   assert.equal(calls.length, 1);
-  assert.match(calls[0][1].text, /Product stats/);
-  assert.match(calls[0][1].text, /Today/);
-  assert.match(calls[0][1].text, /Active users: <b>1<\/b> \/ new users: 0/);
+  assert.equal(calls[0][0], "[telegram:sendRichMessage]");
+  assert.match(calls[0][1].html, /<h1>📊 Product stats<\/h1>/);
+  assert.match(calls[0][1].html, /<h2>📅 Today<\/h2>/);
+  assert.match(calls[0][1].html, /Active users: <\/td><td><b>1<\/b> \/ new users: 0/);
 });
 
 test("admin stats accepts numeric-string ids and bot command suffixes", async () => {
@@ -2482,7 +2601,7 @@ test("admin stats accepts numeric-string ids and bot command suffixes", async ()
   });
 
   assert.equal(serviceCalls, 1);
-  assert.match(messages[0].text, /Product stats/);
+  assert.match(messages[0].html, /<h1>📊 Product stats<\/h1>/);
 });
 
 test("technical admin stats use the separate suffixed command", async () => {
@@ -2505,9 +2624,10 @@ test("technical admin stats use the separate suffixed command", async () => {
   await bot.handleUpdate(textUpdate("/admin_stats_tech@MoneyFlowBot", 100));
 
   assert.equal(calls, 1);
-  assert.match(messages[0].text, /Technical stats/);
-  assert.match(messages[0].text, /Today — Traffic/);
-  assert.doesNotMatch(messages[0].text, /Last 30 days/);
+  assert.match(messages[0].html, /Technical stats/);
+  assert.match(messages[0].html, /<h2>Today<\/h2>/);
+  assert.match(messages[0].html, /Traffic/);
+  assert.doesNotMatch(messages[0].html, /Last 30 days/);
 });
 
 test("product and technical admin stats fail independently", async () => {
@@ -4469,6 +4589,10 @@ function fakeRepository() {
 function captureTelegramClient(messages) {
   return {
     async sendMessage(message) {
+      messages.push(message);
+      return { ok: true };
+    },
+    async sendRichMessage(message) {
       messages.push(message);
       return { ok: true };
     },
