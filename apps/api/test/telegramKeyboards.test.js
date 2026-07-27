@@ -176,7 +176,7 @@ test("unresolved single-item draft keyboard offers every canonical category in c
 
   assert.equal(keyboard.inline_keyboard[0][0].style, "success");
   assert.deepEqual(categoryButtons.map((button) => button.callback_data), CATEGORIES.map((category) => `d:42:c:${category.slug}`));
-  assert.ok(categoryRows.slice(0, -1).every((row) => row.length === 2));
+  assert.deepEqual(categoryRows.map((row) => row.length), [3, 3, 3, 3, 1]);
   assert.deepEqual(categoryRows.at(-1).map((button) => button.callback_data), ["d:42:c:other"]);
   assert.ok(categoryButtons.every((button) => !button.text.startsWith("\u2B1C")));
 });
@@ -192,6 +192,28 @@ test("every category has a distinct compact label in Russian and English", () =>
     assert.equal(buttons.length, CATEGORIES.length);
     assert.ok(buttons.every((button) => button.text.trim().length > 0));
     assert.equal(new Set(buttons.map((button) => button.text)).size, CATEGORIES.length);
+    assert.deepEqual(buttons.map((button) => button.text), language === "ru"
+      ? ["🍽 Еда", "🛒 Продукты", "🏠 Дом", "🛵 Транспорт", "❤️ Здоровье", "🏃 Спорт", "🎒 Вещи", "✈️ Поездки", "📡 Подписки", "📚 Учёба", "🎁 Подарки", "🎭 Досуг", "••• Другое"]
+      : ["🍽 Food", "🛒 Groceries", "🏠 Home", "🛵 Transport", "❤️ Health", "🏃 Sport", "🎒 Gear", "✈️ Travel", "📡 Subs", "📚 Study", "🎁 Gifts", "🎭 Leisure", "••• Other"]);
+  }
+});
+
+test("common Mini App home buttons use one localized label", () => {
+  for (const [language, label] of [["ru", "📱 Открыть Mini App"], ["en", "📱 Open Mini App"]]) {
+    const keyboards = [
+      appKeyboard("http://localhost:3000", 100, language),
+      draftKeyboard(42, [], "http://localhost:3000", 100, language),
+      plannedDraftKeyboard(42, "http://localhost:3000", 100, language),
+      savedExpenseKeyboard(91, "http://localhost:3000", 100, language),
+      inboxDraftKeyboard("http://localhost:3000", 100, 42, language),
+      budgetTopupSuccessKeyboard(99, "http://localhost:3000", 100, language),
+      budgetTopupMiniAppKeyboard("http://localhost:3000", 100, language)
+    ];
+    for (const keyboard of keyboards) {
+      const homeButton = keyboard.inline_keyboard.flat().find((button) => button.web_app?.url === "http://localhost:3000?telegramUserId=100");
+      assert.equal(homeButton?.text, label);
+      assert.equal(homeButton?.style, "primary");
+    }
   }
 });
 

@@ -1,5 +1,7 @@
 import { treatmentLabels } from "./telegramExpenseEditor.js";
 import { CATEGORIES } from "../../../packages/shared/src/categories.js";
+import { draftNeedsCategoryChoice } from "./draftCategory.js";
+import { miniAppHomeButton, webAppButton } from "./telegramWebAppButtons.js";
 
 const LEGACY_CATEGORY_CODES = {
   food: "food_cafe",
@@ -7,18 +9,18 @@ const LEGACY_CATEGORY_CODES = {
 };
 
 const CATEGORY_BUTTON_LABELS = {
-  food_cafe: { ru: "🍽 Еда и кафе", en: "🍽 Food" },
+  food_cafe: { ru: "🍽 Еда", en: "🍽 Food" },
   groceries: { ru: "🛒 Продукты", en: "🛒 Groceries" },
   home: { ru: "🏠 Дом", en: "🏠 Home" },
   transport: { ru: "🛵 Транспорт", en: "🛵 Transport" },
   health: { ru: "❤️ Здоровье", en: "❤️ Health" },
   sport_activities: { ru: "🏃 Спорт", en: "🏃 Sport" },
   gear: { ru: "🎒 Вещи", en: "🎒 Gear" },
-  travel: { ru: "✈️ Путешествия", en: "✈️ Travel" },
-  subscriptions: { ru: "📡 Подписки", en: "📡 Subscriptions" },
-  education: { ru: "📚 Образование", en: "📚 Education" },
+  travel: { ru: "✈️ Поездки", en: "✈️ Travel" },
+  subscriptions: { ru: "📡 Подписки", en: "📡 Subs" },
+  education: { ru: "📚 Учёба", en: "📚 Study" },
   gifts_help: { ru: "🎁 Подарки", en: "🎁 Gifts" },
-  entertainment: { ru: "🎭 Развлечения", en: "🎭 Entertainment" },
+  entertainment: { ru: "🎭 Досуг", en: "🎭 Leisure" },
   other: { ru: "••• Другое", en: "••• Other" }
 };
 
@@ -80,12 +82,12 @@ export function budgetTopupUndoKeyboard(topupId, language = "ru") {
 
 export function budgetTopupSuccessKeyboard(topupId, miniAppUrl, telegramUserId, language = "ru") {
   const rows = budgetTopupUndoKeyboard(topupId, language).inline_keyboard;
-  rows.push([miniAppButton(miniAppUrl, telegramUserId, language)]);
+  rows.push([miniAppHomeButton({ miniAppUrl, telegramUserId, language })]);
   return { inline_keyboard: rows };
 }
 
 export function budgetTopupMiniAppKeyboard(miniAppUrl, telegramUserId, language = "ru") {
-  return { inline_keyboard: [[miniAppButton(miniAppUrl, telegramUserId, language)]] };
+  return { inline_keyboard: [[miniAppHomeButton({ miniAppUrl, telegramUserId, language })]] };
 }
 
 export function draftKeyboard(draftId, items = [], miniAppUrl, telegramUserId, language = "ru") {
@@ -102,13 +104,10 @@ export function draftKeyboard(draftId, items = [], miniAppUrl, telegramUserId, l
       typeButton(regularLabel, draftId, "r"),
       typeButton(largeLabel, draftId, "l")
     ]);
-    const categoryIsResolved =
-      item.category_source === "user" ||
-      (item.category_slug !== "other" && !item.needs_review);
-    if (!categoryIsResolved) {
+    if (draftNeedsCategoryChoice(item)) {
       const categories = CATEGORIES.filter((category) => category.slug !== "other");
-      for (let index = 0; index < categories.length; index += 2) {
-        rows.push(categories.slice(index, index + 2).map((category) =>
+      for (let index = 0; index < categories.length; index += 3) {
+        rows.push(categories.slice(index, index + 3).map((category) =>
           categoryButton(categoryButtonLabel(category.slug, language), draftId, category.slug)));
       }
       const other = CATEGORIES.find((category) => category.slug === "other");
@@ -121,8 +120,8 @@ export function draftKeyboard(draftId, items = [], miniAppUrl, telegramUserId, l
     { text: `🗑 ${text.cancel}`, callback_data: `d:${draftId}:cancel` }
   ]);
   rows.push([{ text: `📥 ${text.later}`, callback_data: `d:${draftId}:review` }]);
-  rows.push([{ text: "📱 Mini App", web_app: { url: `${miniAppUrl}?telegramUserId=${telegramUserId}` } }]);
-  return withPrimaryMiniAppButtons({ inline_keyboard: rows });
+  rows.push([miniAppHomeButton({ miniAppUrl, telegramUserId, language })]);
+  return { inline_keyboard: rows };
 }
 
 function typeButton(label, draftId, code) {
@@ -139,58 +138,43 @@ function categoryButtonLabel(slug, language) {
 
 export function plannedDraftKeyboard(plannedDraftId, miniAppUrl, telegramUserId, language = "ru") {
   const text = keyboardText(language);
-  return withPrimaryMiniAppButtons({
+  return {
     inline_keyboard: [
       [{ text: `✅ ${text.addPlanned}`, callback_data: `plan_confirm:${plannedDraftId}` }],
       [
-        { text: `✏️ ${text.edit}`, web_app: { url: `${miniAppUrl}?telegramUserId=${telegramUserId}&view=plan` } },
+        webAppButton({ text: `✏️ ${text.edit}`, url: `${miniAppUrl}?telegramUserId=${telegramUserId}&view=plan` }),
         { text: `🗑 ${text.cancel}`, callback_data: `plan_cancel:${plannedDraftId}` }
       ],
-      [{ text: "📱 Mini App", web_app: { url: `${miniAppUrl}?telegramUserId=${telegramUserId}` } }]
+      [miniAppHomeButton({ miniAppUrl, telegramUserId, language })]
     ]
-  });
+  };
 }
 
 export function appKeyboard(miniAppUrl, telegramUserId, language = "ru") {
-  const text = keyboardText(language);
-  return withPrimaryMiniAppButtons({
-    inline_keyboard: [[{ text: `📱 ${text.openApp}`, web_app: { url: `${miniAppUrl}?telegramUserId=${telegramUserId}` } }]]
-  });
+  return { inline_keyboard: [[miniAppHomeButton({ miniAppUrl, telegramUserId, language })]] };
 }
 
 export function savedExpenseKeyboard(expenseId, miniAppUrl, telegramUserId, language = "ru") {
   const text = keyboardText(language);
-  return withPrimaryMiniAppButtons({
+  return {
     inline_keyboard: [
       [
         { text: `✏️ ${text.editorEdit ?? text.edit}`, callback_data: `ee:x:${expenseId}:o` },
         { text: `🗑 ${text.deleteExpense ?? text.cancel}`, callback_data: `ee:x:${expenseId}:del` }
       ],
-      [miniAppButton(miniAppUrl, telegramUserId, language)]
+      [miniAppHomeButton({ miniAppUrl, telegramUserId, language })]
     ]
-  });
-}
-
-function miniAppButton(miniAppUrl, telegramUserId, language = "ru") {
-  const text = keyboardText(language);
-  return { text: text.budgetTopupOpenMiniApp ?? `\ud83d\udcf1 ${text.openApp}`, style: "primary", web_app: { url: `${miniAppUrl}?telegramUserId=${telegramUserId}` } };
+  };
 }
 
 export function inboxDraftKeyboard(miniAppUrl, telegramUserId, draftId, language = "ru") {
   const text = keyboardText(language);
-  return withPrimaryMiniAppButtons({
+  return {
     inline_keyboard: [
-      [{ text: `📥 ${text.openDraft}`, web_app: { url: `${miniAppUrl}?telegramUserId=${telegramUserId}&draftId=${draftId}` } }],
-      [{ text: `📱 ${text.openApp}`, web_app: { url: `${miniAppUrl}?telegramUserId=${telegramUserId}` } }]
+      [webAppButton({ text: `📥 ${text.openDraft}`, url: `${miniAppUrl}?telegramUserId=${telegramUserId}&draftId=${draftId}` })],
+      [miniAppHomeButton({ miniAppUrl, telegramUserId, language })]
     ]
-  });
-}
-
-function withPrimaryMiniAppButtons(keyboard) {
-  for (const button of keyboard.inline_keyboard.flat()) {
-    if (button.web_app) button.style = "primary";
-  }
-  return keyboard;
+  };
 }
 
 export function dailyReminderKeyboard(language = "ru") {
