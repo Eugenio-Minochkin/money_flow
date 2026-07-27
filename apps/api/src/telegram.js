@@ -13,6 +13,7 @@ import {
 } from "../../../packages/shared/src/time.js";
 import { localDateTimeToUtc } from "../../../packages/shared/src/time.js";
 import { formatAdminMessageParts } from "./adminStatsService.js";
+import { renderAdminRichMessage } from "./adminRichMessage.js";
 import { formatProductStatsSections } from "./productStatsService.js";
 import { formatTechnicalStatsSections } from "./technicalStatsService.js";
 import { createExpenseExportService } from "./expenseExportService.js";
@@ -59,6 +60,7 @@ import {
 const ONBOARDING_STEPS = ["language", "budget_setup", "base_currency", "monthly_budget", "current_month_budget", "month_opening_spend"];
 const FEEDBACK_PENDING_TTL_MS = 30 * 60_000;
 const MIN_FEEDBACK_MESSAGE_LENGTH = 3;
+const RICH_MESSAGE_MAX_LENGTH = 32768;
 const pendingFeedbackByTelegramUser = new Map();
 const ACCOUNT_DELETION_SOURCE_TELEGRAM = "telegram";
 
@@ -241,13 +243,16 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
       try {
         const stats = await adminStatsService[method]();
         const sections = technical ? formatTechnicalStatsSections(stats) : formatProductStatsSections(stats);
-        const parts = formatAdminMessageParts(sections);
-        let response;
-        for (const part of parts) {
-          response = await sendMessage(token, chatId, part.html, null, telegramClient, part.plainText);
-        }
-        return response;
+        return await sendAdminStatsMessage({
+          token,
+          chatId,
+          sections,
+          command: commandText,
+          reportType: technical ? "technical" : "product",
+          telegramClient
+        });
       } catch (error) {
+        if (error instanceof AmbiguousAdminRichMessageError) throw error;
         console.error("[telegram] admin stats failed", error);
         return sendTelegramResponse(trace, () => sendMessage(token, chatId, unavailable, null, telegramClient));
       }
@@ -2653,6 +2658,63 @@ async function sendMessage(token, chatId, text, replyMarkup, telegramClient, pla
 
 export async function sendTelegramMessage({ token, chatId, text, replyMarkup = null, telegramClient = null }) {
   return sendMessage(token, chatId, text, replyMarkup, telegramClient);
+}
+
+async function sendAdminStatsMessage({ token, chatId, sections, command, reportType, telegramClient }) {
+  const html = renderAdminRichMessage(sections, { reportType });
+  if (richMessageTextLength(html) > RICH_MESSAGE_MAX_LENGTH) {
+    logAdminRichFallback({ command, reportType, errorClass: "size", reason: "rich_message_too_long" });
+    return sendAdminStatsHtmlFallback({ token, chatId, sections, telegramClient });
+  }
+  try {
+    return await sendTelegramRichMessage({ token, chatId, html, telegramClient });
+  } catch (error) {
+    if (error?.status === 400) {
+      logAdminRichFallback({ command, reportType, status: 400, reason: "rich_message_rejected" });
+      return sendAdminStatsHtmlFallback({ token, chatId, sections, telegramClient });
+    }
+    throw new AmbiguousAdminRichMessageError(error);
+  }
+}
+
+function richMessageTextLength(html) {
+  const text = String(html)
+    .replace(/<[^>]*>/g, "")
+    .replace(/&(amp|lt|gt|quot|#39);/g, "x");
+  return Array.from(text).length;
+}
+
+async function sendAdminStatsHtmlFallback({ token, chatId, sections, telegramClient }) {
+  const parts = formatAdminMessageParts(sections);
+  let response;
+  for (const part of parts) {
+    response = await sendMessage(token, chatId, part.html, null, telegramClient, part.plainText);
+  }
+  return response;
+}
+
+function logAdminRichFallback({ command, reportType, status = null, errorClass, reason }) {
+  console.warn("[telegram] admin rich message fallback", { command, reportType, status, errorClass, reason });
+}
+
+class AmbiguousAdminRichMessageError extends Error {
+  constructor(cause) {
+    super("admin rich message delivery is ambiguous", { cause });
+  }
+}
+
+export async function sendTelegramRichMessage({ token, chatId, html, replyMarkup = null, telegramClient = null }) {
+  if (telegramClient) return telegramClient.sendRichMessage({ chatId, html, replyMarkup });
+  if (!token) {
+    const logMessageId = nextLogMessageId();
+    console.log("[telegram:sendRichMessage]", { chatId, html, replyMarkup });
+    return { ok: true, result: { message_id: logMessageId } };
+  }
+  return telegramRequest(token, "sendRichMessage", {
+    chat_id: chatId,
+    rich_message: { html, skip_entity_detection: true },
+    reply_markup: replyMarkup
+  });
 }
 
 export async function sendTelegramDocument({ token, telegramClient = null, chatId, filename, content, contentType, caption = null }) {
