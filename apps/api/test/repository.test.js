@@ -1717,6 +1717,51 @@ test("lists reminder candidates excluding blocked and onboarding users", async (
   assert.equal(users[0].id, 1);
 });
 
+test("planned reminder repository methods use durable exact-occurrence state", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql: String(sql), params });
+    if (String(sql).includes("FROM planned_expenses")) {
+      return { rows: [{ id: 5, reminder_states: [], paid_occurrence_dates: [] }] };
+    }
+    return { rows: [{ planned_expense_id: 5, occurrence_date: "2026-07-27" }] };
+  }));
+
+  assert.equal((await repo.listPlannedPaymentReminderCandidates())[0].id, 5);
+  await repo.claimPlannedPaymentReminder({
+    userId: 1,
+    plannedExpenseId: 5,
+    occurrenceDate: "2026-07-27",
+    localDate: "2026-07-27",
+    timezoneUsed: "Asia/Bangkok"
+  });
+  await repo.recordPlannedPaymentReminderMessage({
+    userId: 1,
+    plannedExpenseId: 5,
+    occurrenceDate: "2026-07-27",
+    localDate: "2026-07-27",
+    timezoneUsed: "Asia/Bangkok",
+    telegramChatId: 100,
+    telegramMessageId: 77,
+    sentAt: new Date("2026-07-27T14:00:00Z")
+  });
+  await repo.snoozePlannedPaymentReminderForTelegramUser(
+    5,
+    100,
+    "2026-07-27",
+    "2026-07-28",
+    "Asia/Bangkok"
+  );
+
+  assert.match(queries[0].sql, /jsonb_agg/i);
+  assert.match(queries[0].sql, /paid_occurrence_dates/i);
+  assert.match(queries[1].sql, /ON CONFLICT \(planned_expense_id, occurrence_date\)/i);
+  assert.match(queries[1].sql, /last_sent_local_date/i);
+  assert.match(queries[2].sql, /tg_message_id/i);
+  assert.match(queries[3].sql, /next_reminder_local_date/i);
+  assert.match(queries[3].sql, /telegram_user_id/i);
+});
+
 test("creates report deliveries idempotently with JSON metadata", async () => {
   const generatedAt = new Date("2026-07-06T09:00:00Z");
   const queries = [];

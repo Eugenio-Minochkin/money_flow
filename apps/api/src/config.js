@@ -34,6 +34,9 @@ export function buildConfig(env) {
   const dailyReminderGlobalEnabled = env.DAILY_REMINDER_GLOBAL_ENABLED === undefined
     ? nodeEnv === "production"
     : env.DAILY_REMINDER_GLOBAL_ENABLED === "true";
+  const plannedPaymentReminderGlobalEnabled = env.PLANNED_PAYMENT_REMINDER_GLOBAL_ENABLED === undefined
+    ? nodeEnv === "production"
+    : env.PLANNED_PAYMENT_REMINDER_GLOBAL_ENABLED === "true";
   return {
     nodeEnv,
     port: Number(env.PORT ?? 3000),
@@ -88,7 +91,9 @@ export function buildConfig(env) {
     githubRepository: env.GITHUB_REPOSITORY,
     dailyReminderGlobalEnabled,
     dailyReminderRolloutPercent: Number(env.DAILY_REMINDER_ROLLOUT_PERCENT ?? 0),
-    dailyReminderIntervalMs: Number(env.DAILY_REMINDER_INTERVAL_MS ?? 10 * 60_000)
+    dailyReminderIntervalMs: Number(env.DAILY_REMINDER_INTERVAL_MS ?? 10 * 60_000),
+    plannedPaymentReminderGlobalEnabled,
+    plannedPaymentReminderSendHour: parseHour(env.PLANNED_PAYMENT_REMINDER_SEND_HOUR, 21)
   };
 }
 
@@ -117,6 +122,11 @@ function parsePositiveNumber(value, fallback) {
 function parsePositiveInteger(value, fallback) {
   const number = Number(value ?? fallback);
   return Number.isInteger(number) && number > 0 ? number : fallback;
+}
+
+function parseHour(value, fallback) {
+  const number = Number(value ?? fallback);
+  return Number.isInteger(number) && number >= 0 && number <= 23 ? number : fallback;
 }
 
 function parseStrictOptionalTimeout(value, fallback, name) {

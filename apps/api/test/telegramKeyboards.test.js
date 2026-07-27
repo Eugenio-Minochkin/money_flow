@@ -256,3 +256,35 @@ test("parser-fallback other renders every canonical category without checkbox pr
   const other = categoryButtons.find((b) => b.callback_data === "d:42:c:other");
   assert.ok(other);
 });
+
+test("planned reminder keyboards use exact occurrence callbacks and explicit terminology", async () => {
+  const {
+    plannedPaymentReminderKeyboard,
+    plannedPaymentDisableConfirmationKeyboard,
+    plannedPaymentSuccessKeyboard
+  } = await import("../src/telegramKeyboards.js");
+
+  const ru = plannedPaymentReminderKeyboard(42, "2026-07-27", "http://localhost:3000", 100, "ru");
+  const en = plannedPaymentReminderKeyboard(42, "2026-07-27", "http://localhost:3000", 100, "en");
+  const confirmation = plannedPaymentDisableConfirmationKeyboard(42, "2026-07-27", "ru");
+  const success = plannedPaymentSuccessKeyboard("http://localhost:3000", 100, "ru");
+
+  assert.deepEqual(ru.inline_keyboard.map((row) => row[0].text), [
+    "✅ Оплачено",
+    "⏰ Напомнить завтра",
+    "🔕 Отключить плановую оплату",
+    "📱 Открыть Mini App"
+  ]);
+  assert.deepEqual(en.inline_keyboard.map((row) => row[0].text), [
+    "✅ Paid",
+    "⏰ Remind me tomorrow",
+    "🔕 Disable planned payment",
+    "📱 Open Mini App"
+  ]);
+  assert.equal(ru.inline_keyboard[0][0].style, "success");
+  assert.equal(ru.inline_keyboard[3][0].style, "primary");
+  assert.equal(ru.inline_keyboard[0][0].callback_data, "ppr:p:42:20260727");
+  assert.equal(confirmation.inline_keyboard[0][0].callback_data, "ppr:y:42:20260727");
+  assert.deepEqual(success.inline_keyboard.map((row) => row[0].text), ["📱 Открыть Mini App"]);
+  assert.equal(success.inline_keyboard[0][0].style, "primary");
+});

@@ -26,7 +26,7 @@ test.before(async () => {
   const applied = await pool.query("SELECT filename FROM schema_migrations ORDER BY filename");
   assert.deepEqual(
     applied.rows.map((row) => row.filename),
-    ["001_initial.sql", "002_draft_confirm_flow.sql", "003_budget_topups.sql", "004_report_deliveries.sql", "005_exchange_rates.sql", "006_feedback.sql", "007_account_deletion.sql", "008_product_analytics.sql", "009_telegram_expense_editor.sql", "010_telegram_editor_prompt_message.sql", "011_planned_expense_disabled_at.sql", "012_planned_expense_starts_on.sql"]
+    ["001_initial.sql", "002_draft_confirm_flow.sql", "003_budget_topups.sql", "004_report_deliveries.sql", "005_exchange_rates.sql", "006_feedback.sql", "007_account_deletion.sql", "008_product_analytics.sql", "009_telegram_expense_editor.sql", "010_telegram_editor_prompt_message.sql", "011_planned_expense_disabled_at.sql", "012_planned_expense_starts_on.sql", "013_planned_payment_reminders.sql"]
   );
 
   const sessions = await pool.query(`
@@ -389,6 +389,74 @@ test("archives and recreates a partially paid weekly plan without rewriting hist
     "SELECT COUNT(*)::int AS count FROM app_events WHERE user_id = $1 AND event_name = 'planned_expense_deleted'",
     [planned.user_id]
   )).rows[0].count, 1);
+});
+
+test("persists idempotent planned reminder delivery, snooze, pay, and disable state", async () => {
+  const telegramUserId = 990013;
+  const user = await createSmokeUser(telegramUserId);
+  const planned = await repo.createPlannedExpense(telegramUserId, {
+    amount: 1000,
+    currency: "THB",
+    description: "reminder smoke",
+    category_slug: "education",
+    recurrence: "monthly",
+    due_day: 27
+  }, new Date("2026-07-01T00:00:00+07:00"));
+  await pool.query(
+    "UPDATE users SET onboarding_step = 'completed' WHERE id = $1",
+    [user.id]
+  );
+
+  const candidates = await repo.listPlannedPaymentReminderCandidates();
+  assert.equal(candidates.some((candidate) => candidate.id === planned.id), true);
+
+  const claim = {
+    userId: user.id,
+    plannedExpenseId: planned.id,
+    occurrenceDate: "2026-07-27",
+    localDate: "2026-07-27",
+    timezoneUsed: "Asia/Bangkok"
+  };
+  assert.ok(await repo.claimPlannedPaymentReminder(claim));
+  assert.equal(await repo.claimPlannedPaymentReminder(claim), null);
+  await repo.recordPlannedPaymentReminderMessage({
+    ...claim,
+    telegramChatId: telegramUserId,
+    telegramMessageId: 77,
+    sentAt: new Date("2026-07-27T14:00:00Z")
+  });
+  assert.ok(await repo.snoozePlannedPaymentReminderForTelegramUser(
+    planned.id,
+    telegramUserId,
+    "2026-07-27",
+    "2026-07-28",
+    "Asia/Bangkok"
+  ));
+  assert.ok(await repo.claimPlannedPaymentReminder({ ...claim, localDate: "2026-07-28" }));
+
+  const paid = await repo.payPlannedExpenseForTelegramUser(
+    planned.id,
+    telegramUserId,
+    new Date("2026-07-28T14:00:00+07:00"),
+    { occurrenceDate: "2026-07-27" }
+  );
+  assert.equal(paid.budget_impact, "planned");
+  const afterPay = await repo.listPlannedPaymentReminderCandidates();
+  assert.deepEqual(
+    afterPay.find((candidate) => candidate.id === planned.id).paid_occurrence_dates,
+    ["2026-07-27"]
+  );
+
+  const disabled = await repo.deactivatePlannedExpense(
+    telegramUserId,
+    planned.id,
+    new Date("2026-07-28T15:00:00+07:00")
+  );
+  assert.equal(disabled.plannedExpense.active, false);
+  assert.equal(
+    (await repo.listPlannedPaymentReminderCandidates()).some((candidate) => candidate.id === planned.id),
+    false
+  );
 });
 
 test("undoes one exact planned payment without changing today's opening snapshot", async () => {

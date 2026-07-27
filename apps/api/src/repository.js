@@ -1187,6 +1187,199 @@ export function createRepository(pool, options = {}) {
       return result.rows;
     },
 
+    async listPlannedPaymentReminderCandidates() {
+      const result = await pool.query(
+        `SELECT pe.*,
+                users.telegram_user_id,
+                users.timezone,
+                users.interface_language,
+                COALESCE((
+                  SELECT jsonb_agg(jsonb_build_object(
+                    'occurrence_date', reminders.occurrence_date::text,
+                    'next_reminder_local_date', reminders.next_reminder_local_date::text,
+                    'last_sent_local_date', reminders.last_sent_local_date::text,
+                    'status', reminders.status,
+                    'tg_chat_id', reminders.tg_chat_id,
+                    'tg_message_id', reminders.tg_message_id
+                  ) ORDER BY reminders.occurrence_date)
+                  FROM planned_payment_reminders reminders
+                  WHERE reminders.planned_expense_id = pe.id
+                ), '[]'::jsonb) AS reminder_states,
+                COALESCE((
+                  SELECT array_agg(payments.occurrence_date::text ORDER BY payments.occurrence_date)
+                  FROM planned_expense_payments payments
+                  JOIN expenses linked_expense
+                    ON linked_expense.id = payments.expense_id
+                   AND linked_expense.user_id = pe.user_id
+                  WHERE payments.planned_expense_id = pe.id
+                ), ARRAY[]::text[]) AS paid_occurrence_dates
+         FROM planned_expenses pe
+         JOIN users ON users.id = pe.user_id
+         WHERE pe.active = true
+           AND users.telegram_user_id IS NOT NULL
+           AND users.onboarding_step = 'completed'
+           AND users.bot_blocked = false
+         ORDER BY users.id ASC, pe.id ASC`
+      );
+      return result.rows;
+    },
+
+    async claimPlannedPaymentReminder(input) {
+      const result = await pool.query(
+        `INSERT INTO planned_payment_reminders (
+           user_id, planned_expense_id, occurrence_date, next_reminder_local_date,
+           last_sent_local_date, timezone_used, status, updated_at
+         )
+         VALUES ($1, $2, $3, NULL, $4, $5, 'active', now())
+         ON CONFLICT (planned_expense_id, occurrence_date)
+         DO UPDATE SET
+           next_reminder_local_date = NULL,
+           last_sent_local_date = EXCLUDED.last_sent_local_date,
+           timezone_used = EXCLUDED.timezone_used,
+           updated_at = now()
+         WHERE planned_payment_reminders.status = 'active'
+           AND planned_payment_reminders.last_sent_local_date IS DISTINCT FROM EXCLUDED.last_sent_local_date
+           AND (
+             planned_payment_reminders.next_reminder_local_date IS NULL
+             OR planned_payment_reminders.next_reminder_local_date <= EXCLUDED.last_sent_local_date
+           )
+         RETURNING *`,
+        [
+          input.userId,
+          input.plannedExpenseId,
+          input.occurrenceDate,
+          input.localDate,
+          input.timezoneUsed
+        ]
+      );
+      return result.rows[0] ?? null;
+    },
+
+    async recordPlannedPaymentReminderMessage(input) {
+      const result = await pool.query(
+        `UPDATE planned_payment_reminders
+         SET tg_chat_id = $1,
+             tg_message_id = $2,
+             sent_count = sent_count + 1,
+             updated_at = $3
+         WHERE user_id = $4
+           AND planned_expense_id = $5
+           AND occurrence_date = $6
+           AND status = 'active'
+         RETURNING *`,
+        [
+          input.telegramChatId,
+          input.telegramMessageId,
+          input.sentAt ?? new Date(),
+          input.userId,
+          input.plannedExpenseId,
+          input.occurrenceDate
+        ]
+      );
+      return result.rows[0] ?? null;
+    },
+
+    async getPlannedPaymentReminderForTelegramUser(plannedExpenseId, telegramUserId, occurrenceDate) {
+      const result = await pool.query(
+        `SELECT reminders.*,
+                pe.description,
+                pe.amount,
+                pe.currency,
+                pe.recurrence,
+                pe.active,
+                users.interface_language,
+                users.timezone,
+                EXISTS (
+                  SELECT 1
+                  FROM planned_expense_payments payments
+                  JOIN expenses linked_expense
+                    ON linked_expense.id = payments.expense_id
+                   AND linked_expense.user_id = pe.user_id
+                  WHERE payments.planned_expense_id = pe.id
+                    AND payments.occurrence_date = $3
+                ) AS paid
+         FROM planned_payment_reminders reminders
+         JOIN planned_expenses pe ON pe.id = reminders.planned_expense_id
+         JOIN users ON users.id = pe.user_id
+         WHERE reminders.planned_expense_id = $1
+           AND users.telegram_user_id = $2
+           AND reminders.occurrence_date = $3`,
+        [plannedExpenseId, telegramUserId, occurrenceDate]
+      );
+      return result.rows[0] ?? null;
+    },
+
+    async snoozePlannedPaymentReminderForTelegramUser(
+      plannedExpenseId,
+      telegramUserId,
+      occurrenceDate,
+      nextReminderLocalDate,
+      timezoneUsed
+    ) {
+      const result = await pool.query(
+        `UPDATE planned_payment_reminders reminders
+         SET next_reminder_local_date = $4,
+             timezone_used = $5,
+             updated_at = now()
+         FROM planned_expenses pe, users
+         WHERE reminders.planned_expense_id = $1
+           AND reminders.occurrence_date = $3
+           AND reminders.planned_expense_id = pe.id
+           AND pe.user_id = users.id
+           AND users.telegram_user_id = $2
+           AND pe.active = true
+           AND reminders.status = 'active'
+           AND NOT EXISTS (
+             SELECT 1
+             FROM planned_expense_payments payments
+             JOIN expenses linked_expense
+               ON linked_expense.id = payments.expense_id
+              AND linked_expense.user_id = pe.user_id
+             WHERE payments.planned_expense_id = pe.id
+               AND payments.occurrence_date = reminders.occurrence_date
+           )
+         RETURNING reminders.*`,
+        [plannedExpenseId, telegramUserId, occurrenceDate, nextReminderLocalDate, timezoneUsed]
+      );
+      return result.rows[0] ?? null;
+    },
+
+    async markPlannedPaymentReminderTerminal(plannedExpenseId, occurrenceDate, status) {
+      const normalizedStatus = status === "disabled" ? "disabled" : "paid";
+      const result = await pool.query(
+        `UPDATE planned_payment_reminders
+         SET status = $3,
+             next_reminder_local_date = NULL,
+             updated_at = now()
+         WHERE planned_expense_id = $1
+           AND occurrence_date = $2
+         RETURNING *`,
+        [plannedExpenseId, occurrenceDate, normalizedStatus]
+      );
+      return result.rows[0] ?? null;
+    },
+
+    async listOutstandingPlannedPaymentReminders(plannedExpenseId, occurrenceDate = null) {
+      const params = occurrenceDate == null
+        ? [plannedExpenseId]
+        : [plannedExpenseId, occurrenceDate];
+      const occurrenceFilter = occurrenceDate == null ? "" : "AND reminders.occurrence_date = $2";
+      const result = await pool.query(
+        `SELECT reminders.*, users.interface_language
+         FROM planned_payment_reminders reminders
+         JOIN planned_expenses pe ON pe.id = reminders.planned_expense_id
+         JOIN users ON users.id = pe.user_id
+         WHERE reminders.planned_expense_id = $1
+           AND reminders.status = 'active'
+           AND reminders.tg_chat_id IS NOT NULL
+           AND reminders.tg_message_id IS NOT NULL
+           ${occurrenceFilter}
+         ORDER BY reminders.occurrence_date`,
+        params
+      );
+      return result.rows;
+    },
+
     async hasConfirmedFinancialActivity(userId, bounds) {
       const result = await pool.query(
         `SELECT 1 FROM expenses

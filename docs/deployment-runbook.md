@@ -283,6 +283,17 @@ The production database remains in the Docker volume. Application secrets remain
 The release-note sync step is intentionally non-blocking after health checks:
 it should not roll back or fail a healthy application deploy.
 
+## Planned Payment Telegram Reminders
+
+The scheduler is enabled by default in production when the kill switch is omitted. Keep these values in `.env.production` to make the intended state explicit:
+
+```env
+PLANNED_PAYMENT_REMINDER_GLOBAL_ENABLED=true
+PLANNED_PAYMENT_REMINDER_SEND_HOUR=21
+```
+
+Set `PLANNED_PAYMENT_REMINDER_GLOBAL_ENABLED=false` for an emergency stop. `PLANNED_PAYMENT_REMINDER_SEND_HOUR` is interpreted in each user's saved IANA timezone. Migration `013_planned_payment_reminders.sql` is additive and stores exact occurrence delivery/snooze state plus Telegram message references; it does not store descriptions or amounts.
+
 ## Postgres backup and restore
 
 The production database lives in the Docker volume and holds user financial
