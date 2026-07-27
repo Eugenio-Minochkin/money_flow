@@ -50,6 +50,20 @@ The regular expense parser distinguishes `local_safe`, `local_reviewable`, and `
 
 Issue #115 PR A adds this classification, observability, timeout safety, and rollout documentation without introducing a new `local_reviewable` primary route or changing production rollout values. Acceptance metadata is emitted only after local evaluation completes; LLM-only messages do not count as local candidates, accepted parses, or rejected parses. PR B owns any user-visible routing expansion and must preserve the existing rule that a parser-provided `other` category cannot be confirmed until the user explicitly selects a category. LLM timeout or error may use a local fallback only when the result is `local_safe`.
 
+## 2026-07-27 - Historical Critical Shadow Cases Are Not Time-Correlated
+
+The existing safe shadow telemetry intentionally records disagreement flags and
+safe routing metadata, not a draft relation or parser result payload. Therefore
+historical critical disagreements are reported as `unadjudicable`, with no
+attempt to infer a confirmation by account or timestamp. This is preferable to
+a false local/LLM attribution.
+
+A future correlation, if separately approved, must be draft-owned and store
+only keyed fingerprints plus safe lifecycle/result enums. It may aggregate
+`local_match`, `llm_match`, `neither_match`, and `unadjudicable`, but must never
+export fingerprints, financial values, source text, descriptions, transcripts,
+or identifiers. This decision changes neither parser routing nor rollout.
+
 ## 2026-07-10 - Product Analytics Uses First-touch And Derived Milestones
 
 Money Flow stores one normalized acquisition source on the user at the first valid `/start` or authenticated Mini App launch and never overwrites it. Internal report navigation is product activity, not acquisition. Legacy users are not backfilled; unresolved legacy source is reported as `unknown` until a valid new entry assigns source or `direct`.
