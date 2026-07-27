@@ -141,6 +141,31 @@ test("blocked or forbidden send failure is not retried", async () => {
   assert.equal(repository.releaseCalls.length, 0);
 });
 
+test("post-send persistence failure keeps the claim and does not duplicate the Telegram card", async () => {
+  const { createPlannedPaymentReminderService } = await import("../src/plannedPaymentReminderService.js");
+  let attempts = 0;
+  const repository = fakeRepository([candidate()]);
+  repository.recordPlannedPaymentReminderMessage = async () => {
+    throw new Error("temporary database failure after send");
+  };
+  const service = createPlannedPaymentReminderService({
+    repository,
+    sendMessage: async () => {
+      attempts += 1;
+      return { result: { message_id: 92 } };
+    },
+    globalEnabled: true,
+    sendHour: 21,
+    miniAppUrl: "https://money.example.com",
+    now: () => new Date("2026-07-27T14:00:00Z")
+  });
+
+  assert.equal((await service.runOnce()).failed, 1);
+  assert.equal((await service.runOnce()).sent, 0);
+  assert.equal(attempts, 1);
+  assert.equal(repository.releaseCalls.length, 0);
+});
+
 test("snoozed and due-today occurrences of one twice-monthly plan are sent separately in date order", async () => {
   const { createPlannedPaymentReminderService } = await import("../src/plannedPaymentReminderService.js");
   const sent = [];

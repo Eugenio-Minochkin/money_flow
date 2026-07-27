@@ -72,6 +72,7 @@ export function createPlannedPaymentReminderService({
       source: "telegram"
     });
 
+    let telegramDelivered = false;
     try {
       const response = await sendMessage({
         chatId: Number(candidate.telegram_user_id),
@@ -88,6 +89,7 @@ export function createPlannedPaymentReminderService({
           candidate.interface_language
         )
       });
+      telegramDelivered = true;
       const telegramMessageId = response?.result?.message_id ?? response?.message_id ?? null;
       await repository.recordPlannedPaymentReminderMessage({
         userId: candidate.user_id,
@@ -126,11 +128,13 @@ export function createPlannedPaymentReminderService({
         await repository.markUserBotBlocked(candidate.user_id);
         return "blocked";
       }
-      await repository.releasePlannedPaymentReminderClaim({
-        ...claimInput,
-        previousLastSentLocalDate: occurrence.previousLastSentLocalDate,
-        previousNextReminderLocalDate: occurrence.previousNextReminderLocalDate
-      });
+      if (!telegramDelivered) {
+        await repository.releasePlannedPaymentReminderClaim({
+          ...claimInput,
+          previousLastSentLocalDate: occurrence.previousLastSentLocalDate,
+          previousNextReminderLocalDate: occurrence.previousNextReminderLocalDate
+        });
+      }
       return "failed";
     }
   }
