@@ -136,6 +136,98 @@ test("Russian disable confirmation uses unambiguous planned-payment terminology"
   assert.doesNotMatch(confirmation.text, /Отключить план «/);
 });
 
+test("Telegram disable clears every outstanding exact-occurrence card and disables every reminder state", async () => {
+  const calls = [];
+  const repository = fakeRepository();
+  repository.outstanding = [
+    {
+      occurrence_date: "2026-07-26",
+      tg_chat_id: 100,
+      tg_message_id: 55,
+      interface_language: "en"
+    },
+    {
+      occurrence_date: "2026-07-27",
+      tg_chat_id: 100,
+      tg_message_id: 56,
+      interface_language: "en"
+    }
+  ];
+
+  await handleCallback({
+    update: callbackUpdate("ppr:y:42:20260726"),
+    repository,
+    token: "token",
+    miniAppUrl: "http://localhost:3000",
+    telegramClient: client(calls),
+    trace: trace(),
+    now: () => new Date("2026-07-27T14:05:00Z")
+  });
+
+  const edits = calls.filter((call) => call.method === "editMessageText");
+  assert.deepEqual(edits.map((call) => call.messageId), [55, 56]);
+  assert.equal(edits.every((call) => call.replyMarkup.inline_keyboard.length === 0), true);
+  assert.equal(edits.every((call) => /Planned payment disabled/.test(call.text)), true);
+  assert.equal(edits.every((call) => !/Mini App/.test(call.text)), true);
+  assert.deepEqual(repository.markAllTerminalCalls, [{
+    plannedExpenseId: 42,
+    status: "disabled"
+  }]);
+  assert.equal(repository.markTerminalCalls.length, 0);
+
+  await handleCallback({
+    update: callbackUpdate("ppr:y:42:20260727"),
+    repository,
+    token: "token",
+    miniAppUrl: "http://localhost:3000",
+    telegramClient: client(calls),
+    trace: trace(),
+    now: () => new Date("2026-07-27T14:06:00Z")
+  });
+  assert.match(calls.at(-1).text, /no longer available/);
+  assert.deepEqual(calls.at(-1).replyMarkup, { inline_keyboard: [] });
+});
+
+test("disable cancellation restores snoozed RU and EN reminder copy", async () => {
+  for (const [language, expected, forbidden] of [
+    ["ru", /Вы просили напомнить об этой оплате сегодня/, /Оплата запланирована на сегодня/],
+    ["en", /You asked to be reminded about this payment today/, /Payment planned for today/]
+  ]) {
+    const calls = [];
+    const repository = fakeRepository();
+    repository.getUserByTelegramId = async () => ({
+      id: 1,
+      telegram_user_id: 100,
+      interface_language: language,
+      timezone: "Asia/Bangkok"
+    });
+
+    await handleCallback({
+      update: callbackUpdate("ppr:d:42:20260726"),
+      repository,
+      token: "token",
+      miniAppUrl: "http://localhost:3000",
+      telegramClient: client(calls),
+      trace: trace(),
+      now: () => new Date("2026-07-27T14:05:00Z")
+    });
+    await handleCallback({
+      update: callbackUpdate("ppr:c:42:20260726"),
+      repository,
+      token: "token",
+      miniAppUrl: "http://localhost:3000",
+      telegramClient: client(calls),
+      trace: trace(),
+      now: () => new Date("2026-07-27T14:05:00Z")
+    });
+
+    const restored = calls.filter((call) => call.method === "editMessageText").at(-1);
+    assert.match(restored.text, expected);
+    assert.doesNotMatch(restored.text, forbidden);
+    assert.match(JSON.stringify(restored.replyMarkup), /ppr:p:42:20260726/);
+  }
+});
+
 function callbackUpdate(data) {
   return {
     callback_query: {
@@ -148,26 +240,31 @@ function callbackUpdate(data) {
 }
 
 function fakeRepository() {
-  return {
+  const repository = {
     payCalls: [],
     dashboardCalls: 0,
     snoozeCalls: [],
     disableCalls: [],
+    markTerminalCalls: [],
+    markAllTerminalCalls: [],
+    outstanding: [],
+    active: true,
     async getUserByTelegramId() {
       return { id: 1, telegram_user_id: 100, interface_language: "en", timezone: "Asia/Bangkok" };
     },
-    async getPlannedPaymentReminderForTelegramUser() {
+    async getPlannedPaymentReminderForTelegramUser(_plannedExpenseId, _telegramUserId, occurrenceDate) {
       return {
         planned_expense_id: 42,
-        occurrence_date: "2026-07-27",
+        occurrence_date: occurrenceDate,
         description: "English",
         amount: 1000,
         currency: "THB",
         recurrence: "monthly",
-        active: true,
+        active: this.active,
         paid: false,
         timezone: "Asia/Bangkok",
-        interface_language: "en"
+        interface_language: "en",
+        last_sent_local_date: occurrenceDate === "2026-07-26" ? "2026-07-27" : occurrenceDate
       };
     },
     async payPlannedExpenseForTelegramUser(plannedExpenseId, telegramUserId, _paidAt, options) {
@@ -200,7 +297,15 @@ function fakeRepository() {
         }
       };
     },
-    async markPlannedPaymentReminderTerminal() {},
+    async markPlannedPaymentReminderTerminal(plannedExpenseId, occurrenceDate, status) {
+      this.markTerminalCalls.push({ plannedExpenseId, occurrenceDate, status });
+    },
+    async markAllPlannedPaymentRemindersTerminal(plannedExpenseId, status) {
+      this.markAllTerminalCalls.push({ plannedExpenseId, status });
+    },
+    async listOutstandingPlannedPaymentReminders() {
+      return this.outstanding;
+    },
     async snoozePlannedPaymentReminderForTelegramUser(
       plannedExpenseId,
       telegramUserId,
@@ -214,10 +319,13 @@ function fakeRepository() {
     },
     async deactivatePlannedExpense(...args) {
       this.disableCalls.push(args);
+      if (!this.active) return null;
+      this.active = false;
       return { plannedExpense: { id: 42 } };
     },
     async recordAppEvent() {}
   };
+  return repository;
 }
 
 function client(calls) {

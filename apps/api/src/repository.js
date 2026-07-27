@@ -1383,6 +1383,21 @@ export function createRepository(pool, options = {}) {
       return result.rows[0] ?? null;
     },
 
+    async markAllPlannedPaymentRemindersTerminal(plannedExpenseId, status) {
+      const normalizedStatus = status === "disabled" ? "disabled" : "paid";
+      const result = await pool.query(
+        `UPDATE planned_payment_reminders
+         SET status = $2,
+             next_reminder_local_date = NULL,
+             updated_at = now()
+         WHERE planned_expense_id = $1
+           AND status = 'active'
+         RETURNING *`,
+        [plannedExpenseId, normalizedStatus]
+      );
+      return result.rows;
+    },
+
     async listOutstandingPlannedPaymentReminders(plannedExpenseId, occurrenceDate = null) {
       const params = occurrenceDate == null
         ? [plannedExpenseId]

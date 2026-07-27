@@ -18,6 +18,7 @@ import { formatTechnicalStatsSections } from "./technicalStatsService.js";
 import { createExpenseExportService } from "./expenseExportService.js";
 import { createTelegramJobQueue } from "./telegramJobQueue.js";
 import { renderDraftPreview } from "./draftPreview.js";
+import { formatPlannedPaymentReminder } from "./plannedPaymentReminderService.js";
 import { formatBudgetTopupDraft, formatBudgetTopupSuccess, formatBudgetTopupUndoSuccess, formatPlannedDraft, formatReserveClosedEvent, formatSavedSummary, formatTotals, formatWeeklyReport } from "./telegramFormat.js";
 import {
   appKeyboard,
@@ -2408,13 +2409,22 @@ async function handlePlannedPaymentReminderCallback({
   }
 
   if (action === "c") {
+    const timezoneUsed = normalizeTimeZone(user?.timezone ?? context.timezone).timeZone;
+    const sentLocalDate = String(
+      context.last_sent_local_date ?? timezoneLocalDateKey(now(), timezoneUsed)
+    ).slice(0, 10);
+    const deliveryReason = occurrenceDate === sentLocalDate ? "due_today" : "snoozed";
     return sendTelegramResponse(trace, async () => {
       await answerCallback(token, callback.id, plannedReminderText(language, "cancelled"), telegramClient);
       return editMessageText(
         token,
         chatId,
         messageId,
-        plannedReminderCardText(context, language),
+        formatPlannedPaymentReminder(context, language, {
+          occurrenceDate,
+          localDate: sentLocalDate,
+          deliveryReason
+        }),
         plannedPaymentReminderKeyboard(plannedExpenseId, occurrenceDate, miniAppUrl, telegramUserId, language),
         telegramClient
       );
@@ -2434,21 +2444,32 @@ async function handlePlannedPaymentReminderCallback({
         telegramClient
       });
     }
-    await repository.markPlannedPaymentReminderTerminal?.(plannedExpenseId, occurrenceDate, "disabled");
+    const outstanding = await repository.listOutstandingPlannedPaymentReminders(plannedExpenseId);
+    if (!outstanding.some((reminder) =>
+      Number(reminder.tg_chat_id) === Number(chatId)
+      && Number(reminder.tg_message_id) === Number(messageId))) {
+      outstanding.push({
+        ...context,
+        tg_chat_id: chatId,
+        tg_message_id: messageId,
+        interface_language: language
+      });
+    }
+    await updatePlannedPaymentReminderMessages({
+      token,
+      reminders: outstanding,
+      outcome: "disabled",
+      source: "telegram",
+      telegramClient
+    });
+    await repository.markAllPlannedPaymentRemindersTerminal(plannedExpenseId, "disabled");
     await safeRecordAppEvent(repository, user?.id, "planned_payment_reminder_disabled", {
       local_date: occurrenceDate,
       recurrence: context.recurrence,
       source: "telegram",
       outcome: "disabled"
     });
-    return safeReplacePlannedReminder({
-      token,
-      chatId,
-      messageId,
-      text: plannedReminderText(language, "disabled"),
-      replyMarkup: { inline_keyboard: [] },
-      telegramClient
-    });
+    return { ok: true };
   }
 
   return answerCallback(token, callback.id, plannedReminderText(language, "unavailable"), telegramClient);
@@ -2463,17 +2484,6 @@ function nextDateKey(value) {
   const [year, month, day] = String(value).split("-").map(Number);
   const next = new Date(Date.UTC(year, month - 1, day + 1));
   return next.toISOString().slice(0, 10);
-}
-
-function plannedReminderCardText(context, language) {
-  const amount = new Intl.NumberFormat(language === "ru" ? "ru-RU" : "en-US", {
-    maximumFractionDigits: ["USD", "EUR", "GEL"].includes(context.currency) ? 2 : 0,
-    minimumFractionDigits: ["USD", "EUR", "GEL"].includes(context.currency) ? 2 : 0
-  }).format(Number(context.amount));
-  const item = `${escapeTelegramHtml(context.description)} — ${amount} ${escapeTelegramHtml(context.currency)}`;
-  return language === "ru"
-    ? `📅 <b>Плановая оплата</b>\n\n${item}\nОплата запланирована на сегодня. Уже оплатили?`
-    : `📅 <b>Payment planned for today</b>\n\n${item}\nHave you paid it?`;
 }
 
 function plannedDisableConfirmationText(language, description) {
@@ -2702,14 +2712,19 @@ export async function updatePlannedPaymentReminderMessages({
   token,
   reminders,
   outcome,
+  source = "mini_app",
   telegramClient
 }) {
   for (const reminder of reminders ?? []) {
     const language = reminder.interface_language === "ru" ? "ru" : "en";
     const text = outcome === "disabled"
       ? language === "ru"
-        ? "🔕 Плановая оплата отключена в Mini App."
-        : "🔕 Planned payment disabled in Mini App."
+        ? source === "telegram"
+          ? "🔕 Плановая оплата отключена."
+          : "🔕 Плановая оплата отключена в Mini App."
+        : source === "telegram"
+          ? "🔕 Planned payment disabled."
+          : "🔕 Planned payment disabled in Mini App."
       : language === "ru"
         ? "✅ Оплата отмечена в Mini App."
         : "✅ Payment marked as paid in Mini App.";

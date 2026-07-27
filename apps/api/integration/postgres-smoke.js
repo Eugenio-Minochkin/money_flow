@@ -440,6 +440,19 @@ test("persists idempotent planned reminder delivery, snooze, pay, and disable st
     "Asia/Bangkok"
   ));
   assert.ok(await repo.claimPlannedPaymentReminder({ ...claim, localDate: "2026-07-28" }));
+  const secondClaim = {
+    ...claim,
+    occurrenceDate: "2026-08-27",
+    localDate: "2026-08-27"
+  };
+  assert.ok(await repo.claimPlannedPaymentReminder(secondClaim));
+  await repo.recordPlannedPaymentReminderMessage({
+    ...secondClaim,
+    telegramChatId: telegramUserId,
+    telegramMessageId: 78,
+    sentAt: new Date("2026-08-27T14:00:00Z")
+  });
+  assert.equal((await repo.listOutstandingPlannedPaymentReminders(planned.id)).length, 2);
 
   const paid = await repo.payPlannedExpenseForTelegramUser(
     planned.id,
@@ -460,6 +473,10 @@ test("persists idempotent planned reminder delivery, snooze, pay, and disable st
     new Date("2026-07-28T15:00:00+07:00")
   );
   assert.equal(disabled.plannedExpense.active, false);
+  const disabledReminders = await repo.markAllPlannedPaymentRemindersTerminal(planned.id, "disabled");
+  assert.equal(disabledReminders.length, 2);
+  assert.equal(disabledReminders.every((reminder) => reminder.status === "disabled"), true);
+  assert.equal((await repo.listOutstandingPlannedPaymentReminders(planned.id)).length, 0);
   assert.equal(
     (await repo.listPlannedPaymentReminderCandidates()).some((candidate) => candidate.id === planned.id),
     false

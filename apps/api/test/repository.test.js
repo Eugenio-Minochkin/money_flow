@@ -1760,6 +1760,7 @@ test("planned reminder repository methods use durable exact-occurrence state", a
     "2026-07-28",
     "Asia/Bangkok"
   );
+  await repo.markAllPlannedPaymentRemindersTerminal(5, "disabled");
 
   assert.match(queries[0].sql, /jsonb_agg/i);
   assert.match(queries[0].sql, /paid_occurrence_dates/i);
@@ -1771,6 +1772,8 @@ test("planned reminder repository methods use durable exact-occurrence state", a
   assert.match(queries[3].sql, /tg_message_id/i);
   assert.match(queries[4].sql, /next_reminder_local_date/i);
   assert.match(queries[4].sql, /telegram_user_id/i);
+  assert.match(queries[5].sql, /SET status = \$2/i);
+  assert.doesNotMatch(queries[5].sql, /occurrence_date =/i);
 });
 
 test("creates report deliveries idempotently with JSON metadata", async () => {
