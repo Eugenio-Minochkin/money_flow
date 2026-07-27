@@ -118,3 +118,70 @@ After tooling merge, the owner can:
 4. add invented synthetic positive and false-positive cases for candidates that generalize;
 5. run the explicit API benchmark, compare critical correctness before latency, and record the environment and run count;
 6. open separate follow-up PRs for approved aliases and any prompt/model decision.
+
+## Shadow-disagreement adjudication follow-up
+
+Historical critical shadow disagreements are currently **unadjudicable**. The
+completion event retains safe disagreement flags and routing enums, but it does
+not retain a durable relation to the created draft, either parser's normalized
+critical result, or a confirmation outcome for that same draft. Matching by
+account and time would be ambiguous when a user has more than one in-flight
+draft, so this audit intentionally does not attempt it.
+
+Run the dedicated aggregate-only check only against an approved local copy or
+read replica:
+
+```powershell
+$env:SHADOW_ADJUDICATION_DATABASE_URL = "postgres://127.0.0.1:5432/money_flow_audit_copy"
+npm.cmd run parser:shadow-adjudication:audit -- --source=local-copy --statement-timeout-ms=30000
+```
+
+The command starts `BEGIN TRANSACTION READ ONLY`, applies the local statement
+timeout, runs one fixed `SELECT`, and always rolls back. It never reads or
+prints source text, descriptions, transcripts, financial values, account
+identifiers, or Telegram identifiers. Its output contains only aggregate
+counts by safe input type, language enum, local acceptance enum, reject-reason
+enum, and result category. It separately reports the five critical field
+counts plus `confirmed`, `cancelled`, `unconfirmed`, and `unlinked` lifecycle
+counts. For the existing event history, all critical cases are `unlinked` and
+`unadjudicable`; the three lifecycle counts remain zero rather than being
+inferred.
+
+### Minimal future correlation proposal
+
+Implement this only in a separate, reviewed follow-up after the historical
+result is accepted:
+
+1. When a critical shadow draft is created, save a draft-owned correlation
+   record containing a `fingerprintSchemaVersion`, safe enums, and keyed HMAC
+   fingerprints of the normalized local and LLM critical-field tuples. Reuse
+   the already required `PARSER_TEXT_HASH_SECRET`; do not add a new production
+   setting.
+2. Construct every fingerprint input as a domain-separated UTF-8 payload:
+   `money-flow:shadow-adjudication:v1:<canonical-payload>`. Never HMAC a
+   critical-field tuple without this independent domain and version prefix.
+3. Define `<canonical-payload>` as RFC 8785 JSON Canonicalization Scheme
+   output built from a new, explicit data structure rather than serializing a
+   parser result object. The critical fields must be emitted in this fixed
+   logical order: `expense_count`, then each expense's normalized `amount`,
+   `currency`, local calendar day, and `budget_impact`. A multiple-expense
+   payload must first sort its expense entries lexicographically by each
+   entry's complete canonical representation; this makes the fingerprint
+   independent of input array order and JSON property order.
+4. Treat `fingerprintSchemaVersion` as part of the comparison contract.
+   Fingerprints created with different schema versions must never be compared;
+   report those cases as `unadjudicable` until an explicitly version-compatible
+   migration strategy is approved.
+5. Keep the correlation record linked by the existing internal draft relation,
+   not by account/time matching and not by a value in an analytics event.
+6. On confirm, build the same keyed fingerprint from the final saved regular
+   expenses and persist only one result enum: `local_match`, `llm_match`,
+   `neither_match`, or `unadjudicable`. On cancel, persist only `cancelled`;
+   pending drafts at reporting time are `unconfirmed`.
+7. Aggregate those stored enums in the audit. Fingerprints, draft references,
+   and every value used to construct a fingerprint stay in the database and
+   never reach analytics events, logs, stdout, fixtures, reports, or PR text.
+
+This preserves the current parser routing, owner allowlist, zero percent
+rollout, and production configuration. It makes future confirmed cases
+decidable without retaining a second copy of user financial content.
