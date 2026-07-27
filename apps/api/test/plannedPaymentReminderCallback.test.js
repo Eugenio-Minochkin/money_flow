@@ -66,7 +66,9 @@ test("planned reminder snooze is durable and disable requires confirmation", asy
     now: () => new Date("2026-07-27T14:05:00Z")
   });
   assert.equal(repository.snoozeCalls[0].nextReminderLocalDate, "2026-07-28");
-  assert.match(snoozeCalls.find((call) => call.method === "editMessageText").text, /tomorrow after 21:00/);
+  const snoozedText = snoozeCalls.find((call) => call.method === "editMessageText").text;
+  assert.match(snoozedText, /tomorrow evening/);
+  assert.doesNotMatch(snoozedText, /21:00|after \d{1,2}:\d{2}/);
 
   const disableCalls = [];
   await handleCallback({
@@ -82,6 +84,31 @@ test("planned reminder snooze is durable and disable requires confirmation", asy
   const confirmation = disableCalls.find((call) => call.method === "editMessageText");
   assert.match(confirmation.text, /Disable planned payment “English”/);
   assert.match(confirmation.replyMarkup.inline_keyboard[0][0].callback_data, /^ppr:y:/);
+});
+
+test("Russian snooze confirmation promises tomorrow evening without a hardcoded hour", async () => {
+  const calls = [];
+  const repository = fakeRepository();
+  repository.getUserByTelegramId = async () => ({
+    id: 1,
+    telegram_user_id: 100,
+    interface_language: "ru",
+    timezone: "Asia/Bangkok"
+  });
+
+  await handleCallback({
+    update: callbackUpdate("ppr:s:42:20260727"),
+    repository,
+    token: "token",
+    miniAppUrl: "http://localhost:3000",
+    telegramClient: client(calls),
+    trace: trace(),
+    now: () => new Date("2026-07-27T14:05:00Z")
+  });
+
+  const snoozedText = calls.find((call) => call.method === "editMessageText").text;
+  assert.match(snoozedText, /завтра вечером/);
+  assert.doesNotMatch(snoozedText, /21:00|после \d{1,2}:\d{2}/);
 });
 
 test("Russian disable confirmation uses unambiguous planned-payment terminology", async () => {

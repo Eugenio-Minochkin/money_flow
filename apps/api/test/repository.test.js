@@ -1735,6 +1735,14 @@ test("planned reminder repository methods use durable exact-occurrence state", a
     localDate: "2026-07-27",
     timezoneUsed: "Asia/Bangkok"
   });
+  await repo.releasePlannedPaymentReminderClaim({
+    userId: 1,
+    plannedExpenseId: 5,
+    occurrenceDate: "2026-07-27",
+    localDate: "2026-07-27",
+    previousLastSentLocalDate: "2026-07-26",
+    previousNextReminderLocalDate: "2026-07-27"
+  });
   await repo.recordPlannedPaymentReminderMessage({
     userId: 1,
     plannedExpenseId: 5,
@@ -1757,9 +1765,12 @@ test("planned reminder repository methods use durable exact-occurrence state", a
   assert.match(queries[0].sql, /paid_occurrence_dates/i);
   assert.match(queries[1].sql, /ON CONFLICT \(planned_expense_id, occurrence_date\)/i);
   assert.match(queries[1].sql, /last_sent_local_date/i);
-  assert.match(queries[2].sql, /tg_message_id/i);
-  assert.match(queries[3].sql, /next_reminder_local_date/i);
-  assert.match(queries[3].sql, /telegram_user_id/i);
+  assert.match(queries[2].sql, /SET last_sent_local_date = \$5/i);
+  assert.match(queries[2].sql, /next_reminder_local_date = \$6/i);
+  assert.match(queries[2].sql, /last_sent_local_date = \$4/i);
+  assert.match(queries[3].sql, /tg_message_id/i);
+  assert.match(queries[4].sql, /next_reminder_local_date/i);
+  assert.match(queries[4].sql, /telegram_user_id/i);
 });
 
 test("creates report deliveries idempotently with JSON metadata", async () => {

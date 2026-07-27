@@ -1255,6 +1255,30 @@ export function createRepository(pool, options = {}) {
       return result.rows[0] ?? null;
     },
 
+    async releasePlannedPaymentReminderClaim(input) {
+      const result = await pool.query(
+        `UPDATE planned_payment_reminders
+         SET last_sent_local_date = $5,
+             next_reminder_local_date = $6,
+             updated_at = now()
+         WHERE user_id = $1
+           AND planned_expense_id = $2
+           AND occurrence_date = $3
+           AND last_sent_local_date = $4
+           AND status = 'active'
+         RETURNING *`,
+        [
+          input.userId,
+          input.plannedExpenseId,
+          input.occurrenceDate,
+          input.localDate,
+          input.previousLastSentLocalDate,
+          input.previousNextReminderLocalDate
+        ]
+      );
+      return result.rows[0] ?? null;
+    },
+
     async recordPlannedPaymentReminderMessage(input) {
       const result = await pool.query(
         `UPDATE planned_payment_reminders

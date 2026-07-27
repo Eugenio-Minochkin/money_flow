@@ -21,19 +21,21 @@ export function createPlannedPaymentReminderService({
       const candidates = await repository.listPlannedPaymentReminderCandidates();
       for (const candidate of candidates) {
         summary.checked += 1;
-        const outcome = await evaluateAndSend(candidate, current);
-        summary[outcome] = (summary[outcome] ?? 0) + 1;
+        const outcomes = await evaluateAndSend(candidate, current);
+        for (const outcome of outcomes) {
+          summary[outcome] = (summary[outcome] ?? 0) + 1;
+        }
       }
       return summary;
     }
   };
 
   async function evaluateAndSend(candidate, current) {
-    if (!candidate.active) return "skipped";
+    if (!candidate.active) return ["skipped"];
     const normalized = normalizeTimeZone(candidate.timezone);
     const timeZone = normalized.timeZone;
     const localDate = localDateKey(current, timeZone);
-    if (localHour(current, timeZone) < sendHour) return "skipped";
+    if (localHour(current, timeZone) < sendHour) return ["skipped"];
 
     if (normalized.fallback) {
       await safeEvent(repository, candidate.user_id, normalized.reason, {
@@ -41,17 +43,27 @@ export function createPlannedPaymentReminderService({
       });
     }
 
-    const occurrenceDate = eligibleOccurrence(candidate, localDate);
-    if (!occurrenceDate) return "skipped";
-    if ((candidate.paid_occurrence_dates ?? []).map(normalizeDate).includes(occurrenceDate)) return "skipped";
+    const paidOccurrences = new Set((candidate.paid_occurrence_dates ?? []).map(normalizeDate));
+    const occurrences = eligibleOccurrences(candidate, localDate)
+      .filter(({ occurrenceDate }) => !paidOccurrences.has(occurrenceDate));
+    if (occurrences.length === 0) return ["skipped"];
 
-    const claimed = await repository.claimPlannedPaymentReminder({
+    const outcomes = [];
+    for (const occurrence of occurrences) {
+      outcomes.push(await sendOccurrence(candidate, occurrence, current, localDate, timeZone));
+    }
+    return outcomes;
+  }
+
+  async function sendOccurrence(candidate, occurrence, current, localDate, timeZone) {
+    const claimInput = {
       userId: candidate.user_id,
       plannedExpenseId: candidate.id,
-      occurrenceDate,
+      occurrenceDate: occurrence.occurrenceDate,
       localDate,
       timezoneUsed: timeZone
-    });
+    };
+    const claimed = await repository.claimPlannedPaymentReminder(claimInput);
     if (!claimed) return "skipped";
 
     await safeEvent(repository, candidate.user_id, "planned_payment_reminder_eligible", {
@@ -63,10 +75,14 @@ export function createPlannedPaymentReminderService({
     try {
       const response = await sendMessage({
         chatId: Number(candidate.telegram_user_id),
-        text: formatPlannedPaymentReminder(candidate, candidate.interface_language),
+        text: formatPlannedPaymentReminder(candidate, candidate.interface_language, {
+          occurrenceDate: occurrence.occurrenceDate,
+          localDate,
+          deliveryReason: occurrence.deliveryReason
+        }),
         replyMarkup: plannedPaymentReminderKeyboard(
           candidate.id,
-          occurrenceDate,
+          occurrence.occurrenceDate,
           miniAppUrl,
           candidate.telegram_user_id,
           candidate.interface_language
@@ -76,7 +92,7 @@ export function createPlannedPaymentReminderService({
       await repository.recordPlannedPaymentReminderMessage({
         userId: candidate.user_id,
         plannedExpenseId: candidate.id,
-        occurrenceDate,
+        occurrenceDate: occurrence.occurrenceDate,
         localDate,
         timezoneUsed: timeZone,
         telegramChatId: Number(candidate.telegram_user_id),
@@ -110,34 +126,59 @@ export function createPlannedPaymentReminderService({
         await repository.markUserBotBlocked(candidate.user_id);
         return "blocked";
       }
+      await repository.releasePlannedPaymentReminderClaim({
+        ...claimInput,
+        previousLastSentLocalDate: occurrence.previousLastSentLocalDate,
+        previousNextReminderLocalDate: occurrence.previousNextReminderLocalDate
+      });
       return "failed";
     }
   }
 }
 
-export function formatPlannedPaymentReminder(candidate, language = "ru") {
+export function formatPlannedPaymentReminder(candidate, language = "ru", { deliveryReason = "due_today" } = {}) {
   const amount = new Intl.NumberFormat(language === "ru" ? "ru-RU" : "en-US", {
     minimumFractionDigits: ["USD", "EUR", "GEL"].includes(candidate.currency) ? 2 : 0,
     maximumFractionDigits: ["USD", "EUR", "GEL"].includes(candidate.currency) ? 2 : 0
   }).format(Number(candidate.amount));
   const item = `${escapeHtml(candidate.description)} — ${amount} ${escapeHtml(candidate.currency)}`;
+  if (deliveryReason === "snoozed") {
+    return language === "ru"
+      ? `📅 <b>Плановая оплата</b>\n\n${item}\nВы просили напомнить об этой оплате сегодня. Уже оплатили?`
+      : `📅 <b>Planned payment</b>\n\n${item}\nYou asked to be reminded about this payment today. Have you paid it?`;
+  }
   return language === "ru"
     ? `📅 <b>Плановая оплата</b>\n\n${item}\nОплата запланирована на сегодня. Уже оплатили?`
     : `📅 <b>Payment planned for today</b>\n\n${item}\nHave you paid it?`;
 }
 
-function eligibleOccurrence(candidate, localDate) {
+function eligibleOccurrences(candidate, localDate) {
   const states = Array.isArray(candidate.reminder_states) ? candidate.reminder_states : [];
-  const snoozed = states.find((state) =>
-    state.status === "active"
-    && normalizeDate(state.next_reminder_local_date) === localDate
-    && normalizeDate(state.last_sent_local_date) !== localDate);
-  if (snoozed) return normalizeDate(snoozed.occurrence_date);
+  const occurrences = states
+    .filter((state) =>
+      state.status === "active"
+      && normalizeDate(state.next_reminder_local_date) === localDate
+      && normalizeDate(state.last_sent_local_date) !== localDate)
+    .map((state) => ({
+      occurrenceDate: normalizeDate(state.occurrence_date),
+      deliveryReason: "snoozed",
+      previousLastSentLocalDate: normalizeDate(state.last_sent_local_date),
+      previousNextReminderLocalDate: normalizeDate(state.next_reminder_local_date)
+    }));
 
   const dueToday = plannedOccurrenceDateKeysForPeriod(candidate, localDate.slice(0, 7)).includes(localDate);
-  if (!dueToday) return null;
-  const state = states.find((item) => normalizeDate(item.occurrence_date) === localDate);
-  return state?.last_sent_local_date ? null : localDate;
+  const dueState = states.find((item) => normalizeDate(item.occurrence_date) === localDate);
+  if (dueToday
+    && !dueState?.last_sent_local_date
+    && !occurrences.some(({ occurrenceDate }) => occurrenceDate === localDate)) {
+    occurrences.push({
+      occurrenceDate: localDate,
+      deliveryReason: "due_today",
+      previousLastSentLocalDate: normalizeDate(dueState?.last_sent_local_date),
+      previousNextReminderLocalDate: normalizeDate(dueState?.next_reminder_local_date)
+    });
+  }
+  return occurrences.sort((left, right) => left.occurrenceDate.localeCompare(right.occurrenceDate));
 }
 
 function normalizeDate(value) {

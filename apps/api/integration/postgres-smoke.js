@@ -419,6 +419,13 @@ test("persists idempotent planned reminder delivery, snooze, pay, and disable st
   };
   assert.ok(await repo.claimPlannedPaymentReminder(claim));
   assert.equal(await repo.claimPlannedPaymentReminder(claim), null);
+  assert.ok(await repo.releasePlannedPaymentReminderClaim({
+    ...claim,
+    previousLastSentLocalDate: null,
+    previousNextReminderLocalDate: null
+  }));
+  assert.ok(await repo.claimPlannedPaymentReminder(claim));
+  assert.equal(await repo.claimPlannedPaymentReminder(claim), null);
   await repo.recordPlannedPaymentReminderMessage({
     ...claim,
     telegramChatId: telegramUserId,
