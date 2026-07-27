@@ -153,18 +153,34 @@ Implement this only in a separate, reviewed follow-up after the historical
 result is accepted:
 
 1. When a critical shadow draft is created, save a draft-owned correlation
-   record containing only a version, safe enums, and keyed HMAC fingerprints
-   of the normalized local and LLM critical-field tuples. Reuse the already
-   required `PARSER_TEXT_HASH_SECRET`; do not add a new production setting.
-2. Keep the correlation record linked by the existing internal draft relation,
+   record containing a `fingerprintSchemaVersion`, safe enums, and keyed HMAC
+   fingerprints of the normalized local and LLM critical-field tuples. Reuse
+   the already required `PARSER_TEXT_HASH_SECRET`; do not add a new production
+   setting.
+2. Construct every fingerprint input as a domain-separated UTF-8 payload:
+   `money-flow:shadow-adjudication:v1:<canonical-payload>`. Never HMAC a
+   critical-field tuple without this independent domain and version prefix.
+3. Define `<canonical-payload>` as RFC 8785 JSON Canonicalization Scheme
+   output built from a new, explicit data structure rather than serializing a
+   parser result object. The critical fields must be emitted in this fixed
+   logical order: `expense_count`, then each expense's normalized `amount`,
+   `currency`, local calendar day, and `budget_impact`. A multiple-expense
+   payload must first sort its expense entries lexicographically by each
+   entry's complete canonical representation; this makes the fingerprint
+   independent of input array order and JSON property order.
+4. Treat `fingerprintSchemaVersion` as part of the comparison contract.
+   Fingerprints created with different schema versions must never be compared;
+   report those cases as `unadjudicable` until an explicitly version-compatible
+   migration strategy is approved.
+5. Keep the correlation record linked by the existing internal draft relation,
    not by account/time matching and not by a value in an analytics event.
-3. On confirm, build the same keyed fingerprint from the final saved regular
+6. On confirm, build the same keyed fingerprint from the final saved regular
    expenses and persist only one result enum: `local_match`, `llm_match`,
    `neither_match`, or `unadjudicable`. On cancel, persist only `cancelled`;
    pending drafts at reporting time are `unconfirmed`.
-4. Aggregate those stored enums in the audit. Fingerprints, draft references,
+7. Aggregate those stored enums in the audit. Fingerprints, draft references,
    and every value used to construct a fingerprint stay in the database and
-   never reach logs, stdout, fixtures, reports, or PR text.
+   never reach analytics events, logs, stdout, fixtures, reports, or PR text.
 
 This preserves the current parser routing, owner allowlist, zero percent
 rollout, and production configuration. It makes future confirmed cases

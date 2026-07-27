@@ -59,10 +59,18 @@ attempt to infer a confirmation by account or timestamp. This is preferable to
 a false local/LLM attribution.
 
 A future correlation, if separately approved, must be draft-owned and store
-only keyed fingerprints plus safe lifecycle/result enums. It may aggregate
-`local_match`, `llm_match`, `neither_match`, and `unadjudicable`, but must never
-export fingerprints, financial values, source text, descriptions, transcripts,
-or identifiers. This decision changes neither parser routing nor rollout.
+only keyed fingerprints plus safe lifecycle/result enums. Each fingerprint must
+HMAC the domain-separated UTF-8 payload
+`money-flow:shadow-adjudication:v1:<canonical-payload>`, never an unprefixed
+tuple. The canonical payload uses RFC 8785 JSON Canonicalization Scheme, a
+fixed critical-field order, and expenses sorted by complete canonical entry so
+neither JSON property order nor input array order changes the fingerprint. The
+record must include its fingerprint schema version; different versions are
+never compared and remain `unadjudicable`. It may aggregate `local_match`,
+`llm_match`, `neither_match`, and `unadjudicable`, but must never export
+fingerprints, financial values, source text, descriptions, transcripts, or
+identifiers to analytics events, logs, stdout, fixtures, reports, or PR text.
+This decision changes neither parser routing nor rollout.
 
 ## 2026-07-10 - Product Analytics Uses First-touch And Derived Milestones
 
