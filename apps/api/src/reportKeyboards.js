@@ -1,39 +1,53 @@
-export function weeklyReportKeyboard(miniAppUrl, telegramUserId, periodKey, language = "ru") {
+export function weeklyReportKeyboard(miniAppUrl, telegramUserId, period, language = "ru") {
   const text = language === "en"
-    ? { open: "Open week", add: "Add expense" }
-    : { open: "Открыть неделю", add: "Добавить трату" };
+    ? { open: "Open week" }
+    : { open: "Открыть неделю" };
   return {
     inline_keyboard: [[
-      webAppButton(text.open, reportUrl(miniAppUrl, telegramUserId, "history", "week", "weekly", periodKey)),
-      webAppButton(text.add, `${miniAppUrl}?telegramUserId=${telegramUserId}&action=addExpense`)
+      webAppButton(text.open, weeklyHistoryUrl(miniAppUrl, telegramUserId, period), "primary")
     ]]
   };
 }
 
-export function monthlyReportKeyboard(miniAppUrl, telegramUserId, periodKey, language = "ru") {
+export function monthlyReportKeyboard(miniAppUrl, telegramUserId, period, language = "ru") {
   const text = language === "en"
     ? { open: "Open month", budget: "New month budget" }
     : { open: "Открыть месяц", budget: "Бюджет на новый месяц" };
   return {
     inline_keyboard: [[
-      webAppButton(text.open, reportUrl(miniAppUrl, telegramUserId, "history", "month", "monthly", periodKey)),
+      webAppButton(text.open, monthlyHistoryUrl(miniAppUrl, telegramUserId, period), "primary"),
       webAppButton(text.budget, `${miniAppUrl}?telegramUserId=${telegramUserId}&view=settings&focus=budget`)
     ]]
   };
 }
 
-function reportUrl(miniAppUrl, telegramUserId, view, period, reportType, reportKey) {
+function weeklyHistoryUrl(miniAppUrl, telegramUserId, period) {
   const url = new URL(miniAppUrl);
   url.searchParams.set("telegramUserId", String(telegramUserId));
-  url.searchParams.set("view", view);
-  url.searchParams.set("period", period);
-  url.searchParams.set("periodKey", reportKey);
+  url.searchParams.set("view", "history");
+  url.searchParams.set("period", "custom");
+  url.searchParams.set("fromDate", period.localStartDate);
+  url.searchParams.set("toDate", period.localEndDate);
   url.searchParams.set("launchSource", "report");
-  url.searchParams.set("reportType", reportType);
-  url.searchParams.set("reportKey", reportKey);
+  url.searchParams.set("reportType", "weekly");
+  url.searchParams.set("reportKey", period.periodKey);
   return url.toString();
 }
 
-function webAppButton(text, url) {
-  return { text, web_app: { url } };
+function monthlyHistoryUrl(miniAppUrl, telegramUserId, period) {
+  const url = new URL(miniAppUrl);
+  url.searchParams.set("telegramUserId", String(telegramUserId));
+  url.searchParams.set("view", "history");
+  url.searchParams.set("period", "month");
+  url.searchParams.set("monthKey", period.periodKey);
+  url.searchParams.set("fromDate", period.localStartDate);
+  url.searchParams.set("toDate", period.localEndDate);
+  url.searchParams.set("launchSource", "report");
+  url.searchParams.set("reportType", "monthly");
+  url.searchParams.set("reportKey", period.periodKey);
+  return url.toString();
+}
+
+function webAppButton(text, url, style) {
+  return { text, ...(style ? { style } : {}), web_app: { url } };
 }

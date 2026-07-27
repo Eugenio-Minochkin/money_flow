@@ -197,8 +197,8 @@ export function createReportService(options = {}) {
           ? formatMonthlyReport(report, { language: user.interface_language })
           : formatWeeklyReport(report, { language: user.interface_language }),
         replyMarkup: reportType === "monthly"
-          ? monthlyReportKeyboard(miniAppUrl, Number(user.telegram_user_id), period.periodKey, user.interface_language)
-          : weeklyReportKeyboard(miniAppUrl, Number(user.telegram_user_id), period.periodKey, user.interface_language)
+          ? monthlyReportKeyboard(miniAppUrl, Number(user.telegram_user_id), period, user.interface_language)
+          : weeklyReportKeyboard(miniAppUrl, Number(user.telegram_user_id), period, user.interface_language)
       });
       await repository.markReportDeliverySent({
         userId: user.id,
