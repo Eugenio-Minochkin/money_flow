@@ -3252,6 +3252,26 @@ test("draft category callback accepts a canonical slug, marks user source and ed
   assert.ok(calls.some((call) => call.method === "answerCallbackQuery"));
 });
 
+test("draft category callback keeps legacy food and sport callbacks working end to end", async (t) => {
+  for (const [legacyCode, slug] of [["food", "food_cafe"], ["sport", "sport_activities"]]) {
+    await t.test(legacyCode, async () => {
+      const calls = [];
+      const repo = fakeRepository();
+      const bot = createTelegramBot({
+        token: "test-token",
+        miniAppUrl: "http://localhost:3000",
+        repository: repo,
+        telegramClient: capturingClient(calls)
+      });
+
+      await bot.handleUpdate(callbackUpdate(`d:42:c:${legacyCode}`, 100));
+
+      assert.equal(repo.updatedItems[0].category_slug, slug);
+      assert.ok(calls.some((call) => call.method === "editMessageText"));
+    });
+  }
+});
+
 test("draft callback redraw prepares a fresh mixed-currency total after the update", async () => {
   const calls = [];
   const previewItems = [];

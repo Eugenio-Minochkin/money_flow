@@ -137,10 +137,6 @@ function categoryButtonLabel(slug, language) {
   return CATEGORY_BUTTON_LABELS[slug]?.[language] ?? CATEGORY_BUTTON_LABELS.other[language];
 }
 
-function legacyCategoryButton(label, selected, draftId, code) {
-  return { text: `${selected ? "✅" : "⬜"} ${label}`, callback_data: `d:${draftId}:c:${code}` };
-}
-
 export function plannedDraftKeyboard(plannedDraftId, miniAppUrl, telegramUserId, language = "ru") {
   const text = keyboardText(language);
   return withPrimaryMiniAppButtons({

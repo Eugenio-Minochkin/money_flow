@@ -181,6 +181,20 @@ test("unresolved single-item draft keyboard offers every canonical category in c
   assert.ok(categoryButtons.every((button) => !button.text.startsWith("\u2B1C")));
 });
 
+test("every category has a distinct compact label in Russian and English", () => {
+  for (const language of ["ru", "en"]) {
+    const buttons = draftKeyboard(42, [{
+      amount: 70, category_slug: "other", category_source: "parser", needs_review: true, budget_impact: "regular"
+    }], "http://localhost:3000", 100, language).inline_keyboard
+      .flat()
+      .filter((button) => button.callback_data?.startsWith("d:42:c:"));
+
+    assert.equal(buttons.length, CATEGORIES.length);
+    assert.ok(buttons.every((button) => button.text.trim().length > 0));
+    assert.equal(new Set(buttons.map((button) => button.text)).size, CATEGORIES.length);
+  }
+});
+
 test("legacy category codes and canonical slugs resolve to known categories", async () => {
   const { categorySlugFromCode } = await import("../src/telegramKeyboards.js");
 
