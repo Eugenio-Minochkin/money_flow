@@ -16,7 +16,7 @@ export function monthlyReportKeyboard(miniAppUrl, telegramUserId, period, langua
   return {
     inline_keyboard: [[
       webAppButton(text.open, monthlyHistoryUrl(miniAppUrl, telegramUserId, period), "primary"),
-      webAppButton(text.budget, `${miniAppUrl}?telegramUserId=${telegramUserId}&view=settings&focus=budget`)
+      webAppButton(text.budget, `${miniAppUrl}?telegramUserId=${telegramUserId}&view=settings&focus=budget`, "primary")
     ]]
   };
 }

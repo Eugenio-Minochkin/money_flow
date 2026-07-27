@@ -3219,7 +3219,7 @@ test("impact callback updates the draft item and edits the existing Telegram mes
   }
 });
 
-test("draft category callback (d: scheme) maps quick code to slug, marks user source and edits in place", async () => {
+test("draft category callback accepts a canonical slug, marks user source and edits in place", async () => {
   const calls = [];
   const repo = fakeRepository();
   const bot = createTelegramBot({
@@ -3237,13 +3237,13 @@ test("draft category callback (d: scheme) maps quick code to slug, marks user so
   await bot.handleUpdate({
     callback_query: {
       id: "callback-d-cat",
-      data: "d:42:c:food",
+      data: "d:42:c:groceries",
       from: { id: 100 },
       message: { chat: { id: 10 }, message_id: 71 }
     }
   });
 
-  assert.equal(repo.updatedItems[0].category_slug, "food_cafe");
+  assert.equal(repo.updatedItems[0].category_slug, "groceries");
   assert.equal(repo.updatedItems[0].category_source, "user");
   const edit = calls.find((call) => call.method === "editMessageText");
   assert.ok(edit);
@@ -3492,7 +3492,7 @@ test("unclear draft includes category quick actions", async () => {
     });
 
     const keyboard = calls[1][1].replyMarkup.inline_keyboard.flat();
-    assert.ok(keyboard.some((button) => button.callback_data === "d:42:c:food"));
+    assert.ok(keyboard.some((button) => button.callback_data === "d:42:c:food_cafe"));
   } finally {
     console.log = originalLog;
   }

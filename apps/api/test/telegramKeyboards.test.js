@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+import { CATEGORIES } from "../../../packages/shared/src/categories.js";
+
 import {
   appKeyboard,
   budgetTopupDraftKeyboard,
@@ -9,10 +11,12 @@ import {
   budgetTopupUndoKeyboard,
   dailyReminderKeyboard,
   draftKeyboard,
+  inboxDraftKeyboard,
+  plannedDraftKeyboard,
   savedExpenseKeyboard
 } from "../src/telegramKeyboards.js";
 
-test("single-item draft keyboard uses d: scheme, radio type and checkbox category, no planned", () => {
+test("single-item draft keyboard uses canonical category callbacks", () => {
   const keyboard = draftKeyboard(42, [{
     amount: 70, category_slug: "other", category_source: "parser", needs_review: true, budget_impact: "regular"
   }], "http://localhost:3000", 100, "ru");
@@ -24,13 +28,13 @@ test("single-item draft keyboard uses d: scheme, radio type and checkbox categor
   assert.ok(buttons.some((b) => b.callback_data === "d:42:review"));
   assert.ok(buttons.some((b) => b.callback_data === "d:42:t:r"));
   assert.ok(buttons.some((b) => b.callback_data === "d:42:t:l"));
-  assert.ok(buttons.some((b) => b.callback_data === "d:42:c:food"));
+  assert.ok(buttons.some((b) => b.callback_data === "d:42:c:food_cafe"));
   assert.ok(buttons.some((b) => b.callback_data === "d:42:c:other"));
   assert.ok(buttons.every((b) => !/planned/i.test(b.callback_data)));
   assert.ok(buttons.some((b) => b.text === "◉ Учесть сегодня"));
   assert.ok(buttons.some((b) => b.text === "○ Распределить до конца месяца"));
-  assert.ok(buttons.some((b) => b.text.startsWith("⬜") && b.text.includes("Еда")));
-  assert.ok(buttons.some((b) => b.text.startsWith("⬜")));
+  assert.ok(buttons.some((b) => b.callback_data === "d:42:c:groceries"));
+  assert.ok(buttons.every((b) => !b.callback_data?.startsWith("d:42:c:") || !b.text.startsWith("⬜")));
   assert.ok(buttons.some((b) => b.callback_data === "ee:d:42:0:o" && b.text.includes("Исправить")));
 });
 
@@ -163,15 +167,56 @@ test("every quick category code round-trips to a known slug", async () => {
   }
 });
 
-test("parser-fallback other renders every category button unchecked", () => {
+test("unresolved single-item draft keyboard offers every canonical category in compact rows", () => {
+  const keyboard = draftKeyboard(42, [{
+    amount: 70, category_slug: "other", category_source: "parser", needs_review: true, budget_impact: "regular"
+  }], "http://localhost:3000", 100, "en");
+  const categoryRows = keyboard.inline_keyboard.filter((row) => row.some((button) => button.callback_data?.startsWith("d:42:c:")));
+  const categoryButtons = categoryRows.flat();
+
+  assert.equal(keyboard.inline_keyboard[0][0].style, "success");
+  assert.deepEqual(categoryButtons.map((button) => button.callback_data), CATEGORIES.map((category) => `d:42:c:${category.slug}`));
+  assert.ok(categoryRows.slice(0, -1).every((row) => row.length === 2));
+  assert.deepEqual(categoryRows.at(-1).map((button) => button.callback_data), ["d:42:c:other"]);
+  assert.ok(categoryButtons.every((button) => !button.text.startsWith("\u2B1C")));
+});
+
+test("legacy category codes and canonical slugs resolve to known categories", async () => {
+  const { categorySlugFromCode } = await import("../src/telegramKeyboards.js");
+
+  assert.equal(categorySlugFromCode("food"), "food_cafe");
+  assert.equal(categorySlugFromCode("sport"), "sport_activities");
+  for (const category of CATEGORIES) {
+    assert.equal(categorySlugFromCode(category.slug), category.slug);
+  }
+  assert.equal(categorySlugFromCode("not_a_category"), null);
+});
+
+test("every Mini App button is primary", () => {
+  const keyboards = [
+    appKeyboard("http://localhost:3000", 100),
+    draftKeyboard(42, [], "http://localhost:3000", 100),
+    plannedDraftKeyboard(42, "http://localhost:3000", 100),
+    savedExpenseKeyboard(91, "http://localhost:3000", 100),
+    inboxDraftKeyboard("http://localhost:3000", 100, 42),
+    budgetTopupSuccessKeyboard(99, "http://localhost:3000", 100),
+    budgetTopupMiniAppKeyboard("http://localhost:3000", 100)
+  ];
+
+  for (const button of keyboards.flatMap((keyboard) => keyboard.inline_keyboard.flat())) {
+    if (button.web_app) assert.equal(button.style, "primary", button.text);
+  }
+});
+
+test("parser-fallback other renders every canonical category without checkbox prefixes", () => {
   const keyboard = draftKeyboard(42, [{
     amount: 70, category_slug: "other", category_source: "parser", needs_review: true, budget_impact: "regular"
   }], "http://x", 100, "en");
   const categoryButtons = keyboard.inline_keyboard
     .flat()
     .filter((b) => typeof b.callback_data === "string" && b.callback_data.startsWith("d:42:c:"));
-  assert.equal(categoryButtons.length, 6);
-  assert.ok(categoryButtons.every((b) => b.text.startsWith("⬜")), "no category should be selected for parser-fallback other");
+  assert.equal(categoryButtons.length, CATEGORIES.length);
+  assert.ok(categoryButtons.every((b) => !b.text.startsWith("⬜")), "category labels should stay compact");
   const other = categoryButtons.find((b) => b.callback_data === "d:42:c:other");
-  assert.ok(other && other.text.startsWith("⬜"));
+  assert.ok(other);
 });
