@@ -383,6 +383,8 @@ test("dashboard keeps card tooltips and makes the hero an accessible disclosure"
   assert.match(css, /\.dashboard-card__flip-inner\s*{/);
   assert.match(css, /\.hero-metric__ribbon\s*{/);
   assert.match(css, /\.hero-metric__details-toggle\s*{/);
+  assert.match(css, /\.hero-metric__details\[hidden\]\s*{\s*display:\s*none/s);
+  assert.match(css, /\.hero-metric\s+\.hero-metric__facts strong,\s*\.hero-metric\s+\.hero-metric__detail-row strong\s*{[^}]*font-size:\s*14px/s);
   assert.match(css, /transform-style:\s*preserve-3d/);
   assert.match(css, /prefers-reduced-motion:\s*reduce[^]*\.hero-metric__flip-inner/s);
   assert.doesNotMatch(app, /heroStatus/);

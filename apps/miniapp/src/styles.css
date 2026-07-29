@@ -713,12 +713,13 @@ body[data-theme="dark"] .monthly-forecast {
 .hero-metric #heroHint { color: var(--muted); min-height: 1.2em; }
 .hero-metric__facts { display: grid; gap: 8px; margin-top: 4px; }
 .hero-metric__facts > div, .hero-metric__detail-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: baseline; }
-.hero-metric__facts span, .hero-metric__detail-row span { color: var(--muted); font-size: 14px; font-weight: 650; }
-.hero-metric__facts strong, .hero-metric__detail-row strong { color: var(--ink); font-size: 14px; white-space: nowrap; text-align: right; }
+.hero-metric .hero-metric__facts span, .hero-metric .hero-metric__detail-row span { color: var(--muted); font-size: 14px; font-weight: 650; }
+.hero-metric .hero-metric__facts strong, .hero-metric .hero-metric__detail-row strong { color: var(--ink); font-size: 14px; white-space: nowrap; text-align: right; }
 .hero-metric__progress { height: 8px; overflow: hidden; border-radius: 999px; background: color-mix(in srgb, var(--hero-state) 16%, var(--panel)); }
 .hero-metric__progress > div { height: 100%; border-radius: inherit; background: var(--hero-state); }
 .hero-metric__details-toggle { position: relative; z-index: 1; justify-self: start; min-height: 44px; padding: 0; border: 0; background: transparent; color: var(--accent); font: inherit; font-weight: 800; }
 .hero-metric__details { position: relative; z-index: 1; display: grid; gap: 8px; padding-top: 12px; border-top: 1px solid var(--line); }
+.hero-metric__details[hidden] { display: none; }
 @media (max-width: 360px) { .hero-metric { padding: 16px; } .hero-metric__facts > div { gap: 6px; } .hero-metric__facts span, .hero-metric__facts strong { font-size: 13px; } }
 
 .monthly-forecast {
