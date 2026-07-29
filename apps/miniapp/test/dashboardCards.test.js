@@ -95,11 +95,13 @@ test("builds the semantic dashboard card grid", () => {
   assert.equal(cards[1].amount, "712 THB");
   assert.equal(cards[1].caption, "оплаты впереди до конца месяца");
   assert.equal(cards[2].amount, "2519 THB");
+  assert.deepEqual(cards[2].progress, { percent: 94.75, state: "danger" });
   assert.deepEqual(cards[2].lines.map((line) => `${line.label} ${line.amount}`), [
     "потрачено 45481 THB",
     "бюджет 48000 THB"
   ]);
   assert.equal(cards[3].amount, "1807 THB");
+  assert.deepEqual(cards[3].progress, { percent: 34.04, state: "good" });
   assert.deepEqual(cards[3].lines.map((line) => `${line.label} ${line.amount}`), [
     "потрачено 3813 THB",
     "бюджет 11200 THB"

@@ -24,45 +24,41 @@
 
       <section id="dashboardTab">
         <section class="hero-metric" data-state="good">
-          <svg class="hero-metric__ribbon" viewBox="0 0 220 150" aria-hidden="true" focusable="false"><path d="M15 124C53 24 107 31 205 14"/><path d="M3 142C75 58 132 117 215 42"/><path d="M44 151C104 73 158 101 218 69"/></svg>
-          <div class="hero-metric__flip-inner">
-            <div class="hero-metric__face hero-metric__face--front" data-flip-front>
-              <div class="hero-topline">
-                <span id="heroTitle" data-i18n="dashboard.todayRemaining">Осталось сегодня</span>
-                <button
-                  class="hero-metric__details-toggle"
-                  type="button"
-                  aria-expanded="false"
-                  aria-controls="heroTooltip"
-                  aria-label="Объяснить"
-                  id="heroDetailsToggle"
-                >
-                  i
-                </button>
-              </div>
-              <strong id="safeToSpend">...</strong>
-              <em id="safeToSpendDisplay"></em>
-              <small id="heroHint"></small>
-              <div class="hero-metric__facts">
-                <div><span id="heroSpentLabel"></span><strong id="heroSpentValue"></strong></div>
-                <div><span id="heroMonthLabel"></span><strong id="heroMonthValue"></strong></div>
-              </div>
-              <div class="hero-metric__progress" aria-hidden="true"><div id="heroProgress"></div></div>
+          <div class="hero-metric__summary">
+            <div class="hero-metric__copy">
+              <span class="hero-metric__title" id="heroTitle" data-i18n="dashboard.todayRemaining">Осталось сегодня</span>
+              <strong class="hero-metric__amount" id="safeToSpend">...</strong>
+              <em class="hero-metric__display" id="safeToSpendDisplay"></em>
+              <small class="hero-metric__hint" id="heroHint"></small>
             </div>
-            <div
-              class="hero-metric__details"
-              id="heroTooltip"
-              hidden
+            <svg class="hero-metric__ribbon" viewBox="0 0 180 112" aria-hidden="true" focusable="false" preserveAspectRatio="xMidYMid meet">
+              <path class="hero-metric__ribbon-band hero-metric__ribbon-band--one" d="M-8 96C28 98 42 72 70 75C99 78 112 55 132 48C151 41 166 21 188 4L188 29C169 42 158 59 137 65C112 72 102 95 69 91C39 87 24 108-8 106Z" />
+              <path class="hero-metric__ribbon-band hero-metric__ribbon-band--two" d="M-8 78C25 86 43 53 72 61C99 68 112 39 137 35C158 31 171 12 188 -3L188 17C171 31 161 48 140 52C112 58 104 84 72 76C43 68 28 96-8 89Z" />
+              <path class="hero-metric__ribbon-band hero-metric__ribbon-band--three" d="M-8 104C23 102 38 83 65 87C95 91 111 72 136 67C159 62 173 45 188 33L188 51C173 62 162 78 139 83C111 89 98 106 66 102C38 98 20 115-8 116Z" />
+              <circle class="hero-metric__ribbon-dot" cx="160" cy="16" r="4" />
+            </svg>
+          </div>
+          <div class="hero-metric__facts">
+            <div><span id="heroSpentLabel"></span><strong id="heroSpentValue"></strong></div>
+            <div><span id="heroMonthLabel"></span><strong id="heroMonthValue"></strong></div>
+            <div class="hero-metric__progress" aria-hidden="true"><div id="heroProgress"></div></div>
+          </div>
+          <div class="hero-metric__details" id="heroTooltip" hidden>
+            <p id="heroTooltipText" class="hero-metric__details-copy"></p>
+          </div>
+          <div class="hero-metric__footer">
+            <button
+              class="hero-metric__details-toggle"
+              type="button"
+              aria-expanded="false"
+              aria-controls="heroTooltip"
+              aria-label="Объяснить"
+              id="heroDetailsToggle"
             >
-              <p id="heroTooltipText" class="hero-metric__back-text"></p>
-            </div>
+              i
+            </button>
           </div>
         </section>
-
-        <section class="metrics-grid" id="dashboardCards" aria-label="Основные показатели"></section>
-        <section class="budget-topup-shell hidden" id="budgetTopupBreakdown"></section>
-
-        <section class="notice hidden" id="plannedNotice"></section>
 
         <section class="inbox-block dashboard-inbox hidden" id="dashboardInboxBlock">
           <div class="section-heading compact-heading">
@@ -72,16 +68,35 @@
           <div class="expense-list" id="dashboardInboxDrafts"></div>
         </section>
 
-        <section class="monthly-forecast" id="monthlyForecast" aria-label="Monthly forecast">
-          <div class="monthly-forecast__head">
-            <h2 data-i18n="monthlyForecast.title">Прогноз месяца</h2>
-            <span class="monthly-forecast__subtitle" data-i18n="monthlyForecast.subtitle">Если продолжишь тратить в текущем темпе:</span>
+        <section class="section form-section hidden" id="draftEditorSection">
+          <div class="section-heading">
+            <h2 id="draftEditorTitle">Draft</h2>
           </div>
-          <div class="monthly-forecast__body">
-            <strong class="monthly-forecast__amount" id="forecastAmount">…</strong>
-            <em class="monthly-forecast__amount-display" id="forecastAmountDisplay"></em>
+          <form id="draftForm"></form>
+        </section>
+
+        <section class="notice hidden" id="plannedNotice"></section>
+
+        <details class="dashboard-disclosure monthly-forecast" id="monthlyForecast">
+          <summary class="dashboard-disclosure__summary">
+            <span class="dashboard-disclosure__icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M4 18V9m6 9V5m6 13v-7m4 7H2"/><path d="m4 8 5-4 5 5 6-6"/></svg>
+            </span>
+            <span class="dashboard-disclosure__copy">
+              <strong data-i18n="monthlyForecast.title">Прогноз месяца</strong>
+              <span id="forecastSummaryTotal">К концу месяца: …</span>
+              <span class="dashboard-disclosure__status" id="forecastSummaryStatus"></span>
+            </span>
+            <span class="dashboard-disclosure__chevron" aria-hidden="true">›</span>
+          </summary>
+          <div class="dashboard-disclosure__body monthly-forecast__body">
             <p class="monthly-forecast__explanation" id="forecastExplanation"></p>
             <div class="forecast-rows">
+              <div class="plan-row">
+                <span data-i18n="monthlyForecast.forecast">Прогноз</span>
+                <strong id="forecastAmount">…</strong>
+                <em id="forecastAmountDisplay"></em>
+              </div>
               <div class="plan-row" id="forecastBudgetRow">
                 <span data-i18n="monthlyForecast.monthlyBudget">Бюджет месяца</span>
                 <strong id="forecastBudget">…</strong>
@@ -104,41 +119,66 @@
               </div>
             </div>
           </div>
-        </section>
+        </details>
 
-        <section class="notice hidden" id="otherWarning"></section>
-
-        <section class="section form-section hidden" id="draftEditorSection">
-          <div class="section-heading">
-            <h2 id="draftEditorTitle">Draft</h2>
+        <details class="dashboard-disclosure budget-plan" id="budgetPlan">
+          <summary class="dashboard-disclosure__summary">
+            <span class="dashboard-disclosure__icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="15" rx="3"/><path d="M8 3v4m8-4v4M8 11h8m-8 4h5"/></svg>
+            </span>
+            <span class="dashboard-disclosure__copy">
+              <strong data-i18n="dashboard.budgetPlan">Бюджет и план</strong>
+              <span id="budgetPlanSummary">Свободно … · Плановые …</span>
+            </span>
+            <span class="dashboard-disclosure__chevron" aria-hidden="true">›</span>
+          </summary>
+          <div class="dashboard-disclosure__body budget-plan__body">
+            <section class="metrics-grid" id="dashboardCards" aria-label="Основные показатели"></section>
+            <section class="budget-topup-shell hidden" id="budgetTopupBreakdown"></section>
           </div>
-          <form id="draftForm"></form>
-        </section>
+        </details>
 
-        <section class="section">
-          <div class="section-heading">
+        <section class="section latest-expenses" id="latestExpensesSection">
+          <div class="section-heading compact-heading">
             <h2 data-i18n="history.latestExpenses">Последние расходы</h2>
+            <button type="button" class="ghost-button section-heading__action" id="openAllHistoryButton" data-i18n="actions.showAll">Показать все</button>
           </div>
           <div class="expense-list" id="latestExpenses"></div>
         </section>
 
-        <section class="section">
-          <div class="section-heading">
-            <h2 data-i18n="dashboard.breakdown">Разбор месяца</h2>
-            <span class="eyebrow" data-i18n="dashboard.breakdownHint">категории / теги</span>
+        <details class="dashboard-disclosure analytics-disclosure" id="categoriesDisclosure">
+          <summary class="dashboard-disclosure__summary">
+            <span class="dashboard-disclosure__icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M4 5h6v6H4zM14 5h6v6h-6zM4 15h6v5H4zM14 15h6v5h-6z"/></svg>
+            </span>
+            <span class="dashboard-disclosure__copy">
+              <strong data-i18n="dashboard.categoriesAndTags">Категории и теги</strong>
+              <span class="dashboard-disclosure__badge hidden" id="otherWarningBadge" data-i18n="dashboard.needsReview">Нужно разобрать</span>
+            </span>
+            <span class="dashboard-disclosure__chevron" aria-hidden="true">›</span>
+          </summary>
+          <div class="dashboard-disclosure__body">
+            <section class="notice hidden" id="otherWarning"></section>
+            <div class="bar-list compact-bars" id="topCategories"></div>
+            <div class="tag-list compact-tags" id="topTags"></div>
           </div>
-          <div class="bar-list compact-bars" id="topCategories"></div>
-          <div class="tag-list compact-tags" id="topTags"></div>
-        </section>
+        </details>
 
-        <section class="section">
-          <div class="section-heading">
-            <h2 data-i18n="dashboard.activity">Активность</h2>
-            <span class="eyebrow" data-i18n="dashboard.activityHint">крупное / дни</span>
+        <details class="dashboard-disclosure analytics-disclosure" id="activityDisclosure">
+          <summary class="dashboard-disclosure__summary">
+            <span class="dashboard-disclosure__icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M4 19V9m5 10V5m5 14v-7m5 7V3"/></svg>
+            </span>
+            <span class="dashboard-disclosure__copy">
+              <strong data-i18n="dashboard.activityByDay">Активность по дням</strong>
+            </span>
+            <span class="dashboard-disclosure__chevron" aria-hidden="true">›</span>
+          </summary>
+          <div class="dashboard-disclosure__body">
+            <div class="expense-list compact-largest" id="largestExpenses"></div>
+            <div class="heatmap compact-heatmap" id="dailyHeatmap"></div>
           </div>
-          <div class="expense-list compact-largest" id="largestExpenses"></div>
-          <div class="heatmap compact-heatmap" id="dailyHeatmap"></div>
-        </section>
+        </details>
 
         <section class="section form-section hidden" id="expenseEditorSection">
           <div class="section-heading">
@@ -436,10 +476,22 @@
     </section>
 
     <nav class="bottom-tabs" aria-label="Sections" data-i18n-aria-label="navigation.sections">
-      <button class="tab-button active" type="button" data-tab="dashboard">Dashboard</button>
-      <button class="tab-button" type="button" data-tab="history">History</button>
-      <button class="tab-button" type="button" data-tab="plan">Plan</button>
-      <button class="tab-button" type="button" data-tab="settings">Settings</button>
+      <button class="tab-button active" type="button" data-tab="dashboard">
+        <span class="tab-button__icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m4 11 8-7 8 7v9h-5v-6H9v6H4z"/></svg></span>
+        <span class="tab-button__label">Dashboard</span>
+      </button>
+      <button class="tab-button" type="button" data-tab="history">
+        <span class="tab-button__icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 20V8a7 7 0 0 1 14 0v12"/><path d="M3 20h18M8 8h8"/></svg></span>
+        <span class="tab-button__label">History</span>
+      </button>
+      <button class="tab-button" type="button" data-tab="plan">
+        <span class="tab-button__icon" aria-hidden="true"><rect x="5" y="4" width="14" height="17" rx="3"/><path d="M8 2v4m8-4v4M8 10h8m-8 4h5"/></svg></span>
+        <span class="tab-button__label">Plan</span>
+      </button>
+      <button class="tab-button" type="button" data-tab="settings">
+        <span class="tab-button__icon" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 3v2m0 14v2M3 12h2m14 0h2m-2.6-6.4-1.4 1.4M7 17l-1.4 1.4m12.8 0L17 17M7 7 5.6 5.6"/></svg></span>
+        <span class="tab-button__label">Settings</span>
+      </button>
     </nav>
 
     <div class="toast hidden" id="toast" role="status" aria-live="polite"></div>
