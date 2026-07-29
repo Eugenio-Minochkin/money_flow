@@ -19,20 +19,56 @@ export function buildHeroMetric(snapshot, helpers) {
   const dayRemaining = Number(snapshot.dayRemaining ?? 0);
   const dayOverrun = Number(snapshot.dayOverrun ?? 0);
   const dayPlanLimit = Number(snapshot.dayPlanLimit ?? 0);
-  const hasOverrun = dayOverrun > 0;
-  const amount = hasOverrun ? dayOverrun : dayRemaining;
-  const displayAmount = hasOverrun ? snapshot.display?.dayOverrun : snapshot.display?.dayRemaining;
+  const monthRemaining = Number(snapshot.monthRemaining ?? snapshot.remaining ?? 0);
+  const freeRemaining = Number(snapshot.freeRemaining ?? 0);
+  const dayState = snapshot.progress?.day?.state ?? "good";
+  let kind = "remaining";
+  if (monthRemaining < 0) kind = "monthOverrun";
+  else if (freeRemaining < 0) kind = "freeDeficit";
+  else if (dayOverrun > 0) kind = "dayOverrun";
+  const amountByKind = {
+    monthOverrun: Math.abs(monthRemaining),
+    freeDeficit: Math.abs(freeRemaining),
+    dayOverrun,
+    remaining: dayRemaining
+  };
+  const displayByKind = {
+    monthOverrun: Math.abs(Number(snapshot.display?.monthRemaining ?? 0)),
+    freeDeficit: Math.abs(Number(snapshot.display?.freeRemaining ?? 0)),
+    dayOverrun: snapshot.display?.dayOverrun,
+    remaining: snapshot.display?.dayRemaining
+  };
+  const state = kind === "remaining" ? dayState : "danger";
+  const titleKey = {
+    monthOverrun: "dashboard.hero.monthOverrun",
+    freeDeficit: "dashboard.hero.freeDeficit",
+    dayOverrun: "dashboard.hero.dayOverrun",
+    remaining: "dashboard.hero.safeToday"
+  }[kind];
+  const hintKey = {
+    monthOverrun: "dashboard.hero.monthOverrunHint",
+    freeDeficit: "dashboard.hero.freeDeficitHint",
+    dayOverrun: "dashboard.hero.dayOverrunHint",
+    remaining: state === "danger" ? "dashboard.hero.dangerHint" : ""
+  }[kind];
 
   return {
-    title: helpers.t(hasOverrun ? "dashboard.todayOverrun" : "dashboard.todayRemaining"),
-    amount: helpers.moneyBase(amount),
-    display: helpers.moneyDisplay(displayAmount, snapshot.display?.currency),
+    kind,
+    title: helpers.t(titleKey),
+    amount: helpers.moneyBase(amountByKind[kind]),
+    display: helpers.moneyDisplay(displayByKind[kind], snapshot.display?.currency),
+    hint: hintKey ? helpers.t(hintKey) : "",
+    spentLabel: helpers.t("dashboard.hero.spentToday"),
+    spent: `${helpers.moneyBase(todayTotal)} / ${helpers.moneyBase(dayPlanLimit)}`,
+    monthLabel: helpers.t(kind === "monthOverrun" ? "dashboard.hero.budgetOverrun" : "dashboard.hero.freeThroughMonthEnd"),
+    monthValue: helpers.moneyBase(kind === "monthOverrun" ? Math.abs(monthRemaining) : freeRemaining),
+    progress: { percent: Math.max(0, Math.min(Number(snapshot.progress?.day?.percent ?? 0), 100)), state },
     caption: helpers.t("dashboard.todayCaption", {
       spent: helpers.moneyBase(todayTotal),
       budget: helpers.moneyBase(dayPlanLimit)
     }),
-    state: hasOverrun ? "bad" : "good",
-    tooltip: helpers.t(hasOverrun ? "dashboard.tooltip.heroTodayOverspend" : "dashboard.tooltip.heroTodayOnTrack")
+    state,
+    tooltip: helpers.t(kind === "dayOverrun" ? "dashboard.tooltip.heroTodayOverspend" : "dashboard.tooltip.heroTodayOnTrack")
   };
 }
 

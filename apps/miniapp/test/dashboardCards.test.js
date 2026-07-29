@@ -17,6 +17,17 @@ const labels = {
   "dashboard.todayCaption": "потрачено {spent} · бюджет дня {budget}",
   "dashboard.todayOverrun": "Перерасход сегодня",
   "dashboard.todayRemaining": "Осталось сегодня",
+  "dashboard.hero.safeToday": "Можно потратить сегодня",
+  "dashboard.hero.dayOverrun": "Сегодня выше ориентира",
+  "dashboard.hero.dayOverrunHint": "на столько превышен дневной ориентир",
+  "dashboard.hero.freeDeficit": "Свободный бюджет исчерпан",
+  "dashboard.hero.freeDeficitHint": "не хватает с учётом плановых оплат и резерва",
+  "dashboard.hero.monthOverrun": "Бюджет месяца превышен",
+  "dashboard.hero.monthOverrunHint": "превышение текущего бюджета",
+  "dashboard.hero.dangerHint": "Осталось немного от дневного ориентира",
+  "dashboard.hero.spentToday": "Сегодня потрачено",
+  "dashboard.hero.freeThroughMonthEnd": "До конца месяца",
+  "dashboard.hero.budgetOverrun": "Превышение бюджета",
   "dashboard.tooltip.heroTodayOnTrack": "Можно потратить сегодня и не сломать месяц. Плановые оплаты уже вычтены.",
   "dashboard.tooltip.heroTodayOverspend": "Перерасход относительно бюджета дня. Плановые оплаты уже вычтены.",
   "dashboard.tooltip.monthFree": "Деньги, которыми реально можно распоряжаться до конца месяца. Плановые оплаты уже отложены.",
@@ -122,17 +133,18 @@ test("marks negative month-free values as danger and does not clamp them", () =>
   assert.equal(cards[3].state, "danger");
 });
 
-test("builds hero metric from today-only budget fields", () => {
+test("prioritizes monthly state over daily overrun in the hero", () => {
   const hero = buildHeroMetric(semanticSnapshot, helpers);
-
-  assert.deepEqual(hero, {
-    title: "Перерасход сегодня",
-    amount: "279 THB",
-    display: "~$8.07",
-    caption: "потрачено 676 THB · бюджет дня 397 THB",
-    state: "bad",
-    tooltip: "Перерасход относительно бюджета дня. Плановые оплаты уже вычтены."
-  });
+  assert.equal(hero.kind, "dayOverrun");
+  assert.equal(hero.title, "Сегодня выше ориентира");
+  assert.equal(hero.amount, "279 THB");
+  assert.equal(hero.state, "danger");
+  assert.equal(hero.progress.percent, 0);
+  const monthOverrun = buildHeroMetric({ ...semanticSnapshot, monthRemaining: -1250, display: { ...semanticSnapshot.display, monthRemaining: -38.3 } }, helpers);
+  assert.equal(monthOverrun.kind, "monthOverrun");
+  assert.equal(monthOverrun.amount, "1250 THB");
+  assert.equal(monthOverrun.display, "~$38.3");
+  assert.equal(monthOverrun.title, "Бюджет месяца превышен");
 });
 
 test("builds on-track hero title caption and tooltip", () => {
@@ -144,10 +156,23 @@ test("builds on-track hero title caption and tooltip", () => {
     display: { currency: "USD", dayRemaining: 4.5 }
   }, helpers);
 
-  assert.equal(hero.title, "Осталось сегодня");
+  assert.equal(hero.title, "Можно потратить сегодня");
   assert.equal(hero.amount, "147 THB");
   assert.equal(hero.caption, "потрачено 250 THB · бюджет дня 397 THB");
+  assert.equal(hero.state, "good");
   assert.equal(hero.tooltip, "Можно потратить сегодня и не сломать месяц. Плановые оплаты уже вычтены.");
+});
+
+test("uses existing day state and free deficit without inventing thresholds", () => {
+  const warn = buildHeroMetric({ ...semanticSnapshot, dayOverrun: 0, dayRemaining: 120, progress: { day: { percent: 73, state: "warn" } } }, helpers);
+  assert.equal(warn.kind, "remaining");
+  assert.equal(warn.state, "warn");
+  assert.equal(warn.progress.percent, 73);
+  const deficit = buildHeroMetric({ ...semanticSnapshot, dayOverrun: 0, monthRemaining: 500, freeRemaining: -250, display: { ...semanticSnapshot.display, freeRemaining: -7.6 } }, helpers);
+  assert.equal(deficit.kind, "freeDeficit");
+  assert.equal(deficit.title, "Свободный бюджет исчерпан");
+  assert.equal(deficit.amount, "250 THB");
+  assert.equal(deficit.display, "~$7.6");
 });
 
 test("renders card flip backs as a single compact paragraph", () => {

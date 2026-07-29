@@ -23,33 +23,36 @@
       </section>
 
       <section id="dashboardTab">
-        <section class="hero-metric hero-metric--flip" data-flip-card data-state="good">
+        <section class="hero-metric" data-state="good">
+          <svg class="hero-metric__ribbon" viewBox="0 0 220 150" aria-hidden="true" focusable="false"><path d="M15 124C53 24 107 31 205 14"/><path d="M3 142C75 58 132 117 215 42"/><path d="M44 151C104 73 158 101 218 69"/></svg>
           <div class="hero-metric__flip-inner">
             <div class="hero-metric__face hero-metric__face--front" data-flip-front>
               <div class="hero-topline">
                 <span id="heroTitle" data-i18n="dashboard.todayRemaining">Осталось сегодня</span>
                 <button
-                  class="hero-metric__info"
+                  class="hero-metric__details-toggle"
                   type="button"
                   aria-expanded="false"
                   aria-controls="heroTooltip"
                   aria-label="Объяснить"
-                  data-flip-toggle
+                  id="heroDetailsToggle"
                 >
                   i
                 </button>
               </div>
               <strong id="safeToSpend">...</strong>
               <em id="safeToSpendDisplay"></em>
-              <small id="heroCaption">...</small>
+              <small id="heroHint"></small>
+              <div class="hero-metric__facts">
+                <div><span id="heroSpentLabel"></span><strong id="heroSpentValue"></strong></div>
+                <div><span id="heroMonthLabel"></span><strong id="heroMonthValue"></strong></div>
+              </div>
+              <div class="hero-metric__progress" aria-hidden="true"><div id="heroProgress"></div></div>
             </div>
             <div
-              class="hero-metric__face hero-metric__face--back"
+              class="hero-metric__details"
               id="heroTooltip"
-              role="note"
-              tabindex="-1"
-              aria-hidden="true"
-              data-flip-back
+              hidden
             >
               <p id="heroTooltipText" class="hero-metric__back-text"></p>
             </div>

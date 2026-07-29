@@ -350,7 +350,7 @@ test("dashboard uses compact header, inbox before month plan, and bottom navigat
   assert.match(css, /body\[data-theme="light"\]/);
 });
 
-test("dashboard cards expose tooltip controls without hero status wiring", async () => {
+test("dashboard keeps card tooltips and makes the hero an accessible disclosure", async () => {
   const renderer = await readFile(join(miniAppRoot, "dashboardCards.js"), "utf8");
   const app = await readFile(join(miniAppRoot, "app.js"), "utf8");
   const css = await readFile(join(miniAppRoot, "styles.css"), "utf8");
@@ -365,14 +365,15 @@ test("dashboard cards expose tooltip controls without hero status wiring", async
   assert.doesNotMatch(renderer, /dashboard-card__tooltip/);
   assert.match(renderer, /aria-expanded="false"/);
   assert.match(renderer, /aria-controls=/);
-  assert.match(html, /class="hero-metric hero-metric--flip"[^>]*data-flip-card/);
+  assert.match(html, /class="hero-metric"[^>]*data-state="good"/);
+  assert.match(html, /hero-metric__ribbon/);
   assert.match(html, /id="heroTooltip"/);
   assert.match(html, /id="heroTooltipText"/);
-  assert.match(html, /data-flip-toggle/);
-  assert.match(html, /class="hero-metric__info"[^]*aria-label="Объяснить"[^]*data-flip-toggle/);
+  assert.match(html, /id="heroDetailsToggle"/);
+  assert.match(html, /class="hero-metric__details-toggle"[^]*aria-controls="heroTooltip"/);
   assert.match(app, /bindDashboardTooltips/);
-  assert.match(app, /querySelector\("\.hero-metric__info"\)/);
-  assert.match(app, /setAttribute\("aria-label",\s*`\$\{t\("dashboard\.explain"\)\}: \$\{heroMetric\.title\}`\)/);
+  assert.match(app, /bindHeroDetails/);
+  assert.match(app, /renderHeroDetails/);
   assert.match(app, /FLIP_SELECTOR\s*=\s*"\[data-flip-card\]"/);
   assert.match(app, /FLIP_TOGGLE_SELECTOR\s*=\s*"\[data-flip-toggle\]"/);
   assert.match(app, /is-flipped/);
@@ -380,8 +381,8 @@ test("dashboard cards expose tooltip controls without hero status wiring", async
   assert.doesNotMatch(app, /dashboard-card__tooltip:not\(\[hidden\]\)/);
   assert.doesNotMatch(app, /querySelectorAll\("\.dashboard-card\[data-dashboard-card\]"\)/);
   assert.match(css, /\.dashboard-card__flip-inner\s*{/);
-  assert.match(css, /\.hero-metric__flip-inner\s*{/);
-  assert.match(css, /\.hero-metric__face--back\s*{/);
+  assert.match(css, /\.hero-metric__ribbon\s*{/);
+  assert.match(css, /\.hero-metric__details-toggle\s*{/);
   assert.match(css, /transform-style:\s*preserve-3d/);
   assert.match(css, /prefers-reduced-motion:\s*reduce[^]*\.hero-metric__flip-inner/s);
   assert.doesNotMatch(app, /heroStatus/);

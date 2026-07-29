@@ -605,10 +605,23 @@ function renderSnapshot(snapshot) {
   setText("#heroTitle", heroMetric.title);
   setText("#safeToSpend", heroMetric.amount);
   setText("#safeToSpendDisplay", heroMetric.display);
-  setText("#heroCaption", heroMetric.caption);
+  setText("#heroHint", heroMetric.hint);
+  setText("#heroSpentLabel", heroMetric.spentLabel);
+  setText("#heroSpentValue", heroMetric.spent);
+  setText("#heroMonthLabel", heroMetric.monthLabel);
+  setText("#heroMonthValue", heroMetric.monthValue);
+  const heroProgress = document.querySelector("#heroProgress");
+  if (heroProgress) {
+    heroProgress.style.width = `${heroMetric.progress.percent}%`;
+    heroProgress.dataset.state = heroMetric.progress.state;
+  }
   setText("#heroTooltipText", heroMetric.tooltip);
-  const heroInfo = document.querySelector(".hero-metric__info");
-  heroInfo?.setAttribute("aria-label", `${t("dashboard.explain")}: ${heroMetric.title}`);
+  const heroDetails = document.querySelector("#heroTooltip");
+  if (heroDetails) heroDetails.innerHTML = renderHeroDetails(snapshot, dashboardState?.currentMonthBudget);
+  const heroToggle = document.querySelector("#heroDetailsToggle");
+  heroToggle?.setAttribute("aria-label", t("dashboard.hero.why"));
+  heroToggle && (heroToggle.textContent = t("dashboard.hero.why"));
+  bindHeroDetails();
   renderDashboardCards(document.querySelector("#dashboardCards"), buildDashboardCards(snapshot, {
     t,
     moneyBase,
@@ -621,6 +634,33 @@ function renderSnapshot(snapshot) {
     formatDate: (value) => formatDateOnly(value)
   });
   bindDashboardTooltips();
+}
+
+function renderHeroDetails(snapshot, currentMonthBudget) {
+  const rows = [
+    ["dashboard.hero.baseBudget", currentMonthBudget?.baseBudget],
+    ["dashboard.hero.topups", currentMonthBudget?.topupsTotal ? `+${moneyBase(currentMonthBudget.topupsTotal)}` : null],
+    ["dashboard.hero.monthBudget", snapshot.monthlyBudget],
+    ["dashboard.spent", snapshot.month],
+    ["dashboard.hero.planned", snapshot.plannedRemaining],
+    ["dashboard.hero.reserve", snapshot.reserve?.amount],
+    ["dashboard.hero.free", snapshot.freeRemaining],
+    ["dashboard.hero.dayPlan", snapshot.dayPlanLimit]
+  ].filter(([, value]) => value != null).map(([label, value]) => `
+    <div class="hero-metric__detail-row"><span>${escapeHtml(t(label))}</span><strong>${escapeHtml(typeof value === "string" ? value : moneyBase(value))}</strong></div>`);
+  return rows.join("");
+}
+
+function bindHeroDetails() {
+  const toggle = document.querySelector("#heroDetailsToggle");
+  const panel = document.querySelector("#heroTooltip");
+  if (!toggle || !panel || toggle.dataset.bound === "true") return;
+  toggle.dataset.bound = "true";
+  toggle.addEventListener("click", () => {
+    const open = panel.hasAttribute("hidden");
+    panel.toggleAttribute("hidden", !open);
+    toggle.setAttribute("aria-expanded", String(open));
+  });
 }
 
 function bindDashboardTooltips() {
