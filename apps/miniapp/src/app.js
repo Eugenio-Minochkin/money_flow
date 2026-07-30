@@ -48,6 +48,7 @@ import {
   defaultPlannedCurrency,
   dueOrOverduePlannedOccurrences,
   isPlannedPaid,
+  nextUnpaidPlannedItem,
   parseDueDays,
   recurrenceLabel as plannedRecurrenceLabel,
   weekdayOptions as plannedWeekdayOptions
@@ -143,6 +144,7 @@ document.querySelector("#interfaceLanguageInput").addEventListener("change", (ev
 document.querySelector("#interfaceThemeInput").addEventListener("change", (event) => applyTheme(event.target.value));
 document.querySelector("#detectTimezoneButton")?.addEventListener("click", detectTimezone);
 document.querySelector("#openHistoryInboxButton")?.addEventListener("click", () => switchTab("history"));
+document.querySelector("#openAllHistoryButton")?.addEventListener("click", () => switchTab("history"));
 document.querySelectorAll("[data-export-period]").forEach((button) => {
   button.addEventListener("click", () => requestExpenseExport(button.dataset.exportPeriod));
 });
@@ -253,12 +255,15 @@ function renderAnalytics(snapshot, analytics) {
 
 function renderOtherWarning(warning) {
   const notice = document.querySelector("#otherWarning");
+  const badge = document.querySelector("#otherWarningBadge");
   if (!warning?.active) {
     notice.classList.add("hidden");
     notice.innerHTML = "";
+    badge?.classList.add("hidden");
     return;
   }
   notice.classList.remove("hidden");
+  badge?.classList.remove("hidden");
   notice.innerHTML = `
     <div class="notice-title">
       <span>${currentLanguage === "ru" ? `Категория “Другое” уже ${warning.percent}% месяца` : `Other is already ${warning.percent}% of the month`}</span>
@@ -336,7 +341,18 @@ function renderMonthlyForecast(snapshot, analytics) {
     snapshot.display?.averageDailyRegularSpending ?? (daysInMonth > 0 ? displayForecast / daysInMonth : 0)
   );
   const perDay = t("monthlyForecast.perDay");
+  const hasBudget = Number.isFinite(monthlyBudget) && monthlyBudget > 0;
+  const roundedDifference = Math.round(difference * 100) / 100;
+  const isOverBudget = roundedDifference > 0;
+  const forecastSection = document.querySelector("#monthlyForecast");
 
+  setText("#forecastSummaryTotal", t("monthlyForecast.summaryTotal", { amount: moneyBase(forecast) }));
+  setText("#forecastSummaryStatus", hasBudget
+    ? (isOverBudget
+      ? t("monthlyForecast.summaryAboveBudget", { amount: moneyBase(Math.abs(difference)) })
+      : t("monthlyForecast.summaryWithinBudget", { amount: moneyBase(Math.abs(difference)) }))
+    : t("monthlyForecast.withinBudget"));
+  if (forecastSection) forecastSection.dataset.state = isOverBudget ? "danger" : "good";
   setText("#forecastAmount", moneyBase(forecast));
   setText("#forecastAmountDisplay", displayText(displayForecast));
   setText("#forecastExplanation", t("monthlyForecast.explanation", { spentSoFar: moneyBase(spentSoFar) }));
@@ -346,16 +362,14 @@ function renderMonthlyForecast(snapshot, analytics) {
 
   const diffRow = document.querySelector("#forecastDiffRow");
   diffRow.classList.remove("good", "bad", "neutral");
-  const roundedDifference = Math.round(difference * 100) / 100;
-  const isOverBudget = roundedDifference > 0;
   if (isOverBudget) {
     diffRow.classList.add("bad");
-    setText("#forecastDiff", t("monthlyForecast.aboveBudget", { amount: moneyBase(difference) }));
-    setText("#forecastDiffDisplay", displayText(Math.abs(displayForecast - displayBudget)));
+    setText("#forecastDiff", t("monthlyForecast.aboveBudget", { amount: moneyBase(Math.abs(difference)) }));
   } else {
-    setText("#forecastDiff", "");
-    setText("#forecastDiffDisplay", "");
+    diffRow.classList.add("good");
+    setText("#forecastDiff", t("monthlyForecast.withinBudgetWithLeft", { amount: moneyBase(Math.abs(difference)) }));
   }
+  setText("#forecastDiffDisplay", displayText(Math.abs(displayForecast - displayBudget)));
 
   setText("#forecastAvgPace", `${moneyBase(averageDailySpending)}${perDay}`);
   setText("#forecastAvgPaceDisplay", showDisplay ? `${moneyDisplay(displayAverageDaily, displayCurrency)}${perDay}` : "");
@@ -376,9 +390,8 @@ function renderMonthlyForecast(snapshot, analytics) {
     setText("#forecastWeekDisplay", "");
   }
 
-  const hasBudget = Number.isFinite(monthlyBudget) && monthlyBudget > 0;
   document.querySelector("#forecastBudgetRow").classList.toggle("hidden", !hasBudget);
-  document.querySelector("#forecastDiffRow").classList.toggle("hidden", !(hasBudget && isOverBudget));
+  document.querySelector("#forecastDiffRow").classList.toggle("hidden", !hasBudget);
 }
 
 async function loadHistory() {
@@ -605,10 +618,27 @@ function renderSnapshot(snapshot) {
   setText("#heroTitle", heroMetric.title);
   setText("#safeToSpend", heroMetric.amount);
   setText("#safeToSpendDisplay", heroMetric.display);
-  setText("#heroCaption", heroMetric.caption);
+  setText("#heroHint", heroMetric.hint);
+  setText("#heroSpentLabel", heroMetric.spentLabel);
+  setText("#heroSpentValue", heroMetric.spent);
+  setText("#heroMonthLabel", heroMetric.monthLabel);
+  setText("#heroMonthValue", heroMetric.monthValue);
+  const heroProgress = document.querySelector("#heroProgress");
+  if (heroProgress) {
+    heroProgress.style.width = `${heroMetric.progress.percent}%`;
+    heroProgress.dataset.state = heroMetric.progress.state;
+  }
   setText("#heroTooltipText", heroMetric.tooltip);
-  const heroInfo = document.querySelector(".hero-metric__info");
-  heroInfo?.setAttribute("aria-label", `${t("dashboard.explain")}: ${heroMetric.title}`);
+  const heroDetails = document.querySelector("#heroTooltip");
+  if (heroDetails) heroDetails.innerHTML = renderHeroDetails(snapshot, dashboardState?.currentMonthBudget);
+  const heroToggle = document.querySelector("#heroDetailsToggle");
+  heroToggle?.setAttribute("aria-label", t("dashboard.hero.why"));
+  heroToggle && (heroToggle.textContent = t("dashboard.hero.why"));
+  bindHeroDetails();
+  setText("#budgetPlanSummary", t("dashboard.budgetPlanSummary", {
+    free: moneyBase(snapshot.freeRemaining ?? 0),
+    planned: moneyBase(snapshot.plannedRemaining ?? 0)
+  }));
   renderDashboardCards(document.querySelector("#dashboardCards"), buildDashboardCards(snapshot, {
     t,
     moneyBase,
@@ -621,6 +651,33 @@ function renderSnapshot(snapshot) {
     formatDate: (value) => formatDateOnly(value)
   });
   bindDashboardTooltips();
+}
+
+function renderHeroDetails(snapshot, currentMonthBudget) {
+  const rows = [
+    ["dashboard.hero.baseBudget", currentMonthBudget?.baseBudget],
+    ["dashboard.hero.topups", currentMonthBudget?.topupsTotal ? `+${moneyBase(currentMonthBudget.topupsTotal)}` : null],
+    ["dashboard.hero.monthBudget", snapshot.monthlyBudget],
+    ["dashboard.spent", snapshot.month],
+    ["dashboard.hero.planned", snapshot.plannedRemaining],
+    ["dashboard.hero.reserve", snapshot.reserve?.amount],
+    ["dashboard.hero.free", snapshot.freeRemaining],
+    ["dashboard.hero.dayPlan", snapshot.dayPlanLimit]
+  ].filter(([, value]) => value != null).map(([label, value]) => `
+    <div class="hero-metric__detail-row"><span>${escapeHtml(t(label))}</span><strong>${escapeHtml(typeof value === "string" ? value : moneyBase(value))}</strong></div>`);
+  return rows.join("");
+}
+
+function bindHeroDetails() {
+  const toggle = document.querySelector("#heroDetailsToggle");
+  const panel = document.querySelector("#heroTooltip");
+  if (!toggle || !panel || toggle.dataset.bound === "true") return;
+  toggle.dataset.bound = "true";
+  toggle.addEventListener("click", () => {
+    const open = panel.hasAttribute("hidden");
+    panel.toggleAttribute("hidden", !open);
+    toggle.setAttribute("aria-expanded", String(open));
+  });
 }
 
 function bindDashboardTooltips() {
@@ -778,8 +835,14 @@ function renderPlannedNotice(items) {
   const notice = document.querySelector("#plannedNotice");
   const entries = dueOrOverduePlannedOccurrences(items);
   if (!entries.length) {
-    notice.classList.add("hidden");
-    notice.innerHTML = "";
+    const next = nextUnpaidPlannedItem(items);
+    if (!next) {
+      notice.classList.add("hidden");
+      notice.innerHTML = "";
+      return;
+    }
+    notice.classList.remove("hidden");
+    notice.innerHTML = plannedFutureRowHtml(next);
     return;
   }
   notice.classList.remove("hidden");
@@ -791,6 +854,29 @@ function renderPlannedNotice(items) {
   const rows = entries.map((entry) => plannedDueRowHtml(entry, titleKey)).join("");
   notice.innerHTML = `<div class="planned-due-list${hasOverdue ? " planned-due-list--overdue" : ""}">${rows}</div>`;
   bindPlannedActions(notice, items);
+}
+
+function plannedFutureRowHtml(entry) {
+  const item = entry.item;
+  const occurrenceDate = entry.occurrence?.occurrence_date ?? entry.date;
+  const metaParts = [
+    formatDateOnly(occurrenceDate, currentLanguage, userTimeZone()),
+    moneyBase(item.amount_base ?? item.amount)
+  ];
+  const displayText = moneyDisplay(item.display?.amount, item.display?.currency);
+  if (displayText && item.display?.currency && String(item.display.currency).toUpperCase() !== String(item.base_currency ?? "").toUpperCase()) {
+    metaParts.push(displayText);
+  }
+  return `
+    <article class="planned-due-row planned-due-row--compact planned-due-row--future">
+      <span class="planned-due-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="15" rx="3"/><path d="M8 3v4m8-4v4M8 11h8"/></svg></span>
+      <div class="planned-due-main">
+        <span class="planned-due-label">${t("plan.nextPlanned")}</span>
+        <strong class="planned-due-title">${escapeHtml(item.description)}</strong>
+        <em class="planned-due-meta">${escapeHtml(metaParts.join(" · "))}</em>
+      </div>
+    </article>
+  `;
 }
 
 function plannedDueRowHtml(entry, titleKey) {
@@ -810,6 +896,7 @@ function plannedDueRowHtml(entry, titleKey) {
   const payAttributes = `data-pay-planned="${escapeAttribute(item.id)}" data-occurrence-date="${escapeAttribute(occurrence.occurrence_date)}"`;
   return `
     <article class="planned-due-row planned-due-row--compact">
+      <span class="planned-due-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="15" rx="3"/><path d="M8 3v4m8-4v4M8 11h8"/></svg></span>
       <div class="planned-due-main">
         <span class="planned-due-label">${t(labelKey)}</span>
         <strong class="planned-due-title">${escapeHtml(item.description)}</strong>
@@ -866,8 +953,48 @@ function renderLatest(expenses) {
     list.innerHTML = `<div class="empty">${t("history.noExpenses")}</div>`;
     return;
   }
-  list.innerHTML = expenses.map(expenseRow).join("");
-  bindExpenseActions(list, expenses);
+  list.innerHTML = expenses.slice(0, 3).map(dashboardExpenseRow).join("");
+}
+
+function dashboardExpenseRow(expense) {
+  const amount = expense.amount_original ?? expense.amount_base ?? expense.amount ?? 0;
+  const currency = expense.currency_original
+    ?? expense.base_currency
+    ?? dashboardState?.snapshot?.baseCurrency
+    ?? dashboardState?.user?.base_currency
+    ?? "THB";
+  return `
+    <article class="dashboard-expense-row" style="--category-color: ${categoryColor(expense.category_slug)}">
+      <span class="dashboard-expense-icon" aria-hidden="true">${dashboardCategoryIcon(expense.category_slug)}</span>
+      <div class="dashboard-expense-main">
+        <strong>${escapeHtml(expense.description)}</strong>
+        <span>${formatDate(expense.spent_at, currentLanguage, userTimeZone())}</span>
+      </div>
+      <div class="dashboard-expense-amount">
+        <strong>${formatMoney(amount, currency)}</strong>
+        <em>${moneyDisplay(expense.display?.amount, expense.display?.currency)}</em>
+      </div>
+    </article>
+  `;
+}
+
+function dashboardCategoryIcon(slug) {
+  const icons = {
+    food_cafe: '<path d="M5 8h11v5a5 5 0 0 1-5 5H10a5 5 0 0 1-5-5z"/><path d="M16 10h2a2 2 0 0 1 0 4h-2M7 5h7"/>',
+    groceries: '<path d="M5 9h14l-1 11H6z"/><path d="M9 9a3 3 0 0 1 6 0"/>',
+    transport: '<rect x="4" y="5" width="16" height="13" rx="3"/><path d="M7 9h10M7 14h10"/><circle cx="8" cy="19" r="1"/><circle cx="16" cy="19" r="1"/>',
+    health: '<path d="M12 21s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 11c0 5.6-7 10-7 10z"/><path d="M9 13h6m-3-3v6"/>',
+    sport_activities: '<path d="m7 5 3 3-4 4-3-3zm10 0-3 3 4 4 3-3zM9 15h6m-5-7h4"/>',
+    home: '<path d="m4 11 8-7 8 7v9h-5v-6H9v6H4z"/>',
+    travel: '<path d="M4 16 20 8l-6 12-3-5zM11 15l-3-3"/>',
+    subscriptions: '<rect x="5" y="3" width="14" height="18" rx="3"/><path d="M9 7h6m-6 4h6m-6 4h4"/>',
+    education: '<path d="m3 9 9-5 9 5-9 5z"/><path d="M7 12v5c3 2 7 2 10 0v-5"/>',
+    gifts_help: '<rect x="4" y="9" width="16" height="11" rx="2"/><path d="M12 9v11M3 9h18V6H3zM12 6c-4 0-4-4-1-4 2 0 1 4 1 4zm0 0c4 0 4-4 1-4-2 0-1 4-1 4z"/>',
+    entertainment: '<path d="M7 4h10l2 16-7-3-7 3z"/><circle cx="9" cy="10" r="1"/><circle cx="15" cy="10" r="1"/><path d="M9 14h6"/>',
+    gear: '<path d="M6 7h12l2 13H4z"/><path d="M9 7a3 3 0 0 1 6 0"/>'
+  };
+  const content = icons[slug] ?? '<circle cx="12" cy="12" r="8"/><path d="M8 12h8m-4-4v8"/>';
+  return `<svg viewBox="0 0 24 24" focusable="false">${content}</svg>`;
 }
 
 function renderHistory(expenses) {
@@ -2005,7 +2132,9 @@ function applyLanguage(language) {
     element.setAttribute("aria-label", t(element.dataset.i18nAriaLabel));
   });
   document.querySelectorAll("[data-tab]").forEach((button) => {
-    button.textContent = t(`screen.${button.dataset.tab}`);
+    const label = button.querySelector(".tab-button__label");
+    if (label) label.textContent = t(`screen.${button.dataset.tab}`);
+    else button.textContent = t(`screen.${button.dataset.tab}`);
   });
   setOptionalText("#settingsTab h2", t("settings.title"));
   const labels = [
