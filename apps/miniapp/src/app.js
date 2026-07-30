@@ -628,7 +628,6 @@ function renderSnapshot(snapshot) {
     heroProgress.style.width = `${heroMetric.progress.percent}%`;
     heroProgress.dataset.state = heroMetric.progress.state;
   }
-  setText("#heroTooltipText", heroMetric.tooltip);
   const heroDetails = document.querySelector("#heroTooltip");
   if (heroDetails) heroDetails.innerHTML = renderHeroDetails(snapshot, dashboardState?.currentMonthBudget, heroMetric);
   const heroToggle = document.querySelector("#heroDetailsToggle");
@@ -679,10 +678,17 @@ function renderHeroDetails(snapshot, currentMonthBudget, heroMetric) {
   if (heroMetric.kind === "monthOverrun") {
     rows.push(heroDetailRow("dashboard.hero.budgetOverrun", heroMetric.amount, "result"));
     if (freeRemaining < 0 && Math.abs(freeRemaining) !== Math.abs(Number(snapshot.monthRemaining ?? 0))) {
-      rows.push(heroDetailRow("dashboard.hero.shortAfterPlanned", moneyBase(Math.abs(freeRemaining))));
+      rows.push(heroDetailRow(
+        reserve > 0 ? "dashboard.hero.shortAfterPlannedAndReserve" : "dashboard.hero.shortAfterPlanned",
+        moneyBase(Math.abs(freeRemaining))
+      ));
     }
   } else if (heroMetric.kind === "freeDeficit") {
-    rows.push(heroDetailRow("dashboard.hero.shortAfterPlanned", heroMetric.amount, "result"));
+    rows.push(heroDetailRow(
+      reserve > 0 ? "dashboard.hero.shortAfterPlannedAndReserve" : "dashboard.hero.shortAfterPlanned",
+      heroMetric.amount,
+      "result"
+    ));
   } else {
     rows.push(heroDetailRow("dashboard.hero.free", moneyBase(Math.max(freeRemaining, 0)), "subtotal"));
     rows.push(heroDetailRow("dashboard.hero.dayPlan", moneyBase(dayPlan)));
@@ -1013,14 +1019,14 @@ function dashboardExpenseRow(expense) {
   return `
     <button type="button" class="dashboard-expense-row" data-edit-expense="${escapeAttribute(expense.id)}" aria-label="${escapeAttribute(`${t("actions.edit")}: ${expense.description}`)}" style="--category-color: ${categoryColor(expense.category_slug)}">
       <span class="dashboard-expense-icon" aria-hidden="true">${dashboardCategoryIcon(expense.category_slug)}</span>
-      <div class="dashboard-expense-main">
+      <span class="dashboard-expense-main">
         <strong>${escapeHtml(expense.description)}</strong>
         <span>${formatDate(expense.spent_at, currentLanguage, userTimeZone())}</span>
-      </div>
-      <div class="dashboard-expense-amount">
+      </span>
+      <span class="dashboard-expense-amount">
         <strong>${formatMoney(amount, currency)}</strong>
         <em>${moneyDisplay(expense.display?.amount, expense.display?.currency)}</em>
-      </div>
+      </span>
     </button>
   `;
 }
@@ -2206,6 +2212,22 @@ function applyLanguage(language) {
   updateHistoryFilterChips();
   if (historyCalendarDraft) renderHistoryCalendar();
   renderPlannedArchive();
+  rerenderDashboardLanguageState();
+}
+
+function rerenderDashboardLanguageState() {
+  if (!dashboardState?.snapshot) return;
+  const plannedExpenses = dashboardState.plannedExpenses ?? [];
+  renderSnapshot(dashboardState.snapshot);
+  renderPlannedNotice(plannedExpenses);
+  renderAnalytics(
+    dashboardState.snapshot,
+    dashboardState.analytics ?? {}
+  );
+  renderTopCategories(dashboardState.topCategories ?? [], dashboardState.snapshot.month);
+  renderPlannedMonthSummary(plannedExpenses);
+  renderPlannedExpenses(plannedExpenses);
+  renderLatest(dashboardState.latestExpenses ?? []);
 }
 
 function applyTheme(theme) {

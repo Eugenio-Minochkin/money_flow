@@ -375,14 +375,6 @@ body[data-theme="dark"] .monthly-forecast {
   overflow-wrap: anywhere;
 }
 
-.dashboard-card__warning {
-  color: var(--red);
-  font-size: 12px;
-  font-weight: 760;
-  line-height: 1.25;
-  overflow-wrap: anywhere;
-}
-
 .budget-topup-shell.hidden {
   display: none;
 }

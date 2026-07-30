@@ -21,6 +21,10 @@ export function buildHeroMetric(snapshot, helpers) {
   const dayPlanLimit = Number(snapshot.dayPlanLimit ?? 0);
   const monthRemaining = Number(snapshot.monthRemaining ?? snapshot.remaining ?? 0);
   const freeRemaining = Number(snapshot.freeRemaining ?? 0);
+  const reserveAmount = Number(snapshot.reserve?.amount ?? 0);
+  const deficitLabelKey = reserveAmount > 0
+    ? "dashboard.hero.shortAfterPlannedAndReserve"
+    : "dashboard.hero.shortAfterPlanned";
   const dayState = snapshot.progress?.day?.state ?? "good";
   let kind = "remaining";
   if (monthRemaining < 0) kind = "monthOverrun";
@@ -41,7 +45,7 @@ export function buildHeroMetric(snapshot, helpers) {
   const state = kind === "remaining" ? dayState : "danger";
   const titleKey = {
     monthOverrun: "dashboard.hero.monthOverrun",
-    freeDeficit: "dashboard.hero.freeDeficit",
+    freeDeficit: reserveAmount > 0 ? "dashboard.hero.freeDeficitWithReserve" : "dashboard.hero.freeDeficit",
     dayOverrun: "dashboard.hero.dayOverrun",
     remaining: "dashboard.hero.safeToday"
   }[kind];
@@ -52,8 +56,8 @@ export function buildHeroMetric(snapshot, helpers) {
     remaining: state === "danger" ? "dashboard.hero.dangerHint" : ""
   }[kind];
   const monthLabelKey = {
-    monthOverrun: freeRemaining < 0 ? "dashboard.hero.shortAfterPlanned" : "dashboard.hero.budgetOverrun",
-    freeDeficit: "dashboard.hero.shortAfterPlanned",
+    monthOverrun: freeRemaining < 0 ? deficitLabelKey : "dashboard.hero.budgetOverrun",
+    freeDeficit: deficitLabelKey,
     dayOverrun: "dashboard.hero.freeThroughMonthEnd",
     remaining: "dashboard.hero.freeThroughMonthEnd"
   }[kind];
@@ -147,10 +151,9 @@ export function buildDashboardCards(snapshot, helpers) {
       budgetLine(helpers.t("dashboard.budget"), helpers.moneyBase(weekPlanLimit))
     ],
     caption: weekRemaining < 0 ? helpers.t("dashboard.weekPlanExceeded") : undefined,
-    warning: freeRemaining <= 0 ? helpers.t("dashboard.monthBudgetExhausted") : "",
     progress: weekCardProgress,
     infoLabel: explainLabel,
-    tooltip: helpers.t(snapshot.isMonthBinding ? "dashboard.tooltip.weekMonthBinding" : "dashboard.tooltip.weekWeekBinding")
+    tooltip: helpers.t("dashboard.tooltip.week")
   };
 
   return [monthFreeCard, plannedCard, monthCard, weekCard];
@@ -239,7 +242,6 @@ function renderCard(card) {
   const display = card.display ? `<div class="dashboard-card__display">${escapeHtml(card.display)}</div>` : "";
   const caption = card.caption ? `<div class="dashboard-card__caption">${escapeHtml(card.caption)}</div>` : "";
   const reserveLine = card.reserveLine ? `<div class="dashboard-card__reserve">${escapeHtml(card.reserveLine)}</div>` : "";
-  const warning = card.warning ? `<div class="dashboard-card__warning">${escapeHtml(card.warning)}</div>` : "";
   const back = card.tooltip ? `
         <div class="dashboard-card__face dashboard-card__face--back" id="${escapeHtml(tooltipId)}" role="note" tabindex="-1" aria-hidden="true" aria-live="polite" data-flip-back>
           <p class="dashboard-card__back-text">${escapeHtml(card.tooltip)}</p>
@@ -259,7 +261,6 @@ function renderCard(card) {
           ${display}
           ${caption}
           ${reserveLine}
-          ${warning}
           <div class="dashboard-card__spacer"></div>
           ${progress}
         </div>

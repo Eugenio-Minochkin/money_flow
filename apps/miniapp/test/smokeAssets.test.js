@@ -434,9 +434,28 @@ test("dashboard latest expenses use three tappable icon rows that open the exist
   const dashboardRow = app.match(/function dashboardExpenseRow\(expense\)\s*{[^]*?\n}/)?.[0] ?? "";
   assert.match(dashboardRow, /data-edit-expense/);
   assert.doesNotMatch(dashboardRow, /data-delete-expense/);
+  assert.doesNotMatch(dashboardRow, /<div\b/);
+  assert.match(dashboardRow, /<span class="dashboard-expense-main">/);
+  assert.match(dashboardRow, /<span class="dashboard-expense-amount">/);
   assert.match(css, /\.dashboard-expense-row\s*{/);
   assert.match(css, /\.dashboard-expense-row:active\s*{/);
   assert.match(css, /\.dashboard-expense-icon\s*{/);
+});
+
+test("language changes rerender cached dynamic dashboard content without another request", async () => {
+  const app = await readFile(join(miniAppRoot, "app.js"), "utf8");
+  const applyLanguage = app.match(/function applyLanguage\(language\)\s*{[^]*?\r?\n}\r?\n\r?\nfunction applyTheme/)?.[0] ?? "";
+  const rerender = app.match(/function rerenderDashboardLanguageState\(\)\s*{[^]*?\r?\n}/)?.[0] ?? "";
+
+  assert.match(applyLanguage, /rerenderDashboardLanguageState\(\)/);
+  assert.match(rerender, /dashboardState\?\.snapshot/);
+  assert.match(rerender, /renderSnapshot\(dashboardState\.snapshot\)/);
+  assert.match(rerender, /renderLatest\(dashboardState\.latestExpenses\s*\?\?\s*\[\]\)/);
+  assert.match(rerender, /renderAnalytics\(\s*dashboardState\.snapshot,\s*dashboardState\.analytics\s*\?\?\s*\{\}\s*\)/);
+  assert.match(rerender, /const plannedExpenses = dashboardState\.plannedExpenses\s*\?\?\s*\[\]/);
+  assert.match(rerender, /renderPlannedNotice\(plannedExpenses\)/);
+  assert.doesNotMatch(rerender, /\bload\s*\(/);
+  assert.doesNotMatch(app, /setText\("#heroTooltipText"/);
 });
 
 test("hero calculation is structured and mobile budget cards keep the reference 2 by 2 grid", async () => {
