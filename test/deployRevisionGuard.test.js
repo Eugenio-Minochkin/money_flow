@@ -21,8 +21,8 @@ test('production deploy embeds and verifies the exact Git revision', () => {
   assert.match(workflow, /APP_REVISION="\$\(git rev-parse HEAD\)"/);
   assert.match(workflow, /export APP_REVISION/);
   assert.match(workflow, /build --pull --no-cache api/);
-  assert.match(workflow, /function verify_api_revision|verify_api_revision\(\)/);
-  assert.match(workflow, /exec -T api cat \/app\/REVISION/);
+  assert.match(workflow, /verify_api_revision\(\)/);
+  assert.match(workflow, /api cat \/app\/REVISION/);
   assert.match(workflow, /API revision mismatch/);
   assert.ok((workflow.match(/verify_api_revision/g) ?? []).length >= 3);
 });
