@@ -6,6 +6,9 @@ Money Flow UI should feel light and direct. Favor quick comprehension over dense
 
 - Keep the dashboard compact.
 - Show budget state clearly before adding secondary analytics.
+- Keep the hero state, amount, progress, and decorative ribbon synchronized. Distinguish a daily overrun, a monthly budget overrun, and a shortfall after scheduled payments.
+- Keep the three recent-expense rows directly editable, with the section action opening full History.
+- On narrow screens, keep the Budget and plan metrics in the reference 2-by-2 grid with equal card widths and equal heights within each row. The weekly metric keeps its weekly remainder even when the month has no free money, with a separate warning for the monthly constraint.
 - Avoid visual noise that makes the user hunt for the current money state.
 - Empty, loading, and error states should be consistent across dashboard sections.
 
@@ -33,4 +36,4 @@ Money Flow UI should feel light and direct. Favor quick comprehension over dense
 
 - Support both small and large iPhone screens, including iPhone 11 and iPhone 14 Pro.
 - Check that cards, buttons, labels, and amounts do not overlap on narrow screens.
-- Russian interface text should sound natural, simple, and human.
+- Russian and English interface text should sound natural, simple, and human. Check dashboard changes at 375, 390, and 430 CSS pixels, including long English labels.

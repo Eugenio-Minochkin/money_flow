@@ -31,11 +31,11 @@
               <em class="hero-metric__display" id="safeToSpendDisplay"></em>
               <small class="hero-metric__hint" id="heroHint"></small>
             </div>
-            <svg class="hero-metric__ribbon" viewBox="0 0 180 112" aria-hidden="true" focusable="false" preserveAspectRatio="xMidYMid meet">
-              <path class="hero-metric__ribbon-band hero-metric__ribbon-band--one" d="M-8 96C28 98 42 72 70 75C99 78 112 55 132 48C151 41 166 21 188 4L188 29C169 42 158 59 137 65C112 72 102 95 69 91C39 87 24 108-8 106Z" />
-              <path class="hero-metric__ribbon-band hero-metric__ribbon-band--two" d="M-8 78C25 86 43 53 72 61C99 68 112 39 137 35C158 31 171 12 188 -3L188 17C171 31 161 48 140 52C112 58 104 84 72 76C43 68 28 96-8 89Z" />
-              <path class="hero-metric__ribbon-band hero-metric__ribbon-band--three" d="M-8 104C23 102 38 83 65 87C95 91 111 72 136 67C159 62 173 45 188 33L188 51C173 62 162 78 139 83C111 89 98 106 66 102C38 98 20 115-8 116Z" />
-              <circle class="hero-metric__ribbon-dot" cx="160" cy="16" r="4" />
+            <svg class="hero-metric__ribbon" viewBox="0 0 260 160" aria-hidden="true" focusable="false" preserveAspectRatio="xMidYMid slice">
+              <path class="hero-metric__ribbon-band hero-metric__ribbon-band--one" d="M-20 136C20 128 43 105 74 109C109 114 124 96 148 76C175 53 196 56 220 31C235 16 248 5 276-7L276 30C252 39 241 50 226 67C201 95 174 91 153 108C128 129 107 142 72 135C42 129 21 148-20 154Z" />
+              <path class="hero-metric__ribbon-band hero-metric__ribbon-band--two" d="M-20 111C18 113 40 81 75 88C107 94 124 66 151 60C183 52 195 40 218 17C236-1 253-10 276-18L276 12C253 21 242 30 226 47C202 72 182 78 153 84C126 90 111 117 74 111C41 106 20 132-20 131Z" />
+              <path class="hero-metric__ribbon-band hero-metric__ribbon-band--three" d="M-20 148C20 139 40 121 70 124C104 128 126 116 151 96C178 75 199 76 222 54C241 36 255 28 276 19L276 51C257 60 245 69 229 83C202 108 180 105 157 124C132 144 106 154 69 149C39 145 17 161-20 166Z" />
+              <circle class="hero-metric__ribbon-dot" cx="228" cy="22" r="5" />
             </svg>
           </div>
           <div class="hero-metric__facts">
@@ -52,10 +52,10 @@
               type="button"
               aria-expanded="false"
               aria-controls="heroTooltip"
-              aria-label="Объяснить"
+              data-i18n-aria-label="dashboard.hero.why"
               id="heroDetailsToggle"
             >
-              i
+              Как посчитано?
             </button>
           </div>
         </section>
@@ -477,19 +477,19 @@
 
     <nav class="bottom-tabs" aria-label="Sections" data-i18n-aria-label="navigation.sections">
       <button class="tab-button active" type="button" data-tab="dashboard">
-        <span class="tab-button__icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m4 11 8-7 8 7v9h-5v-6H9v6H4z"/></svg></span>
+        <span class="tab-button__icon" data-nav-icon="dashboard" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m4 11 8-7 8 7v9h-5v-6H9v6H4z"/></svg></span>
         <span class="tab-button__label">Dashboard</span>
       </button>
       <button class="tab-button" type="button" data-tab="history">
-        <span class="tab-button__icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 20V8a7 7 0 0 1 14 0v12"/><path d="M3 20h18M8 8h8"/></svg></span>
+        <span class="tab-button__icon" data-nav-icon="history" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 20V8a7 7 0 0 1 14 0v12"/><path d="M3 20h18M8 8h8"/></svg></span>
         <span class="tab-button__label">History</span>
       </button>
       <button class="tab-button" type="button" data-tab="plan">
-        <span class="tab-button__icon" aria-hidden="true"><rect x="5" y="4" width="14" height="17" rx="3"/><path d="M8 2v4m8-4v4M8 10h8m-8 4h5"/></svg></span>
+        <span class="tab-button__icon" data-nav-icon="plan" data-nav-shape="calendar" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 11h18M8 15h.01M12 15h.01M16 15h.01M8 18h.01M12 18h.01M16 18h.01"/></svg></span>
         <span class="tab-button__label">Plan</span>
       </button>
       <button class="tab-button" type="button" data-tab="settings">
-        <span class="tab-button__icon" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 3v2m0 14v2M3 12h2m14 0h2m-2.6-6.4-1.4 1.4M7 17l-1.4 1.4m12.8 0L17 17M7 7 5.6 5.6"/></svg></span>
+        <span class="tab-button__icon" data-nav-icon="settings" data-nav-shape="gear" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.09a2 2 0 0 1 1 1.74v.5a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.09a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2Z"/><circle cx="12" cy="12" r="3"/></svg></span>
         <span class="tab-button__label">Settings</span>
       </button>
     </nav>

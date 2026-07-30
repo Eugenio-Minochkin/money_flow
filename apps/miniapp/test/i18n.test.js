@@ -33,8 +33,7 @@ test("Mini App translations cover dashboard, plan, history and settings labels",
     "dashboard.tooltip.monthFree",
     "dashboard.tooltip.planned",
     "dashboard.tooltip.month",
-    "dashboard.tooltip.weekMonthBinding",
-    "dashboard.tooltip.weekWeekBinding",
+    "dashboard.tooltip.week",
     "dashboard.week",
     "dashboard.month",
     "history.latestExpenses",
@@ -147,12 +146,62 @@ test("settings translations distinguish regular and current month budgets", () =
 });
 
 test("dashboard labels use the semantic cleanup vocabulary", () => {
-  assert.equal(createTranslator("ru")("dashboard.todayRemaining"), "Осталось сегодня");
+  assert.equal(createTranslator("ru")("dashboard.hero.safeToday"), "Можно потратить сегодня");
+  assert.equal(createTranslator("en")("dashboard.hero.safeToday"), "Safe to spend today");
+  assert.equal(createTranslator("ru")("dashboard.hero.dayOverrun"), "Сегодня выше ориентира");
+  assert.equal(createTranslator("en")("dashboard.hero.dayOverrun"), "Today’s spending is above target");
+  assert.equal(createTranslator("ru")("dashboard.hero.freeDeficit"), "После плановых оплат не хватит");
+  assert.equal(createTranslator("en")("dashboard.hero.freeDeficit"), "You’ll be short after scheduled payments");
+  assert.equal(createTranslator("ru")("dashboard.hero.why"), "Как посчитано?");
+  assert.equal(createTranslator("en")("dashboard.hero.why"), "How is this calculated?");
+  assert.equal(createTranslator("ru")("dashboard.hero.calculationTitle"), "Как посчитано?");
+  assert.equal(createTranslator("en")("dashboard.hero.calculationTitle"), "How is this calculated?");
   assert.equal(createTranslator("ru")("dashboard.untilMonthEnd"), "До конца месяца");
-  assert.equal(createTranslator("ru")("dashboard.todayCaption", { spent: "676 THB", budget: "397 THB" }), "потрачено 676 THB · бюджет дня 397 THB");
-  assert.equal(createTranslator("en")("dashboard.todayRemaining"), "Left today");
-  assert.equal(createTranslator("en")("dashboard.untilMonthEnd"), "Until month-end");
-  assert.equal(createTranslator("en")("dashboard.todayCaption", { spent: "676 THB", budget: "397 THB" }), "spent 676 THB · day budget 397 THB");
+  assert.equal(createTranslator("en")("dashboard.untilMonthEnd"), "Rest of the month");
+  assert.equal(createTranslator("ru")("dashboard.budgetPlan"), "Бюджет и план");
+  assert.equal(createTranslator("en")("dashboard.budgetPlan"), "Budget & plan");
+  assert.equal(createTranslator("ru")("actions.showAll"), "Вся история");
+  assert.equal(createTranslator("en")("actions.showAll"), "View history");
+  assert.equal(createTranslator("ru")("history.latestExpenses"), "Последние расходы");
+  assert.equal(createTranslator("en")("history.latestExpenses"), "Recent expenses");
+  assert.equal(createTranslator("en")("dashboard.categoriesAndTags"), "Categories & tags");
+  assert.equal(createTranslator("en")("dashboard.activityByDay"), "Daily activity");
+  assert.equal(createTranslator("ru")("dashboard.weekPlanExceeded"), "Недельный план превышен");
+  assert.equal(createTranslator("en")("dashboard.weekPlanExceeded"), "Weekly plan exceeded");
+  assert.equal(createTranslator("ru")("dashboard.tooltip.week"), "Сколько осталось от недельного бюджета с учётом расходов этой недели.");
+  assert.equal(createTranslator("en")("dashboard.tooltip.week"), "How much remains from this week’s budget after this week’s spending.");
+  assert.equal(createTranslator("ru")("dashboard.hero.freeDeficitWithReserve"), "После плановых оплат и резерва не хватит");
+  assert.equal(createTranslator("en")("dashboard.hero.freeDeficitWithReserve"), "You’ll be short after scheduled payments and reserves");
+});
+
+test("new dashboard copy exists in both locales with no cross-language fallback", () => {
+  const keys = [
+    "dashboard.hero.calculationTitle",
+    "dashboard.hero.monthBudget",
+    "dashboard.hero.topups",
+    "dashboard.hero.spentSoFar",
+    "dashboard.hero.planned",
+    "dashboard.hero.reserve",
+    "dashboard.hero.free",
+    "dashboard.hero.shortAfterPlanned",
+    "dashboard.hero.shortAfterPlannedAndReserve",
+    "dashboard.hero.dayPlan",
+    "dashboard.hero.zeroTargetExplanation",
+    "dashboard.weekPlanExceeded",
+    "actions.showAll",
+    "history.latestExpenses",
+    "screen.dashboard",
+    "screen.history",
+    "screen.plan",
+    "screen.settings"
+  ];
+
+  for (const key of keys) {
+    assert.equal(typeof translations.ru[key], "string", `ru.${key}`);
+    assert.equal(typeof translations.en[key], "string", `en.${key}`);
+    assert.notEqual(translations.ru[key], translations.en[key], key);
+    assert.doesNotMatch(translations.en[key], /[А-Яа-яЁё]/u, `en.${key}`);
+  }
 });
 
 test("dashboard tooltip translations are short hints without numeric formulas", () => {
@@ -172,8 +221,7 @@ test("dashboard tooltip translations are short hints without numeric formulas", 
       "dashboard.tooltip.monthFree",
       "dashboard.tooltip.planned",
       "dashboard.tooltip.month",
-      "dashboard.tooltip.weekMonthBinding",
-      "dashboard.tooltip.weekWeekBinding"
+      "dashboard.tooltip.week"
     ]) {
       assert.doesNotMatch(t(key), /\{/, `${language}.${key} must not keep a raw placeholder`);
     }
@@ -181,6 +229,10 @@ test("dashboard tooltip translations are short hints without numeric formulas", 
   assert.match(createTranslator("ru")("dashboard.tooltip.monthFree"), /реально можно распоряжаться/i);
   assert.match(createTranslator("ru")("dashboard.tooltip.heroTodayOnTrack"), /Плановые оплаты уже вычтены/i);
   assert.match(createTranslator("en")("dashboard.tooltip.heroTodayOverspend"), /already deducted/i);
+  assert.equal(translations.ru["dashboard.monthBudgetExhausted"], undefined);
+  assert.equal(translations.en["dashboard.monthBudgetExhausted"], undefined);
+  assert.equal(translations.ru["dashboard.tooltip.weekMonthBinding"], undefined);
+  assert.equal(translations.en["dashboard.tooltip.weekMonthBinding"], undefined);
 });
 
 test("translator falls back to English and formats count labels", () => {

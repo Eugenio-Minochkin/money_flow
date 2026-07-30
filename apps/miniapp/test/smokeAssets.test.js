@@ -294,7 +294,7 @@ test("dashboard cards match the rounded reference layout with stateful progress 
 
   assert.match(css, /\.shell\s*{[^}]*width:\s*min\(100%,\s*812px\)/s);
   assert.match(css, /\.hero-metric\s*{[^}]*border-radius:\s*20px[^}]*background:\s*linear-gradient/s);
-  assert.match(css, /\.hero-metric__amount\s*{[^}]*font-size:\s*clamp\(32px,\s*9vw,\s*38px\)/s);
+  assert.match(css, /\.hero-metric__amount\s*{[^}]*font-size:\s*clamp\(31px,\s*9vw,\s*39px\)/s);
   assert.match(css, /\.metrics-grid\s*{[^}]*gap:\s*22px/s);
   assert.match(css, /\.dashboard-card\s*{[^}]*border-radius:\s*24px/s);
   assert.match(css, /\.dashboard-card\s*{[^}]*min-height:\s*214px/s);
@@ -313,7 +313,7 @@ test("dashboard uses compact iPhone card sizing", async () => {
   assert.match(css, /@media \(max-width:\s*640px\)\s*{[^}]*\.shell\s*{[^}]*padding:\s*14px 16px 88px/s);
   assert.match(css, /@media \(max-width:\s*640px\)[^]*\.dashboard-card,[^}]*\.dashboard-card__face--back\s*{[^}]*min-height:\s*140px/s);
   assert.match(css, /@media \(max-width:\s*640px\)[^]*\.dashboard-card__face--front\s*{[^}]*gap:\s*5px[^}]*padding:\s*12px/s);
-  assert.match(css, /@media \(max-width:\s*640px\)[^]*\.dashboard-card__amount\s*{[^}]*font-size:\s*clamp\(23px,\s*6\.5vw,\s*27px\)/s);
+  assert.match(css, /@media \(max-width:\s*640px\)[^]*\.dashboard-card__amount\s*{[^}]*font-size:\s*clamp\(19px,\s*5\.5vw,\s*23px\)/s);
   assert.match(css, /@media \(max-width:\s*640px\)[^]*\.dashboard-card__progress\s*{[^}]*height:\s*6px/s);
 });
 
@@ -411,7 +411,7 @@ test("dashboard keeps card tooltips and makes the hero an accessible disclosure"
   assert.doesNotMatch(app, /querySelectorAll\("\.dashboard-card\[data-dashboard-card\]"\)/);
   assert.match(css, /\.dashboard-card__flip-inner\s*{/);
   assert.match(css, /\.hero-metric__ribbon\s*{/);
-  assert.match(css, /\.hero-metric__summary\s*{[^}]*grid-template-columns:/s);
+  assert.match(css, /\.hero-metric__summary\s*{[^}]*position:\s*relative[^}]*min-height:\s*154px/s);
   assert.match(css, /\.hero-metric__facts\s*{[^}]*border-radius:\s*14px[^}]*background:\s*color-mix/s);
   assert.match(css, /\.hero-metric__details-toggle\s*{/);
   assert.match(css, /\.hero-metric__details\[hidden\]\s*{\s*display:\s*none/s);
@@ -420,7 +420,7 @@ test("dashboard keeps card tooltips and makes the hero an accessible disclosure"
   assert.doesNotMatch(app, /heroStatus/);
 });
 
-test("dashboard latest expenses use three icon rows without history edit actions", async () => {
+test("dashboard latest expenses use three tappable icon rows that open the existing editor", async () => {
   const app = await readFile(join(miniAppRoot, "app.js"), "utf8");
   const css = await readFile(join(miniAppRoot, "styles.css"), "utf8");
 
@@ -429,20 +429,72 @@ test("dashboard latest expenses use three icon rows without history edit actions
   assert.match(app, /function dashboardCategoryIcon\(slug\)/);
   assert.match(app, /<svg[^>]+viewBox="0 0 24 24"/);
   const latestRenderer = app.match(/function renderLatest\(expenses\)\s*{[^]*?\n}/)?.[0] ?? "";
-  assert.doesNotMatch(latestRenderer, /bindExpenseActions|expenses\.map\(expenseRow\)/);
+  assert.match(latestRenderer, /bindExpenseActions\(list,\s*expenses,\s*\{\s*returnTab:\s*"dashboard"\s*\}\)/);
+  assert.doesNotMatch(latestRenderer, /expenses\.map\(expenseRow\)/);
   const dashboardRow = app.match(/function dashboardExpenseRow\(expense\)\s*{[^]*?\n}/)?.[0] ?? "";
-  assert.doesNotMatch(dashboardRow, /data-edit-expense|data-delete-expense/);
+  assert.match(dashboardRow, /data-edit-expense/);
+  assert.doesNotMatch(dashboardRow, /data-delete-expense/);
+  assert.doesNotMatch(dashboardRow, /<div\b/);
+  assert.match(dashboardRow, /<span class="dashboard-expense-main">/);
+  assert.match(dashboardRow, /<span class="dashboard-expense-amount">/);
   assert.match(css, /\.dashboard-expense-row\s*{/);
+  assert.match(css, /\.dashboard-expense-row:active\s*{/);
   assert.match(css, /\.dashboard-expense-icon\s*{/);
+});
+
+test("language changes rerender cached dynamic dashboard content without another request", async () => {
+  const app = await readFile(join(miniAppRoot, "app.js"), "utf8");
+  const applyLanguage = app.match(/function applyLanguage\(language\)\s*{[^]*?\r?\n}\r?\n\r?\nfunction applyTheme/)?.[0] ?? "";
+  const rerender = app.match(/function rerenderDashboardLanguageState\(\)\s*{[^]*?\r?\n}/)?.[0] ?? "";
+
+  assert.match(applyLanguage, /rerenderDashboardLanguageState\(\)/);
+  assert.match(rerender, /dashboardState\?\.snapshot/);
+  assert.match(rerender, /renderSnapshot\(dashboardState\.snapshot\)/);
+  assert.match(rerender, /renderLatest\(dashboardState\.latestExpenses\s*\?\?\s*\[\]\)/);
+  assert.match(rerender, /renderAnalytics\(\s*dashboardState\.snapshot,\s*dashboardState\.analytics\s*\?\?\s*\{\}\s*\)/);
+  assert.match(rerender, /const plannedExpenses = dashboardState\.plannedExpenses\s*\?\?\s*\[\]/);
+  assert.match(rerender, /renderPlannedNotice\(plannedExpenses\)/);
+  assert.doesNotMatch(rerender, /\bload\s*\(/);
+  assert.doesNotMatch(app, /setText\("#heroTooltipText"/);
+});
+
+test("hero calculation is structured and mobile budget cards keep the reference 2 by 2 grid", async () => {
+  const app = await readFile(join(miniAppRoot, "app.js"), "utf8");
+  const css = await readFile(join(miniAppRoot, "styles.css"), "utf8");
+
+  assert.match(app, /dashboard\.hero\.calculationTitle/);
+  assert.match(app, /hero-metric__calculation-title/);
+  assert.match(css, /\.hero-metric__detail-row--result\s*{/);
+  assert.doesNotMatch(app, /\["dashboard\.hero\.baseBudget",\s*currentMonthBudget\?\.baseBudget\],[^]*\["dashboard\.hero\.monthBudget",\s*snapshot\.monthlyBudget\]/);
+  assert.match(css, /@media \(max-width:\s*640px\)[^]*\.metrics-grid\s*{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/s);
+});
+
+test("hero ribbon fills the upper right hero background instead of a small inset illustration", async () => {
+  const html = await readFile(join(miniAppRoot, "index.html"), "utf8");
+  const css = await readFile(join(miniAppRoot, "styles.css"), "utf8");
+
+  assert.match(html, /hero-metric__ribbon[^>]*preserveAspectRatio="xMidYMid slice"/);
+  assert.match(css, /\.hero-metric__ribbon\s*{[^}]*top:\s*-24px[^}]*right:\s*-48px[^}]*width:\s*clamp\(300px,\s*88vw,\s*350px\)[^}]*height:\s*210px/s);
+});
+
+test("all four bottom navigation icons have explicit stable SVG identities", async () => {
+  const html = await readFile(join(miniAppRoot, "index.html"), "utf8");
+
+  for (const icon of ["dashboard", "history", "plan", "settings"]) {
+    assert.match(html, new RegExp(`data-nav-icon="${icon}"`));
+  }
+  assert.equal((html.match(/data-nav-icon="/g) ?? []).length, 4);
+  assert.match(html, /data-nav-icon="plan"[^>]*data-nav-shape="calendar"/);
+  assert.match(html, /data-nav-icon="settings"[^>]*data-nav-shape="gear"/);
 });
 
 test("dashboard light theme uses the approved warm surface system", async () => {
   const css = await readFile(join(miniAppRoot, "styles.css"), "utf8");
 
   const lightTheme = css.match(/body\[data-theme="light"\]\s*{[^}]*}/s)?.[0] ?? "";
-  assert.match(lightTheme, /--bg:\s*#f5f0e8/);
-  assert.match(lightTheme, /--panel:\s*#fffcf7/);
-  assert.match(lightTheme, /--line:\s*#e9ded0/);
+  assert.match(lightTheme, /--bg:\s*#f8f6f1/);
+  assert.match(lightTheme, /--panel:\s*#fffefa/);
+  assert.match(lightTheme, /--line:\s*#e8e2da/);
   assert.match(lightTheme, /--ink:\s*#1d2530/);
   assert.match(lightTheme, /--muted:\s*#6f6a63/);
   assert.match(css, /\.dashboard-disclosure,[^]*\.latest-expenses\s*{[^}]*border-radius:\s*18px/s);

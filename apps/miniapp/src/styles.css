@@ -1,10 +1,10 @@
 :root {
   color-scheme: light dark;
-  --bg: #f6f1ea;
+  --bg: #f8f6f1;
   --ink: #251d18;
   --muted: #756b61;
-  --line: #e5d9cc;
-  --panel: #fffdfa;
+  --line: #e7e1d9;
+  --panel: #fffefa;
   --accent: #1d7f75;
   --accent-soft: #e2f1ef;
   --hero: #1e504b;
@@ -40,12 +40,12 @@ body[data-theme="dark"] {
 
 body[data-theme="light"] {
   color-scheme: light;
-  --bg: #f5f0e8;
+  --bg: #f8f6f1;
   --ink: #1d2530;
   --muted: #6f6a63;
-  --line: #e9ded0;
-  --panel: #fffcf7;
-  --surface-soft: #faf4ea;
+  --line: #e8e2da;
+  --panel: #fffefa;
+  --surface-soft: #f6f2eb;
   --accent: #0f8b7f;
   --accent-soft: #dcf1ed;
   --hero: #1e504b;
@@ -591,13 +591,14 @@ body[data-theme="dark"] .monthly-forecast {
 
 .hero-metric {
   --hero-state: var(--green);
+  position: relative;
   display: grid;
-  gap: 12px;
+  gap: 0;
   overflow: hidden;
   margin-bottom: 12px;
   border: 1px solid #e5ddd2;
   border-radius: 20px;
-  background: linear-gradient(145deg, #fffdf9 0%, #faf6ef 58%, #f5efe5 100%);
+  background: linear-gradient(145deg, #fffefa 0%, #faf8f3 58%, #f4f0e9 100%);
   box-shadow: 0 10px 24px rgb(68 52 37 / 8%);
 }
 
@@ -611,19 +612,17 @@ body[data-theme="dark"] .monthly-forecast {
 }
 
 .hero-metric__summary {
-  display: grid;
-  grid-template-columns: minmax(190px, 1.45fr) minmax(118px, .9fr);
-  gap: 6px;
-  align-items: center;
-  min-height: 112px;
-  padding: 16px 14px 0 16px;
+  position: relative;
+  min-height: 154px;
+  padding: 20px 16px 18px;
 }
 
 .hero-metric__copy {
   position: relative;
-  z-index: 1;
+  z-index: 3;
   display: grid;
   align-content: center;
+  width: min(68%, 248px);
   min-width: 0;
 }
 
@@ -632,13 +631,13 @@ body[data-theme="dark"] .monthly-forecast {
   font-size: 13px;
   font-weight: 780;
   line-height: 1.25;
-  white-space: nowrap;
+  text-wrap: balance;
 }
 
 .hero-metric__amount {
   margin-top: 6px;
   color: var(--hero-state);
-  font-size: clamp(32px, 9vw, 38px);
+  font-size: clamp(31px, 9vw, 39px);
   font-weight: 820;
   line-height: 1;
   letter-spacing: -.03em;
@@ -667,12 +666,17 @@ body[data-theme="dark"] .monthly-forecast {
 }
 
 .hero-metric__ribbon {
+  position: absolute;
+  top: -24px;
+  right: -48px;
+  z-index: 1;
   display: block;
-  width: 100%;
-  max-width: 154px;
-  justify-self: end;
+  width: clamp(300px, 88vw, 350px);
+  height: 210px;
   color: var(--hero-state);
   filter: drop-shadow(0 7px 12px color-mix(in srgb, var(--hero-state) 13%, transparent));
+  -webkit-mask-image: linear-gradient(90deg, transparent 0 20%, #000 58%);
+  mask-image: linear-gradient(90deg, transparent 0 20%, #000 58%);
 }
 
 .hero-metric__ribbon-band {
@@ -680,15 +684,15 @@ body[data-theme="dark"] .monthly-forecast {
 }
 
 .hero-metric__ribbon-band--one {
-  opacity: .2;
+  opacity: .52;
 }
 
 .hero-metric__ribbon-band--two {
-  opacity: .45;
+  opacity: .22;
 }
 
 .hero-metric__ribbon-band--three {
-  opacity: .11;
+  opacity: .12;
 }
 
 .hero-metric__ribbon-dot {
@@ -697,13 +701,15 @@ body[data-theme="dark"] .monthly-forecast {
 }
 
 .hero-metric__facts {
+  position: relative;
+  z-index: 2;
   display: grid;
   gap: 8px;
-  margin: 0 12px;
+  margin: -20px 12px 0;
   padding: 11px 12px 12px;
   border: 1px solid #e9e1d7;
   border-radius: 14px;
-  background: color-mix(in srgb, #fff 82%, #f3ede4);
+  background: color-mix(in srgb, #fff 88%, #f3efe8);
   box-shadow: 0 4px 12px rgb(69 54 39 / 5%);
 }
 
@@ -751,10 +757,46 @@ body[data-theme="dark"] .monthly-forecast {
   display: grid;
   gap: 7px;
   margin: 0 12px;
-  padding: 11px 12px;
+  padding: 14px 12px;
   border: 1px solid #e9e1d7;
   border-radius: 14px;
   background: rgb(255 253 249 / 72%);
+}
+
+.hero-metric__calculation-title {
+  margin: 0 0 3px;
+  color: #29231e;
+  font-size: 14px;
+  line-height: 1.25;
+}
+
+.hero-metric__calculation-rows {
+  display: grid;
+  gap: 7px;
+}
+
+.hero-metric__detail-row--subtotal {
+  padding-top: 7px;
+  border-top: 1px solid #e9e1d7;
+}
+
+.hero-metric__detail-row--result {
+  margin-top: 3px;
+  padding-top: 9px;
+  border-top: 1px solid color-mix(in srgb, var(--hero-state) 32%, #e9e1d7);
+}
+
+.hero-metric__detail-row--result span,
+.hero-metric__detail-row--result strong {
+  color: var(--hero-state);
+  font-weight: 820;
+}
+
+.hero-metric__calculation-note {
+  margin: 4px 0 0;
+  color: #73685d;
+  font-size: 11px;
+  line-height: 1.35;
 }
 
 .hero-metric__details[hidden] {
@@ -802,8 +844,8 @@ body[data-theme="dark"] .monthly-forecast {
 
 @media (max-width: 360px) {
   .hero-metric__summary {
-    grid-template-columns: minmax(174px, 1.35fr) minmax(96px, .75fr);
-    padding-inline: 13px 10px;
+    min-height: 150px;
+    padding-inline: 13px;
   }
 
   .hero-metric__amount {
@@ -1227,10 +1269,26 @@ body[data-theme="dark"] .monthly-forecast {
   min-height: 64px;
   padding: 10px 14px;
   border-bottom: 1px solid var(--line);
+  width: 100%;
+  border-top: 0;
+  border-right: 0;
+  border-left: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 120ms ease, transform 120ms ease;
 }
 
 .dashboard-expense-row:last-child {
   border-bottom: 0;
+}
+
+.dashboard-expense-row:active {
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+  transform: scale(.995);
 }
 
 .dashboard-expense-icon {
@@ -2201,7 +2259,8 @@ button:disabled {
   }
 
   .metrics-grid {
-    gap: 10px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
   }
 
   .dashboard-card,
@@ -2228,7 +2287,7 @@ button:disabled {
   }
 
   .dashboard-card__face--back {
-    padding: 14px;
+    padding: 12px;
   }
 
   .dashboard-card__back-text {
@@ -2237,29 +2296,34 @@ button:disabled {
   }
 
   .dashboard-card__top {
-    min-height: 36px;
+    gap: 4px;
+    min-height: 38px;
   }
 
   .dashboard-card__amount {
-    font-size: clamp(23px, 6.5vw, 27px);
+    font-size: clamp(19px, 5.5vw, 23px);
     line-height: 1.05;
   }
 
   .dashboard-card__title {
-    font-size: 15px;
+    flex: 1 1 auto;
+    font-size: 13px;
+    line-height: 1.12;
   }
 
   .dashboard-card__percent {
-    font-size: 12px;
+    flex: 0 0 auto;
+    font-size: 10px;
   }
 
   .dashboard-card__line {
-    font-size: 12px;
+    gap: 4px;
+    font-size: 10px;
     line-height: 1.15;
   }
 
   .dashboard-card__caption {
-    font-size: 11px;
+    font-size: 10px;
     line-height: 1.18;
   }
 
@@ -2269,7 +2333,7 @@ button:disabled {
   }
 
   .dashboard-card__display {
-    font-size: 11px;
+    font-size: 10px;
   }
 
   .dashboard-card__progress {

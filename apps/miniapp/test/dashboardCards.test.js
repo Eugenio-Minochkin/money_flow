@@ -20,22 +20,24 @@ const labels = {
   "dashboard.hero.safeToday": "Можно потратить сегодня",
   "dashboard.hero.dayOverrun": "Сегодня выше ориентира",
   "dashboard.hero.dayOverrunHint": "на столько превышен дневной ориентир",
-  "dashboard.hero.freeDeficit": "Свободный бюджет исчерпан",
-  "dashboard.hero.freeDeficitHint": "не хватает с учётом плановых оплат и резерва",
+  "dashboard.hero.shortAfterPlanned": "После плановых оплат не хватит",
+  "dashboard.hero.shortAfterPlannedAndReserve": "После плановых оплат и резерва не хватит",
+  "dashboard.hero.freeDeficit": "После плановых оплат не хватит",
+  "dashboard.hero.freeDeficitWithReserve": "После плановых оплат и резерва не хватит",
+  "dashboard.hero.freeDeficitHint": "До конца месяца",
   "dashboard.hero.monthOverrun": "Бюджет месяца превышен",
-  "dashboard.hero.monthOverrunHint": "превышение текущего бюджета",
+  "dashboard.hero.monthOverrunHint": "Уже потрачено больше бюджета",
   "dashboard.hero.dangerHint": "Осталось немного от дневного ориентира",
   "dashboard.hero.spentToday": "Сегодня потрачено",
   "dashboard.hero.freeThroughMonthEnd": "До конца месяца",
-  "dashboard.hero.shortfallThroughMonthEnd": "Дефицит до конца месяца",
   "dashboard.hero.budgetOverrun": "Превышение бюджета",
+  "dashboard.weekPlanExceeded": "Недельный план превышен",
   "dashboard.tooltip.heroTodayOnTrack": "Можно потратить сегодня и не сломать месяц. Плановые оплаты уже вычтены.",
   "dashboard.tooltip.heroTodayOverspend": "Перерасход относительно бюджета дня. Плановые оплаты уже вычтены.",
   "dashboard.tooltip.monthFree": "Деньги, которыми реально можно распоряжаться до конца месяца. Плановые оплаты уже отложены.",
   "dashboard.tooltip.planned": "Деньги на будущие оплаты: аренда, подписки и другие платежи впереди.",
   "dashboard.tooltip.month": "Остаток общего бюджета месяца. Плановые, которые ещё не оплачены, здесь не вычтены.",
-  "dashboard.tooltip.weekMonthBinding": "Лимит недели ограничен месяцем. Берём меньшее из недели и свободного остатка месяца.",
-  "dashboard.tooltip.weekWeekBinding": "Остаток недельного бюджета.",
+  "dashboard.tooltip.week": "Сколько осталось от недельного бюджета с учётом расходов этой недели.",
   "dashboard.untilMonthEnd": "До конца месяца",
   "dashboard.week": "Неделя"
 };
@@ -101,7 +103,7 @@ test("builds the semantic dashboard card grid", () => {
     "потрачено 45481 THB",
     "бюджет 48000 THB"
   ]);
-  assert.equal(cards[3].amount, "1807 THB");
+  assert.equal(cards[3].amount, "7387 THB");
   assert.deepEqual(cards[3].progress, { percent: 34.04, state: "good" });
   assert.deepEqual(cards[3].lines.map((line) => `${line.label} ${line.amount}`), [
     "потрачено 3813 THB",
@@ -132,8 +134,10 @@ test("marks negative month-free values as danger and does not clamp them", () =>
 
   assert.equal(cards[0].amount, "-320 THB");
   assert.equal(cards[0].state, "danger");
-  assert.equal(cards[3].amount, "-320 THB");
-  assert.equal(cards[3].state, "danger");
+  assert.equal(cards[3].amount, "7387 THB");
+  assert.equal(cards[3].state, "good");
+  assert.equal(cards[3].warning, undefined);
+  assert.equal(cards[3].tooltip, "Сколько осталось от недельного бюджета с учётом расходов этой недели.");
 });
 
 test("prioritizes monthly state over daily overrun in the hero", () => {
@@ -142,12 +146,14 @@ test("prioritizes monthly state over daily overrun in the hero", () => {
   assert.equal(hero.title, "Сегодня выше ориентира");
   assert.equal(hero.amount, "279 THB");
   assert.equal(hero.state, "danger");
-  assert.equal(hero.progress.percent, 0);
+  assert.equal(hero.progress.percent, 100);
   const monthOverrun = buildHeroMetric({ ...semanticSnapshot, monthRemaining: -1250, display: { ...semanticSnapshot.display, monthRemaining: -38.3 } }, helpers);
   assert.equal(monthOverrun.kind, "monthOverrun");
   assert.equal(monthOverrun.amount, "1250 THB");
   assert.equal(monthOverrun.display, "~$38.3");
   assert.equal(monthOverrun.title, "Бюджет месяца превышен");
+  assert.equal(monthOverrun.hint, "Уже потрачено больше бюджета");
+  assert.equal(monthOverrun.progress.percent, 100);
 });
 
 test("builds on-track hero title caption and tooltip", () => {
@@ -173,11 +179,97 @@ test("uses existing day state and free deficit without inventing thresholds", ()
   assert.equal(warn.progress.percent, 73);
   const deficit = buildHeroMetric({ ...semanticSnapshot, dayOverrun: 0, monthRemaining: 500, freeRemaining: -250, display: { ...semanticSnapshot.display, freeRemaining: -7.6 } }, helpers);
   assert.equal(deficit.kind, "freeDeficit");
-  assert.equal(deficit.title, "Свободный бюджет исчерпан");
+  assert.equal(deficit.title, "После плановых оплат не хватит");
   assert.equal(deficit.amount, "250 THB");
   assert.equal(deficit.display, "~$7.6");
-  assert.equal(deficit.monthLabel, "Дефицит до конца месяца");
+  assert.equal(deficit.hint, "До конца месяца");
+  assert.equal(deficit.monthLabel, "После плановых оплат не хватит");
   assert.equal(deficit.monthValue, "250 THB");
+  assert.equal(deficit.progress.percent, 100);
+});
+
+test("hero progress follows the metric shown and handles a zero daily target", () => {
+  const onTrack = buildHeroMetric({
+    today: 250,
+    dayRemaining: 750,
+    dayOverrun: 0,
+    dayPlanLimit: 1000,
+    freeRemaining: 18700,
+    monthRemaining: 25100,
+    monthlyBudget: 51000,
+    progress: { day: { percent: 25, state: "good" } }
+  }, helpers);
+  assert.deepEqual(onTrack.progress, { percent: 25, state: "good" });
+
+  const zeroTarget = buildHeroMetric({
+    today: 0,
+    dayRemaining: 0,
+    dayOverrun: 0,
+    dayPlanLimit: 0,
+    freeRemaining: 0,
+    monthRemaining: 0,
+    monthlyBudget: 0,
+    progress: { day: { percent: Number.NaN, state: "good" } }
+  }, helpers);
+  assert.deepEqual(zeroTarget.progress, { percent: 0, state: "good" });
+  assert.equal(zeroTarget.spent, "0 THB");
+});
+
+test("week card keeps weekly remaining independent from exhausted month budget", () => {
+  const cards = buildDashboardCards({
+    ...semanticSnapshot,
+    freeRemaining: -3023,
+    weekAvailable: -3023,
+    weekRemainingRaw: 7387
+  }, helpers);
+  const weekCard = cards.at(-1);
+
+  assert.equal(weekCard.amount, "7387 THB");
+  assert.equal(weekCard.state, "good");
+  assert.equal(weekCard.caption, undefined);
+  assert.equal(weekCard.warning, undefined);
+  assert.equal(weekCard.tooltip, "Сколько осталось от недельного бюджета с учётом расходов этой недели.");
+});
+
+test("week card adds a short caption only when the weekly plan is exceeded", () => {
+  const cards = buildDashboardCards({
+    ...semanticSnapshot,
+    week: 12436,
+    weekRemainingRaw: -920,
+    weekPlanLimit: 11516,
+    weekProgressPercent: 108,
+    progress: {
+      ...semanticSnapshot.progress,
+      week: { percent: 108, state: "danger" }
+    },
+    display: {
+      ...semanticSnapshot.display,
+      weekRemainingRaw: -28.2
+    }
+  }, helpers);
+  const weekCard = cards.at(-1);
+
+  assert.equal(weekCard.amount, "-920 THB");
+  assert.equal(weekCard.state, "danger");
+  assert.equal(weekCard.caption, "Недельный план превышен");
+  assert.equal(weekCard.warning, undefined);
+});
+
+test("hero deficit names an active reserve in the displayed label and value context", () => {
+  const hero = buildHeroMetric({
+    ...semanticSnapshot,
+    dayOverrun: 0,
+    monthRemaining: 500,
+    freeRemaining: -250,
+    reserve: { amount: 4000 },
+    display: { ...semanticSnapshot.display, freeRemaining: -7.6 }
+  }, helpers);
+
+  assert.equal(hero.kind, "freeDeficit");
+  assert.equal(hero.title, "После плановых оплат и резерва не хватит");
+  assert.equal(hero.amount, "250 THB");
+  assert.equal(hero.monthLabel, "После плановых оплат и резерва не хватит");
+  assert.equal(hero.monthValue, "250 THB");
 });
 
 test("renders card flip backs as a single compact paragraph", () => {
@@ -191,6 +283,7 @@ test("renders card flip backs as a single compact paragraph", () => {
   assert.match(container.innerHTML, /dashboard-card__flip-inner/);
   assert.match(container.innerHTML, /dashboard-card__face dashboard-card__face--front/);
   assert.match(container.innerHTML, /dashboard-card__face dashboard-card__face--back/);
+  assert.doesNotMatch(container.innerHTML, /dashboard-card__warning/);
   assert.match(container.innerHTML, /<p class="dashboard-card__back-text">/);
   assert.match(container.innerHTML, /dashboard-card__info/);
   assert.doesNotMatch(container.innerHTML, /dashboard-card__tooltip/);
@@ -213,12 +306,12 @@ test("month tooltip explains unpaid planned payments without numbers", () => {
   assert.doesNotMatch(monthCard.tooltip, /\{|\d{3,}/);
 });
 
-test("week tooltip switches between month-bound and week-bound copy", () => {
+test("week tooltip always explains the displayed weekly remainder", () => {
   const bound = buildDashboardCards(semanticSnapshot, helpers).find((card) => card.title === "Неделя");
   const unbound = buildDashboardCards({ ...semanticSnapshot, isMonthBinding: false }, helpers).find((card) => card.title === "Неделя");
 
-  assert.equal(bound.tooltip, "Лимит недели ограничен месяцем. Берём меньшее из недели и свободного остатка месяца.");
-  assert.equal(unbound.tooltip, "Остаток недельного бюджета.");
+  assert.equal(bound.tooltip, "Сколько осталось от недельного бюджета с учётом расходов этой недели.");
+  assert.equal(unbound.tooltip, "Сколько осталось от недельного бюджета с учётом расходов этой недели.");
 });
 
 test("tooltips never leak raw placeholders into rendered markup", () => {
