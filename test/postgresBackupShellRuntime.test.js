@@ -182,7 +182,7 @@ set -u
 args="$*"
 if [[ "$args" == *" ps -q api"* ]]; then echo api-container; exit 0; fi
 if [[ "$args" == inspect* ]]; then echo money-flow-network; exit 0; fi
-if [[ "$args" == network\ inspect* ]]; then echo 172.18.0.1; exit 0; fi
+if [[ "$args" == "network inspect"* ]]; then echo 172.18.0.1; exit 0; fi
 if [[ "$args" == *" cp "* ]]; then
   printf '%s\\n' "$args" > "$SECURITY_CP_LOG"
   : > "$SECURITY_CP_MARKER"
