@@ -1,5 +1,7 @@
 FROM node:24-alpine
 
+ARG APP_REVISION=unknown
+
 WORKDIR /app
 
 COPY package.json package-lock.json ./
@@ -9,7 +11,10 @@ RUN npm ci --omit=dev
 COPY apps apps
 COPY packages packages
 
-RUN addgroup -S app && adduser -S -G app app \
+LABEL org.opencontainers.image.revision="$APP_REVISION"
+
+RUN printf '%s\n' "$APP_REVISION" > /app/REVISION \
+    && addgroup -S app && adduser -S -G app app \
     && chown -R app:app /app
 
 ENV NODE_ENV=production
