@@ -140,6 +140,7 @@ test('backup runtime cleans host and container temporaries when validation or co
   assert.deepEqual(readdirSync(backupDir).filter((name) => name.includes('.tmp.')), []);
   assert.deepEqual(readdirSync(backupDir).filter((name) => name.endsWith('.dump')), ['moneyflow-postgres-old.dump']);
 
+  rmSync(join(sandbox.root, 'container-rm'), { force: true });
   const copyFailure = runScript('scripts/backup-postgres.sh', {
     env: backupEnv(sandbox, backupDir, { DOCKER_CP_EXIT: '12' }),
   });
@@ -215,7 +216,7 @@ test('security check chooses newest mtime with a stable filename tie-break and c
   const older = join(backupDir, 'moneyflow-postgres-a.dump');
   const expected = join(backupDir, 'moneyflow-postgres-z.dump');
   writeFileSync(older, 'old'); writeFileSync(expected, 'new');
-  const sameTime = new Date('2026-07-30T00:00:00Z');
+  const sameTime = new Date();
   utimesSync(older, sameTime, sameTime); utimesSync(expected, sameTime, sameTime);
 
   const result = runScript('scripts/prod-security-check.sh', {
@@ -248,6 +249,8 @@ test('security check reports missing stale and corrupt backups separately and cl
   });
   assert.notEqual(result.status, 0); assert.match(result.stderr, /Newest backup is not a valid pg_restore archive/);
 
+  assert.equal(existsSync(join(sandbox.root, 'security-rm')), true);
+  rmSync(join(sandbox.root, 'security-rm'), { force: true });
   result = runScript('scripts/prod-security-check.sh', {
     env: securityEnv(sandbox, appDir, backupDir, { SECURITY_CP_EXIT: '12' }),
   });
