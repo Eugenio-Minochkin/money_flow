@@ -215,9 +215,9 @@ jobs:
           trap restore_release_digest_scheduler EXIT
 
           docker compose --env-file .env.production -f compose.prod.yml build --pull --no-cache api
+          release_digest_scheduler_disabled=1
           RELEASE_DIGEST_AUTO_SEND_ENABLED=false \
             docker compose --env-file .env.production -f compose.prod.yml up -d --build --no-deps --force-recreate api
-          release_digest_scheduler_disabled=1
           verify_api_revision
           ./scripts/prod-security-check.sh
 
