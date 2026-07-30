@@ -51,6 +51,15 @@ export function buildHeroMetric(snapshot, helpers) {
     dayOverrun: "dashboard.hero.dayOverrunHint",
     remaining: state === "danger" ? "dashboard.hero.dangerHint" : ""
   }[kind];
+  const monthLabelKey = {
+    monthOverrun: "dashboard.hero.budgetOverrun",
+    freeDeficit: "dashboard.hero.shortfallThroughMonthEnd",
+    dayOverrun: "dashboard.hero.freeThroughMonthEnd",
+    remaining: "dashboard.hero.freeThroughMonthEnd"
+  }[kind];
+  const monthValue = kind === "monthOverrun"
+    ? Math.abs(monthRemaining)
+    : kind === "freeDeficit" ? Math.abs(freeRemaining) : freeRemaining;
 
   return {
     kind,
@@ -60,8 +69,8 @@ export function buildHeroMetric(snapshot, helpers) {
     hint: hintKey ? helpers.t(hintKey) : "",
     spentLabel: helpers.t("dashboard.hero.spentToday"),
     spent: `${helpers.moneyBase(todayTotal)} / ${helpers.moneyBase(dayPlanLimit)}`,
-    monthLabel: helpers.t(kind === "monthOverrun" ? "dashboard.hero.budgetOverrun" : "dashboard.hero.freeThroughMonthEnd"),
-    monthValue: helpers.moneyBase(kind === "monthOverrun" ? Math.abs(monthRemaining) : freeRemaining),
+    monthLabel: helpers.t(monthLabelKey),
+    monthValue: helpers.moneyBase(monthValue),
     progress: { percent: Math.max(0, Math.min(Number(snapshot.progress?.day?.percent ?? 0), 100)), state },
     caption: helpers.t("dashboard.todayCaption", {
       spent: helpers.moneyBase(todayTotal),

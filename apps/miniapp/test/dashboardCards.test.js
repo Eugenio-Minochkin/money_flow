@@ -27,6 +27,7 @@ const labels = {
   "dashboard.hero.dangerHint": "Осталось немного от дневного ориентира",
   "dashboard.hero.spentToday": "Сегодня потрачено",
   "dashboard.hero.freeThroughMonthEnd": "До конца месяца",
+  "dashboard.hero.shortfallThroughMonthEnd": "Дефицит до конца месяца",
   "dashboard.hero.budgetOverrun": "Превышение бюджета",
   "dashboard.tooltip.heroTodayOnTrack": "Можно потратить сегодня и не сломать месяц. Плановые оплаты уже вычтены.",
   "dashboard.tooltip.heroTodayOverspend": "Перерасход относительно бюджета дня. Плановые оплаты уже вычтены.",
@@ -175,6 +176,8 @@ test("uses existing day state and free deficit without inventing thresholds", ()
   assert.equal(deficit.title, "Свободный бюджет исчерпан");
   assert.equal(deficit.amount, "250 THB");
   assert.equal(deficit.display, "~$7.6");
+  assert.equal(deficit.monthLabel, "Дефицит до конца месяца");
+  assert.equal(deficit.monthValue, "250 THB");
 });
 
 test("renders card flip backs as a single compact paragraph", () => {
