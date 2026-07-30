@@ -27,13 +27,13 @@ test('production deploy embeds and verifies the exact Git revision', () => {
   assert.ok((workflow.match(/verify_api_revision/g) ?? []).length >= 3);
 });
 
-test('failed pre-start builds do not recreate the API from an unavailable revision image', () => {
+test('failed pre-start builds do not recreate the API before the scheduler was disabled', () => {
   const workflow = readText('.github/workflows/deploy.yml');
 
   assert.match(workflow, /release_digest_scheduler_disabled=0/);
   assert.match(
     workflow,
-    /if \[ "\$release_digest_scheduler_disabled" -eq 1 \]; then[\s\S]*up -d --no-deps --force-recreate api/
+    /if \[ "\$release_digest_scheduler_disabled" -eq 1 \]; then[\s\S]*up -d --force-recreate api/
   );
   assert.match(
     workflow,
