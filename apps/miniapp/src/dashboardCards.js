@@ -52,14 +52,22 @@ export function buildHeroMetric(snapshot, helpers) {
     remaining: state === "danger" ? "dashboard.hero.dangerHint" : ""
   }[kind];
   const monthLabelKey = {
-    monthOverrun: "dashboard.hero.budgetOverrun",
-    freeDeficit: "dashboard.hero.shortfallThroughMonthEnd",
+    monthOverrun: freeRemaining < 0 ? "dashboard.hero.shortAfterPlanned" : "dashboard.hero.budgetOverrun",
+    freeDeficit: "dashboard.hero.shortAfterPlanned",
     dayOverrun: "dashboard.hero.freeThroughMonthEnd",
     remaining: "dashboard.hero.freeThroughMonthEnd"
   }[kind];
   const monthValue = kind === "monthOverrun"
-    ? Math.abs(monthRemaining)
+    ? freeRemaining < 0 ? Math.abs(freeRemaining) : Math.abs(monthRemaining)
     : kind === "freeDeficit" ? Math.abs(freeRemaining) : freeRemaining;
+  const progressPercent = {
+    monthOverrun: 100,
+    freeDeficit: 100,
+    dayOverrun: 100,
+    remaining: boundedPercent(snapshot.progress?.day?.percent, dayPlanLimit > 0
+      ? ratioPercent(todayTotal, dayPlanLimit)
+      : 0)
+  }[kind];
 
   return {
     kind,
@@ -68,10 +76,12 @@ export function buildHeroMetric(snapshot, helpers) {
     display: helpers.moneyDisplay(displayByKind[kind], snapshot.display?.currency),
     hint: hintKey ? helpers.t(hintKey) : "",
     spentLabel: helpers.t("dashboard.hero.spentToday"),
-    spent: `${helpers.moneyBase(todayTotal)} / ${helpers.moneyBase(dayPlanLimit)}`,
+    spent: dayPlanLimit > 0
+      ? `${helpers.moneyBase(todayTotal)} / ${helpers.moneyBase(dayPlanLimit)}`
+      : helpers.moneyBase(todayTotal),
     monthLabel: helpers.t(monthLabelKey),
     monthValue: helpers.moneyBase(monthValue),
-    progress: { percent: Math.max(0, Math.min(Number(snapshot.progress?.day?.percent ?? 0), 100)), state },
+    progress: { percent: progressPercent, state },
     caption: helpers.t("dashboard.todayCaption", {
       spent: helpers.moneyBase(todayTotal),
       budget: helpers.moneyBase(dayPlanLimit)
@@ -89,7 +99,11 @@ export function buildDashboardCards(snapshot, helpers) {
   const monthRemaining = Number(snapshot.monthRemaining ?? snapshot.remaining ?? 0);
   const plannedRemaining = Number(snapshot.plannedRemaining ?? 0);
   const reserveAmount = Number(snapshot.reserve?.amount ?? 0);
-  const weekAvailable = Number(snapshot.weekAvailable ?? snapshot.weekRemaining ?? 0);
+  const weekPlanLimit = Number(snapshot.weekPlanLimit ?? 0);
+  const weekSpent = Number(snapshot.week ?? 0);
+  const weekRemaining = Number(snapshot.weekRemainingRaw ?? snapshot.weekRemaining ?? Math.max(weekPlanLimit - weekSpent, 0));
+  const weekCardState = weekRemaining < 0 ? "danger" : weekProgress.state;
+  const weekCardProgress = { ...weekProgress, state: weekCardState };
   const monthFreeCard = {
     title: helpers.t("dashboard.untilMonthEnd"),
     amount: helpers.moneyBase(snapshot.freeRemaining),
@@ -124,15 +138,17 @@ export function buildDashboardCards(snapshot, helpers) {
   };
   const weekCard = {
     title: helpers.t("dashboard.week"),
-    amount: helpers.moneyBase(weekAvailable),
-    display: helpers.moneyDisplay(snapshot.display?.weekAvailable, snapshot.display?.currency),
+    amount: helpers.moneyBase(weekRemaining),
+    display: helpers.moneyDisplay(snapshot.display?.weekRemainingRaw ?? snapshot.display?.weekRemaining, snapshot.display?.currency),
     percent: helpers.percent(snapshot.weekProgressPercent ?? 0),
-    state: weekAvailable < 0 ? "danger" : weekProgress.state,
+    state: weekCardState,
     lines: [
-      remainingLine(helpers.t("dashboard.spent"), helpers.moneyBase(snapshot.week)),
-      budgetLine(helpers.t("dashboard.budget"), helpers.moneyBase(snapshot.weekPlanLimit ?? 0))
+      remainingLine(helpers.t("dashboard.spent"), helpers.moneyBase(weekSpent)),
+      budgetLine(helpers.t("dashboard.budget"), helpers.moneyBase(weekPlanLimit))
     ],
-    progress: weekProgress,
+    caption: weekRemaining < 0 ? helpers.t("dashboard.weekPlanExceeded") : undefined,
+    warning: freeRemaining <= 0 ? helpers.t("dashboard.monthBudgetExhausted") : "",
+    progress: weekCardProgress,
     infoLabel: explainLabel,
     tooltip: helpers.t(snapshot.isMonthBinding ? "dashboard.tooltip.weekMonthBinding" : "dashboard.tooltip.weekWeekBinding")
   };
@@ -223,6 +239,7 @@ function renderCard(card) {
   const display = card.display ? `<div class="dashboard-card__display">${escapeHtml(card.display)}</div>` : "";
   const caption = card.caption ? `<div class="dashboard-card__caption">${escapeHtml(card.caption)}</div>` : "";
   const reserveLine = card.reserveLine ? `<div class="dashboard-card__reserve">${escapeHtml(card.reserveLine)}</div>` : "";
+  const warning = card.warning ? `<div class="dashboard-card__warning">${escapeHtml(card.warning)}</div>` : "";
   const back = card.tooltip ? `
         <div class="dashboard-card__face dashboard-card__face--back" id="${escapeHtml(tooltipId)}" role="note" tabindex="-1" aria-hidden="true" aria-live="polite" data-flip-back>
           <p class="dashboard-card__back-text">${escapeHtml(card.tooltip)}</p>
@@ -242,6 +259,7 @@ function renderCard(card) {
           ${display}
           ${caption}
           ${reserveLine}
+          ${warning}
           <div class="dashboard-card__spacer"></div>
           ${progress}
         </div>
@@ -273,4 +291,20 @@ function slugify(value) {
     .toLowerCase()
     .replace(/[^\p{Letter}\p{Number}]+/gu, "-")
     .replace(/^-|-$/g, "") || "card";
+}
+
+function ratioPercent(value, limit) {
+  const numerator = Number(value);
+  const denominator = Number(limit);
+  if (!Number.isFinite(numerator) || !Number.isFinite(denominator) || denominator <= 0) {
+    return numerator > 0 ? 100 : 0;
+  }
+  return Math.max(0, Math.min((numerator / denominator) * 100, 100));
+}
+
+function boundedPercent(value, fallback = 0) {
+  const number = Number(value);
+  return Number.isFinite(number)
+    ? Math.max(0, Math.min(number, 100))
+    : Math.max(0, Math.min(Number(fallback) || 0, 100));
 }

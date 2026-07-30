@@ -630,7 +630,7 @@ function renderSnapshot(snapshot) {
   }
   setText("#heroTooltipText", heroMetric.tooltip);
   const heroDetails = document.querySelector("#heroTooltip");
-  if (heroDetails) heroDetails.innerHTML = renderHeroDetails(snapshot, dashboardState?.currentMonthBudget);
+  if (heroDetails) heroDetails.innerHTML = renderHeroDetails(snapshot, dashboardState?.currentMonthBudget, heroMetric);
   const heroToggle = document.querySelector("#heroDetailsToggle");
   heroToggle?.setAttribute("aria-label", t("dashboard.hero.why"));
   heroToggle && (heroToggle.textContent = t("dashboard.hero.why"));
@@ -653,19 +653,65 @@ function renderSnapshot(snapshot) {
   bindDashboardTooltips();
 }
 
-function renderHeroDetails(snapshot, currentMonthBudget) {
-  const rows = [
-    ["dashboard.hero.baseBudget", currentMonthBudget?.baseBudget],
-    ["dashboard.hero.topups", currentMonthBudget?.topupsTotal ? `+${moneyBase(currentMonthBudget.topupsTotal)}` : null],
-    ["dashboard.hero.monthBudget", snapshot.monthlyBudget],
-    ["dashboard.spent", snapshot.month],
-    ["dashboard.hero.planned", snapshot.plannedRemaining],
-    ["dashboard.hero.reserve", snapshot.reserve?.amount],
-    ["dashboard.hero.free", snapshot.freeRemaining],
-    ["dashboard.hero.dayPlan", snapshot.dayPlanLimit]
-  ].filter(([, value]) => value != null).map(([label, value]) => `
-    <div class="hero-metric__detail-row"><span>${escapeHtml(t(label))}</span><strong>${escapeHtml(typeof value === "string" ? value : moneyBase(value))}</strong></div>`);
-  return rows.join("");
+function renderHeroDetails(snapshot, currentMonthBudget, heroMetric) {
+  const baseBudget = Number(currentMonthBudget?.baseBudget ?? snapshot.monthlyBudget ?? 0);
+  const topups = Number(currentMonthBudget?.topupsTotal ?? 0);
+  const monthlyBudget = Number(snapshot.monthlyBudget ?? currentMonthBudget?.amount ?? baseBudget + topups);
+  const monthSpent = Number(snapshot.month ?? 0);
+  const planned = Number(snapshot.plannedRemaining ?? 0);
+  const reserve = Number(snapshot.reserve?.amount ?? 0);
+  const freeRemaining = Number(snapshot.freeRemaining ?? 0);
+  const today = Number(snapshot.today ?? 0);
+  const dayPlan = Number(snapshot.dayPlanLimit ?? 0);
+  const rows = [];
+
+  if (topups > 0) {
+    rows.push(heroDetailRow("dashboard.hero.baseBudget", moneyBase(baseBudget)));
+    rows.push(heroDetailRow("dashboard.hero.topups", `+${moneyBase(topups)}`));
+    rows.push(heroDetailRow("dashboard.hero.monthBudget", moneyBase(monthlyBudget), "subtotal"));
+  } else {
+    rows.push(heroDetailRow("dashboard.hero.monthBudget", moneyBase(monthlyBudget)));
+  }
+  if (monthSpent > 0) rows.push(heroDetailRow("dashboard.hero.spentSoFar", `−${moneyBase(monthSpent)}`));
+  if (planned > 0) rows.push(heroDetailRow("dashboard.hero.planned", `−${moneyBase(planned)}`));
+  if (reserve > 0) rows.push(heroDetailRow("dashboard.hero.reserve", `−${moneyBase(reserve)}`));
+
+  if (heroMetric.kind === "monthOverrun") {
+    rows.push(heroDetailRow("dashboard.hero.budgetOverrun", heroMetric.amount, "result"));
+    if (freeRemaining < 0 && Math.abs(freeRemaining) !== Math.abs(Number(snapshot.monthRemaining ?? 0))) {
+      rows.push(heroDetailRow("dashboard.hero.shortAfterPlanned", moneyBase(Math.abs(freeRemaining))));
+    }
+  } else if (heroMetric.kind === "freeDeficit") {
+    rows.push(heroDetailRow("dashboard.hero.shortAfterPlanned", heroMetric.amount, "result"));
+  } else {
+    rows.push(heroDetailRow("dashboard.hero.free", moneyBase(Math.max(freeRemaining, 0)), "subtotal"));
+    rows.push(heroDetailRow("dashboard.hero.dayPlan", moneyBase(dayPlan)));
+    if (today > 0) rows.push(heroDetailRow("dashboard.hero.spentToday", `−${moneyBase(today)}`));
+    rows.push(heroDetailRow(
+      heroMetric.kind === "dayOverrun" ? "dashboard.hero.dayOverrun" : "dashboard.hero.safeToday",
+      heroMetric.amount,
+      "result"
+    ));
+  }
+
+  const zeroTargetExplanation = dayPlan === 0
+    ? `<p class="hero-metric__calculation-note">${escapeHtml(t("dashboard.hero.zeroTargetExplanation", { amount: moneyBase(0) }))}</p>`
+    : "";
+  return `
+    <h3 class="hero-metric__calculation-title">${escapeHtml(t("dashboard.hero.calculationTitle"))}</h3>
+    <div class="hero-metric__calculation-rows">${rows.join("")}</div>
+    ${zeroTargetExplanation}
+  `;
+}
+
+function heroDetailRow(labelKey, value, modifier = "") {
+  const className = modifier ? ` hero-metric__detail-row--${modifier}` : "";
+  return `
+    <div class="hero-metric__detail-row${className}">
+      <span>${escapeHtml(t(labelKey))}</span>
+      <strong>${escapeHtml(value)}</strong>
+    </div>
+  `;
 }
 
 function bindHeroDetails() {
@@ -954,6 +1000,7 @@ function renderLatest(expenses) {
     return;
   }
   list.innerHTML = expenses.slice(0, 3).map(dashboardExpenseRow).join("");
+  bindExpenseActions(list, expenses, { returnTab: "dashboard" });
 }
 
 function dashboardExpenseRow(expense) {
@@ -964,7 +1011,7 @@ function dashboardExpenseRow(expense) {
     ?? dashboardState?.user?.base_currency
     ?? "THB";
   return `
-    <article class="dashboard-expense-row" style="--category-color: ${categoryColor(expense.category_slug)}">
+    <button type="button" class="dashboard-expense-row" data-edit-expense="${escapeAttribute(expense.id)}" aria-label="${escapeAttribute(`${t("actions.edit")}: ${expense.description}`)}" style="--category-color: ${categoryColor(expense.category_slug)}">
       <span class="dashboard-expense-icon" aria-hidden="true">${dashboardCategoryIcon(expense.category_slug)}</span>
       <div class="dashboard-expense-main">
         <strong>${escapeHtml(expense.description)}</strong>
@@ -974,7 +1021,7 @@ function dashboardExpenseRow(expense) {
         <strong>${formatMoney(amount, currency)}</strong>
         <em>${moneyDisplay(expense.display?.amount, expense.display?.currency)}</em>
       </div>
-    </article>
+    </button>
   `;
 }
 
@@ -1187,11 +1234,11 @@ function budgetImpactLabel(value) {
   return "";
 }
 
-function bindExpenseActions(container, expenses) {
+function bindExpenseActions(container, expenses, options = {}) {
   container.querySelectorAll("[data-edit-expense]").forEach((button) => {
     button.addEventListener("click", () => {
       const expense = expenses.find((item) => String(item.id) === button.dataset.editExpense);
-      renderExpenseEditor(expense, { returnTab: "history" });
+      renderExpenseEditor(expense, { returnTab: options.returnTab ?? "history" });
     });
   });
   container.querySelectorAll("[data-delete-expense]").forEach((button) => {
