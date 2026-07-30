@@ -16,6 +16,7 @@
 # Never prints secrets (POSTGRES_PASSWORD, AWS credentials).
 
 set -euo pipefail
+umask 077
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -105,9 +106,12 @@ esac
 # --- Create backup ----------------------------------------------------------
 
 mkdir -p "$BACKUP_DIR"
+chmod 700 "$BACKUP_DIR"
 
 stamp="$(date +%Y-%m-%d_%H-%M-%S)"
 outfile="$BACKUP_DIR/moneyflow-postgres-${stamp}.dump"
+tmp_outfile="${outfile}.tmp.$$"
+container_tmp="/tmp/money-flow-backup-validate-$$.dump"
 
 log "Database:   $POSTGRES_DB (user: $POSTGRES_USER)"
 log "Service:    $POSTGRES_SERVICE (compose: $COMPOSE_FILE)"
@@ -118,19 +122,42 @@ log "Backing up to: $outfile"
 # negated status (0), so a failure would exit 0. Capture the real code in the
 # else-branch instead.
 if "${COMPOSE[@]}" exec -T "$POSTGRES_SERVICE" \
-      pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc > "$outfile"; then
+      pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc > "$tmp_outfile"; then
   :
 else
   dump_rc=$?
-  rm -f "$outfile"
+  rm -f "$tmp_outfile"
   err "pg_dump failed (exit $dump_rc). Is the '$POSTGRES_SERVICE' container running?"
   exit "$dump_rc"
 fi
 
-if [ ! -s "$outfile" ]; then
+if [ ! -s "$tmp_outfile" ]; then
+  rm -f "$tmp_outfile"
   err "Backup file is empty: $outfile"
   exit 1
 fi
+
+chmod 600 "$tmp_outfile"
+
+# The custom-format dump lives on the host. Copy it into the Postgres
+# container for pg_restore validation, then always remove the container copy.
+validation_ok=0
+if "${COMPOSE[@]}" cp "$tmp_outfile" "${POSTGRES_SERVICE}:${container_tmp}" \
+  && MSYS_NO_PATHCONV=1 "${COMPOSE[@]}" exec -T "$POSTGRES_SERVICE" \
+    pg_restore --list "$container_tmp" >/dev/null 2>&1; then
+  validation_ok=1
+fi
+MSYS_NO_PATHCONV=1 "${COMPOSE[@]}" exec -T "$POSTGRES_SERVICE" \
+  rm -f "$container_tmp" >/dev/null 2>&1 || true
+
+if [ "$validation_ok" -ne 1 ]; then
+  rm -f "$tmp_outfile"
+  err "Backup validation failed; invalid dump removed."
+  exit 1
+fi
+
+mv -f "$tmp_outfile" "$outfile"
+chmod 600 "$outfile"
 
 size_bytes="$(wc -c < "$outfile")"
 log "Created:    $outfile"

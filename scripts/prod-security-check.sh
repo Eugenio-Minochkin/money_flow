@@ -103,9 +103,22 @@ if [ "$gateway_trusted" -ne 1 ]; then
 fi
 
 backup_root="${BACKUP_DIR:-/opt/money-flow/backups/postgres}"
-latest_backup="$(find "$backup_root" -maxdepth 1 -name 'moneyflow-postgres-*.dump' -type f -mtime -2 -print -quit)"
-if [ -z "$latest_backup" ]; then
-  echo "No Postgres backup newer than 2 days in $backup_root" >&2
+shopt -s nullglob
+backup_candidates=()
+for candidate in "$backup_root"/moneyflow-postgres-*.dump; do
+  if [ -f "$candidate" ]; then
+    backup_candidates+=("$candidate")
+  fi
+done
+shopt -u nullglob
+if [ "${#backup_candidates[@]}" -eq 0 ]; then
+  echo "No Postgres backup files in $backup_root" >&2
+  exit 1
+fi
+
+latest_backup="$(ls -t -- "${backup_candidates[@]}" | head -n 1)"
+if ! find "$latest_backup" -maxdepth 0 -mtime -2 -print -quit | grep -q .; then
+  echo "Newest Postgres backup is stale: $latest_backup" >&2
   exit 1
 fi
 
@@ -123,7 +136,7 @@ fi
 MSYS_NO_PATHCONV=1 docker compose --env-file .env.production -f compose.prod.yml exec -T postgres \
   rm -f "$seccheck_tmp" >/dev/null 2>&1 || true
 if [ "$seccheck_ok" -ne 1 ]; then
-  echo "Latest backup is not a valid pg_restore archive: $latest_backup" >&2
+  echo "Newest backup is not a valid pg_restore archive: $latest_backup" >&2
   exit 1
 fi
 

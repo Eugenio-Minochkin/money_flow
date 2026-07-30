@@ -173,6 +173,11 @@ jobs:
           git fetch origin --prune --tags
           git checkout --force "$DEPLOY_REF"
 
+          ENV_FILE="$APP_DIR/.env.production" \
+          COMPOSE_FILE="$APP_DIR/compose.prod.yml" \
+          BACKUP_DIR="$APP_DIR/backups/postgres" \
+            "$APP_DIR/scripts/backup-postgres.sh"
+
           restore_release_digest_scheduler() {
             deploy_status=$?
             trap - EXIT
