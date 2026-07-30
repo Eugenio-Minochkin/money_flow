@@ -27,7 +27,7 @@ test('production deploy embeds and verifies the exact Git revision', () => {
   assert.ok((workflow.match(/verify_api_revision/g) ?? []).length >= 3);
 });
 
-test('failed pre-start builds do not recreate the API before the scheduler was disabled', () => {
+test('failed image builds do not recreate the API, while partial starts restore the scheduler', () => {
   const workflow = readText('.github/workflows/deploy.yml');
 
   assert.match(workflow, /release_digest_scheduler_disabled=0/);
@@ -37,6 +37,6 @@ test('failed pre-start builds do not recreate the API before the scheduler was d
   );
   assert.match(
     workflow,
-    /RELEASE_DIGEST_AUTO_SEND_ENABLED=false[\s\S]*up -d --build --no-deps --force-recreate api[\s\S]*release_digest_scheduler_disabled=1/
+    /build --pull --no-cache api[\s\S]*release_digest_scheduler_disabled=1[\s\S]*RELEASE_DIGEST_AUTO_SEND_ENABLED=false[\s\S]*up -d --build --no-deps --force-recreate api/
   );
 });
