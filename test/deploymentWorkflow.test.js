@@ -382,7 +382,9 @@ test('backup and security scripts enforce validated private Postgres dumps', () 
   assert.match(backup, /rm -f "\$tmp_outfile"/);
   assert.match(securityCheck, /for candidate in .*moneyflow-postgres-\*\.dump/);
   assert.match(securityCheck, /\[ -f "\$candidate" \]/);
-  assert.match(securityCheck, /ls -t -- "\$\{backup_candidates\[@\]\}"/);
+  assert.match(securityCheck, /stat -c '%Y'/);
+  assert.match(securityCheck, /candidate_mtime.*-gt.*latest_mtime/);
+  assert.match(securityCheck, /basename.*candidate.*>.*basename.*latest_backup/);
   assert.match(securityCheck, /No Postgres backup files/);
   assert.match(securityCheck, /Newest Postgres backup is stale/);
   assert.match(securityCheck, /Newest backup is not a valid pg_restore archive/);

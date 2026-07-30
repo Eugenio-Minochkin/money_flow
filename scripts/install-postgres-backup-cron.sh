@@ -19,7 +19,8 @@ check_cron() {
     echo "Postgres backup cron is missing: $CRON_FILE" >&2
     return 1
   fi
-  if grep -Fq "$APP_DIR/backup-postgres.sh" "$CRON_FILE"; then
+  if grep -Fq "$APP_DIR/backup-postgres.sh" "$CRON_FILE" \
+    || grep -Fq '/opt/money-flow/backup-postgres.sh' "$CRON_FILE"; then
     echo "Postgres backup cron still references the legacy backup-postgres.sh path" >&2
     return 1
   fi
@@ -47,7 +48,7 @@ case "${1:-}" in
     ;;
 esac
 
-if [ "${EUID}" -ne 0 ]; then
+if [ "$CRON_FILE" = '/etc/cron.d/money-flow-backup' ] && [ "${EUID}" -ne 0 ]; then
   echo "This installer must run as root because it writes $CRON_FILE" >&2
   exit 1
 fi

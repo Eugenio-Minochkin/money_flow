@@ -116,8 +116,25 @@ if [ "${#backup_candidates[@]}" -eq 0 ]; then
   exit 1
 fi
 
-latest_backup="$(ls -t -- "${backup_candidates[@]}" | head -n 1)"
-if ! find "$latest_backup" -maxdepth 0 -mtime -2 -print -quit | grep -q .; then
+latest_backup=""
+latest_mtime=""
+for candidate in "${backup_candidates[@]}"; do
+  if ! candidate_mtime="$(stat -c '%Y' -- "$candidate")"; then
+    continue
+  fi
+  if [ -z "$latest_backup" ] \
+    || [ "$candidate_mtime" -gt "$latest_mtime" ] \
+    || { [ "$candidate_mtime" -eq "$latest_mtime" ] && [[ "$(basename "$candidate")" > "$(basename "$latest_backup")" ]]; }; then
+    latest_backup="$candidate"
+    latest_mtime="$candidate_mtime"
+  fi
+done
+if [ -z "$latest_backup" ]; then
+  echo "No Postgres backup files in $backup_root" >&2
+  exit 1
+fi
+
+if [ "$latest_mtime" -le "$(( $(date +%s) - 2 * 24 * 60 * 60 ))" ]; then
   echo "Newest Postgres backup is stale: $latest_backup" >&2
   exit 1
 fi
@@ -125,19 +142,36 @@ fi
 # Validate the dump is a readable pg_restore custom-format archive. The file
 # lives on the host, so copy it into the postgres container (custom format
 # requires a seekable file) and list its contents with pg_restore.
-seccheck_tmp="/tmp/money-flow-seccheck-backup.dump"
-docker compose --env-file .env.production -f compose.prod.yml cp "$latest_backup" "postgres:${seccheck_tmp}"
-seccheck_ok=0
-# MSYS_NO_PATHCONV stops Git Bash on Windows from rewriting the container path.
-if MSYS_NO_PATHCONV=1 docker compose --env-file .env.production -f compose.prod.yml exec -T postgres \
-  pg_restore --list "$seccheck_tmp" >/dev/null 2>&1; then
-  seccheck_ok=1
+seccheck_tmp="/tmp/money-flow-seccheck-backup-$$.dump"
+cleanup_seccheck_tmp() {
+  if [ -n "${seccheck_tmp:-}" ]; then
+    MSYS_NO_PATHCONV=1 docker compose --env-file .env.production -f compose.prod.yml exec -T postgres \
+      rm -f "$seccheck_tmp" >/dev/null 2>&1 || true
+    seccheck_tmp=""
+  fi
+}
+on_seccheck_exit() {
+  rc="$?"
+  trap - EXIT
+  cleanup_seccheck_tmp
+  exit "$rc"
+}
+trap on_seccheck_exit EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+if ! docker compose --env-file .env.production -f compose.prod.yml cp "$latest_backup" "postgres:${seccheck_tmp}"; then
+  echo "Could not copy newest Postgres backup into validation container: $latest_backup" >&2
+  exit 1
 fi
-MSYS_NO_PATHCONV=1 docker compose --env-file .env.production -f compose.prod.yml exec -T postgres \
-  rm -f "$seccheck_tmp" >/dev/null 2>&1 || true
-if [ "$seccheck_ok" -ne 1 ]; then
+# MSYS_NO_PATHCONV stops Git Bash on Windows from rewriting the container path.
+if ! MSYS_NO_PATHCONV=1 docker compose --env-file .env.production -f compose.prod.yml exec -T postgres \
+  pg_restore --list "$seccheck_tmp" >/dev/null 2>&1; then
   echo "Newest backup is not a valid pg_restore archive: $latest_backup" >&2
   exit 1
 fi
+cleanup_seccheck_tmp
+trap - EXIT
 
 echo "security-check ok"

@@ -77,15 +77,6 @@ alert_admin_backup_failure() {
   done
 }
 
-on_backup_exit() {
-  rc="$?"
-  if [ "$rc" -ne 0 ]; then
-    alert_admin_backup_failure "$rc"
-  fi
-}
-
-trap on_backup_exit EXIT
-
 # Compose base command. Pass --env-file only when an explicit env file is given,
 # so prod variable substitution (POSTGRES_DB/USER/PASSWORD) resolves correctly.
 COMPOSE=(docker compose)
@@ -93,6 +84,40 @@ if [ -n "$ENV_FILE" ] && [ -f "$ENV_FILE" ]; then
   COMPOSE+=(--env-file "$ENV_FILE")
 fi
 COMPOSE+=(-f "$COMPOSE_FILE")
+
+tmp_outfile=""
+container_tmp=""
+
+cleanup_container_tmp() {
+  if [ -n "$container_tmp" ]; then
+    MSYS_NO_PATHCONV=1 "${COMPOSE[@]}" exec -T "$POSTGRES_SERVICE" \
+      rm -f "$container_tmp" >/dev/null 2>&1 || true
+    container_tmp=""
+  fi
+}
+
+cleanup_backup_artifacts() {
+  if [ -n "$tmp_outfile" ]; then
+    rm -f "$tmp_outfile" || true
+    tmp_outfile=""
+  fi
+  cleanup_container_tmp
+}
+
+on_backup_exit() {
+  rc="$?"
+  trap - EXIT
+  cleanup_backup_artifacts
+  if [ "$rc" -ne 0 ]; then
+    alert_admin_backup_failure "$rc"
+  fi
+  exit "$rc"
+}
+
+trap on_backup_exit EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 # --- Validate retention input ----------------------------------------------
 
@@ -132,7 +157,6 @@ else
 fi
 
 if [ ! -s "$tmp_outfile" ]; then
-  rm -f "$tmp_outfile"
   err "Backup file is empty: $outfile"
   exit 1
 fi
@@ -147,16 +171,15 @@ if "${COMPOSE[@]}" cp "$tmp_outfile" "${POSTGRES_SERVICE}:${container_tmp}" \
     pg_restore --list "$container_tmp" >/dev/null 2>&1; then
   validation_ok=1
 fi
-MSYS_NO_PATHCONV=1 "${COMPOSE[@]}" exec -T "$POSTGRES_SERVICE" \
-  rm -f "$container_tmp" >/dev/null 2>&1 || true
+cleanup_container_tmp
 
 if [ "$validation_ok" -ne 1 ]; then
-  rm -f "$tmp_outfile"
   err "Backup validation failed; invalid dump removed."
   exit 1
 fi
 
 mv -f "$tmp_outfile" "$outfile"
+tmp_outfile=""
 chmod 600 "$outfile"
 
 size_bytes="$(wc -c < "$outfile")"
