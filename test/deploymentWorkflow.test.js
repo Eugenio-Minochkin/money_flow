@@ -345,3 +345,47 @@ test('production postgres healthcheck uses pg_isready without hardcoded credenti
   assert.match(pgIsreadyLine, /\$\$\{POSTGRES_DB\}/);
   assert.doesNotMatch(pgIsreadyLine, /POSTGRES_PASSWORD|password/i);
 });
+
+test('production deploy validates a fresh backup before it mutates containers', () => {
+  const workflow = readText('.github/workflows/deploy.yml');
+  const checkoutIndex = workflow.indexOf('git checkout --force "$DEPLOY_REF"');
+  const backupIndex = workflow.indexOf('"$APP_DIR/scripts/backup-postgres.sh"');
+  const firstContainerMutationIndex = workflow.indexOf('up -d --force-recreate api');
+  const buildIndex = workflow.indexOf('up -d --build');
+  const schedulerDisableIndex = workflow.indexOf('RELEASE_DIGEST_AUTO_SEND_ENABLED=false');
+
+  assert.ok(checkoutIndex >= 0);
+  assert.ok(backupIndex > checkoutIndex);
+  assert.ok(backupIndex < firstContainerMutationIndex);
+  assert.ok(backupIndex < buildIndex);
+  assert.ok(backupIndex < schedulerDisableIndex);
+  assert.match(
+    workflow,
+    /ENV_FILE="\$APP_DIR\/\.env\.production"[\s\\]+COMPOSE_FILE="\$APP_DIR\/compose\.prod\.yml"[\s\\]+BACKUP_DIR="\$APP_DIR\/backups\/postgres"[\s\\]+"\$APP_DIR\/scripts\/backup-postgres\.sh"/
+  );
+});
+
+test('backup and security scripts enforce validated private Postgres dumps', () => {
+  const backup = readText('scripts/backup-postgres.sh');
+  const securityCheck = readText('scripts/prod-security-check.sh');
+  const validationIndex = backup.indexOf('pg_restore --list');
+  const retentionIndex = backup.indexOf('# --- Retention');
+  const uploadIndex = backup.indexOf('# --- Optional external copy');
+
+  assert.match(backup, /umask 077/);
+  assert.match(backup, /chmod 600/);
+  assert.match(backup, /pg_dump[\s\S]*-Fc/);
+  assert.ok(validationIndex >= 0);
+  assert.ok(validationIndex < retentionIndex);
+  assert.ok(validationIndex < uploadIndex);
+  assert.match(backup, /mv -f "\$tmp_outfile" "\$outfile"/);
+  assert.match(backup, /rm -f "\$tmp_outfile"/);
+  assert.match(securityCheck, /for candidate in .*moneyflow-postgres-\*\.dump/);
+  assert.match(securityCheck, /\[ -f "\$candidate" \]/);
+  assert.match(securityCheck, /stat -c '%Y'/);
+  assert.match(securityCheck, /candidate_mtime.*-gt.*latest_mtime/);
+  assert.match(securityCheck, /basename.*candidate.*>.*basename.*latest_backup/);
+  assert.match(securityCheck, /No Postgres backup files/);
+  assert.match(securityCheck, /Newest Postgres backup is stale/);
+  assert.match(securityCheck, /Newest backup is not a valid pg_restore archive/);
+});

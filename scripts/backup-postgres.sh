@@ -16,6 +16,7 @@
 # Never prints secrets (POSTGRES_PASSWORD, AWS credentials).
 
 set -euo pipefail
+umask 077
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -76,15 +77,6 @@ alert_admin_backup_failure() {
   done
 }
 
-on_backup_exit() {
-  rc="$?"
-  if [ "$rc" -ne 0 ]; then
-    alert_admin_backup_failure "$rc"
-  fi
-}
-
-trap on_backup_exit EXIT
-
 # Compose base command. Pass --env-file only when an explicit env file is given,
 # so prod variable substitution (POSTGRES_DB/USER/PASSWORD) resolves correctly.
 COMPOSE=(docker compose)
@@ -92,6 +84,40 @@ if [ -n "$ENV_FILE" ] && [ -f "$ENV_FILE" ]; then
   COMPOSE+=(--env-file "$ENV_FILE")
 fi
 COMPOSE+=(-f "$COMPOSE_FILE")
+
+tmp_outfile=""
+container_tmp=""
+
+cleanup_container_tmp() {
+  if [ -n "$container_tmp" ]; then
+    MSYS_NO_PATHCONV=1 "${COMPOSE[@]}" exec -T "$POSTGRES_SERVICE" \
+      rm -f "$container_tmp" >/dev/null 2>&1 || true
+    container_tmp=""
+  fi
+}
+
+cleanup_backup_artifacts() {
+  if [ -n "$tmp_outfile" ]; then
+    rm -f "$tmp_outfile" || true
+    tmp_outfile=""
+  fi
+  cleanup_container_tmp
+}
+
+on_backup_exit() {
+  rc="$?"
+  trap - EXIT
+  cleanup_backup_artifacts
+  if [ "$rc" -ne 0 ]; then
+    alert_admin_backup_failure "$rc"
+  fi
+  exit "$rc"
+}
+
+trap on_backup_exit EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 # --- Validate retention input ----------------------------------------------
 
@@ -105,9 +131,12 @@ esac
 # --- Create backup ----------------------------------------------------------
 
 mkdir -p "$BACKUP_DIR"
+chmod 700 "$BACKUP_DIR"
 
 stamp="$(date +%Y-%m-%d_%H-%M-%S)"
 outfile="$BACKUP_DIR/moneyflow-postgres-${stamp}.dump"
+tmp_outfile="${outfile}.tmp.$$"
+container_tmp="/tmp/money-flow-backup-validate-$$.dump"
 
 log "Database:   $POSTGRES_DB (user: $POSTGRES_USER)"
 log "Service:    $POSTGRES_SERVICE (compose: $COMPOSE_FILE)"
@@ -118,19 +147,40 @@ log "Backing up to: $outfile"
 # negated status (0), so a failure would exit 0. Capture the real code in the
 # else-branch instead.
 if "${COMPOSE[@]}" exec -T "$POSTGRES_SERVICE" \
-      pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc > "$outfile"; then
+      pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc > "$tmp_outfile"; then
   :
 else
   dump_rc=$?
-  rm -f "$outfile"
+  rm -f "$tmp_outfile"
   err "pg_dump failed (exit $dump_rc). Is the '$POSTGRES_SERVICE' container running?"
   exit "$dump_rc"
 fi
 
-if [ ! -s "$outfile" ]; then
+if [ ! -s "$tmp_outfile" ]; then
   err "Backup file is empty: $outfile"
   exit 1
 fi
+
+chmod 600 "$tmp_outfile"
+
+# The custom-format dump lives on the host. Copy it into the Postgres
+# container for pg_restore validation, then always remove the container copy.
+validation_ok=0
+if "${COMPOSE[@]}" cp "$tmp_outfile" "${POSTGRES_SERVICE}:${container_tmp}" \
+  && MSYS_NO_PATHCONV=1 "${COMPOSE[@]}" exec -T "$POSTGRES_SERVICE" \
+    pg_restore --list "$container_tmp" >/dev/null 2>&1; then
+  validation_ok=1
+fi
+cleanup_container_tmp
+
+if [ "$validation_ok" -ne 1 ]; then
+  err "Backup validation failed; invalid dump removed."
+  exit 1
+fi
+
+mv -f "$tmp_outfile" "$outfile"
+tmp_outfile=""
+chmod 600 "$outfile"
 
 size_bytes="$(wc -c < "$outfile")"
 log "Created:    $outfile"

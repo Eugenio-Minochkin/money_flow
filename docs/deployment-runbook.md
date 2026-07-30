@@ -251,6 +251,7 @@ The server directory must contain:
 .env.production
 compose.prod.yml
 scripts/prod-security-check.sh
+scripts/backup-postgres.sh
 ```
 
 The deploy user needs permission to run:
@@ -259,6 +260,7 @@ The deploy user needs permission to run:
 cd /opt/money-flow
 git fetch origin --prune --tags
 git checkout --force <commit-sha>
+ENV_FILE=/opt/money-flow/.env.production COMPOSE_FILE=/opt/money-flow/compose.prod.yml BACKUP_DIR=/opt/money-flow/backups/postgres ./scripts/backup-postgres.sh
 docker compose --env-file .env.production -f compose.prod.yml up -d --build
 ./scripts/prod-security-check.sh
 docker compose --env-file .env.production -f compose.prod.yml exec -T api \
@@ -273,6 +275,7 @@ The workflow deploys a specific Git commit:
 cd /opt/money-flow
 git fetch origin --prune --tags
 git checkout --force "$DEPLOY_REF"
+ENV_FILE=/opt/money-flow/.env.production COMPOSE_FILE=/opt/money-flow/compose.prod.yml BACKUP_DIR=/opt/money-flow/backups/postgres ./scripts/backup-postgres.sh
 docker compose --env-file .env.production -f compose.prod.yml up -d --build
 ./scripts/prod-security-check.sh
 docker compose --env-file .env.production -f compose.prod.yml exec -T api \
@@ -280,6 +283,11 @@ docker compose --env-file .env.production -f compose.prod.yml exec -T api \
 ```
 
 The production database remains in the Docker volume. Application secrets remain in `.env.production`.
+Before any container is rebuilt, recreated, restarted, or stopped, the deploy
+creates and validates a fresh custom-format Postgres dump. A backup creation or
+validation failure stops the deploy before the running containers are changed.
+The post-start `prod-security-check.sh` remains a separate defense-in-depth
+check.
 The release-note sync step is intentionally non-blocking after health checks:
 it should not roll back or fail a healthy application deploy.
 
@@ -303,7 +311,8 @@ inside the `postgres` container via `docker compose`.
 
 | Script | Purpose |
 | --- | --- |
-| `scripts/backup-postgres.sh` | Manual/custom-format backup + retention + optional S3 copy |
+| `scripts/backup-postgres.sh` | Manual/custom-format backup + validation + retention + optional S3 copy |
+| `scripts/install-postgres-backup-cron.sh` | Idempotent installer/checker for the supported server cron entry |
 | `scripts/restore-postgres.sh` | Restore a `.dump` into an empty target DB (production-gated) |
 | `scripts/test-postgres-restore.sh` | Automated backup→restore→verify drill (non-destructive) |
 
@@ -313,6 +322,8 @@ inside the `postgres` container via `docker compose`.
   `/opt/money-flow/backups/postgres`. Override with `BACKUP_DIR`.
 - Filename: `moneyflow-postgres-YYYY-MM-DD_HH-MM-SS.dump` (local server time).
 - Format: `pg_dump -Fc` custom format, restorable with `pg_restore`.
+- Dump files are mode `0600`; the backup directory is mode `0700` and must not
+  be broadly readable.
 - `/backups/` is gitignored — dumps are never committed.
 
 ### Environment variables
@@ -355,14 +366,18 @@ cd /opt/money-flow
 ENV_FILE=.env.production COMPOSE_FILE=compose.prod.yml ./scripts/backup-postgres.sh
 ```
 
-Expected log lines: backup destination, created filename, byte size, retention
-summary, and either `External upload complete.` or
+The script first writes a temporary host file, validates it with `pg_restore
+--list` inside the Postgres container, removes that temporary container copy,
+and only then atomically publishes the final `0600` dump. Retention and an
+optional external upload run only after this validation. Expected log lines:
+backup destination, created filename, byte size, retention summary, and either
+`External upload complete.` or
 `External backup upload is not configured, skipping.`
 
 ### Verify a backup was created
 
 ```bash
-ls -lh backups/postgres/moneyflow-postgres-*.dump
+ls -lht backups/postgres/moneyflow-postgres-*.dump
 test -s "$(ls -t backups/postgres/moneyflow-postgres-*.dump | head -1)" && echo "non-empty"
 ```
 
@@ -422,17 +437,28 @@ automated drill:
 Restore drills always target a separate `*_restore_check` database and leave the
 application database untouched.
 
-### Recommended schedule (do not enable automatically from the repo)
+### Recommended schedule (manual server action only)
 
-Back up at least once per day. On the server, schedule the committed script via
-cron (this is a server-side change; the repo does not install it for you):
+Back up at least once per day. The repository contains an idempotent installer
+for the supported `/etc/cron.d/money-flow-backup` entry, but neither the
+repository nor the deploy workflow installs, edits, or otherwise modifies the
+production scheduler automatically. Run these commands manually on the server:
 
-```cron
-15 2 * * * cd /opt/money-flow && ENV_FILE=.env.production COMPOSE_FILE=compose.prod.yml ./scripts/backup-postgres.sh >> /opt/money-flow/logs/postgres-backup.log 2>&1
+```bash
+cd /opt/money-flow
+sudo ./scripts/install-postgres-backup-cron.sh
+sudo ./scripts/install-postgres-backup-cron.sh --check
+ls -lht /opt/money-flow/backups/postgres | head
+journalctl -u cron --since today --no-pager | grep money-flow
+tail -n 100 /opt/money-flow/logs/postgres-backup.log
 ```
 
-Keep the existing `/etc/cron.d/money-flow-backup` pointing at
-`scripts/backup-postgres.sh`. A weekly restore drill
+The installer writes an explicit root-user cron entry with absolute
+`ENV_FILE`, `COMPOSE_FILE`, `BACKUP_DIR`, and committed script paths, appending
+logs to `/opt/money-flow/logs/postgres-backup.log`; it sets the cron file to
+mode `0644`. After `--check` passes and an automatic run has been observed, you
+may manually retire the legacy `/opt/money-flow/backup-postgres.sh`. Do not
+delete or rename that legacy script automatically. A weekly restore drill
 (`scripts/test-postgres-restore.sh`) is recommended to catch silent corruption.
 
 ## Docker Health and Hardening

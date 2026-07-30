@@ -57,7 +57,29 @@ curl -fsS http://127.0.0.1:3000/health
 
 Backups run daily at `02:15` server time and keep files for 14 days. Dumps are
 custom-format (`pg_dump -Fc`), restorable with `pg_restore`, named
-`moneyflow-postgres-YYYY-MM-DD_HH-MM-SS.dump` under `/opt/money-flow/backups/postgres`.
+`moneyflow-postgres-YYYY-MM-DD_HH-MM-SS.dump` under
+`/opt/money-flow/backups/postgres`. Dump files are `0600`; keep that directory
+non-broadly-readable.
+
+The deploy creates and validates a fresh dump before it mutates production
+containers. If backup creation or validation fails, deploy stops and the
+currently running containers remain untouched. The repository and deploy
+workflow never modify the production scheduler automatically.
+
+Install and verify the supported cron configuration manually:
+
+```bash
+cd /opt/money-flow
+sudo ./scripts/install-postgres-backup-cron.sh
+sudo ./scripts/install-postgres-backup-cron.sh --check
+ls -lht /opt/money-flow/backups/postgres | head
+journalctl -u cron --since today --no-pager | grep money-flow
+tail -n 100 /opt/money-flow/logs/postgres-backup.log
+```
+
+Only after `--check` succeeds and an automatic run is observed may you manually
+retire `/opt/money-flow/backup-postgres.sh`. Do not delete or rename that
+legacy script automatically.
 
 Create a manual backup (sources `.env.production` + uses `compose.prod.yml`):
 
