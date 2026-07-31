@@ -271,7 +271,9 @@ test('webhook verification accepts only the exact URL without leaking secrets', 
   for (const body of [
     '{"ok":true,"result":{"url":""}}',
     '{"ok":true,"result":{"url":"https://other.test/telegram/webhook"}}',
-    '{"ok":false,"description":"Telegram API failure"}'
+    '{"ok":false,"description":"Telegram API failure"}',
+    '{"ok":false,"result":{"url":"https://example.test/telegram/webhook"}}',
+    '{"result":{"url":"https://example.test/telegram/webhook"}}'
   ]) {
     const result = runRemoteVerification({ name: 'verify_telegram_webhook', body });
     assert.equal(result.status, 1, body);
