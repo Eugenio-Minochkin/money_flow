@@ -116,8 +116,8 @@ export function formatSavedSummary(total, snapshot, options = {}) {
   const totalToday = todayTotal + plannedToday + largeToday;
   const forecastPlanDelta = Number(snapshot.forecastMonthTotal ?? 0) - Number(snapshot.monthlyBudget ?? 0);
   const planLine = forecastPlanDelta > 0
-    ? `⚠️ <b>${t(language, "plan")}:</b> ${t(language, "aboveBy")} ${formatMoney(Math.abs(forecastPlanDelta), currency, language)}`
-    : `🟢 <b>${t(language, "plan")}:</b> ${t(language, "belowBy")} ${formatMoney(Math.abs(forecastPlanDelta), currency, language)}`;
+    ? `⚠️ ${t(language, "forecastAboveBy")} <b>${formatMoney(Math.abs(forecastPlanDelta), currency, language)}</b>`
+    : `🟢 ${t(language, "forecastBelowBy")} <b>${formatMoney(Math.abs(forecastPlanDelta), currency, language)}</b>`;
   const recovery = formatRecoveryAdvice(snapshot, language);
   const savedLines = formatSavedExpenseLines(options.expenses, total, currency, language);
   const todayLine = `${t(language, "regular")}: <b>${formatMoney(todayTotal, currency, language)} / ${formatMoney(dayPlanLimit, currency, language)}</b>`;
@@ -140,8 +140,10 @@ export function formatSavedSummary(total, snapshot, options = {}) {
     `<b>${t(language, "month")}</b>`,
     `📅 <b>${t(language, "spent")}:</b> ${formatMoney(snapshot.month, currency, language)} / ${formatMoney(snapshot.monthlyBudget, currency, language)}${progress}`,
     `🧾 <b>${t(language, "reservedPlanned")}:</b> ${formatMoney(snapshot.plannedRemaining, currency, language)}`,
-    `🟢 <b>${t(language, "freeAfterPlanned")}:</b> ${formatMoney(snapshot.freeRemaining, currency, language)}`,
-    `🔮 <b>${t(language, "forecast")}:</b> ${formatMoney(snapshot.forecastMonthTotal ?? 0, currency, language)}`,
+    `${Number(snapshot.freeRemaining) < 0 ? "🔴" : "🟢"} <b>${t(language, "freeAfterPlanned")}:</b> <b>${formatMoney(snapshot.freeRemaining, currency, language)}</b>`,
+    "",
+    `🔮 <b>${t(language, "forecastMonthEnd")}</b>`,
+    `${t(language, "expectedSpending")}: <b>${formatMoney(snapshot.forecastMonthTotal ?? 0, currency, language)}</b>`,
     planLine
   ];
   if (recovery) lines.push("", recovery);
@@ -155,11 +157,12 @@ function formatSavedExpenseLines(expenses, total, currency, language) {
   const lines = expenses.map((expense) => {
     const amount = expense.amount_original ?? expense.amount ?? expense.amount_base ?? 0;
     const expenseCurrency = expense.currency_original ?? expense.currency ?? expense.base_currency ?? currency;
-    return [
-      escapeHtml(categoryName(expense.category_slug)),
-      escapeHtml(expense.description ?? ""),
-      formatMoney(amount, expenseCurrency, language)
-    ].filter(Boolean).join(" · ");
+    const category = escapeHtml(categoryName(expense.category_slug));
+    const description = String(expense.description ?? "").trim();
+    const amountText = `<b>${formatMoney(amount, expenseCurrency, language)}</b>`;
+    return description
+      ? `🏷️ ${category} · <b>${escapeHtml(description)}</b> — ${amountText}`
+      : `🏷️ ${category} · ${amountText}`;
   });
   if (lines.length === 1) return lines[0];
   const itemLines = lines.map((line, index) => `${index + 1}. ${line}`).join("\n");
@@ -380,6 +383,10 @@ const messages = {
     draftReviewEdit: "Не уверен, что правильно понял некоторые расходы.\nНажми «Исправить» и проверь их перед сохранением.",
     draftTitle: "Я понял так:",
     forecast: "Прогноз",
+    forecastAboveBy: "Выше бюджета на",
+    forecastBelowBy: "Ниже бюджета на",
+    forecastMonthEnd: "Прогноз на конец месяца",
+    expectedSpending: "Ожидаемые траты",
     free: "Осталось",
     largeToday: "Крупные сегодня",
     isCorrect: "Все верно?",
@@ -422,6 +429,10 @@ const messages = {
     draftReviewEdit: "I may have misunderstood some expenses.\nTap “Edit” and review them before saving.",
     draftTitle: "I understood this:",
     forecast: "Forecast",
+    forecastAboveBy: "Above budget by",
+    forecastBelowBy: "Below budget by",
+    forecastMonthEnd: "Forecast for month end",
+    expectedSpending: "Expected spending",
     free: "Remaining",
     largeToday: "Large today",
     isCorrect: "Is everything correct?",
