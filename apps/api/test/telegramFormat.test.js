@@ -255,7 +255,7 @@ test("formats saved summary with the fixed daily budget and saved expense detail
   assert.match(normalized, /Осталось: <b>417 THB<\/b>/);
   assert.doesNotMatch(normalized, /1 600 THB/);
   assert.doesNotMatch(normalized, /1 590 THB/);
-  assert.match(normalized, /Продукты · Молоко · 10 THB/);
+  assert.match(normalized, /🏷️ Продукты · <b>Молоко<\/b> — <b>10 THB<\/b>/);
 });
 
 test("formats saved summary month plan delta from forecast minus monthly budget", () => {
@@ -297,9 +297,8 @@ test("saved summary month block separates reserved planned and free money after 
 
   assert.match(normalized, /46 691 THB \/ 51 000 THB \(91,55%\)/);
   assert.match(normalized, /В резерве на плановые:<\/b> 3 273 THB/);
-  assert.match(normalized, /Свободно после плановых:<\/b> 1 036 THB/);
-  assert.match(normalized, /Прогноз:<\/b> 55 453 THB/);
-  assert.match(normalized, /По прогнозу:<\/b> выше бюджета на 4 453 THB/);
+  assert.match(normalized, /🟢 <b>Свободно после плановых:<\/b> <b>1 036 THB<\/b>/);
+  assert.match(normalized, /\n\n🔮 <b>Прогноз на конец месяца<\/b>\nОжидаемые траты: <b>55 453 THB<\/b>\n⚠️ Выше бюджета на <b>4 453 THB<\/b>/);
 
   // The free amount is no longer shown under the ambiguous bare "Осталось" label.
   assert.doesNotMatch(normalized, /Осталось: <b>1 036 THB<\/b>/);
@@ -334,9 +333,8 @@ test("saved summary month block separates reserved planned and free money after 
 
   assert.match(normalized, /46,691 THB \/ 51,000 THB \(91.55%\)/);
   assert.match(normalized, /Reserved for planned payments:<\/b> 3,273 THB/);
-  assert.match(normalized, /Free after planned payments:<\/b> 1,036 THB/);
-  assert.match(normalized, /Forecast:<\/b> 55,453 THB/);
-  assert.match(normalized, /Forecast status:<\/b> over budget by 4,453 THB/);
+  assert.match(normalized, /🟢 <b>Free after planned payments:<\/b> <b>1,036 THB<\/b>/);
+  assert.match(normalized, /\n\n🔮 <b>Forecast for month end<\/b>\nExpected spending: <b>55,453 THB<\/b>\n⚠️ Above budget by <b>4,453 THB<\/b>/);
 
   assert.ok(
     normalized.indexOf("Reserved for planned payments") < normalized.indexOf("Free after planned payments"),
@@ -355,7 +353,35 @@ test("saved summary month block shows a green below-budget forecast status line"
   }, { language: "ru" });
   const normalized = normalizeSpaces(text);
 
-  assert.match(normalized, /🟢 <b>По прогнозу:<\/b> ниже бюджета на 3 000 THB/);
+  assert.match(normalized, /🟢 Ниже бюджета на <b>3 000 THB<\/b>/);
+});
+
+test("formats saved expense hierarchy without dangling separators for empty descriptions", () => {
+  const text = formatSavedSummary(25, null, {
+    language: "ru",
+    expenses: [
+      { amount_original: 10, currency_original: "THB", category_slug: "groceries", description: "Молоко" },
+      { amount_original: 15, currency_original: "THB", category_slug: "food_cafe", description: "" }
+    ]
+  });
+
+  assert.match(text, /1\. 🏷️ Продукты · <b>Молоко<\/b> — <b>10 THB<\/b>/);
+  assert.match(text, /2\. 🏷️ Еда и кафе · <b>15 THB<\/b>/);
+  assert.doesNotMatch(text, /<b>Продукты<\/b>|· —|<b><\/b>/);
+});
+
+test("saved summary marks negative free remaining red without changing displayed values", () => {
+  const text = formatSavedSummary(10, {
+    ...snapshot(),
+    freeRemaining: -1470,
+    forecastMonthTotal: 57470,
+    monthlyBudget: 56000
+  }, { language: "ru" });
+  const normalized = normalizeSpaces(text);
+
+  assert.match(normalized, /🔴 <b>Свободно после плановых:<\/b> <b>-1 470 THB<\/b>/);
+  assert.match(normalized, /Ожидаемые траты: <b>57 470 THB<\/b>/);
+  assert.match(normalized, /⚠️ Выше бюджета на <b>1 470 THB<\/b>/);
 });
 
 test("formats saved summary with planned and large daily aggregates", () => {
