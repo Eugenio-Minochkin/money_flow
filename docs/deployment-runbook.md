@@ -261,7 +261,8 @@ cd /opt/money-flow
 git fetch origin --prune --tags
 git checkout --force <commit-sha>
 ENV_FILE=/opt/money-flow/.env.production COMPOSE_FILE=/opt/money-flow/compose.prod.yml BACKUP_DIR=/opt/money-flow/backups/postgres ./scripts/backup-postgres.sh
-docker compose --env-file .env.production -f compose.prod.yml up -d --build
+docker compose --env-file .env.production -f compose.prod.yml build --pull --no-cache api
+docker compose --env-file .env.production -f compose.prod.yml up -d --no-deps --force-recreate api
 ./scripts/prod-security-check.sh
 docker compose --env-file .env.production -f compose.prod.yml exec -T api \
   npm run release-notes:sync-pr -- --pr=<pull-request-number>
@@ -276,7 +277,8 @@ cd /opt/money-flow
 git fetch origin --prune --tags
 git checkout --force "$DEPLOY_REF"
 ENV_FILE=/opt/money-flow/.env.production COMPOSE_FILE=/opt/money-flow/compose.prod.yml BACKUP_DIR=/opt/money-flow/backups/postgres ./scripts/backup-postgres.sh
-docker compose --env-file .env.production -f compose.prod.yml up -d --build
+docker compose --env-file .env.production -f compose.prod.yml build --pull --no-cache api
+docker compose --env-file .env.production -f compose.prod.yml up -d --no-deps --force-recreate api
 ./scripts/prod-security-check.sh
 docker compose --env-file .env.production -f compose.prod.yml exec -T api \
   npm run release-notes:sync-pr -- --pr="$RELEASE_PR_NUMBER"
@@ -286,6 +288,18 @@ The production database remains in the Docker volume. Application secrets remain
 Before any container is rebuilt, recreated, restarted, or stopped, the deploy
 creates and validates a fresh custom-format Postgres dump. A backup creation or
 validation failure stops the deploy before the running containers are changed.
+The workflow records the image ID produced by the no-cache API build and checks
+that the recreated container runs that exact image. For revision-aware commits,
+the container must also contain `/app/REVISION` equal to the checked-out Git
+SHA; the log reports `Verification mode: exact revision`.
+
+Older rollback targets created before the revision marker was introduced remain
+deployable. The workflow selects this legacy path only when the target commit's
+tracked `Dockerfile` does not contain the `/app/REVISION` mechanism. It then
+requires the running container image ID to equal the freshly built image ID and
+reports `Verification mode: legacy rollback`. An image-ID mismatch fails the
+rollback; absence of `/app/REVISION` is never ignored for a revision-aware
+target.
 The post-start `prod-security-check.sh` remains a separate defense-in-depth
 check.
 The release-note sync step is intentionally non-blocking after health checks:
@@ -523,7 +537,12 @@ Find the previous good commit:
 git log --oneline
 ```
 
-Open GitHub Actions, choose `CI and Deploy`, click `Run workflow`, and enter the previous commit SHA in the `ref` input. This uses `workflow_dispatch` and runs the same deploy steps against the older commit.
+Open GitHub Actions, choose `CI and Deploy`, click `Run workflow`, and enter the
+previous commit SHA in the `ref` input. This uses `workflow_dispatch` and runs
+the same deploy steps against the older commit. A revision-aware rollback must
+pass the exact `/app/REVISION` check. A commit from before the marker was added
+uses the backward-compatible legacy check, which still fails unless the running
+container uses the image ID saved immediately after the no-cache build.
 
 ## If Deploy Fails
 

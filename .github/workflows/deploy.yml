@@ -176,21 +176,49 @@ jobs:
           APP_REVISION="$(git rev-parse HEAD)"
           export APP_REVISION
 
+          if git grep -Fq '/app/REVISION' HEAD -- Dockerfile; then
+            revision_check_mode=exact_revision
+          else
+            revision_check_mode=legacy_rollback
+          fi
+
           ENV_FILE="$APP_DIR/.env.production" \
           COMPOSE_FILE="$APP_DIR/compose.prod.yml" \
           BACKUP_DIR="$APP_DIR/backups/postgres" \
             "$APP_DIR/scripts/backup-postgres.sh"
 
-          verify_api_revision() {
-            actual_revision="$(
-              docker compose --env-file .env.production -f compose.prod.yml exec -T \
-                api cat /app/REVISION | tr -d '\r\n'
+          verify_api_deployment() {
+            api_container_id="$(
+              docker compose --env-file .env.production -f compose.prod.yml ps -q api
             )"
-            if [ "$actual_revision" != "$APP_REVISION" ]; then
-              echo "API revision mismatch: expected $APP_REVISION, got ${actual_revision:-<empty>}" >&2
+            if [ -z "$api_container_id" ]; then
+              echo "API container is not running" >&2
               return 1
             fi
-            echo "Verified API revision: $actual_revision"
+
+            running_api_image_id="$(docker inspect --format '{{.Image}}' "$api_container_id")"
+            if [ "$running_api_image_id" != "$built_api_image_id" ]; then
+              echo "API image ID mismatch: expected $built_api_image_id, got ${running_api_image_id:-<empty>}" >&2
+              return 1
+            fi
+
+            if [ "$revision_check_mode" = exact_revision ]; then
+              if ! actual_revision="$(
+                docker compose --env-file .env.production -f compose.prod.yml exec -T \
+                  api cat /app/REVISION | tr -d '\r\n'
+              )"; then
+                echo "API revision marker is required for revision-aware checkout $APP_REVISION" >&2
+                return 1
+              fi
+              if [ "$actual_revision" != "$APP_REVISION" ]; then
+                echo "API revision mismatch: expected $APP_REVISION, got ${actual_revision:-<empty>}" >&2
+                return 1
+              fi
+              echo "Verification mode: exact revision ($actual_revision)"
+              return 0
+            fi
+
+            echo "Verification mode: legacy rollback (fresh image $running_api_image_id)"
           }
 
           release_digest_scheduler_disabled=0
@@ -203,8 +231,8 @@ jobs:
                 echo "Failed to restore the release digest scheduler after deploy" >&2
                 exit 1
               fi
-              if ! verify_api_revision; then
-                echo "Restored API container does not match the deployed revision" >&2
+              if ! verify_api_deployment; then
+                echo "Restored API container does not match the deployed build" >&2
                 exit 1
               fi
             fi
@@ -215,10 +243,28 @@ jobs:
           trap restore_release_digest_scheduler EXIT
 
           docker compose --env-file .env.production -f compose.prod.yml build --pull --no-cache api
+          api_image_name="$(
+            docker compose --env-file .env.production -f compose.prod.yml config api |
+              awk '
+                /^  api:$/ { in_api = 1; next }
+                in_api && /^    image:/ { print $2; exit }
+                in_api && /^  [^ ]/ { exit }
+              '
+          )"
+          compose_project_name="$(
+            docker compose --env-file .env.production -f compose.prod.yml config api |
+              awk '$1 == "name:" { print $2; exit }'
+          )"
+          test -n "$compose_project_name"
+          if [ -z "$api_image_name" ]; then
+            api_image_name="${compose_project_name}-api"
+          fi
+          test -n "$api_image_name"
+          built_api_image_id="$(docker image inspect --format '{{.Id}}' "$api_image_name")"
           release_digest_scheduler_disabled=1
           RELEASE_DIGEST_AUTO_SEND_ENABLED=false \
-            docker compose --env-file .env.production -f compose.prod.yml up -d --build --no-deps --force-recreate api
-          verify_api_revision
+            docker compose --env-file .env.production -f compose.prod.yml up -d --no-deps --force-recreate api
+          verify_api_deployment
           ./scripts/prod-security-check.sh
 
           if [ -n "$RELEASE_PR_NUMBER" ]; then
@@ -243,7 +289,7 @@ jobs:
           fi
 
           docker compose --env-file .env.production -f compose.prod.yml up -d --force-recreate api
-          verify_api_revision
+          verify_api_deployment
           ./scripts/prod-security-check.sh
           release_digest_scheduler_disabled=0
           trap - EXIT
