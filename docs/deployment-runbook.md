@@ -302,6 +302,15 @@ rollback; absence of `/app/REVISION` is never ignored for a revision-aware
 target.
 The post-start `prod-security-check.sh` remains a separate defense-in-depth
 check.
+The workflow also retries the public `https://${APP_DOMAIN}/health` endpoint and
+requires `{ ok: true, db: true, revision: "<deployed SHA>" }`; a missing,
+`unknown`, or stale revision fails deploy. It checks `getWebhookInfo` through a
+temporary `0600` curl config (so the bot token never enters command output) and
+requires the exact `https://${APP_DOMAIN}/telegram/webhook` URL. If either check
+fails, do not change the webhook manually: inspect the public proxy upstream,
+the Compose `api` container ID and `/app/REVISION`, then correct the mismatched
+route or environment and rerun deploy. There must be one public API upstream
+for the production bot.
 The release-note sync step is intentionally non-blocking after health checks:
 it should not roll back or fail a healthy application deploy.
 
