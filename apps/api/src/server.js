@@ -22,6 +22,7 @@ import { createReleaseDigestScheduler } from "./releaseDigestScheduler.js";
 import { createReleaseNotesService } from "./releaseNotesService.js";
 import { createReportScheduler } from "./reportScheduler.js";
 import { createReportService } from "./reportService.js";
+import { readAppRevision } from "./revision.js";
 import { DraftCanceledError, CategoryRequiredError, createRepository } from "./repository.js";
 import { shouldRateLimitRequest } from "./routing.js";
 import {
@@ -41,6 +42,7 @@ import { createVoiceTranscriber } from "./voiceTranscriber.js";
 
 const root = resolve(fileURLToPath(new URL("../../..", import.meta.url)));
 const webRoot = join(root, "apps", "miniapp", "src");
+const appRevision = readAppRevision();
 const readJson = createJsonReader({ maxJsonBytes: config.maxJsonBytes });
 const serveStatic = createStaticHandler({ webRoot });
 const apiSecurity = createApiSecurity({
@@ -839,7 +841,10 @@ async function route(req, res) {
   if (req.method === "GET" && url.pathname === "/health") {
     try {
       const health = await repository.health();
-      return sendJson(res, 200, { ok: true, ...health });
+      if (process.env.NODE_ENV === "production" && appRevision === "unknown") {
+        return sendJson(res, 503, { ok: false, ...health, revision: appRevision });
+      }
+      return sendJson(res, 200, { ok: true, ...health, revision: appRevision });
     } catch (error) {
       console.error("[health] database check failed", error.message);
       return sendJson(res, 503, { ok: false, db: false });

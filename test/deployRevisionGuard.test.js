@@ -174,6 +174,23 @@ test('production deploy embeds and strictly verifies the exact Git revision', ()
   assert.ok((workflow.match(/verify_api_deployment/g) ?? []).length >= 3);
 });
 
+test('production deploy keeps its remote script intact and verifies public revision plus webhook', () => {
+  const workflow = readText('.github/workflows/deploy.yml');
+
+  assert.match(
+    workflow,
+    /BACKUP_DIR="\$APP_DIR\/backups\/postgres"[\s\\]+"\$APP_DIR\/scripts\/backup-postgres\.sh" <\/dev\/null/
+  );
+  assert.match(workflow, /verify_public_api_revision\(\)/);
+  assert.match(workflow, /https:\/\/\$\{APP_DOMAIN\}\/health/);
+  assert.match(workflow, /Public API revision mismatch/);
+  assert.match(workflow, /verify_telegram_webhook\(\)/);
+  assert.match(workflow, /https:\/\/\$\{APP_DOMAIN\}\/telegram\/webhook/);
+  assert.match(workflow, /Telegram webhook URL mismatch/);
+  assert.match(workflow, /curl -fsS --config "\$webhook_curl_config"/);
+  assert.doesNotMatch(workflow, /api\.telegram\.org\/bot\$\{?TELEGRAM_BOT_TOKEN\}?\/getWebhookInfo/);
+});
+
 test('legacy rollback verifies the recreated container uses the freshly built image', () => {
   const workflow = readText('.github/workflows/deploy.yml');
 

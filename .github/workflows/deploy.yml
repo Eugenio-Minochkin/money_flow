@@ -185,7 +185,7 @@ jobs:
           ENV_FILE="$APP_DIR/.env.production" \
           COMPOSE_FILE="$APP_DIR/compose.prod.yml" \
           BACKUP_DIR="$APP_DIR/backups/postgres" \
-            "$APP_DIR/scripts/backup-postgres.sh"
+            "$APP_DIR/scripts/backup-postgres.sh" </dev/null
 
           verify_api_deployment() {
             api_container_id="$(
@@ -219,6 +219,60 @@ jobs:
             fi
 
             echo "Verification mode: legacy rollback (fresh image $running_api_image_id)"
+          }
+
+          verify_public_api_revision() {
+            public_health_url="https://${APP_DOMAIN}/health"
+            for attempt in $(seq 1 20); do
+              if public_health="$(curl -fsS "$public_health_url" 2>/dev/null)" \
+                && printf '%s' "$public_health" | node -e '
+                  let body = "";
+                  process.stdin.on("data", (chunk) => { body += chunk; });
+                  process.stdin.on("end", () => {
+                    try {
+                      const health = JSON.parse(body);
+                      process.exit(health.ok === true && health.db === true && health.revision === process.argv[1] ? 0 : 1);
+                    } catch {
+                      process.exit(1);
+                    }
+                  });
+                ' "$APP_REVISION"; then
+                echo "Public API revision verified: $APP_REVISION"
+                return 0
+              fi
+              sleep 3
+            done
+            echo "Public API revision mismatch: expected $APP_REVISION at $public_health_url" >&2
+            return 1
+          }
+
+          verify_telegram_webhook() {
+            set -a
+            . ./.env.production
+            set +a
+            expected_webhook_url="https://${APP_DOMAIN}/telegram/webhook"
+            webhook_curl_config="$(umask 077; mktemp /tmp/money-flow-webhook-info.XXXXXX)"
+            trap 'rm -f "$webhook_curl_config"' RETURN
+            printf 'url = "https://api.telegram.org/bot%s/getWebhookInfo"\n' "$TELEGRAM_BOT_TOKEN" > "$webhook_curl_config"
+            webhook_url="$(curl -fsS --config "$webhook_curl_config" | node -e '
+              let body = "";
+              process.stdin.on("data", (chunk) => { body += chunk; });
+              process.stdin.on("end", () => {
+                try {
+                  const info = JSON.parse(body).result ?? {};
+                  process.stdout.write(info.url ?? "");
+                } catch {
+                  process.exit(1);
+                }
+              });
+            ')" || return 1
+            rm -f "$webhook_curl_config"
+            trap - RETURN
+            if [ "$webhook_url" != "$expected_webhook_url" ]; then
+              echo "Telegram webhook URL mismatch: expected $expected_webhook_url, got ${webhook_url:-<empty>}" >&2
+              return 1
+            fi
+            echo "Telegram webhook verified: $webhook_url"
           }
 
           release_digest_scheduler_disabled=0
@@ -266,6 +320,10 @@ jobs:
             docker compose --env-file .env.production -f compose.prod.yml up -d --no-deps --force-recreate api
           verify_api_deployment
           ./scripts/prod-security-check.sh
+          APP_DOMAIN="$(sed -n 's/^APP_DOMAIN=//p' .env.production | tail -n 1 | tr -d '\r')"
+          test -n "$APP_DOMAIN"
+          verify_public_api_revision
+          verify_telegram_webhook
 
           if [ -n "$RELEASE_PR_NUMBER" ]; then
             release_sync_github_token="$(cat "$RELEASE_SYNC_TOKEN_FILE")"
@@ -291,6 +349,8 @@ jobs:
           docker compose --env-file .env.production -f compose.prod.yml up -d --force-recreate api
           verify_api_deployment
           ./scripts/prod-security-check.sh
+          verify_public_api_revision
+          verify_telegram_webhook
           release_digest_scheduler_disabled=0
           trap - EXIT
           REMOTE
