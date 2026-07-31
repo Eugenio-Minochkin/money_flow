@@ -20,7 +20,14 @@ test('GitHub Actions deploy workflow runs CI, SSH deploy, and production checks'
   assert.match(workflow, /DEPLOY_REF/);
   assert.match(workflow, /git fetch origin --prune --tags/);
   assert.match(workflow, /git checkout --force "\$DEPLOY_REF"/);
-  assert.match(workflow, /docker compose --env-file \.env\.production -f compose\.prod\.yml up -d --build/);
+  assert.match(
+    workflow,
+    /docker compose --env-file \.env\.production -f compose\.prod\.yml build --pull --no-cache api/
+  );
+  assert.match(
+    workflow,
+    /docker compose --env-file \.env\.production -f compose\.prod\.yml up -d --no-deps --force-recreate api/
+  );
   assert.match(workflow, /\.\/scripts\/prod-security-check\.sh/);
 });
 
@@ -351,7 +358,7 @@ test('production deploy validates a fresh backup before it mutates containers', 
   const checkoutIndex = workflow.indexOf('git checkout --force "$DEPLOY_REF"');
   const backupIndex = workflow.indexOf('"$APP_DIR/scripts/backup-postgres.sh"');
   const firstContainerMutationIndex = workflow.indexOf('up -d --force-recreate api');
-  const buildIndex = workflow.indexOf('up -d --build');
+  const buildIndex = workflow.indexOf('build --pull --no-cache api');
   const schedulerDisableIndex = workflow.indexOf('RELEASE_DIGEST_AUTO_SEND_ENABLED=false');
 
   assert.ok(checkoutIndex >= 0);
