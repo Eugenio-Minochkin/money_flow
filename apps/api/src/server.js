@@ -13,6 +13,7 @@ import { confirmDraftForApi } from "./draftConfirmation.js";
 import { createExchangeRateProvider } from "./exchangeRates.js";
 import { createExpenseExportService } from "./expenseExportService.js";
 import { createExpenseParser } from "./expenseParser.js";
+import { handleHealth } from "./health.js";
 import { createJsonReader, createStaticHandler, sendJson } from "./http.js";
 import { handleDevRoute } from "./devRoutes.js";
 import { createMiniAppLaunchService } from "./miniAppLaunchService.js";
@@ -839,16 +840,13 @@ async function route(req, res) {
   }
 
   if (req.method === "GET" && url.pathname === "/health") {
-    try {
-      const health = await repository.health();
-      if (process.env.NODE_ENV === "production" && appRevision === "unknown") {
-        return sendJson(res, 503, { ok: false, ...health, revision: appRevision });
-      }
-      return sendJson(res, 200, { ok: true, ...health, revision: appRevision });
-    } catch (error) {
-      console.error("[health] database check failed", error.message);
-      return sendJson(res, 503, { ok: false, db: false });
-    }
+    return handleHealth({
+      repository,
+      revision: appRevision,
+      isProduction: process.env.NODE_ENV === "production",
+      res,
+      sendJson
+    });
   }
 
   if (req.method === "GET") {

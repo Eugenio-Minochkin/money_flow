@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
 
 function readText(path) {
@@ -8,11 +10,65 @@ function readText(path) {
 }
 
 function extractShellFunction(source, name) {
+  source = source.replace(/\r\n/g, '\n');
   const match = source.match(
-    new RegExp(`^ {10}${name}\\(\\) \\{\\r?\\n[\\s\\S]*?^ {10}\\}\\r?$`, 'm')
+    new RegExp(`^ {10}${name}\\(\\) \\{\\n[\\s\\S]*?^ {10}\\}$`, 'm')
   );
   assert.ok(match, `expected ${name} shell function`);
   return match[0].replace(/^ {10}/gm, '');
+}
+
+function runRemoteVerification({ name, body, appRevision = 'revision-123' }) {
+  const workflow = readText('.github/workflows/deploy.yml');
+  const verifyFunction = extractShellFunction(workflow, name);
+  const workingDirectory = mkdtempSync(join(tmpdir(), 'money-flow-deploy-'));
+  const token = 'bot-token-must-not-leak';
+  const secret = 'webhook-secret-must-not-leak';
+  writeFileSync(join(workingDirectory, '.env.production'), [
+    'APP_DOMAIN=example.test',
+    `TELEGRAM_BOT_TOKEN=${token}`,
+    `TELEGRAM_WEBHOOK_SECRET=${secret}`
+  ].join('\n'));
+  const script = `
+set -euo pipefail
+
+${verifyFunction}
+
+curl() {
+  printf '%s' "$FAKE_CURL_BODY"
+}
+
+sleep() { :; }
+
+docker() {
+  if [[ " $* " == *" exec -T api node -e "* ]]; then
+    args=("$@")
+    for ((i = 0; i < \${#args[@]}; i += 1)); do
+      if [[ "\${args[$i]}" == node ]]; then
+        command node "\${args[@]:$((i + 1))}"
+        return
+      fi
+    done
+  fi
+  printf 'unexpected docker command: %s\\n' "$*" >&2
+  return 97
+}
+
+APP_DOMAIN=example.test
+APP_REVISION="$FAKE_APP_REVISION"
+${name}
+`;
+  try {
+    const result = spawnSync(bashExecutable(), ['-s'], {
+      cwd: workingDirectory,
+      encoding: 'utf8',
+      env: { ...process.env, FAKE_APP_REVISION: appRevision, FAKE_CURL_BODY: body },
+      input: script
+    });
+    return { status: result.status, stdout: result.stdout, stderr: result.stderr, token, secret };
+  } finally {
+    rmSync(workingDirectory, { recursive: true, force: true });
+  }
 }
 
 function bashExecutable() {
@@ -187,8 +243,76 @@ test('production deploy keeps its remote script intact and verifies public revis
   assert.match(workflow, /verify_telegram_webhook\(\)/);
   assert.match(workflow, /https:\/\/\$\{APP_DOMAIN\}\/telegram\/webhook/);
   assert.match(workflow, /Telegram webhook URL mismatch/);
+  assert.match(workflow, /api\s+node -e/);
+  assert.doesNotMatch(workflow, /\| node -e/);
   assert.match(workflow, /curl -fsS --config "\$webhook_curl_config"/);
   assert.doesNotMatch(workflow, /api\.telegram\.org\/bot\$\{?TELEGRAM_BOT_TOKEN\}?\/getWebhookInfo/);
+});
+
+test('public revision verification accepts only a healthy matching public revision', () => {
+  for (const body of [
+    '{"ok":true,"db":true,"revision":"revision-other"}',
+    '{"ok":true,"db":true}',
+    '{not-json}'
+  ]) {
+    const result = runRemoteVerification({ name: 'verify_public_api_revision', body });
+    assert.equal(result.status, 1, body);
+    assert.match(result.stderr, /Public API revision mismatch/);
+  }
+
+  const matching = runRemoteVerification({
+    name: 'verify_public_api_revision',
+    body: '{"ok":true,"db":true,"revision":"revision-123"}'
+  });
+  assert.equal(matching.status, 0, matching.stderr);
+});
+
+test('webhook verification accepts only the exact URL without leaking secrets', () => {
+  for (const body of [
+    '{"ok":true,"result":{"url":""}}',
+    '{"ok":true,"result":{"url":"https://other.test/telegram/webhook"}}',
+    '{"ok":false,"description":"Telegram API failure"}'
+  ]) {
+    const result = runRemoteVerification({ name: 'verify_telegram_webhook', body });
+    assert.equal(result.status, 1, body);
+    assert.doesNotMatch(result.stdout, new RegExp(`${result.token}|${result.secret}`));
+    assert.doesNotMatch(result.stderr, new RegExp(`${result.token}|${result.secret}`));
+  }
+
+  const matching = runRemoteVerification({
+    name: 'verify_telegram_webhook',
+    body: '{"ok":true,"result":{"url":"https://example.test/telegram/webhook"}}'
+  });
+  assert.equal(matching.status, 0, matching.stderr);
+  assert.doesNotMatch(matching.stdout, new RegExp(`${matching.token}|${matching.secret}`));
+  assert.doesNotMatch(matching.stderr, new RegExp(`${matching.token}|${matching.secret}`));
+});
+
+test('backup cannot consume commands that follow the remote heredoc', () => {
+  const workflow = readText('.github/workflows/deploy.yml').replace(/\r\n/g, '\n');
+  const backupCommand = workflow.match(
+    /ENV_FILE="\$APP_DIR\/\.env\.production" \\\n          COMPOSE_FILE="\$APP_DIR\/compose\.prod\.yml" \\\n          BACKUP_DIR="\$APP_DIR\/backups\/postgres" \\\n            "\$APP_DIR\/scripts\/backup-postgres\.sh" <\/dev\/null/
+  )?.[0];
+  assert.ok(backupCommand, 'expected the real isolated backup command');
+
+  const appDirectory = mkdtempSync(join(tmpdir(), 'money-flow-heredoc-'));
+  try {
+    const scriptsDirectory = join(appDirectory, 'scripts');
+    mkdirSync(scriptsDirectory);
+    writeFileSync(join(appDirectory, 'compose.prod.yml'), 'services: {}\n');
+    writeFileSync(join(appDirectory, '.env.production'), 'APP_DOMAIN=example.test\n');
+    const backupPath = join(scriptsDirectory, 'backup-postgres.sh');
+    writeFileSync(backupPath, '#!/usr/bin/env bash\ncat >/dev/null\n');
+    const result = spawnSync(bashExecutable(), ['-s'], {
+      encoding: 'utf8',
+      env: { ...process.env, APP_DIR: appDirectory },
+      input: `${backupCommand}\nprintf 'sentinel-after-backup\\n'\n`
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /sentinel-after-backup/);
+  } finally {
+    rmSync(appDirectory, { recursive: true, force: true });
+  }
 });
 
 test('legacy rollback verifies the recreated container uses the freshly built image', () => {

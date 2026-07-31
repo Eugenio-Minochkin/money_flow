@@ -225,7 +225,8 @@ jobs:
             public_health_url="https://${APP_DOMAIN}/health"
             for attempt in $(seq 1 20); do
               if public_health="$(curl -fsS "$public_health_url" 2>/dev/null)" \
-                && printf '%s' "$public_health" | node -e '
+                && printf '%s' "$public_health" | docker compose --env-file .env.production -f compose.prod.yml exec -T \
+                  api node -e '
                   let body = "";
                   process.stdin.on("data", (chunk) => { body += chunk; });
                   process.stdin.on("end", () => {
@@ -254,7 +255,8 @@ jobs:
             webhook_curl_config="$(umask 077; mktemp /tmp/money-flow-webhook-info.XXXXXX)"
             trap 'rm -f "$webhook_curl_config"' RETURN
             printf 'url = "https://api.telegram.org/bot%s/getWebhookInfo"\n' "$TELEGRAM_BOT_TOKEN" > "$webhook_curl_config"
-            webhook_url="$(curl -fsS --config "$webhook_curl_config" | node -e '
+            webhook_url="$(curl -fsS --config "$webhook_curl_config" | docker compose --env-file .env.production -f compose.prod.yml exec -T \
+              api node -e '
               let body = "";
               process.stdin.on("data", (chunk) => { body += chunk; });
               process.stdin.on("end", () => {
