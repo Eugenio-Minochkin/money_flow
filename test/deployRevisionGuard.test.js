@@ -103,7 +103,7 @@ docker() {
       *" ps -q api "*)
         printf '%s\\n' api-container
         ;;
-      *" exec -T api cat /app/REVISION "*)
+      *" exec --interactive=false -T api cat /app/REVISION "*)
         if [ "$FAKE_MARKER_READ_FAILS" = 1 ]; then
           printf '%s\\n' 'marker read failed' >&2
           return 1
@@ -313,6 +313,23 @@ test('backup cannot consume commands that follow the remote heredoc', () => {
   } finally {
     rmSync(appDirectory, { recursive: true, force: true });
   }
+});
+
+test('remote deploy disables inherited stdin for non-pipeline exec commands and security checks', () => {
+  const workflow = readText('.github/workflows/deploy.yml').replace(/\r\n/g, '\n');
+  const remote = workflow.match(/<<'REMOTE'\n([\s\S]*?)^          REMOTE$/m)?.[1] ?? '';
+
+  assert.match(
+    remote,
+    /exec --interactive=false -T \\\n                  api cat \/app\/REVISION/
+  );
+  assert.match(
+    remote,
+    /exec --interactive=false -T \\\n              -e GITHUB_TOKEN[\s\S]*api \\\n              npm run release-notes:sync-pr/
+  );
+  assert.equal((remote.match(/\.\/scripts\/prod-security-check\.sh <\/dev\/null/g) ?? []).length, 2);
+  assert.doesNotMatch(remote, /exec -T \\\n                  api cat \/app\/REVISION/);
+  assert.doesNotMatch(remote, /exec -T \\\n              -e GITHUB_TOKEN/);
 });
 
 test('legacy rollback verifies the recreated container uses the freshly built image', () => {

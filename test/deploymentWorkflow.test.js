@@ -106,7 +106,7 @@ test('production deploy resolves a PR and syncs release notes after security che
   assert.doesNotMatch(workflow, /-e GITHUB_TOKEN="\$release_sync_github_token"/);
   assert.match(
     workflow,
-    /export GITHUB_TOKEN="\$release_sync_github_token"[\s\S]*exec -T\s+[\s\S]*-e GITHUB_TOKEN\s+[\s\S]*-e GITHUB_REPOSITORY\s+[\s\S]*api/
+    /export GITHUB_TOKEN="\$release_sync_github_token"[\s\S]*exec --interactive=false -T\s+[\s\S]*-e GITHUB_TOKEN\s+[\s\S]*-e GITHUB_REPOSITORY\s+[\s\S]*api/
   );
   assert.ok(restoreTrapIndex >= 0);
   assert.ok(disabledStartIndex > restoreTrapIndex);
@@ -131,7 +131,7 @@ test('release note sync warnings do not fail a successful production deploy', ()
   assert.ok(releaseSyncWarningIndex > releaseSyncIndex);
   assert.match(
     workflow,
-    /if ! docker compose --env-file \.env\.production -f compose\.prod\.yml exec -T\s+[\s\S]*release-notes:sync-pr -- --pr="\$RELEASE_PR_NUMBER"[\s\S]*then[\s\S]*Warning: release note sync failed/
+    /if ! docker compose --env-file \.env\.production -f compose\.prod\.yml exec --interactive=false -T\s+[\s\S]*release-notes:sync-pr -- --pr="\$RELEASE_PR_NUMBER"[\s\S]*then[\s\S]*Warning: release note sync failed/
   );
   assert.doesNotMatch(releaseSyncBlock, /exit 1/);
 });
