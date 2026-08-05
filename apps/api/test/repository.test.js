@@ -4802,13 +4802,15 @@ test("a planned occurrence stays paid when its linked expense local date differs
   // planned_expense_payments is the source of truth; expense.spent_at is history
   // placement, not payment validity.
   let listSql = "";
-  const repo = createRepository(fakePool((sql) => {
+  let listParams = [];
+  const repo = createRepository(fakePool((sql, params) => {
     const query = String(sql);
     if (query.includes("SELECT timezone FROM users")) {
       return { rows: [{ timezone: "Asia/Bangkok" }] };
     }
     if (query.includes("planned_expense_payments")) {
       listSql = query;
+      listParams = params;
       return {
         rows: [{
           id: "5",
@@ -4838,6 +4840,7 @@ test("a planned occurrence stays paid when its linked expense local date differs
   assert.doesNotMatch(listSql, /spent_at/);
   assert.match(listSql, /JOIN expenses e ON e\.id = pep\.expense_id/);
   assert.match(listSql, /e\.user_id = pe\.user_id/);
+  assert.deepEqual(listParams[1], ["2026-06"]);
   assert.ok(planned[0].paid_occurrence_dates.includes("2026-06-06"));
   assert.equal(planned[0].paid_occurrences["2026-06-06"].expense_id, "20");
 });

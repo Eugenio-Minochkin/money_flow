@@ -3072,8 +3072,8 @@ export function createRepository(pool, options = {}) {
       return result.rows.map((row) => withDisplayTotal(row, user));
     },
 
-    async listPlannedExpensesForTelegramUser(telegramUserId) {
-      return listPlannedExpensesForTelegramUserAt(pool, telegramUserId, new Date());
+    async listPlannedExpensesForTelegramUser(telegramUserId, now = new Date()) {
+      return listPlannedExpensesForTelegramUserAt(pool, telegramUserId, now);
     },
 
     async listArchivedPlannedExpensesForTelegramUser(telegramUserId) {
