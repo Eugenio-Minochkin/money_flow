@@ -35,6 +35,8 @@ export const CATEGORIES = [
     keywords: [
       "бензин", "fuel", "petrol", "gasoline", "gas station", "байк", "moto", "motorbike", "мотобайк",
       "scooter", "motorcycle", "такси", "taxi", "grab", "bolt", "tuk tuk", "tuktuk", "songthaew",
+      "электричка", "электропоезд", "автобус", "метро", "маршрутка", "трамвай", "троллейбус", "общественный транспорт",
+      "заправка байка", "сервис байка", "ремонт велосипеда",
       "парковка", "parking", "bike repair", "motorbike repair", "motorcycle repair", "oil change",
       "bike wash", "замена масла", "ремонт байка", "ремонт мотоцикла", "мойка байка", "мотосервис"
     ]

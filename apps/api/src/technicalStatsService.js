@@ -167,6 +167,8 @@ async function periodStats(pool, period, usersCreatedAtAvailable) {
     localPrimaryCount: Number(events.localPrimaryCount),
     localSafeCount: Number(events.localSafeCount),
     localReviewableCount: Number(events.localReviewableCount),
+    localReviewableLlmCount: Number(events.localReviewableLlmCount),
+    localReviewableFallbackCount: Number(events.localReviewableFallbackCount),
     localRejectedCount: Number(events.localRejectedCount),
     localRejectedFallbackCount: Number(events.localRejectedFallbackCount),
     localExceptionFallbackCount: Number(events.localExceptionFallbackCount),
@@ -448,6 +450,14 @@ async function aggregateEvents(pool, period) {
        )::int AS local_reviewable_count,
        COUNT(*) FILTER (
          WHERE event_name = 'message_processing_completed'
+           AND metadata->>'parserRoute' = 'local_reviewable_llm'
+       )::int AS local_reviewable_llm_count,
+       COUNT(*) FILTER (
+         WHERE event_name = 'message_processing_completed'
+           AND metadata->>'parserRoute' = 'llm_error_local_reviewable_fallback'
+       )::int AS local_reviewable_fallback_count,
+       COUNT(*) FILTER (
+         WHERE event_name = 'message_processing_completed'
            AND metadata->>'localAcceptanceLevel' = 'local_rejected'
        )::int AS local_rejected_count,
        COUNT(*) FILTER (
@@ -626,6 +636,8 @@ async function aggregateEvents(pool, period) {
     localPrimaryCount: numeric(row.local_primary_count),
     localSafeCount: numeric(row.local_safe_count),
     localReviewableCount: numeric(row.local_reviewable_count),
+    localReviewableLlmCount: numeric(row.local_reviewable_llm_count),
+    localReviewableFallbackCount: numeric(row.local_reviewable_fallback_count),
     localRejectedCount: numeric(row.local_rejected_count),
     localRejectedFallbackCount: numeric(row.local_rejected_fallback_count),
     localExceptionFallbackCount: numeric(row.local_exception_fallback_count),
@@ -713,6 +725,7 @@ function formatPeriod(label, period, options) {
     `Parser avg: local ${formatSeconds(period.avgLocalFastPathProcessingSeconds)} / LLM ${formatSeconds(period.avgLlmProcessingSeconds)}`,
     `Local acceptance: ${numeric(period.localCandidateCount)} candidates / ${numeric(period.localAcceptedCount)} accepted / ${numeric(period.localPrimaryCount)} primary`,
     `Levels: safe ${numeric(period.localSafeCount)} / reviewable ${numeric(period.localReviewableCount)} / rejected ${numeric(period.localRejectedCount)}`,
+    `Reviewable route: LLM ${numeric(period.localReviewableLlmCount)} / fallback ${numeric(period.localReviewableFallbackCount)}`,
     `LLM fallback: ${numeric(period.llmFallbackCount)}`,
     `Internal latency avg/P95: local ${formatInternalSeconds(period.avgLocalParseSeconds)}/${formatInternalSeconds(period.p95LocalParseSeconds)} / LLM HTTP ${formatInternalSeconds(period.avgLlmHttpSeconds)}/${formatInternalSeconds(period.p95LlmHttpSeconds)}`,
     `Review: category ${period.categoryNeedsReviewCount}`,

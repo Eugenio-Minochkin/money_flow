@@ -20,6 +20,7 @@
     "release-notes:sync-pr": "node apps/api/scripts/sync-release-notes-pr.js",
     "reports:backfill": "node --env-file=.env apps/api/scripts/backfill-report.js",
     "parser:audit": "node apps/api/scripts/audit-expense-parser.js",
+    "parser:csv-audit": "node apps/api/scripts/audit-local-parser-csv.js",
     "parser:shadow-adjudication:audit": "node apps/api/scripts/audit-shadow-adjudication.js",
     "parser:benchmark:api": "node apps/api/scripts/benchmark-expense-parser.js"
   },

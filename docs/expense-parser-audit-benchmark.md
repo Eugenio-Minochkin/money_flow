@@ -36,6 +36,16 @@ The thresholds may be made stricter, but not weaker than:
 
 ## Data and privacy rules
 
+### Local CSV category check
+
+For a user-provided CSV, run the read-only local parser check explicitly:
+
+```powershell
+npm.cmd run parser:csv-audit -- --file="C:\path\to\money-flow-export-all.csv"
+```
+
+It prints only aggregate record, local-resolution, `other`, mismatch, and category-slug counts. It never writes the CSV or prints notes, amounts, dates, IDs, or full rows. Do not commit the CSV or its contents.
+
 The fixed query reads regular expense drafts and confirmed expenses joined through `expenses.draft_id`. Confirmed expenses are the final category truth. Pending, inbox, and cancelled draft items can contribute only review-only evidence. RU and EN evidence is aggregated separately.
 
 `source_text` is used only for bounded language and draft-status counts. It never creates an alias candidate. Candidate phrases can come only from `drafts.items[].description`, and an entire description is suppressed before aggregation if it contains a number or quantity word, currency token or symbol, URL, domain, email-like value, username/handle, or identifier-shaped value. Unambiguous item-to-expense ordinal mapping is required for confirmed multi-expense drafts.

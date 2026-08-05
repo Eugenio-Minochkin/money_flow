@@ -66,6 +66,8 @@ test("technical stats aggregate parser acceptance timings fallbacks and shadow s
     local_primary_count: 4,
     local_safe_count: 7,
     local_reviewable_count: 3,
+    local_reviewable_llm_count: 2,
+    local_reviewable_fallback_count: 1,
     local_rejected_count: 2,
     llm_fallback_count: 5,
     avg_local_parse_ms: 2,
@@ -98,8 +100,10 @@ test("technical stats aggregate parser acceptance timings fallbacks and shadow s
     safe: stats.today.localSafeCount,
     reviewable: stats.today.localReviewableCount,
     rejected: stats.today.localRejectedCount,
-    fallback: stats.today.llmFallbackCount
-  }, { candidates: 12, accepted: 10, primary: 4, safe: 7, reviewable: 3, rejected: 2, fallback: 5 });
+    fallback: stats.today.llmFallbackCount,
+    reviewableLlm: stats.today.localReviewableLlmCount,
+    reviewableFallback: stats.today.localReviewableFallbackCount
+  }, { candidates: 12, accepted: 10, primary: 4, safe: 7, reviewable: 3, rejected: 2, fallback: 5, reviewableLlm: 2, reviewableFallback: 1 });
   assert.equal(stats.today.avgLocalParseSeconds, 0.002);
   assert.equal(stats.today.p95LocalParseSeconds, 0.004);
   assert.equal(stats.today.avgLlmHttpSeconds, 0.1);
@@ -112,6 +116,7 @@ test("technical stats aggregate parser acceptance timings fallbacks and shadow s
   const text = formatTechnicalStats(stats);
   assert.match(text, /Local acceptance: 12 candidates \/ 10 accepted \/ 4 primary/);
   assert.match(text, /Levels: safe 7 \/ reviewable 3 \/ rejected 2/);
+  assert.match(text, /Reviewable route: LLM 2 \/ fallback 1/);
   assert.match(text, /LLM fallback: 5/);
   assert.match(text, /Internal latency avg\/P95: local 0\.002s\/0\.004s \/ LLM HTTP 0\.100s\/0\.220s/);
   assert.match(text, /Critical shadow: 2\/120 \(1\.7%\)/);

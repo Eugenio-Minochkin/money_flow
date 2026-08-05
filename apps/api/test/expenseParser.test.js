@@ -19,8 +19,8 @@ test("synthetic corpus maps local rejects to diagnostic trace reasons", () => {
   }
 });
 
-test("synthetic corpus routes safe and reviewable results explicitly inside rollout", async () => {
-  for (const fixture of SYNTHETIC_EXPENSE_PARSER_CORPUS.filter((item) => item.route !== "local_rejected")) {
+test("synthetic corpus keeps only local_safe results on the local primary route inside rollout", async () => {
+  for (const fixture of SYNTHETIC_EXPENSE_PARSER_CORPUS.filter((item) => item.route === "local_safe")) {
     let openAiCalls = 0;
     let trace;
     const parser = createExpenseParser({
@@ -45,6 +45,48 @@ test("synthetic corpus routes safe and reviewable results explicitly inside roll
     assert.equal(result.expenses.length, fixture.count ?? 1, fixture.id);
     assert.equal(trace.localAcceptanceLevel, fixture.route, fixture.id);
     assert.equal(trace.parserRoute, "local_primary", fixture.id);
+  }
+});
+
+test("local_reviewable results inside rollout use the LLM category instead of returning local other", async () => {
+  for (const fixture of SYNTHETIC_EXPENSE_PARSER_CORPUS.filter((item) => item.route === "local_reviewable")) {
+    let openAiCalls = 0;
+    let trace;
+    const parser = createExpenseParser({
+      apiKey: "test-key",
+      fastPathMode: "enabled",
+      localFirstRolloutPercent: 100,
+      parserTextHashSecret: "test-secret",
+      now: () => new Date("2026-07-21T10:00:00+03:00"),
+      fetchImpl: async () => {
+        openAiCalls += 1;
+        return jsonResponse({ output_text: JSON.stringify({
+          expenses: [{
+            amount: fixture.amount,
+            currency: fixture.currency,
+            description: "synthetic expense",
+            category_slug: "education",
+            tags: [],
+            spent_at: "2026-07-21T10:00:00.000+03:00",
+            budget_impact: "regular",
+            confidence: 0.8,
+            needs_review: false
+          }],
+          notes: []
+        }) });
+      }
+    });
+
+    const result = await parser.parse(fixture.text, {
+      defaultCurrency: fixture.defaultCurrency ?? "THB",
+      userId: 42,
+      onLlmTrace(metadata) { trace = metadata; }
+    });
+
+    assert.equal(openAiCalls, 1, fixture.id);
+    assert.equal(result.expenses[0].category_slug, "education", fixture.id);
+    assert.equal(trace.localAcceptanceLevel, "local_reviewable", fixture.id);
+    assert.equal(trace.parserRoute, "local_reviewable_llm", fixture.id);
   }
 });
 
@@ -95,7 +137,7 @@ test("every synthetic high-risk intent becomes a controlled reject when LLM fall
   }
 });
 
-test("nearby high-risk words in ordinary expenses do not block local primary", async () => {
+test("nearby high-risk words in ordinary expenses do not become protected-intent local rejects", async () => {
   for (const text of SYNTHETIC_HIGH_RISK_FALSE_POSITIVES) {
     let trace;
     const parser = createExpenseParser({
@@ -103,16 +145,18 @@ test("nearby high-risk words in ordinary expenses do not block local primary", a
       fastPathMode: "enabled",
       localFirstRolloutPercent: 100,
       parserTextHashSecret: "test-secret",
-      fetchImpl: async () => {
-        throw new Error("OpenAI must not be called for a safe lexical neighbor");
-      }
+      fetchImpl: async () => jsonResponse({ output_text: JSON.stringify({
+        expenses: [{ amount: 1, currency: "THB", description: "synthetic", category_slug: "other", tags: [], spent_at: "2026-07-21T10:00:00.000+03:00", budget_impact: "regular", confidence: 0.6, needs_review: true }],
+        notes: []
+      }) })
     });
 
     const result = await parser.parse(text, { userId: 42, onLlmTrace(metadata) { trace = metadata; } });
 
     assert.equal(result.expenses.length, 1, text);
     assert.match(trace.localAcceptanceLevel, /^local_(safe|reviewable)$/, text);
-    assert.equal(trace.parserRoute, "local_primary", text);
+    assert.notEqual(trace.localAcceptanceLevel, "local_rejected", text);
+    assert.notEqual(trace.parserRoute, "local_rejected_fallback", text);
   }
 });
 
@@ -479,7 +523,7 @@ test("fractional rollout percent is floored to an integer", async () => {
   assert.equal(openAiCalls, 0);
 });
 
-test("enabled fast-path keeps unknown category as review without OpenAI", async () => {
+test("enabled fast-path sends an unknown category to OpenAI", async () => {
   let openAiCalls = 0;
   let trace;
   const parser = createExpenseParser({
@@ -490,7 +534,10 @@ test("enabled fast-path keeps unknown category as review without OpenAI", async 
     now: () => new Date("2026-06-01T10:00:00+07:00"),
     fetchImpl: async () => {
       openAiCalls += 1;
-      throw new Error("OpenAI should not be called");
+      return jsonResponse({ output_text: JSON.stringify({
+        expenses: [{ amount: 120, currency: "THB", description: "notebook", category_slug: "education", tags: [], spent_at: "2026-06-01T10:00:00.000+07:00", budget_impact: "regular", confidence: 0.8, needs_review: false }],
+        notes: []
+      }) });
     }
   });
 
@@ -501,10 +548,11 @@ test("enabled fast-path keeps unknown category as review without OpenAI", async 
     }
   });
 
-  assert.equal(openAiCalls, 0);
-  assert.equal(parsed.expenses[0].category_slug, "other");
-  assert.equal(parsed.expenses[0].needs_review, true);
+  assert.equal(openAiCalls, 1);
+  assert.equal(parsed.expenses[0].category_slug, "education");
+  assert.equal(parsed.expenses[0].needs_review, false);
   assert.equal(trace.categoryResolution, "needs_user_review");
+  assert.equal(trace.parserRoute, "local_reviewable_llm");
 });
 
 test("local acceptance classifies safe reviewable and rejected candidates without changing compatibility flags", () => {
@@ -635,7 +683,10 @@ test("unsupported-intent stop patterns avoid broad false positives", async () =>
       now: () => new Date("2026-06-01T10:00:00+07:00"),
       fetchImpl: async () => {
         openAiCalls += 1;
-        throw new Error("OpenAI should not be called");
+        return jsonResponse({ output_text: JSON.stringify({
+          expenses: [{ amount: 100, currency: "THB", description: "synthetic", category_slug: "subscriptions", tags: [], spent_at: "2026-06-01T10:00:00.000+07:00", budget_impact: "regular", confidence: 0.8, needs_review: false }],
+          notes: []
+        }) });
       }
     });
 
@@ -646,9 +697,8 @@ test("unsupported-intent stop patterns avoid broad false positives", async () =>
       }
     });
 
-    assert.equal(openAiCalls, 0, text);
     assert.equal(parsed.expenses.length, 1, text);
-    assert.equal(trace.parserRoute, "local_primary", text);
+    assert.notEqual(trace.parserRoute, "local_rejected_fallback", text);
   }
 });
 
@@ -756,9 +806,8 @@ test("English unsupported-intent stop patterns avoid broad false positives", asy
       }
     });
 
-    assert.equal(openAiCalls, 0, text);
     assert.equal(parsed.expenses.length, 1, text);
-    assert.equal(trace.parserRoute, "local_primary", text);
+    assert.notEqual(trace.parserRoute, "local_rejected_fallback", text);
   }
 });
 
@@ -1128,7 +1177,7 @@ test("LLM timeout aborts the request once and falls back only for local_safe", a
   assert.equal(trace.fallbackReason, "expense_parser_llm_timeout");
 });
 
-test("LLM timeout rejects local_reviewable with a safe code and without retry", async () => {
+test("LLM timeout returns the reviewable local draft without retry", async () => {
   let trace;
   let calls = 0;
   let aborted = false;
@@ -1152,21 +1201,39 @@ test("LLM timeout rejects local_reviewable with a safe code and without retry", 
     }
   });
 
-  await assert.rejects(
-    () => parser.parse("notebook 80", {
-      userId: 7,
-      onLlmTrace(metadata) {
-        trace = metadata;
-      }
-    }),
-    (error) => error.code === "expense_parser_llm_timeout"
-  );
+  const parsed = await parser.parse("notebook 80", {
+    userId: 7,
+    onLlmTrace(metadata) {
+      trace = metadata;
+    }
+  });
 
   assert.equal(calls, 1);
   assert.equal(aborted, true);
+  assert.equal(parsed.expenses[0].category_slug, "other");
+  assert.equal(parsed.expenses[0].needs_review, true);
   assert.equal(trace.localAcceptanceLevel, "local_reviewable");
-  assert.equal(trace.parserRoute, "llm_error");
+  assert.equal(trace.parserRoute, "llm_error_local_reviewable_fallback");
   assert.equal(trace.fallbackReason, "expense_parser_llm_timeout");
+});
+
+test("OpenAI parser prompt gives compact category meanings and reserves other for no reasonable match", async () => {
+  const parser = createExpenseParser({
+    apiKey: "test-key",
+    now: () => new Date("2026-06-01T10:00:00+07:00"),
+    fetchImpl: async (_url, request) => {
+      const prompt = JSON.parse(request.body).input[0].content;
+      assert.match(prompt, /transport.*электричка.*автобус.*метро.*такси.*байк.*бензин/i);
+      assert.match(prompt, /travel.*авиабилеты.*отели.*визы.*багаж/i);
+      assert.match(prompt, /education.*курсы.*книги.*материалы/i);
+      assert.match(prompt, /gear.*clothing.*tech.*accessories/i);
+      assert.match(prompt, /home.*rent.*utilities.*household goods/i);
+      assert.match(prompt, /Use other only when no listed category reasonably fits/i);
+      return jsonResponse({ output_text: JSON.stringify({ expenses: [], notes: [] }) });
+    }
+  });
+
+  await parser.parse("synthetic category prompt check 1");
 });
 
 test("local parser exception falls back to LLM with explicit route", async () => {

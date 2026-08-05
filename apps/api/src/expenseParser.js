@@ -132,7 +132,7 @@ export function createExpenseParser(options = {}) {
         });
         const parserRoute = resolveLlmParserRoute({ fastPathMode, inRollout, localFastPath, localParserError });
         const shouldCompareShadow = (fastPathMode === "shadow" || parserRoute === "rollout_excluded")
-          && isLocalPrimaryAcceptance(localFastPath.localAcceptanceLevel);
+          && isLocalShadowEligible(localFastPath.localAcceptanceLevel);
         const shadowFields = shouldCompareShadow
           ? compareParseResults(localResult, parsed.result, timeZone)
           : [];
@@ -164,11 +164,13 @@ export function createExpenseParser(options = {}) {
         const llmTimingMetadata = Number.isFinite(error?.llmHttpMs)
           ? { llmHttpMs: error.llmHttpMs }
           : {};
-        if (localFastPath.localAcceptanceLevel === "local_safe" && localResult) {
+        if (isLocalFallbackAcceptance(localFastPath.localAcceptanceLevel) && localResult) {
           emitTrace({
             ...llmTimingMetadata,
             parserEngine: "local-fallback",
-            parserRoute: "llm_error_local_accepted_fallback",
+            parserRoute: localFastPath.localAcceptanceLevel === "local_reviewable"
+              ? "llm_error_local_reviewable_fallback"
+              : "llm_error_local_accepted_fallback",
             fallbackReason,
             ...localEvaluationTraceMetadata({ localEvaluationCompleted, localFastPath, localResult }),
             llmSkipped: false,
@@ -261,6 +263,14 @@ export function evaluateLocalFastPath({ text, localResult }) {
 }
 
 function isLocalPrimaryAcceptance(level) {
+  return level === "local_safe";
+}
+
+function isLocalFallbackAcceptance(level) {
+  return level === "local_safe" || level === "local_reviewable";
+}
+
+function isLocalShadowEligible(level) {
   return level === "local_safe" || level === "local_reviewable";
 }
 
@@ -361,6 +371,8 @@ function buildSystemPrompt(now, defaultCurrency = "THB", timeZone = "Asia/Bangko
     `Supported currencies: ${SUPPORTED_CURRENCY_CODES.join(", ")}.`,
     `Use these category slugs only: ${[...ALLOWED_CATEGORIES].join(", ")}.`,
     "Category is the type of expense. Tags are context.",
+    "Category guide: transport is everyday local travel (электричка, автобус, метро, такси, байк, бензин); travel is separate trips (авиабилеты, отели, визы, багаж); education is learning (уроки, курсы, книги, учебные материалы); gear is clothing, tech, accessories and personal items; home is rent, utilities and household goods.",
+    "Choose the most likely specific category. Use other only when no listed category reasonably fits. Low confidence may set needs_review=true without using other.",
     "Set budget_impact from explicit user wording:",
     "- planned when the user says: плановая, запланированная, из плана, planned.",
     "- large_oneoff when the user says: крупная, большая покупка, разовая крупная, large/big one-off purchase or expense.",
@@ -505,6 +517,7 @@ function resolveLlmParserRoute({ fastPathMode, inRollout, localFastPath, localPa
   if (localParserError) return "local_exception_fallback";
   if (fastPathMode !== "enabled") return "llm_primary";
   if (!inRollout) return "rollout_excluded";
+  if (localFastPath.localAcceptanceLevel === "local_reviewable") return "local_reviewable_llm";
   if (!isLocalPrimaryAcceptance(localFastPath.localAcceptanceLevel)) return "local_rejected_fallback";
   return "llm_primary";
 }
