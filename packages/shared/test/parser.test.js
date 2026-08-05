@@ -118,6 +118,27 @@ test("parses added currency aliases and education category", () => {
   assert.equal(result.expenses[0].category_slug, "education");
 });
 
+test("parses unambiguous public transport terms without matching electricity", () => {
+  for (const text of [
+    "электричка 61 руб",
+    "электропоезд 61 руб",
+    "автобус 73 руб",
+    "метро 100 руб",
+    "маршрутка 73 руб",
+    "трамвай 73 руб",
+    "троллейбус 73 руб",
+    "общественный транспорт 73 руб",
+    "заправка байка 73 руб",
+    "сервис байка 73 руб",
+    "ремонт велосипеда 73 руб"
+  ]) {
+    const result = parseExpenseText(text);
+    assert.equal(result.expenses[0].category_slug, "transport", text);
+  }
+
+  assert.equal(parseExpenseText("электричество 1000 руб").expenses[0].category_slug, "home");
+});
+
 test("parses amount before English description", () => {
   const result = parseExpenseText("120 grab", {
     now: new Date("2026-06-01T12:30:00+07:00")

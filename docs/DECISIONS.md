@@ -38,7 +38,7 @@ Model/prompt benchmarks use a fixed invented corpus and report correctness separ
 
 ## 2026-07-21 - Local Parser Quality Routes By Acceptance Enum
 
-Issue #115 PR B enables both `local_safe` and `local_reviewable` as local-primary results only inside the already configured `enabled` rollout cohort. `shadow`, `off`, and rollout-excluded users keep their previous LLM-primary behavior. `local_rejected` always uses LLM fallback when available and otherwise returns the existing controlled parser error. LLM timeout/error fallback remains restricted to `local_safe`.
+`local_safe` is the only local-primary result inside the already configured `enabled` rollout cohort. `local_reviewable` must use the LLM to resolve its category; on LLM timeout or error it returns the already parsed local draft with `other` and `needs_review=true`, so the user can choose a category manually. `shadow`, `off`, and rollout-excluded users keep their previous LLM-primary behavior. `local_rejected` always uses LLM fallback when available and otherwise returns the existing controlled parser error.
 
 Local parse failures use privacy-safe diagnostic enums: `no_amount_token`, `multiple_amounts_ambiguous`, `small_bare_integer`, `unsupported_amount_shape`, `amount_over_limit`, `unsafe_split_or_mapping`, `unsupported_number_words`, and `local_exception`. These reasons contain no source text or financial values.
 
@@ -48,7 +48,7 @@ The deterministic parser may accept multiple expenses only when every explicitly
 
 The regular expense parser distinguishes `local_safe`, `local_reviewable`, and `local_rejected` results. Critical financial fields are expense count, amount, currency, the user's timezone-aware local calendar day, and budget impact. Category and `needs_review` are reviewable fields only after every critical field is unambiguous.
 
-Issue #115 PR A adds this classification, observability, timeout safety, and rollout documentation without introducing a new `local_reviewable` primary route or changing production rollout values. Acceptance metadata is emitted only after local evaluation completes; LLM-only messages do not count as local candidates, accepted parses, or rejected parses. PR B owns any user-visible routing expansion and must preserve the existing rule that a parser-provided `other` category cannot be confirmed until the user explicitly selects a category. LLM timeout or error may use a local fallback only when the result is `local_safe`.
+Acceptance metadata is emitted only after local evaluation completes; LLM-only messages do not count as local candidates, accepted parses, or rejected parses. A parser-provided `other` category cannot be confirmed until the user explicitly selects a category. LLM timeout or error may use a local fallback only when the result is `local_safe` or `local_reviewable`; the latter remains an explicit category-selection draft.
 
 ## 2026-07-27 - Historical Critical Shadow Cases Are Not Time-Correlated
 

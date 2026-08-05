@@ -237,6 +237,7 @@ test("recalculates dashboard budget summary from real expense rows", async () =>
 });
 
 test("archives and recreates a partially paid weekly plan without rewriting history or today's snapshot", async () => {
+  const now = new Date("2026-07-22T10:00:00+07:00");
   await createSmokeUser(990004);
   const planned = await repo.createPlannedExpense(990004, {
     amount: 1000,
@@ -251,7 +252,7 @@ test("archives and recreates a partially paid weekly plan without rewriting hist
   assert.equal(Number(planned.amount_base), 1000);
   assert.equal(planned.disabled_at, null);
 
-  let plannedRows = await repo.listPlannedExpensesForTelegramUser(990004);
+  let plannedRows = await repo.listPlannedExpensesForTelegramUser(990004, now);
   assert.equal(plannedRows.length, 1);
   assert.equal(plannedRows[0].description, "weekly lesson");
 
@@ -270,11 +271,10 @@ test("archives and recreates a partially paid weekly plan without rewriting hist
   assert.equal(firstPaid.budget_impact, "planned");
   assert.equal(secondPaid.budget_impact, "planned");
 
-  plannedRows = await repo.listPlannedExpensesForTelegramUser(990004);
+  plannedRows = await repo.listPlannedExpensesForTelegramUser(990004, now);
   assert.equal(plannedRows[0].paid_count, 2);
   assert.deepEqual(plannedRows[0].paid_occurrence_dates, ["2026-07-01", "2026-07-08"]);
 
-  const now = new Date("2026-07-22T10:00:00+07:00");
   const beforeDisableDashboard = await repo.dashboard(990004, now);
   assert.equal(beforeDisableDashboard.snapshot.plannedRemaining, 3000);
   assert.equal(beforeDisableDashboard.snapshot.freeRemaining, 40000);
@@ -298,7 +298,7 @@ test("archives and recreates a partially paid weekly plan without rewriting hist
   assert.equal(firstDisable.plannedExpense.active, false);
   assert.equal(firstDisable.plannedExpense.disabled_at.toISOString(), now.toISOString());
 
-  plannedRows = await repo.listPlannedExpensesForTelegramUser(990004);
+  plannedRows = await repo.listPlannedExpensesForTelegramUser(990004, now);
   assert.equal(plannedRows.length, 0);
 
   const storedPlan = await pool.query("SELECT active, disabled_at FROM planned_expenses WHERE id = $1", [planned.id]);
@@ -344,7 +344,7 @@ test("archives and recreates a partially paid weekly plan without rewriting hist
   assert.equal(recreated.active, true);
   assert.equal(normalizePlannedDateKey(recreated.starts_on), "2026-07-23");
 
-  const activeAfterRecreate = await repo.listPlannedExpensesForTelegramUser(990004);
+  const activeAfterRecreate = await repo.listPlannedExpensesForTelegramUser(990004, now);
   assert.equal(activeAfterRecreate.length, 1);
   assert.equal(activeAfterRecreate[0].id, recreated.id);
   assert.equal(activeAfterRecreate[0].paid_count, 0);

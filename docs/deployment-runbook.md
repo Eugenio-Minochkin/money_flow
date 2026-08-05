@@ -58,8 +58,9 @@ startup fail fast with a safe configuration error that does not echo the value.
 
 This timeout is a controlled runtime behavior change. LLM requests running
 longer than the configured parser timeout are aborted even when the overall
-Telegram job timeout is larger. An LLM timeout is not retried, and only a
-`local_safe` result may be used as its fallback.
+Telegram job timeout is larger. An LLM timeout is not retried. A `local_safe`
+result stays local-primary; a `local_reviewable` result may return only as its
+existing `other` category-selection draft after a timeout or LLM error.
 
 Advance one stage at a time, only after reviewing `/admin_stats_tech` for the
 whole stage window:
