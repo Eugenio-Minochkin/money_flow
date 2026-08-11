@@ -83,7 +83,9 @@ test("Shortcut setup copies its key without rendering the raw credential", async
   assert.match(html, /id="setupQuickAccessButton"/);
   assert.match(html, /id="quickAccessSetupState"/);
   assert.doesNotMatch(html, /quickAccessTokenValue|quickAccessTokenReveal|copyQuickAccessTokenButton/);
-  assert.match(app, /await navigator\.clipboard\.writeText\(data\.token\)/);
+  assert.match(app, /advanceShortcutSetup\(/);
+  assert.match(app, /preparationId: quickAccessPreparationId/);
+  assert.doesNotMatch(app, /api\("\/api\/quick-access-tokens", \{ method: "DELETE"/);
   assert.match(app, /let quickAccessTokenBusy = false/);
   assert.match(app, /if \(quickAccessTokenBusy\) return/);
   assert.match(app, /setQuickAccessTokenBusy\(true\)/);
@@ -92,6 +94,7 @@ test("Shortcut setup copies its key without rendering the raw credential", async
   for (const language of ["en", "ru"]) {
     assert.equal(typeof translations[language]["quickAccess.setup"], "string");
     assert.equal(typeof translations[language]["quickAccess.keyCopied"], "string");
+    assert.equal(typeof translations[language]["quickAccess.keyPrepared"], "string");
   }
 });
 

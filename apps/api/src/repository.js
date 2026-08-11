@@ -160,26 +160,54 @@ export function createRepository(pool, options = {}) {
       return result.rows[0] ?? null;
     },
 
-    async createQuickAccessToken(userId, tokenHash) {
+    async prepareQuickAccessToken(userId, tokenHash) {
+      const result = await pool.query(
+        `INSERT INTO quick_access_tokens (user_id, token_hash, prepared_expires_at)
+         VALUES ($1, $2, now() + interval '10 minutes')
+         RETURNING *`,
+        [userId, tokenHash]
+      );
+      return result.rows[0] ?? null;
+    },
+
+    async activatePreparedQuickAccessToken(userId, preparationId) {
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
-        await client.query("UPDATE quick_access_tokens SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL", [userId]);
-        const result = await client.query(
-          "INSERT INTO quick_access_tokens (user_id, token_hash) VALUES ($1, $2) RETURNING *",
-          [userId, tokenHash]
+        const prepared = await client.query(
+          `SELECT id, activated_at, revoked_at, prepared_expires_at > now() AS preparation_valid
+           FROM quick_access_tokens
+           WHERE id = $1 AND user_id = $2
+           FOR UPDATE`,
+          [preparationId, userId]
         );
+        const token = prepared.rows[0] ?? null;
+        if (!token) { await client.query("ROLLBACK"); return { state: "not_found" }; }
+        if (token.activated_at) {
+          await client.query("ROLLBACK");
+          return { state: token.revoked_at ? "superseded" : "active" };
+        }
+        if (!token.preparation_valid || token.revoked_at) { await client.query("ROLLBACK"); return { state: "expired" }; }
+        await client.query(
+          "UPDATE quick_access_tokens SET revoked_at = now() WHERE user_id = $1 AND activated_at IS NOT NULL AND revoked_at IS NULL",
+          [userId]
+        );
+        const activated = await client.query(
+          "UPDATE quick_access_tokens SET activated_at = now(), prepared_expires_at = NULL WHERE id = $1 AND user_id = $2 AND activated_at IS NULL AND revoked_at IS NULL RETURNING id",
+          [preparationId, userId]
+        );
+        if (!activated.rows[0]) { await client.query("ROLLBACK"); return { state: "expired" }; }
         await client.query("COMMIT");
-        return result.rows[0];
+        return { state: "activated" };
       } catch (error) {
-        await client.query("ROLLBACK");
+        try { await client.query("ROLLBACK"); } catch { /* preserve the original error */ }
         throw error;
       } finally { client.release(); }
     },
 
     async revokeQuickAccessTokens(userId) {
       const result = await pool.query(
-        "UPDATE quick_access_tokens SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL RETURNING id",
+        "UPDATE quick_access_tokens SET revoked_at = now() WHERE user_id = $1 AND activated_at IS NOT NULL AND revoked_at IS NULL RETURNING id",
         [userId]
       );
       return result.rowCount > 0;
@@ -188,7 +216,7 @@ export function createRepository(pool, options = {}) {
     async getQuickAccessStatus(userId) {
       const result = await pool.query(
         `SELECT last_used_at FROM quick_access_tokens
-         WHERE user_id = $1 AND revoked_at IS NULL
+         WHERE user_id = $1 AND activated_at IS NOT NULL AND revoked_at IS NULL
          ORDER BY created_at DESC, id DESC LIMIT 1`,
         [userId]
       );
@@ -199,15 +227,93 @@ export function createRepository(pool, options = {}) {
     async findQuickAccessToken(tokenHash) {
       const result = await pool.query(
         `UPDATE quick_access_tokens AS token SET last_used_at = now()
-         FROM users WHERE token.user_id = users.id AND token.token_hash = $1 AND token.revoked_at IS NULL
+         FROM users WHERE token.user_id = users.id AND token.token_hash = $1 AND token.activated_at IS NOT NULL AND token.revoked_at IS NULL
          RETURNING token.id AS token_id, users.*`,
         [tokenHash]
       );
       return result.rows[0] ?? null;
     },
 
+    async claimMiniAppQuickCaptureRequest(userId, clientRequestId) {
+      const claimed = await pool.query(
+        `INSERT INTO quick_capture_requests AS requests (user_id, client_request_id, status, claim_version, lease_expires_at)
+         VALUES ($1, $2, 'processing', 1, now() + interval '60 seconds')
+         ON CONFLICT (user_id, client_request_id) DO UPDATE
+           SET claim_version = requests.claim_version + 1,
+               lease_expires_at = now() + interval '60 seconds'
+         WHERE requests.status = 'processing' AND requests.lease_expires_at <= now()
+         RETURNING claim_version`,
+        [userId, clientRequestId]
+      );
+      if (claimed.rows[0]) return { state: "claimed", claimVersion: claimed.rows[0].claim_version };
+      return this.readMiniAppQuickCaptureRequest(userId, clientRequestId);
+    },
+
+    async readMiniAppQuickCaptureRequest(userId, clientRequestId) {
+      const result = await pool.query(
+        `SELECT requests.status AS request_status, drafts.* FROM quick_capture_requests requests
+         LEFT JOIN drafts ON drafts.id = requests.draft_id
+         WHERE requests.user_id = $1 AND requests.client_request_id = $2`,
+        [userId, clientRequestId]
+      );
+      const row = result.rows[0] ?? null;
+      if (!row) return null;
+      return row.request_status === "completed" ? { state: "completed", draft: normalizeDraft(row) } : { state: "processing" };
+    },
+
+    async waitForMiniAppQuickCaptureRequest(userId, clientRequestId) {
+      for (let attempt = 0; attempt < 1200; attempt += 1) {
+        const result = await this.readMiniAppQuickCaptureRequest(userId, clientRequestId);
+        if (!result || result.state === "completed") return result;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      return null;
+    },
+
+    async releaseMiniAppQuickCaptureRequest(userId, clientRequestId, claimVersion) {
+      await pool.query(
+        `DELETE FROM quick_capture_requests
+         WHERE user_id = $1 AND client_request_id = $2
+           AND status = 'processing' AND claim_version = $3`,
+        [userId, clientRequestId, claimVersion]
+      );
+    },
+
+    async completeMiniAppQuickCaptureRequest({ userId, clientRequestId, claimVersion, sourceText, items }) {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        const prior = await client.query(
+          `SELECT id, status, claim_version, lease_expires_at > now() AS lease_active
+           FROM quick_capture_requests
+           WHERE user_id = $1 AND client_request_id = $2 FOR UPDATE`,
+          [userId, clientRequestId]
+        );
+        if (!prior.rows[0] || prior.rows[0].status !== "processing" || String(prior.rows[0].claim_version) !== String(claimVersion) || !prior.rows[0].lease_active) { await client.query("ROLLBACK"); return null; }
+        const status = items.some((item) => item.needs_review) ? "inbox" : "pending";
+        const created = await client.query(
+          "INSERT INTO drafts (user_id, status, source_text, items) VALUES ($1, $2, $3, $4) RETURNING *",
+          [userId, status, sourceText, JSON.stringify(items)]
+        );
+        const completed = await client.query(
+          `UPDATE quick_capture_requests
+           SET draft_id = $3, status = 'completed', completed_at = now(), lease_expires_at = NULL
+           WHERE user_id = $1 AND client_request_id = $2 AND status = 'processing'
+             AND claim_version = $4 AND lease_expires_at > now()
+           RETURNING id`,
+          [userId, clientRequestId, created.rows[0].id, claimVersion]
+        );
+        if (completed.rowCount !== 1) throw new Error("quick_capture_claim_lost");
+        await client.query("COMMIT");
+        return { draft: normalizeDraft(created.rows[0]) };
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally { client.release(); }
+    },
+
     async claimShortcutRequest(tokenId, userId, clientRequestId) {
-      const token = await pool.query("SELECT id FROM quick_access_tokens WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL", [tokenId, userId]);
+      const token = await pool.query("SELECT id FROM quick_access_tokens WHERE id = $1 AND user_id = $2 AND activated_at IS NOT NULL AND revoked_at IS NULL", [tokenId, userId]);
       if (!token.rows[0]) return null;
       const claimed = await pool.query(
         `INSERT INTO quick_access_requests AS requests (token_id, client_request_id, status, claim_version, lease_expires_at)
@@ -226,7 +332,7 @@ export function createRepository(pool, options = {}) {
     async readShortcutRequest(tokenId, userId, clientRequestId) {
       const result = await pool.query(
         `SELECT requests.status AS request_status, drafts.* FROM quick_access_requests requests
-         JOIN quick_access_tokens token ON token.id = requests.token_id AND token.user_id = $2 AND token.revoked_at IS NULL
+         JOIN quick_access_tokens token ON token.id = requests.token_id AND token.user_id = $2 AND token.activated_at IS NOT NULL AND token.revoked_at IS NULL
          LEFT JOIN drafts ON drafts.id = requests.draft_id
          WHERE requests.token_id = $1 AND requests.client_request_id = $3`,
         [tokenId, userId, clientRequestId]
@@ -258,7 +364,7 @@ export function createRepository(pool, options = {}) {
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
-        const token = await client.query("SELECT id FROM quick_access_tokens WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL FOR UPDATE", [tokenId, userId]);
+        const token = await client.query("SELECT id FROM quick_access_tokens WHERE id = $1 AND user_id = $2 AND activated_at IS NOT NULL AND revoked_at IS NULL FOR UPDATE", [tokenId, userId]);
         if (!token.rows[0]) { await client.query("ROLLBACK"); return null; }
         const prior = await client.query(
           `SELECT id, status, claim_version, lease_expires_at > now() AS lease_active

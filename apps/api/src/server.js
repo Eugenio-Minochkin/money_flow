@@ -15,7 +15,7 @@ import { createExpenseExportService } from "./expenseExportService.js";
 import { createExpenseParser } from "./expenseParser.js";
 import { createExpenseDraftFromText, createShortcutExpenseDraft, ExpenseTextNotRecognizedError, ShortcutRequestInProgressError } from "./expenseDraftService.js";
 import { createQuickAccessToken, hashQuickAccessToken } from "./quickAccessService.js";
-import { isQuickCaptureAutoSaveEligible } from "./quickCapture.js";
+import { processMiniAppQuickCapture } from "./quickCapture.js";
 import { handleHealth } from "./health.js";
 import { createJsonReader, createStaticHandler, sendJson } from "./http.js";
 import { handleDevRoute } from "./devRoutes.js";
@@ -447,17 +447,16 @@ async function route(req, res) {
     if (auth.error) return sendJson(res, 400, { error: auth.error });
     const user = await repository.getUserByTelegramId(auth.telegramUserId);
     if (!user) return sendJson(res, 404, { error: "user_not_found" });
+    if (!isClientRequestId(body.clientRequestId)) return sendJson(res, 400, { error: "invalid_client_request_id" });
     try {
-      const draft = await createExpenseDraftFromText({
-        user, text: body.text, source: "miniapp", expenseParser, repository
-      });
-      await repository.recordAppEvent?.(user.id, "quick_entry_submitted", { source: "miniapp" });
-      if (isQuickCaptureAutoSaveEligible(draft.items)) {
-        const saved = await repository.saveDraftAsExpense(draft.id, auth.telegramUserId);
-        await repository.recordAppEvent?.(user.id, "quick_entry_confirmed", { source: "miniapp" });
-        return sendJson(res, 201, { saved });
+      const result = await processMiniAppQuickCapture({ user, clientRequestId: body.clientRequestId, text: body.text, expenseParser, repository });
+      if (!result) return sendJson(res, 409, { error: "quick_capture_request_in_progress" });
+      if (!result.replayed) await repository.recordAppEvent?.(user.id, "quick_entry_submitted", { source: "miniapp" });
+      if (result.saved) {
+        if (!result.saved.alreadySaved) await repository.recordAppEvent?.(user.id, "quick_entry_confirmed", { source: "miniapp" });
+        return sendJson(res, result.replayed ? 200 : 201, { saved: result.saved });
       }
-      return sendJson(res, 201, { draft });
+      return sendJson(res, result.replayed ? 200 : 201, { draft: result.draft });
     } catch (error) {
       if (error instanceof ExpenseTextNotRecognizedError) return sendJson(res, 422, { error: error.code });
       if (error instanceof ShortcutRequestInProgressError) return sendJson(res, 409, { error: error.code });
@@ -465,16 +464,32 @@ async function route(req, res) {
     }
   }
 
-  if (req.method === "POST" && url.pathname === "/api/quick-access-tokens") {
+  if (req.method === "POST" && url.pathname === "/api/quick-access-token-preparations") {
     const body = await readJson(req);
     const auth = apiSecurity.resolveTelegramUserId(req, url, body);
     if (auth.error) return sendJson(res, 400, { error: auth.error });
     const user = await repository.getUserByTelegramId(auth.telegramUserId);
     if (!user) return sendJson(res, 404, { error: "user_not_found" });
     const { token, tokenHash } = createQuickAccessToken();
-    await repository.createQuickAccessToken(user.id, tokenHash);
-    await repository.recordAppEvent?.(user.id, "quick_access_token_created", {});
-    return sendJson(res, 201, { token });
+    const prepared = await repository.prepareQuickAccessToken(user.id, tokenHash);
+    return sendJson(res, 201, { preparationId: prepared.id, token });
+  }
+
+  const quickAccessPreparationMatch = url.pathname.match(/^\/api\/quick-access-token-preparations\/(\d+)\/activate$/);
+  if (req.method === "POST" && quickAccessPreparationMatch) {
+    const body = await readJson(req);
+    const auth = apiSecurity.resolveTelegramUserId(req, url, body);
+    if (auth.error) return sendJson(res, 400, { error: auth.error });
+    const user = await repository.getUserByTelegramId(auth.telegramUserId);
+    if (!user) return sendJson(res, 404, { error: "user_not_found" });
+    const activation = await repository.activatePreparedQuickAccessToken(user.id, Number(quickAccessPreparationMatch[1]));
+    if (!['activated', 'active'].includes(activation.state)) return sendJson(res, 409, { error: `quick_access_preparation_${activation.state}` });
+    if (activation.state === "activated") await repository.recordAppEvent?.(user.id, "quick_access_token_activated", {});
+    return sendJson(res, 200, { ok: true });
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/quick-access-tokens") {
+    return sendJson(res, 410, { error: "quick_access_prepare_required" });
   }
 
   if (req.method === "GET" && url.pathname === "/api/quick-access") {

@@ -2,6 +2,12 @@
 
 This file records stable product and business rules. Read it before changing budget, planned payment, reserve, onboarding, dashboard, or currency behavior.
 
+## Quick Capture
+
+- A Mini App Quick Capture submission is durably identified by `user_id + clientRequestId`; a retry must return its original draft or saved expense and must never create a second financial operation.
+- Parser-provided category provenance remains `parser` until the user explicitly chooses a category. A parser-provided `other` remains unconfirmable until that explicit choice.
+- `saveDraftAsExpense()` remains the final atomic/idempotent boundary for an individual draft.
+
 ## Monthly Budget
 
 - The monthly budget is the user's main recurring budget.

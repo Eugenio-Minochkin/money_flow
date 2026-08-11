@@ -7,7 +7,8 @@ import pg from "pg";
 import { migrate } from "../src/db.js";
 import { normalizePlannedDateKey } from "../src/plannedOccurrenceDates.js";
 import { createRepository } from "../src/repository.js";
-import { createShortcutExpenseDraft } from "../src/expenseDraftService.js";
+import { createMiniAppQuickCaptureDraft, createShortcutExpenseDraft } from "../src/expenseDraftService.js";
+import { processMiniAppQuickCapture } from "../src/quickCapture.js";
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -27,7 +28,7 @@ test.before(async () => {
   const applied = await pool.query("SELECT filename FROM schema_migrations ORDER BY filename");
   assert.deepEqual(
     applied.rows.map((row) => row.filename),
-    ["001_initial.sql", "002_draft_confirm_flow.sql", "003_budget_topups.sql", "004_report_deliveries.sql", "005_exchange_rates.sql", "006_feedback.sql", "007_account_deletion.sql", "008_product_analytics.sql", "009_telegram_expense_editor.sql", "010_telegram_editor_prompt_message.sql", "011_planned_expense_disabled_at.sql", "012_planned_expense_starts_on.sql", "013_planned_payment_reminders.sql", "014_quick_access_tokens.sql"]
+    ["001_initial.sql", "002_draft_confirm_flow.sql", "003_budget_topups.sql", "004_report_deliveries.sql", "005_exchange_rates.sql", "006_feedback.sql", "007_account_deletion.sql", "008_product_analytics.sql", "009_telegram_expense_editor.sql", "010_telegram_editor_prompt_message.sql", "011_planned_expense_disabled_at.sql", "012_planned_expense_starts_on.sql", "013_planned_payment_reminders.sql", "014_quick_access_tokens.sql", "015_quick_capture_safety.sql"]
   );
 
   const sessions = await pool.query(`
@@ -145,7 +146,12 @@ test("saves a confirmed draft expense and reads it back", async () => {
 
 test("Quick Access token status and concurrent request idempotency are durable", async () => {
   const user = await createSmokeUser(990014);
-  const token = await repo.createQuickAccessToken(user.id, "smoke-token-hash");
+  const token = await repo.prepareQuickAccessToken(user.id, "smoke-token-hash");
+  assert.deepEqual(await repo.getQuickAccessStatus(user.id), { configured: false, lastUsedAt: null });
+  assert.deepEqual(
+    await repo.activatePreparedQuickAccessToken(user.id, token.id),
+    { state: "activated" }
+  );
   assert.deepEqual(await repo.getQuickAccessStatus(user.id), { configured: true, lastUsedAt: null });
   const firstClaim = await repo.claimShortcutRequest(token.id, user.id, "durable-race-request");
   const competingClaim = await repo.claimShortcutRequest(token.id, user.id, "durable-race-request");
@@ -193,6 +199,53 @@ test("Quick Access token status and concurrent request idempotency are durable",
   assert.equal(await repo.revokeQuickAccessTokens(user.id), true);
   assert.equal(await repo.findQuickAccessToken("smoke-token-hash"), null);
   assert.deepEqual(await repo.getQuickAccessStatus(user.id), { configured: false, lastUsedAt: null });
+});
+
+test("Mini App Quick Capture keeps one durable draft and expense across concurrent replays", async () => {
+  const user = await createSmokeUser(990016);
+  let parserCalls = 0;
+  const expenseParser = { parse: async () => {
+    parserCalls += 1;
+    return { expenses: [expenseItem({ description: "quick capture coffee", amount: 120, category_source: "parser" })] };
+  } };
+  const request = {
+    user,
+    clientRequestId: "mini-app-safe-replay-0001",
+    text: "coffee 120",
+    expenseParser,
+    repository: repo
+  };
+  const [first, second] = await Promise.all([
+    processMiniAppQuickCapture(request),
+    processMiniAppQuickCapture(request)
+  ]);
+  assert.equal(parserCalls, 1);
+  assert.equal(first.saved.expenses[0].id, second.saved.expenses[0].id);
+  assert.equal(
+    (await pool.query("SELECT COUNT(*)::int AS count FROM expenses WHERE user_id = $1", [user.id])).rows[0].count,
+    1
+  );
+
+  const reviewParser = { parse: async () => ({
+    expenses: [expenseItem({ description: "uncertain capture", category_slug: "other", category_source: "parser", needs_review: true })]
+  }) };
+  const review = await createMiniAppQuickCaptureDraft({
+    user,
+    clientRequestId: "mini-app-review-replay-0001",
+    text: "something uncertain",
+    expenseParser: reviewParser,
+    repository: repo
+  });
+  const reviewReplay = await createMiniAppQuickCaptureDraft({
+    user,
+    clientRequestId: "mini-app-review-replay-0001",
+    text: "something uncertain",
+    expenseParser: { parse: async () => { throw new Error("parser must not run on replay"); } },
+    repository: repo
+  });
+  assert.equal(review.draft.id, reviewReplay.draft.id);
+  assert.equal(reviewReplay.replayed, true);
+  assert.equal(reviewReplay.draft.items[0].category_source, "parser");
 });
 
 test("saves feedback with source metadata", async () => {
@@ -830,6 +883,7 @@ function expenseItem(overrides = {}) {
     description: overrides.description ?? "expense",
     category_slug: overrides.category_slug ?? "food_cafe",
     category_source: overrides.category_source ?? "user",
+    needs_review: overrides.needs_review ?? false,
     tags: overrides.tags ?? [],
     spent_at: overrides.spent_at ?? "2026-06-24T05:00:00.000Z",
     budget_impact: overrides.budget_impact ?? "regular"

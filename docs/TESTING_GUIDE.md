@@ -18,6 +18,8 @@ Use this guide when changing business logic or UI around the main Money Flow sur
 - User timezone behavior for today/yesterday, weeks, months, daily budget snapshots, planned payment dates, and reminders.
 - Daily empty-day reminder guardrails: kill switch, rollout, 48-hour cap, idempotency, no-spending marks, and Telegram blocked/forbidden errors.
 - Planned-payment reminder guardrails: production-default kill switch, configured local send hour, exact-occurrence idempotency, snooze-only notification changes, stale callbacks, RU/EN copy and styles, shared saved summary, Mini App best-effort card sync, and same-evening empty-day suppression.
+- Quick Capture: durable `user_id + clientRequestId` replay for safe auto-save and review drafts, concurrent claims, parser-outside-transaction behavior, retained parser category provenance, and the final `saveDraftAsExpense()` idempotency boundary.
+- Shortcut setup: prepare/copy/activate ordering, activation retry, failed copy/network preserving an existing active key, no raw key rendering or database persistence, and UI copy that describes a key as prepared rather than assuming iOS installation.
 - Disabled planned payments.
 - Weekly recurrence deduplication.
 - Reserve logic.

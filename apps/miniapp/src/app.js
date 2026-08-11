@@ -2,6 +2,8 @@ import { buildDashboardRequestPath, createApiClient, isOnboardingDashboardRespon
 import { categories, categoryColor, categoryLabel } from "./categories.js";
 import { currencyOptions } from "./currencies.js";
 import { resolveDraftSaveResponse, classifyConfirmOutcome } from "./draftSave.js";
+import { advanceShortcutSetup } from "./quickAccessSetup.js";
+import { collectQuickCaptureReviewItems, quickCaptureItemNeedsReview } from "./quickCaptureReview.js";
 import { buildDashboardCards, buildHeroMetric, renderBudgetTopupBreakdown, renderDashboardCards } from "./dashboardCards.js";
 import {
   dateTimeLocal,
@@ -140,8 +142,12 @@ const quickCaptureReview = document.querySelector("#quickCaptureReview");
 const quickCaptureReviewItems = document.querySelector("#quickCaptureReviewItems");
 const quickCaptureReviewStatus = document.querySelector("#quickCaptureReviewStatus");
 let quickCaptureDraft = null;
+let quickCaptureCategorySelections = new Set();
 let quickAccessShortcutUrl = null;
 let quickAccessTokenBusy = false;
+let quickAccessPreparationId = null;
+let quickEntryRequestId = null;
+quickEntryText?.addEventListener("input", () => { quickEntryRequestId = null; });
 document.querySelector("#openQuickEntryButton")?.addEventListener("click", () => {
   resetQuickEntryView();
   quickEntrySheet.classList.remove("hidden"); quickEntryBackdrop.classList.remove("hidden");
@@ -161,7 +167,9 @@ document.querySelector("#quickEntryForm")?.addEventListener("submit", async (eve
   if (!text) return;
   setQuickEntryPending(true);
   try {
-    const data = await api("/api/quick-entry", { method: "POST", body: { telegramUserId, text } });
+    quickEntryRequestId ??= crypto.randomUUID();
+    const data = await api("/api/quick-entry", { method: "POST", body: { telegramUserId, text, clientRequestId: quickEntryRequestId } });
+    quickEntryRequestId = null;
     if (data.saved) {
       renderQuickCaptureSaved(data.saved.expenses);
     } else {
@@ -201,6 +209,7 @@ function closeQuickEntry({ force = false } = {}) {
 
 function resetQuickEntryView() {
   quickCaptureDraft = null;
+  quickEntryRequestId = null;
   quickEntryForm?.classList.remove("hidden");
   quickCaptureReview?.classList.add("hidden");
   if (quickEntryStatus) quickEntryStatus.textContent = "";
@@ -219,11 +228,15 @@ function renderQuickCaptureSaved(expenses) {
 
 function renderQuickCaptureReview(draft) {
   quickCaptureDraft = draft;
+  quickCaptureCategorySelections = new Set();
   draftState = draft;
   quickEntryForm?.classList.add("hidden");
   quickCaptureReview?.classList.remove("hidden");
   if (quickCaptureReviewStatus) quickCaptureReviewStatus.textContent = "";
   quickCaptureReviewItems.innerHTML = draft.items.map((item, index) => quickCaptureReviewItem(item, index)).join("");
+  quickCaptureReviewItems.querySelectorAll("[data-quick-capture-category-index]").forEach((select) => {
+    select.addEventListener("change", () => quickCaptureCategorySelections.add(Number(select.dataset.quickCaptureCategoryIndex)));
+  });
   const title = quickCaptureReview.querySelector("h3");
   if (title) title.textContent = draft.items.length > 1 ? t("quickEntry.reviewMultiple", { count: draft.items.length }) : t("quickEntry.reviewTitle");
   quickCaptureReview.querySelector("#quickCaptureReviewSubmit").textContent = draft.items.length > 1
@@ -232,14 +245,14 @@ function renderQuickCaptureReview(draft) {
 }
 
 function quickCaptureReviewItem(item, index) {
-  const needsReview = item.needs_review || item.category_slug === "other";
+  const needsReview = quickCaptureItemNeedsReview(item);
   return `
     <article class="quick-capture-review__item">
       <strong>${escapeHtml(item.description)}</strong>
       <span>${formatMoney(item.amount, item.currency)} · ${escapeHtml(categoryLabel(item.category_slug, currentLanguage))}</span>
       ${needsReview ? `
         <label><span>${t("forms.amount")}</span><input name="quick-capture-${index}-amount" type="number" min="0.01" step="0.01" value="${Number(item.amount)}" required /></label>
-        <label><span>${t("quickEntry.reviewCategory")}</span><select name="quick-capture-${index}-category">${categories.map(([slug]) => option(slug, item.category_slug, categoryLabel(slug, currentLanguage))).join("")}</select></label>
+        <label><span>${t("quickEntry.reviewCategory")}</span><select name="quick-capture-${index}-category" data-quick-capture-category-index="${index}" required>${item.category_slug === "other" ? `<option value="" selected disabled>${escapeHtml(t("quickEntry.reviewCategory"))}</option>` : ""}${categories.filter(([slug]) => item.category_slug !== "other" || slug !== "other").map(([slug]) => option(slug, item.category_slug, categoryLabel(slug, currentLanguage))).join("")}</select></label>
       ` : ""}
     </article>
   `;
@@ -251,13 +264,11 @@ async function saveQuickCaptureReview(event) {
   const submit = event.currentTarget.querySelector("button[type='submit']");
   submit.disabled = true;
   try {
-    const items = quickCaptureDraft.items.map((item, index) => ({
-      ...item,
-      amount: Number(input(`quick-capture-${index}-amount`)?.value ?? item.amount),
-      category_slug: input(`quick-capture-${index}-category`)?.value ?? item.category_slug,
-      category_source: "user",
-      needs_review: false
-    }));
+    const items = collectQuickCaptureReviewItems(
+      quickCaptureDraft.items,
+      (name) => input(name)?.value,
+      (index) => quickCaptureCategorySelections.has(index)
+    );
     const savedDraft = await api(`/api/drafts/${quickCaptureDraft.id}`, { method: "PATCH", body: { telegramUserId, items, expectedVersion: quickCaptureDraft.version } });
     quickCaptureDraft = savedDraft.draft;
     draftState = savedDraft.draft;
@@ -340,8 +351,17 @@ async function createQuickAccessToken() {
   quickAccessTokenBusy = true;
   setQuickAccessTokenBusy(true);
   try {
-    const data = await api("/api/quick-access-tokens", { method: "POST", body: { telegramUserId } });
-    await navigator.clipboard.writeText(data.token);
+    const outcome = await advanceShortcutSetup({
+      api,
+      telegramUserId,
+      writeText: (token) => navigator.clipboard.writeText(token),
+      preparationId: quickAccessPreparationId
+    });
+    quickAccessPreparationId = outcome.preparationId;
+    if (outcome.status !== "activated") {
+      showToast(t("quickAccess.setupFailed"));
+      return;
+    }
     showQuickAccessSetupState();
   } catch {
     showToast(t("quickAccess.setupFailed"));
@@ -369,19 +389,7 @@ async function reconfigureQuickAccessToken() {
     return;
   }
   if (!window.confirm(t("quickAccess.reconfigureConfirm"))) return;
-  quickAccessTokenBusy = true;
-  setQuickAccessTokenBusy(true);
-  try {
-    await api("/api/quick-access-tokens", { method: "DELETE", body: { telegramUserId } });
-    const data = await api("/api/quick-access-tokens", { method: "POST", body: { telegramUserId } });
-    await navigator.clipboard.writeText(data.token);
-    showQuickAccessSetupState();
-  } catch {
-    showToast(t("quickAccess.setupFailed"));
-  } finally {
-    quickAccessTokenBusy = false;
-    setQuickAccessTokenBusy(false);
-  }
+  await createQuickAccessToken();
 }
 
 async function loadQuickAccessConfig() {
