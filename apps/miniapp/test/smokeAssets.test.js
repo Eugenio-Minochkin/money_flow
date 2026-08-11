@@ -23,7 +23,7 @@ test("Mini App keeps app.js and styles.css cache-busters in sync", async () => {
   assert.ok(appVersion, "index.html should version app.js with a ?v= query");
   assert.ok(cssVersion, "index.html should version styles.css with a ?v= query");
   assert.equal(appVersion, cssVersion, "app.js and styles.css cache-busters must stay in sync");
-  assert.equal(appVersion, "20260811-mobile-ux-hotfix-v2");
+  assert.equal(appVersion, "20260811-quick-capture-ux-v1");
   assert.notEqual(appVersion, "20260626-dashboard-v12", "app.js must not keep the stale dashboard-v12 cache-buster");
 });
 
@@ -58,6 +58,40 @@ test("Quick Entry stays visible and busy while recognition is pending", async ()
     assert.equal(typeof translations[language]["quickEntry.error.amountNotFound"], "string");
     assert.equal(typeof translations[language]["quickEntry.error.network"], "string");
     assert.equal(typeof translations[language]["quickEntry.error.generic"], "string");
+  }
+});
+
+test("Quick Capture saves safe entries with undo and keeps review in the sheet", async () => {
+  const html = await readFile(join(miniAppRoot, "index.html"), "utf8");
+  const app = await readFile(join(miniAppRoot, "app.js"), "utf8");
+
+  assert.match(html, /id="quickCaptureReview"/);
+  assert.match(html, /id="quickCaptureReviewStatus"[^>]+aria-live="polite"/);
+  assert.match(app, /if \(data\.saved\) \{\s*renderQuickCaptureSaved\(data\.saved\.expenses\);/);
+  assert.match(app, /renderQuickCaptureReview\(data\.draft\)/);
+  assert.match(app, /async function undoQuickCapture\(expense\)/);
+  assert.match(app, /api\(`\/api\/expenses\/\$\{expense\.id\}`, \{ method: "DELETE"/);
+  assert.match(app, /expectedVersion: quickCaptureDraft\.version/);
+  assert.match(app, /quickCaptureReviewStatus\.textContent = t\("quickEntry\.reviewSaveFailed"\)/);
+  assert.match(app, /api\(`\/api\/drafts\/\$\{draftState\.id\}\/confirm`/);
+});
+
+test("Shortcut setup copies its key without rendering the raw credential", async () => {
+  const html = await readFile(join(miniAppRoot, "index.html"), "utf8");
+  const app = await readFile(join(miniAppRoot, "app.js"), "utf8");
+
+  assert.match(html, /id="setupQuickAccessButton"/);
+  assert.match(html, /id="quickAccessSetupState"/);
+  assert.doesNotMatch(html, /quickAccessTokenValue|quickAccessTokenReveal|copyQuickAccessTokenButton/);
+  assert.match(app, /await navigator\.clipboard\.writeText\(data\.token\)/);
+  assert.match(app, /let quickAccessTokenBusy = false/);
+  assert.match(app, /if \(quickAccessTokenBusy\) return/);
+  assert.match(app, /setQuickAccessTokenBusy\(true\)/);
+  assert.match(app, /if \(quickAccessTokenBusy \|\| !navigator\.clipboard\?\.writeText\)/);
+  assert.match(app, /function showQuickAccessSetupState\(\)/);
+  for (const language of ["en", "ru"]) {
+    assert.equal(typeof translations[language]["quickAccess.setup"], "string");
+    assert.equal(typeof translations[language]["quickAccess.keyCopied"], "string");
   }
 });
 
@@ -634,7 +668,7 @@ test("settings are grouped into focused sections with quick access and evening r
 
   assert.equal((settingsHtml.match(/class="settings-section"/g) ?? []).length, 5);
   assert.match(settingsHtml, /id="quickAccessBlock"/);
-  assert.match(settingsHtml, /id="createQuickAccessTokenButton"/);
+  assert.match(settingsHtml, /id="setupQuickAccessButton"/);
   assert.match(settingsHtml, /data-i18n="settings.sectionBudget"/);
   assert.match(settingsHtml, /data-i18n="settings.sectionCurrencies"/);
   assert.match(settingsHtml, /data-i18n="settings.sectionNotifications"/);

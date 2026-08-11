@@ -135,14 +135,22 @@ const quickEntryBackdrop = document.querySelector("#quickEntryBackdrop");
 const quickEntryText = document.querySelector("#quickEntryText");
 const quickEntrySubmit = document.querySelector("#quickEntrySubmit");
 const quickEntryStatus = document.querySelector("#quickEntryStatus");
+const quickEntryForm = document.querySelector("#quickEntryForm");
+const quickCaptureReview = document.querySelector("#quickCaptureReview");
+const quickCaptureReviewItems = document.querySelector("#quickCaptureReviewItems");
+const quickCaptureReviewStatus = document.querySelector("#quickCaptureReviewStatus");
+let quickCaptureDraft = null;
+let quickAccessShortcutUrl = null;
+let quickAccessTokenBusy = false;
 document.querySelector("#openQuickEntryButton")?.addEventListener("click", () => {
+  resetQuickEntryView();
   quickEntrySheet.classList.remove("hidden"); quickEntryBackdrop.classList.remove("hidden");
   if (quickEntryStatus) quickEntryStatus.textContent = "";
   quickEntryText?.focus();
   void recordQuickAccessEvent("quick_entry_opened");
 });
 quickEntryBackdrop?.addEventListener("click", () => {
-  if (quickEntrySubmit?.disabled) return;
+  if (quickEntrySubmit?.disabled || quickCaptureDraft) return;
   closeQuickEntry();
   void recordQuickAccessEvent("quick_entry_canceled");
 });
@@ -154,14 +162,19 @@ document.querySelector("#quickEntryForm")?.addEventListener("submit", async (eve
   setQuickEntryPending(true);
   try {
     const data = await api("/api/quick-entry", { method: "POST", body: { telegramUserId, text } });
-    closeQuickEntry({ force: true });
-    await openDraftInline(data.draft.id, { returnTab: "dashboard" });
+    if (data.saved) {
+      renderQuickCaptureSaved(data.saved.expenses);
+    } else {
+      renderQuickCaptureReview(data.draft);
+    }
   } catch (error) {
     quickEntryStatus.textContent = quickEntryErrorMessage(error);
   } finally {
     setQuickEntryPending(false);
   }
 });
+document.querySelector("#quickCaptureReviewForm")?.addEventListener("submit", saveQuickCaptureReview);
+document.querySelector("#cancelQuickCaptureButton")?.addEventListener("click", () => void cancelQuickCapture());
 function quickEntryErrorMessage(error) {
   const code = String(error?.body?.error ?? error?.message ?? "");
   if (code === "amount_not_found") return t("quickEntry.error.amountNotFound");
@@ -186,6 +199,117 @@ function closeQuickEntry({ force = false } = {}) {
   quickEntryBackdrop?.classList.add("hidden");
 }
 
+function resetQuickEntryView() {
+  quickCaptureDraft = null;
+  quickEntryForm?.classList.remove("hidden");
+  quickCaptureReview?.classList.add("hidden");
+  if (quickEntryStatus) quickEntryStatus.textContent = "";
+  if (quickCaptureReviewStatus) quickCaptureReviewStatus.textContent = "";
+}
+
+function renderQuickCaptureSaved(expenses) {
+  const expense = expenses?.[0];
+  closeQuickEntry({ force: true });
+  resetQuickEntryView();
+  if (quickEntryText) quickEntryText.value = "";
+  if (!expense) return;
+  showQuickCaptureToast(expense);
+  void Promise.allSettled([loadDashboard(), loadHistory()]);
+}
+
+function renderQuickCaptureReview(draft) {
+  quickCaptureDraft = draft;
+  draftState = draft;
+  quickEntryForm?.classList.add("hidden");
+  quickCaptureReview?.classList.remove("hidden");
+  if (quickCaptureReviewStatus) quickCaptureReviewStatus.textContent = "";
+  quickCaptureReviewItems.innerHTML = draft.items.map((item, index) => quickCaptureReviewItem(item, index)).join("");
+  const title = quickCaptureReview.querySelector("h3");
+  if (title) title.textContent = draft.items.length > 1 ? t("quickEntry.reviewMultiple", { count: draft.items.length }) : t("quickEntry.reviewTitle");
+  quickCaptureReview.querySelector("#quickCaptureReviewSubmit").textContent = draft.items.length > 1
+    ? t("quickEntry.saveMultiple", { count: draft.items.length })
+    : t("quickEntry.save");
+}
+
+function quickCaptureReviewItem(item, index) {
+  const needsReview = item.needs_review || item.category_slug === "other";
+  return `
+    <article class="quick-capture-review__item">
+      <strong>${escapeHtml(item.description)}</strong>
+      <span>${formatMoney(item.amount, item.currency)} · ${escapeHtml(categoryLabel(item.category_slug, currentLanguage))}</span>
+      ${needsReview ? `
+        <label><span>${t("forms.amount")}</span><input name="quick-capture-${index}-amount" type="number" min="0.01" step="0.01" value="${Number(item.amount)}" required /></label>
+        <label><span>${t("quickEntry.reviewCategory")}</span><select name="quick-capture-${index}-category">${categories.map(([slug]) => option(slug, item.category_slug, categoryLabel(slug, currentLanguage))).join("")}</select></label>
+      ` : ""}
+    </article>
+  `;
+}
+
+async function saveQuickCaptureReview(event) {
+  event.preventDefault();
+  if (!quickCaptureDraft) return;
+  const submit = event.currentTarget.querySelector("button[type='submit']");
+  submit.disabled = true;
+  try {
+    const items = quickCaptureDraft.items.map((item, index) => ({
+      ...item,
+      amount: Number(input(`quick-capture-${index}-amount`)?.value ?? item.amount),
+      category_slug: input(`quick-capture-${index}-category`)?.value ?? item.category_slug,
+      category_source: "user",
+      needs_review: false
+    }));
+    const savedDraft = await api(`/api/drafts/${quickCaptureDraft.id}`, { method: "PATCH", body: { telegramUserId, items, expectedVersion: quickCaptureDraft.version } });
+    quickCaptureDraft = savedDraft.draft;
+    draftState = savedDraft.draft;
+    const data = await api(`/api/drafts/${quickCaptureDraft.id}/confirm`, { method: "POST", body: { telegramUserId, language: currentLanguage } });
+    renderQuickCaptureSaved(data.expenses);
+  } catch (error) {
+    const outcome = resolveDraftSaveResponse(error?.status ?? 500, error?.body ?? null);
+    if (outcome.conflict) {
+      renderQuickCaptureReview(outcome.draft);
+      if (quickCaptureReviewStatus) quickCaptureReviewStatus.textContent = t("toast.draftConflict");
+    } else if (quickCaptureReviewStatus) {
+      quickCaptureReviewStatus.textContent = t("quickEntry.reviewSaveFailed");
+    }
+  } finally {
+    submit.disabled = false;
+  }
+}
+
+async function cancelQuickCapture() {
+  if (!quickCaptureDraft) return;
+  try {
+    await api(`/api/drafts/${quickCaptureDraft.id}`, { method: "DELETE", body: { telegramUserId, language: currentLanguage } });
+    closeQuickEntry({ force: true });
+    resetQuickEntryView();
+    showToast(t("toast.draftCanceled"));
+  } catch {
+    if (quickCaptureReviewStatus) quickCaptureReviewStatus.textContent = t("quickEntry.reviewCancelFailed");
+  }
+}
+
+function showQuickCaptureToast(expense) {
+  const toast = document.querySelector("#toast");
+  if (!toast) return;
+  toast.innerHTML = `<strong>✓ ${escapeHtml(expense.description)} — ${escapeHtml(formatMoney(expense.amount_original ?? expense.amount, expense.currency_original ?? expense.currency))}</strong><span>${escapeHtml(categoryLabel(expense.category_slug, currentLanguage))}</span><div><button type="button" data-quick-capture-edit>${t("actions.edit")}</button><button type="button" data-quick-capture-undo>${t("quickEntry.undo")}</button></div>`;
+  toast.classList.remove("hidden");
+  toast.querySelector("[data-quick-capture-edit]")?.addEventListener("click", () => renderExpenseEditor(expense, { returnTab: "dashboard" }));
+  toast.querySelector("[data-quick-capture-undo]")?.addEventListener("click", () => void undoQuickCapture(expense));
+  clearTimeout(showToast.timer);
+  showToast.timer = setTimeout(() => toast.classList.add("hidden"), 6000);
+}
+
+async function undoQuickCapture(expense) {
+  try {
+    await api(`/api/expenses/${expense.id}`, { method: "DELETE", body: { telegramUserId, language: currentLanguage } });
+    document.querySelector("#toast")?.classList.add("hidden");
+    await Promise.allSettled([loadDashboard(), loadHistory()]);
+    showToast(t("toast.expenseDeleted"));
+  } catch {
+    showToast(t("quickEntry.undoFailed"));
+  }
+}
+
 function recordQuickAccessEvent(eventName) {
   if (!telegramUserId) return Promise.resolve();
   return api("/api/quick-access/events", { method: "POST", body: { telegramUserId, eventName } }).catch(() => {});
@@ -208,32 +332,77 @@ function initializeTelegramQuickAccess() {
 }
 
 async function createQuickAccessToken() {
-  const data = await api("/api/quick-access-tokens", { method: "POST", body: { telegramUserId } });
-  document.querySelector("#quickAccessTokenValue").value = data.token;
-  document.querySelector("#quickAccessTokenReveal").classList.remove("hidden");
-  document.querySelector("#createQuickAccessTokenButton").classList.add("hidden");
-  document.querySelector("#revokeQuickAccessTokenButton").classList.remove("hidden");
+  if (quickAccessTokenBusy) return;
+  if (!quickAccessShortcutUrl || !navigator.clipboard?.writeText) {
+    showToast(t("quickAccess.installUnavailable"));
+    return;
+  }
+  quickAccessTokenBusy = true;
+  setQuickAccessTokenBusy(true);
+  try {
+    const data = await api("/api/quick-access-tokens", { method: "POST", body: { telegramUserId } });
+    await navigator.clipboard.writeText(data.token);
+    showQuickAccessSetupState();
+  } catch {
+    showToast(t("quickAccess.setupFailed"));
+  } finally {
+    quickAccessTokenBusy = false;
+    setQuickAccessTokenBusy(false);
+  }
 }
 
-async function revokeQuickAccessToken() {
-  await api("/api/quick-access-tokens", { method: "DELETE", body: { telegramUserId } });
-  document.querySelector("#quickAccessTokenReveal").classList.add("hidden");
-  document.querySelector("#createQuickAccessTokenButton").classList.remove("hidden");
-  document.querySelector("#revokeQuickAccessTokenButton").classList.add("hidden");
+function setQuickAccessTokenBusy(busy) {
+  document.querySelector("#setupQuickAccessButton").disabled = busy;
+  document.querySelector("#reconfigureQuickAccessButton").disabled = busy;
+}
+
+function showQuickAccessSetupState() {
+  document.querySelector("#quickAccessSetupState")?.classList.remove("hidden");
+  document.querySelector("#setupQuickAccessButton")?.classList.add("hidden");
+  document.querySelector("#reconfigureQuickAccessButton")?.classList.remove("hidden");
+  document.querySelector("#installShortcutLink")?.classList.remove("hidden");
+}
+
+async function reconfigureQuickAccessToken() {
+  if (quickAccessTokenBusy || !navigator.clipboard?.writeText) {
+    showToast(t("quickAccess.installUnavailable"));
+    return;
+  }
+  if (!window.confirm(t("quickAccess.reconfigureConfirm"))) return;
+  quickAccessTokenBusy = true;
+  setQuickAccessTokenBusy(true);
+  try {
+    await api("/api/quick-access-tokens", { method: "DELETE", body: { telegramUserId } });
+    const data = await api("/api/quick-access-tokens", { method: "POST", body: { telegramUserId } });
+    await navigator.clipboard.writeText(data.token);
+    showQuickAccessSetupState();
+  } catch {
+    showToast(t("quickAccess.setupFailed"));
+  } finally {
+    quickAccessTokenBusy = false;
+    setQuickAccessTokenBusy(false);
+  }
 }
 
 async function loadQuickAccessConfig() {
   if (!telegramUserId) return;
   const data = await api(`/api/quick-access?telegramUserId=${encodeURIComponent(telegramUserId)}`);
+  quickAccessShortcutUrl = data.iosShortcutUrl;
+  const setup = document.querySelector("#setupQuickAccessButton");
+  if (!quickAccessShortcutUrl) {
+    document.querySelector("#quickAccessUnavailableState")?.classList.remove("hidden");
+    return;
+  }
+  if (setup) setup.disabled = false;
   if (data.shortcutConfigured) {
     document.querySelector("#quickAccessConfiguredState").classList.remove("hidden");
-    document.querySelector("#createQuickAccessTokenButton").classList.add("hidden");
-    document.querySelector("#revokeQuickAccessTokenButton").classList.remove("hidden");
+    document.querySelector("#setupQuickAccessButton").classList.add("hidden");
+    document.querySelector("#reconfigureQuickAccessButton").classList.remove("hidden");
   }
   if (data.iosShortcutUrl) {
     const link = document.querySelector("#installShortcutLink");
     link.href = data.iosShortcutUrl;
-    link.classList.remove("hidden");
+    if (data.shortcutConfigured) link.classList.remove("hidden");
   }
 }
 
@@ -278,9 +447,8 @@ document.querySelector("#displayCurrencyInput").addEventListener("change", updat
 document.querySelector("#interfaceLanguageInput").addEventListener("change", (event) => applyLanguage(event.target.value));
 document.querySelector("#interfaceThemeInput").addEventListener("change", (event) => applyTheme(event.target.value));
 document.querySelector("#detectTimezoneButton")?.addEventListener("click", detectTimezone);
-document.querySelector("#createQuickAccessTokenButton")?.addEventListener("click", createQuickAccessToken);
-document.querySelector("#revokeQuickAccessTokenButton")?.addEventListener("click", revokeQuickAccessToken);
-document.querySelector("#copyQuickAccessTokenButton")?.addEventListener("click", () => navigator.clipboard?.writeText(document.querySelector("#quickAccessTokenValue").value));
+document.querySelector("#setupQuickAccessButton")?.addEventListener("click", createQuickAccessToken);
+document.querySelector("#reconfigureQuickAccessButton")?.addEventListener("click", reconfigureQuickAccessToken);
 initializeTelegramQuickAccess();
 installTabSwipeNavigation();
 void loadQuickAccessConfig().catch(() => {});

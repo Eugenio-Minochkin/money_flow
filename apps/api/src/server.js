@@ -15,6 +15,7 @@ import { createExpenseExportService } from "./expenseExportService.js";
 import { createExpenseParser } from "./expenseParser.js";
 import { createExpenseDraftFromText, createShortcutExpenseDraft, ExpenseTextNotRecognizedError, ShortcutRequestInProgressError } from "./expenseDraftService.js";
 import { createQuickAccessToken, hashQuickAccessToken } from "./quickAccessService.js";
+import { isQuickCaptureAutoSaveEligible } from "./quickCapture.js";
 import { handleHealth } from "./health.js";
 import { createJsonReader, createStaticHandler, sendJson } from "./http.js";
 import { handleDevRoute } from "./devRoutes.js";
@@ -451,6 +452,11 @@ async function route(req, res) {
         user, text: body.text, source: "miniapp", expenseParser, repository
       });
       await repository.recordAppEvent?.(user.id, "quick_entry_submitted", { source: "miniapp" });
+      if (isQuickCaptureAutoSaveEligible(draft.items)) {
+        const saved = await repository.saveDraftAsExpense(draft.id, auth.telegramUserId);
+        await repository.recordAppEvent?.(user.id, "quick_entry_confirmed", { source: "miniapp" });
+        return sendJson(res, 201, { saved });
+      }
       return sendJson(res, 201, { draft });
     } catch (error) {
       if (error instanceof ExpenseTextNotRecognizedError) return sendJson(res, 422, { error: error.code });

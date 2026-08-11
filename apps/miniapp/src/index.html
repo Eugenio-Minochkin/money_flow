@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>Money Flow</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/styles.css?v=20260811-mobile-ux-hotfix-v2" />
+    <link rel="stylesheet" href="/styles.css?v=20260811-quick-capture-ux-v1" />
   </head>
   <body data-theme="light">
     <main class="shell">
@@ -308,11 +308,12 @@
                   <p class="settings-hint hidden" id="homeScreenAddedState" data-i18n="quickAccess.homeAdded">✓ Added to Home Screen</p>
                 </div>
                 <div class="settings-row settings-row--stacked">
-                  <strong data-i18n="quickAccess.shortcutTitle">Quick entry on iPhone</strong>
-                  <p class="settings-hint" data-i18n="quickAccess.shortcutHint">Create a key for the Money Flow Shortcut. It is shown once.</p>
-                  <div class="button-row"><button type="button" class="ghost-button" id="createQuickAccessTokenButton" data-i18n="quickAccess.createKey">Create key</button><button type="button" class="ghost-button hidden" id="revokeQuickAccessTokenButton" data-i18n="quickAccess.resetKey">Reset key</button></div>
-                  <div class="hidden" id="quickAccessTokenReveal"><label><span data-i18n="quickAccess.copyPrompt">Copy this key — after closing, we will not show it again.</span><input readonly id="quickAccessTokenValue" /></label><button type="button" class="ghost-button" id="copyQuickAccessTokenButton" data-i18n="quickAccess.copyKey">Copy key</button></div>
-                  <p class="settings-hint hidden" id="quickAccessConfiguredState" data-i18n="quickAccess.configured">Quick entry is configured</p>
+                  <strong data-i18n="quickAccess.shortcutTitle">Quick entry with Siri</strong>
+                  <p class="settings-hint" data-i18n="quickAccess.shortcutHint">Add expenses by voice without opening Telegram.</p>
+                  <div class="button-row"><button type="button" id="setupQuickAccessButton" data-i18n="quickAccess.setup" disabled>Set up on iPhone</button><button type="button" class="ghost-button hidden" id="reconfigureQuickAccessButton" data-i18n="quickAccess.reconfigure">Set up again</button></div>
+                  <p class="settings-hint hidden" id="quickAccessUnavailableState" data-i18n="quickAccess.installUnavailable">Shortcut setup is not available yet.</p>
+                  <p class="settings-hint hidden" id="quickAccessSetupState" data-i18n="quickAccess.keyCopied">✓ Key copied. Paste it into Shortcut.</p>
+                  <p class="settings-hint hidden" id="quickAccessConfiguredState" data-i18n="quickAccess.ready">✓ Ready. Say Siri: “Money Flow”.</p>
                   <a class="ghost-button hidden" id="installShortcutLink" target="_blank" rel="noopener" data-i18n="quickAccess.install">Install Shortcut</a>
                 </div>
               </div>
@@ -498,6 +499,14 @@
         <p class="quick-entry-status" id="quickEntryStatus" aria-live="polite"></p>
         <button type="submit" id="quickEntrySubmit" data-i18n="quickEntry.submit">Recognize</button>
       </form>
+      <section class="quick-capture-review hidden" id="quickCaptureReview">
+        <h3 data-i18n="quickEntry.reviewTitle">Review expenses</h3>
+        <form id="quickCaptureReviewForm" class="form-stack">
+          <div id="quickCaptureReviewItems"></div>
+          <p class="quick-entry-status" id="quickCaptureReviewStatus" aria-live="polite"></p>
+          <div class="button-row"><button type="submit" id="quickCaptureReviewSubmit" data-i18n="quickEntry.save">Save</button><button type="button" class="ghost-button" id="cancelQuickCaptureButton" data-i18n="actions.cancel">Cancel</button></div>
+        </form>
+      </section>
     </section>
     <nav class="bottom-tabs" aria-label="Sections" data-i18n-aria-label="navigation.sections">
       <button class="tab-button active" type="button" data-tab="dashboard">
@@ -519,6 +528,6 @@
     </nav>
 
     <div class="toast hidden" id="toast" role="status" aria-live="polite"></div>
-    <script src="/app.js?v=20260811-mobile-ux-hotfix-v2" type="module"></script>
+    <script src="/app.js?v=20260811-quick-capture-ux-v1" type="module"></script>
   </body>
 </html>
