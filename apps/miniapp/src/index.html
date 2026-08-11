@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>Money Flow</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/styles.css?v=20260811-quick-capture-ux-v1" />
+    <link rel="stylesheet" href="/styles.css?v=20260812-mobile-pager-v1" />
   </head>
   <body data-theme="light">
     <main class="shell">
@@ -17,7 +17,8 @@
         <button type="button" id="onboardingOpenBotButton" data-i18n="onboarding.openBot">Continue in bot</button>
       </section>
 
-      <section id="dashboardTab">
+      <div class="tab-pager" id="tabPager">
+      <section class="tab-page" id="dashboardTab">
         <section class="hero-metric" data-state="good">
           <div class="hero-metric__summary">
             <div class="hero-metric__copy">
@@ -183,7 +184,7 @@
         </section>
       </section>
 
-      <section id="planTab" class="hidden">
+      <section id="planTab" class="tab-page hidden">
         <section class="section form-section">
           <div class="section-heading planned-header planned-header--compact">
             <div class="planned-header__top">
@@ -252,7 +253,7 @@
         </section>
       </section>
 
-      <section id="historyTab" class="hidden">
+      <section id="historyTab" class="tab-page hidden">
         <section class="section form-section">
           <div class="section-heading">
             <h2 data-i18n="screen.history">История</h2>
@@ -293,7 +294,7 @@
         </section>
       </section>
 
-      <section id="settingsTab" class="hidden">
+      <section id="settingsTab" class="tab-page hidden">
         <section class="section form-section">
           <div class="section-heading">
             <h2 data-i18n="settings.title">Настройки</h2>
@@ -310,8 +311,8 @@
                 <div class="settings-row settings-row--stacked">
                   <strong data-i18n="quickAccess.shortcutTitle">Quick entry with Siri</strong>
                   <p class="settings-hint" data-i18n="quickAccess.shortcutHint">Add expenses by voice without opening Telegram.</p>
-                  <div class="button-row"><button type="button" id="setupQuickAccessButton" data-i18n="quickAccess.setup" disabled>Set up on iPhone</button><button type="button" class="ghost-button hidden" id="reconfigureQuickAccessButton" data-i18n="quickAccess.reconfigure">Set up again</button></div>
-                  <p class="settings-hint hidden" id="quickAccessUnavailableState" data-i18n="quickAccess.installUnavailable">Shortcut setup is not available yet.</p>
+                  <div class="button-row hidden" id="quickAccessSetupActions"><button type="button" id="setupQuickAccessButton" data-i18n="quickAccess.setup" disabled>Set up on iPhone</button><button type="button" class="ghost-button hidden" id="reconfigureQuickAccessButton" data-i18n="quickAccess.reconfigure">Set up again</button></div>
+                  <p class="settings-hint" id="quickAccessUnavailableState" data-i18n="quickAccess.installUnavailable">Shortcut is not available yet — we’re preparing installation.</p>
                   <p class="settings-hint hidden" id="quickAccessSetupState" data-i18n="quickAccess.keyCopied">✓ Key copied. Paste it into Shortcut.</p>
                   <p class="settings-hint hidden" id="quickAccessConfiguredState" data-i18n="quickAccess.keyPrepared">Key is ready. Install Shortcut.</p>
                   <a class="ghost-button hidden" id="installShortcutLink" target="_blank" rel="noopener" data-i18n="quickAccess.install">Install Shortcut</a>
@@ -460,6 +461,7 @@
 
         </section>
       </section>
+      </div>
     </main>
 
     <div class="history-date-backdrop hidden" id="historyDateBackdrop"></div>
@@ -528,6 +530,6 @@
     </nav>
 
     <div class="toast hidden" id="toast" role="status" aria-live="polite"></div>
-    <script src="/app.js?v=20260811-quick-capture-ux-v1" type="module"></script>
+    <script src="/app.js?v=20260812-mobile-pager-v1" type="module"></script>
   </body>
 </html>

@@ -63,10 +63,19 @@ body[data-theme="light"] {
 body {
   margin: 0;
   min-height: 100vh;
+  min-height: 100dvh;
   overscroll-behavior-y: none;
-  background: var(--bg);
   color: var(--ink);
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+html {
+  min-height: 100%;
+}
+
+html,
+body {
+  background: var(--bg);
 }
 
 .shell {
@@ -227,6 +236,36 @@ h2 {
 .tab-button.active {
   background: var(--accent-soft);
   color: var(--accent);
+}
+
+.tab-pager {
+  position: relative;
+  touch-action: pan-y;
+}
+
+.tab-page {
+  width: 100%;
+}
+
+.tab-page.is-pager-current,
+.tab-page.is-pager-neighbor {
+  will-change: transform;
+}
+
+.tab-page.is-pager-neighbor {
+  position: absolute;
+  inset: 0 0 auto;
+  pointer-events: none;
+}
+
+.tab-pager.is-animating .tab-page.is-pager-current,
+.tab-pager.is-animating .tab-page.is-pager-neighbor {
+  transition: transform 220ms cubic-bezier(.22, .72, .28, 1);
+}
+
+body.is-paging {
+  overflow-x: hidden;
+  user-select: none;
 }
 
 .metrics-grid {
@@ -627,11 +666,12 @@ body[data-theme="dark"] .monthly-forecast {
 
 .hero-metric__summary {
   position: relative;
-  min-height: 154px;
-  padding: 20px 16px 18px;
+  min-height: clamp(190px, 25svh, 230px);
+  padding: 20px 16px 28px;
 }
 
 body.is-fullscreen .hero-metric__summary {
+  min-height: calc(clamp(190px, 25svh, 230px) + var(--tg-fullscreen-control-extra-top));
   padding-top: calc(20px + var(--tg-fullscreen-control-extra-top));
 }
 
@@ -723,7 +763,7 @@ body.is-fullscreen .hero-metric__summary {
   z-index: 2;
   display: grid;
   gap: 8px;
-  margin: -20px 12px 0;
+  margin: 0 12px;
   padding: 11px 12px 12px;
   border: 1px solid #e9e1d7;
   border-radius: 14px;
@@ -862,7 +902,7 @@ body.is-fullscreen .hero-metric__summary {
 
 @media (max-width: 360px) {
   .hero-metric__summary {
-    min-height: 150px;
+    min-height: clamp(186px, 25svh, 214px);
     padding-inline: 13px;
   }
 
@@ -1170,6 +1210,10 @@ body.is-fullscreen .hero-metric__summary {
 }
 
 .planned-due-list .planned-due-row:first-child {
+  border-top: 0;
+}
+
+#plannedNotice > .planned-due-row:first-child {
   border-top: 0;
 }
 
@@ -2244,6 +2288,11 @@ button:disabled {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .tab-pager.is-animating .tab-page.is-pager-current,
+  .tab-pager.is-animating .tab-page.is-pager-neighbor {
+    transition: none;
+  }
+
   .dashboard-card__flip-inner {
     transition: none;
   }

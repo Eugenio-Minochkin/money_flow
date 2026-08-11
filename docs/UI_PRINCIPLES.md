@@ -35,5 +35,7 @@ Money Flow UI should feel light and direct. Favor quick comprehension over dense
 ## Responsive Behavior
 
 - Support both small and large iPhone screens, including iPhone 11 and iPhone 14 Pro.
+- Keep `html`, `body`, the scrolling surface, and Telegram WebView background synchronized with the selected theme so iOS rubber-band areas continue the app surface.
+- Tab swipes are interactive: the current and adjacent pages follow a confirmed horizontal drag and snap only after release. Preserve vertical scrolling, form/editor/modal guards, edge resistance, and the existing tab loading/state lifecycle.
 - Check that cards, buttons, labels, and amounts do not overlap on narrow screens.
 - Russian and English interface text should sound natural, simple, and human. Check dashboard changes at 375, 390, and 430 CSS pixels, including long English labels.
