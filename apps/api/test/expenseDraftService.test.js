@@ -67,9 +67,9 @@ test("Shortcut parser failure releases a processing claim for a later retry", as
   let claims = 0;
   let parserFails = true;
   const repository = {
-    claimShortcutRequest: async () => { claims += 1; return { state: "claimed" }; },
+    claimShortcutRequest: async () => { claims += 1; return { state: "claimed", claimVersion: claims }; },
     releaseShortcutRequest: async (...args) => calls.push(args),
-    completeShortcutRequest: async ({ items }) => ({ draft: { id: 45, items } })
+    completeShortcutRequest: async ({ items, claimVersion }) => ({ draft: { id: 45, items, claimVersion } })
   };
   const input = {
     user: { id: 7 }, tokenId: 9, clientRequestId: "request-456", text: "coffee 120", repository,
@@ -82,11 +82,12 @@ test("Shortcut parser failure releases a processing claim for a later retry", as
     () => createShortcutExpenseDraft(input),
     /parser unavailable/
   );
-  assert.deepEqual(calls, [[9, 7, "request-456"]]);
+  assert.deepEqual(calls, [[9, 7, "request-456", 1]]);
   assert.equal(claims, 1);
   parserFails = false;
   const retry = await createShortcutExpenseDraft(input);
   assert.equal(retry.draft.id, 45);
+  assert.equal(retry.draft.claimVersion, 2);
   assert.equal(claims, 2);
 });
 

@@ -152,12 +152,29 @@ test("Quick Access token status and concurrent request idempotency are durable",
   assert.equal(firstClaim.state, "claimed");
   assert.equal(competingClaim.state, "processing");
   const created = await repo.completeShortcutRequest({
-    tokenId: token.id, userId: user.id, clientRequestId: "durable-race-request", sourceText: "coffee 120",
+    tokenId: token.id, userId: user.id, clientRequestId: "durable-race-request", claimVersion: firstClaim.claimVersion, sourceText: "coffee 120",
     items: [expenseItem({ description: "durable race coffee", amount: 120 })]
   });
   const replay = await repo.waitForShortcutRequest(token.id, user.id, "durable-race-request");
   assert.equal(replay.state, "completed");
   assert.equal(replay.draft.id, created.draft.id);
+  const staleClaim = await repo.claimShortcutRequest(token.id, user.id, "stale-claim-request");
+  await pool.query(
+    "UPDATE quick_access_requests SET lease_expires_at = now() - interval '1 second' WHERE token_id = $1 AND client_request_id = $2",
+    [token.id, "stale-claim-request"]
+  );
+  const reclaimedClaim = await repo.claimShortcutRequest(token.id, user.id, "stale-claim-request");
+  assert.equal(reclaimedClaim.state, "claimed");
+  assert.notEqual(reclaimedClaim.claimVersion, staleClaim.claimVersion);
+  assert.equal(await repo.completeShortcutRequest({
+    tokenId: token.id, userId: user.id, clientRequestId: "stale-claim-request", claimVersion: staleClaim.claimVersion, sourceText: "coffee 120",
+    items: [expenseItem({ description: "stale worker coffee", amount: 120 })]
+  }), null);
+  const reclaimedDraft = await repo.completeShortcutRequest({
+    tokenId: token.id, userId: user.id, clientRequestId: "stale-claim-request", claimVersion: reclaimedClaim.claimVersion, sourceText: "coffee 120",
+    items: [expenseItem({ description: "reclaimed coffee", amount: 120 })]
+  });
+  assert.ok(reclaimedDraft?.draft?.id);
   let parserCalls = 0;
   const expenseParser = { parse: async () => {
     parserCalls += 1;
@@ -170,7 +187,7 @@ test("Quick Access token status and concurrent request idempotency are durable",
   assert.equal(parserCalls, 1);
   assert.equal(first.draft.id, second.draft.id);
   assert.deepEqual([first.replayed, second.replayed].sort(), [false, true]);
-  assert.equal((await pool.query("SELECT COUNT(*)::int AS count FROM drafts WHERE user_id = $1", [user.id])).rows[0].count, 2);
+  assert.equal((await pool.query("SELECT COUNT(*)::int AS count FROM drafts WHERE user_id = $1", [user.id])).rows[0].count, 3);
   const otherUser = await createSmokeUser(990015);
   assert.equal(await repo.claimShortcutRequest(token.id, otherUser.id, "foreign-request"), null);
   assert.equal(await repo.revokeQuickAccessTokens(user.id), true);

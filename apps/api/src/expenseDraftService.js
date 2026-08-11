@@ -41,9 +41,9 @@ async function createShortcutExpenseDraftOnce({ user, tokenId, clientRequestId, 
   let result;
   try {
     const items = await parseExpenseItems({ user, text, expenseParser });
-    result = await repository.completeShortcutRequest({ tokenId, userId: user.id, clientRequestId, sourceText: text, items });
+    result = await repository.completeShortcutRequest({ tokenId, userId: user.id, clientRequestId, claimVersion: claim.claimVersion, sourceText: text, items });
   } catch (error) {
-    await repository.releaseShortcutRequest(tokenId, user.id, clientRequestId);
+    await repository.releaseShortcutRequest(tokenId, user.id, clientRequestId, claim.claimVersion);
     throw error;
   }
   if (!result) return null;

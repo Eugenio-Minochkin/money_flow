@@ -210,11 +210,16 @@ export function createRepository(pool, options = {}) {
       const token = await pool.query("SELECT id FROM quick_access_tokens WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL", [tokenId, userId]);
       if (!token.rows[0]) return null;
       const claimed = await pool.query(
-        `INSERT INTO quick_access_requests (token_id, client_request_id, status)
-         VALUES ($1, $2, 'processing') ON CONFLICT (token_id, client_request_id) DO NOTHING RETURNING id`,
+        `INSERT INTO quick_access_requests AS requests (token_id, client_request_id, status, claim_version, lease_expires_at)
+         VALUES ($1, $2, 'processing', 1, now() + interval '60 seconds')
+         ON CONFLICT (token_id, client_request_id) DO UPDATE
+           SET claim_version = requests.claim_version + 1,
+               lease_expires_at = now() + interval '60 seconds'
+         WHERE requests.status = 'processing' AND requests.lease_expires_at <= now()
+         RETURNING claim_version`,
         [tokenId, clientRequestId]
       );
-      if (claimed.rows[0]) return { state: "claimed" };
+      if (claimed.rows[0]) return { state: "claimed", claimVersion: claimed.rows[0].claim_version };
       return this.readShortcutRequest(tokenId, userId, clientRequestId);
     },
 
@@ -240,33 +245,42 @@ export function createRepository(pool, options = {}) {
       return null;
     },
 
-    async releaseShortcutRequest(tokenId, userId, clientRequestId) {
+    async releaseShortcutRequest(tokenId, userId, clientRequestId, claimVersion) {
       await pool.query(
         `DELETE FROM quick_access_requests requests USING quick_access_tokens token
          WHERE requests.token_id = token.id AND token.id = $1 AND token.user_id = $2
-           AND requests.client_request_id = $3 AND requests.status = 'processing'`,
-        [tokenId, userId, clientRequestId]
+           AND requests.client_request_id = $3 AND requests.status = 'processing' AND requests.claim_version = $4`,
+        [tokenId, userId, clientRequestId, claimVersion]
       );
     },
 
-    async completeShortcutRequest({ tokenId, userId, clientRequestId, sourceText, items }) {
+    async completeShortcutRequest({ tokenId, userId, clientRequestId, claimVersion, sourceText, items }) {
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
         const token = await client.query("SELECT id FROM quick_access_tokens WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL FOR UPDATE", [tokenId, userId]);
         if (!token.rows[0]) { await client.query("ROLLBACK"); return null; }
         const prior = await client.query(
-          `SELECT requests.status, drafts.* FROM quick_access_requests requests LEFT JOIN drafts ON drafts.id = requests.draft_id
-           WHERE requests.token_id = $1 AND requests.client_request_id = $2 FOR UPDATE`,
+          `SELECT id, status, claim_version, lease_expires_at > now() AS lease_active
+           FROM quick_access_requests
+           WHERE token_id = $1 AND client_request_id = $2 FOR UPDATE`,
           [tokenId, clientRequestId]
         );
-        if (!prior.rows[0] || prior.rows[0].status !== "processing") { await client.query("ROLLBACK"); return null; }
+        if (!prior.rows[0] || prior.rows[0].status !== "processing" || String(prior.rows[0].claim_version) !== String(claimVersion) || !prior.rows[0].lease_active) { await client.query("ROLLBACK"); return null; }
         const status = items.some((item) => item.needs_review) ? "inbox" : "pending";
         const created = await client.query(
           "INSERT INTO drafts (user_id, status, source_text, items) VALUES ($1, $2, $3, $4) RETURNING *",
           [userId, status, sourceText, JSON.stringify(items)]
         );
-        await client.query("UPDATE quick_access_requests SET draft_id = $3, status = 'completed', completed_at = now() WHERE token_id = $1 AND client_request_id = $2 AND status = 'processing'", [tokenId, clientRequestId, created.rows[0].id]);
+        const completed = await client.query(
+          `UPDATE quick_access_requests
+           SET draft_id = $3, status = 'completed', completed_at = now(), lease_expires_at = NULL
+           WHERE token_id = $1 AND client_request_id = $2 AND status = 'processing'
+             AND claim_version = $4 AND lease_expires_at > now()
+           RETURNING id`,
+          [tokenId, clientRequestId, created.rows[0].id, claimVersion]
+        );
+        if (completed.rowCount !== 1) throw new Error("shortcut_claim_lost");
         await client.query("COMMIT");
         return { draft: normalizeDraft(created.rows[0]) };
       } catch (error) {

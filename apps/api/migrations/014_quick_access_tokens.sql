@@ -16,6 +16,8 @@ CREATE TABLE IF NOT EXISTS quick_access_requests (
   client_request_id TEXT NOT NULL,
   draft_id BIGINT REFERENCES drafts(id) ON DELETE CASCADE,
   status TEXT NOT NULL CHECK (status IN ('processing', 'completed')),
+  claim_version BIGINT NOT NULL DEFAULT 0,
+  lease_expires_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   completed_at TIMESTAMPTZ,
   UNIQUE(token_id, client_request_id)
