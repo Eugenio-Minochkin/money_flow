@@ -62,6 +62,7 @@ const draftId = params.get("draftId");
 const percentNumber = new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 });
 const FLIP_SELECTOR = "[data-flip-card]";
 const FLIP_TOGGLE_SELECTOR = "[data-flip-toggle]";
+const TAB_ORDER = ["dashboard", "history", "plan", "settings"];
 const api = createApiClient();
 let dashboardState = null;
 let draftState = null;
@@ -97,29 +98,93 @@ const CURRENCY_MARKS = {
   GEL: `<svg viewBox="0 0 30 20" role="img" aria-label="GEL"><rect width="30" height="20" fill="#fff"/><rect x="13" width="4" height="20" fill="#d52b1e"/><rect y="8" width="30" height="4" fill="#d52b1e"/><g stroke="#d52b1e" stroke-width="1.4"><path d="M6 4v4M4 6h4M24 4v4M22 6h4M6 14v4M4 16h4M24 14v4M22 16h4"/></g></svg>`
 };
 
+function disableTelegramVerticalSwipes() {
+  window.Telegram?.WebApp?.disableVerticalSwipes?.();
+}
+
+function syncFullscreenControlSafeArea() {
+  const webApp = window.Telegram?.WebApp;
+  if (!webApp) return;
+  const isFullscreen = Boolean(webApp.isFullscreen);
+  const contentTop = Number(webApp.contentSafeAreaInset?.top ?? 0);
+  const safeTop = Number(webApp.safeAreaInset?.top ?? 0);
+  const isIOS = webApp.platform === "ios" || /iPad|iPhone|iPod/.test(navigator.userAgent);
+  const iOSControlFallback = safeTop + 52;
+  const desiredTop = isFullscreen && isIOS ? Math.max(contentTop, iOSControlFallback) : contentTop;
+  const extraTop = Math.max(0, desiredTop - contentTop);
+
+  document.body.classList.toggle("is-fullscreen", isFullscreen);
+  document.documentElement.style.setProperty("--tg-fullscreen-control-extra-top", `${extraTop}px`);
+}
+
 if (window.Telegram?.WebApp) {
-  window.Telegram.WebApp.ready();
-  window.Telegram.WebApp.expand();
-  try { window.Telegram.WebApp.requestFullscreen?.(); } catch { /* expand remains the fallback */ }
+  const webApp = window.Telegram.WebApp;
+  webApp.ready();
+  webApp.expand();
+  disableTelegramVerticalSwipes();
+  syncFullscreenControlSafeArea();
+  webApp.onEvent?.("fullscreenChanged", syncFullscreenControlSafeArea);
+  webApp.onEvent?.("safeAreaChanged", syncFullscreenControlSafeArea);
+  webApp.onEvent?.("contentSafeAreaChanged", syncFullscreenControlSafeArea);
+  webApp.onEvent?.("fullscreenChanged", disableTelegramVerticalSwipes);
+  try { webApp.requestFullscreen?.(); } catch { /* expand remains the fallback */ }
 }
 
 const quickEntrySheet = document.querySelector("#quickEntrySheet");
 const quickEntryBackdrop = document.querySelector("#quickEntryBackdrop");
+const quickEntryText = document.querySelector("#quickEntryText");
+const quickEntrySubmit = document.querySelector("#quickEntrySubmit");
+const quickEntryStatus = document.querySelector("#quickEntryStatus");
 document.querySelector("#openQuickEntryButton")?.addEventListener("click", () => {
   quickEntrySheet.classList.remove("hidden"); quickEntryBackdrop.classList.remove("hidden");
-  document.querySelector("#quickEntryText")?.focus();
+  if (quickEntryStatus) quickEntryStatus.textContent = "";
+  quickEntryText?.focus();
   void recordQuickAccessEvent("quick_entry_opened");
 });
-quickEntryBackdrop?.addEventListener("click", () => { closeQuickEntry(); void recordQuickAccessEvent("quick_entry_canceled"); });
+quickEntryBackdrop?.addEventListener("click", () => {
+  if (quickEntrySubmit?.disabled) return;
+  closeQuickEntry();
+  void recordQuickAccessEvent("quick_entry_canceled");
+});
 document.querySelector("#quickEntryForm")?.addEventListener("submit", async (event) => {
   event.preventDefault();
-  const text = document.querySelector("#quickEntryText").value.trim();
+  if (quickEntrySubmit?.disabled) return;
+  const text = quickEntryText?.value.trim();
   if (!text) return;
-  const data = await api("/api/quick-entry", { method: "POST", body: { telegramUserId, text } });
-  closeQuickEntry();
-  await openDraftInline(data.draft.id, { returnTab: "dashboard" });
+  setQuickEntryPending(true);
+  try {
+    const data = await api("/api/quick-entry", { method: "POST", body: { telegramUserId, text } });
+    closeQuickEntry({ force: true });
+    await openDraftInline(data.draft.id, { returnTab: "dashboard" });
+  } catch (error) {
+    quickEntryStatus.textContent = quickEntryErrorMessage(error);
+  } finally {
+    setQuickEntryPending(false);
+  }
 });
-function closeQuickEntry() { quickEntrySheet?.classList.add("hidden"); quickEntryBackdrop?.classList.add("hidden"); }
+function quickEntryErrorMessage(error) {
+  const code = String(error?.body?.error ?? error?.message ?? "");
+  if (code === "amount_not_found") return t("quickEntry.error.amountNotFound");
+  if (/failed to fetch|networkerror|network request failed/i.test(code)) return t("quickEntry.error.network");
+  return t("quickEntry.error.generic");
+}
+
+function setQuickEntryPending(pending) {
+  quickEntrySheet?.setAttribute("aria-busy", String(pending));
+  if (quickEntryText) quickEntryText.disabled = pending;
+  if (quickEntrySubmit) {
+    quickEntrySubmit.disabled = pending;
+    quickEntrySubmit.innerHTML = pending
+      ? `<span class="quick-entry-spinner" aria-hidden="true"></span>${escapeHtml(t("quickEntry.recognizing"))}`
+      : escapeHtml(t("quickEntry.submit"));
+  }
+  if (quickEntryStatus && pending) quickEntryStatus.textContent = t("quickEntry.recognizing");
+}
+function closeQuickEntry({ force = false } = {}) {
+  if (quickEntrySubmit?.disabled && !force) return;
+  quickEntrySheet?.classList.add("hidden");
+  quickEntryBackdrop?.classList.add("hidden");
+}
 
 function recordQuickAccessEvent(eventName) {
   if (!telegramUserId) return Promise.resolve();
@@ -217,6 +282,7 @@ document.querySelector("#createQuickAccessTokenButton")?.addEventListener("click
 document.querySelector("#revokeQuickAccessTokenButton")?.addEventListener("click", revokeQuickAccessToken);
 document.querySelector("#copyQuickAccessTokenButton")?.addEventListener("click", () => navigator.clipboard?.writeText(document.querySelector("#quickAccessTokenValue").value));
 initializeTelegramQuickAccess();
+installTabSwipeNavigation();
 void loadQuickAccessConfig().catch(() => {});
 document.querySelector("#openHistoryInboxButton")?.addEventListener("click", () => switchTab("history"));
 document.querySelector("#openAllHistoryButton")?.addEventListener("click", () => switchTab("history"));
@@ -681,6 +747,43 @@ function switchTab(tab) {
     }
     loadHistory().catch(showError);
   }
+}
+
+function isTabSwipeBlocked() {
+  const bottomTabs = document.querySelector(".bottom-tabs");
+  if (accountDeleted || !bottomTabs || bottomTabs.classList.contains("hidden")) return true;
+  return [...document.querySelectorAll('[role="dialog"], #draftEditorSection, #expenseEditorSection, #plannedForm')]
+    .some((element) => !element.classList.contains("hidden"));
+}
+
+function installTabSwipeNavigation() {
+  let swipeStart = null;
+  document.addEventListener("touchstart", (event) => {
+    swipeStart = null;
+    const touch = event.touches[0];
+    if (!touch || event.touches.length !== 1 || isTabSwipeBlocked()) return;
+    if (touch.clientX < 16 || touch.clientX > window.innerWidth - 16) return;
+    if (event.target.closest("input, textarea, select, button, a, [contenteditable='true']")) return;
+    swipeStart = { x: touch.clientX, y: touch.clientY };
+  }, { passive: true });
+
+  document.addEventListener("touchend", (event) => {
+    const start = swipeStart;
+    swipeStart = null;
+    if (!start || isTabSwipeBlocked()) return;
+    const touch = event.changedTouches[0];
+    const { x, y } = start;
+    if (!touch) return;
+    const deltaX = touch.clientX - x;
+    const deltaY = touch.clientY - y;
+    if (Math.abs(deltaX) < 60 || Math.abs(deltaX) <= Math.abs(deltaY)) return;
+    const currentIndex = TAB_ORDER.findIndex((tab) => !document.querySelector(`#${tab}Tab`)?.classList.contains("hidden"));
+    if (currentIndex < 0) return;
+    const nextIndex = currentIndex + (deltaX < 0 ? 1 : -1);
+    if (nextIndex < 0 || nextIndex >= TAB_ORDER.length) return;
+    switchTab(TAB_ORDER[nextIndex]);
+    window.Telegram?.WebApp?.HapticFeedback?.selectionChanged?.();
+  }, { passive: true });
 }
 
 function renderSnapshot(snapshot) {

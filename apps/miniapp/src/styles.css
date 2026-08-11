@@ -63,6 +63,7 @@ body[data-theme="light"] {
 body {
   margin: 0;
   min-height: 100vh;
+  overscroll-behavior-y: none;
   background: var(--bg);
   color: var(--ink);
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -87,6 +88,9 @@ body {
 .quick-entry-sheet { position: fixed; z-index: 30; inset: auto 0 0; padding: 12px 16px calc(20px + max(0px, var(--tg-content-safe-area-inset-bottom, var(--tg-safe-area-inset-bottom, 0px)))); border-radius: 22px 22px 0 0; background: var(--panel); box-shadow: 0 -10px 30px rgb(0 0 0 / 18%); }
 .quick-entry-sheet textarea { min-height: 96px; width: 100%; resize: vertical; }
 .quick-entry-sheet__handle { width: 42px; height: 4px; margin: 0 auto 14px; border-radius: 9px; background: var(--line); }
+.quick-entry-status { min-height: 1.25em; color: var(--muted); font-size: 13px; font-weight: 700; }
+.quick-entry-spinner { display: inline-block; width: .9em; height: .9em; margin-right: .45em; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; vertical-align: -.1em; animation: quick-entry-spin .7s linear infinite; }
+@keyframes quick-entry-spin { to { transform: rotate(360deg); } }
 
 .eyebrow,
 .expense-meta,
@@ -621,6 +625,10 @@ body[data-theme="dark"] .monthly-forecast {
   position: relative;
   min-height: 154px;
   padding: 20px 16px 18px;
+}
+
+body.is-fullscreen .hero-metric__summary {
+  padding-top: calc(20px + var(--tg-fullscreen-control-extra-top));
 }
 
 .hero-metric__copy {
