@@ -160,6 +160,135 @@ export function createRepository(pool, options = {}) {
       return result.rows[0] ?? null;
     },
 
+    async createQuickAccessToken(userId, tokenHash) {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query("UPDATE quick_access_tokens SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL", [userId]);
+        const result = await client.query(
+          "INSERT INTO quick_access_tokens (user_id, token_hash) VALUES ($1, $2) RETURNING *",
+          [userId, tokenHash]
+        );
+        await client.query("COMMIT");
+        return result.rows[0];
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally { client.release(); }
+    },
+
+    async revokeQuickAccessTokens(userId) {
+      const result = await pool.query(
+        "UPDATE quick_access_tokens SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL RETURNING id",
+        [userId]
+      );
+      return result.rowCount > 0;
+    },
+
+    async getQuickAccessStatus(userId) {
+      const result = await pool.query(
+        `SELECT last_used_at FROM quick_access_tokens
+         WHERE user_id = $1 AND revoked_at IS NULL
+         ORDER BY created_at DESC, id DESC LIMIT 1`,
+        [userId]
+      );
+      const token = result.rows[0] ?? null;
+      return { configured: Boolean(token), lastUsedAt: token?.last_used_at ?? null };
+    },
+
+    async findQuickAccessToken(tokenHash) {
+      const result = await pool.query(
+        `UPDATE quick_access_tokens AS token SET last_used_at = now()
+         FROM users WHERE token.user_id = users.id AND token.token_hash = $1 AND token.revoked_at IS NULL
+         RETURNING token.id AS token_id, users.*`,
+        [tokenHash]
+      );
+      return result.rows[0] ?? null;
+    },
+
+    async claimShortcutRequest(tokenId, userId, clientRequestId) {
+      const token = await pool.query("SELECT id FROM quick_access_tokens WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL", [tokenId, userId]);
+      if (!token.rows[0]) return null;
+      const claimed = await pool.query(
+        `INSERT INTO quick_access_requests AS requests (token_id, client_request_id, status, claim_version, lease_expires_at)
+         VALUES ($1, $2, 'processing', 1, now() + interval '60 seconds')
+         ON CONFLICT (token_id, client_request_id) DO UPDATE
+           SET claim_version = requests.claim_version + 1,
+               lease_expires_at = now() + interval '60 seconds'
+         WHERE requests.status = 'processing' AND requests.lease_expires_at <= now()
+         RETURNING claim_version`,
+        [tokenId, clientRequestId]
+      );
+      if (claimed.rows[0]) return { state: "claimed", claimVersion: claimed.rows[0].claim_version };
+      return this.readShortcutRequest(tokenId, userId, clientRequestId);
+    },
+
+    async readShortcutRequest(tokenId, userId, clientRequestId) {
+      const result = await pool.query(
+        `SELECT requests.status AS request_status, drafts.* FROM quick_access_requests requests
+         JOIN quick_access_tokens token ON token.id = requests.token_id AND token.user_id = $2 AND token.revoked_at IS NULL
+         LEFT JOIN drafts ON drafts.id = requests.draft_id
+         WHERE requests.token_id = $1 AND requests.client_request_id = $3`,
+        [tokenId, userId, clientRequestId]
+      );
+      const row = result.rows[0] ?? null;
+      if (!row) return null;
+      return row.request_status === "completed" ? { state: "completed", draft: normalizeDraft(row) } : { state: "processing" };
+    },
+
+    async waitForShortcutRequest(tokenId, userId, clientRequestId) {
+      for (let attempt = 0; attempt < 1200; attempt += 1) {
+        const result = await this.readShortcutRequest(tokenId, userId, clientRequestId);
+        if (!result || result.state === "completed") return result;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      return null;
+    },
+
+    async releaseShortcutRequest(tokenId, userId, clientRequestId, claimVersion) {
+      await pool.query(
+        `DELETE FROM quick_access_requests requests USING quick_access_tokens token
+         WHERE requests.token_id = token.id AND token.id = $1 AND token.user_id = $2
+           AND requests.client_request_id = $3 AND requests.status = 'processing' AND requests.claim_version = $4`,
+        [tokenId, userId, clientRequestId, claimVersion]
+      );
+    },
+
+    async completeShortcutRequest({ tokenId, userId, clientRequestId, claimVersion, sourceText, items }) {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        const token = await client.query("SELECT id FROM quick_access_tokens WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL FOR UPDATE", [tokenId, userId]);
+        if (!token.rows[0]) { await client.query("ROLLBACK"); return null; }
+        const prior = await client.query(
+          `SELECT id, status, claim_version, lease_expires_at > now() AS lease_active
+           FROM quick_access_requests
+           WHERE token_id = $1 AND client_request_id = $2 FOR UPDATE`,
+          [tokenId, clientRequestId]
+        );
+        if (!prior.rows[0] || prior.rows[0].status !== "processing" || String(prior.rows[0].claim_version) !== String(claimVersion) || !prior.rows[0].lease_active) { await client.query("ROLLBACK"); return null; }
+        const status = items.some((item) => item.needs_review) ? "inbox" : "pending";
+        const created = await client.query(
+          "INSERT INTO drafts (user_id, status, source_text, items) VALUES ($1, $2, $3, $4) RETURNING *",
+          [userId, status, sourceText, JSON.stringify(items)]
+        );
+        const completed = await client.query(
+          `UPDATE quick_access_requests
+           SET draft_id = $3, status = 'completed', completed_at = now(), lease_expires_at = NULL
+           WHERE token_id = $1 AND client_request_id = $2 AND status = 'processing'
+             AND claim_version = $4 AND lease_expires_at > now()
+           RETURNING id`,
+          [tokenId, clientRequestId, created.rows[0].id, claimVersion]
+        );
+        if (completed.rowCount !== 1) throw new Error("shortcut_claim_lost");
+        await client.query("COMMIT");
+        return { draft: normalizeDraft(created.rows[0]) };
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally { client.release(); }
+    },
+
     async requestAccountDeletion(telegramUserId, { source, ttlMinutes = ACCOUNT_DELETION_TTL_MINUTES, now = new Date() } = {}) {
       assertAccountDeletionSource(source);
       const currentNow = normalizeNow(now);

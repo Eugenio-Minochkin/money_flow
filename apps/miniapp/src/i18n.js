@@ -1,5 +1,12 @@
 export const translations = {
   ru: {
+    "quickAccess.configured": "Быстрая запись настроена",
+    "quickAccess.install": "Установить Shortcut",
+    "quickAccess.title": "⚡ Быстрый доступ", "quickAccess.homeTitle": "Добавить Money Flow на экран «Домой»", "quickAccess.homeAdd": "Добавить на экран «Домой»", "quickAccess.homeAdded": "✓ Добавлено на экран «Домой»", "quickAccess.shortcutTitle": "Быстрая запись на iPhone", "quickAccess.shortcutHint": "Создайте ключ для Shortcut Money Flow. Он будет показан один раз.", "quickAccess.createKey": "Создать ключ", "quickAccess.resetKey": "Сбросить ключ", "quickAccess.copyPrompt": "Скопируй этот ключ — после закрытия мы больше его не покажем.", "quickAccess.copyKey": "Скопировать ключ",
+    "quickEntry.title": "Новая трата",
+    "quickEntry.prompt": "Что потратил?",
+    "quickEntry.placeholder": "Например: кофе 120 бат",
+    "quickEntry.submit": "Распознать",
     "actions.add": "Добавить",
     "actions.cancel": "Отменить",
     "actions.close": "Закрыть",
@@ -351,6 +358,13 @@ export const translations = {
     ,"reserve.plannedChangeError": "После этого изменения резерв станет больше свободного бюджета. Сначала уменьшите резерв или измените плановые траты."
   },
   en: {
+    "quickAccess.configured": "Quick entry is configured",
+    "quickAccess.install": "Install Shortcut",
+    "quickAccess.title": "⚡ Quick access", "quickAccess.homeTitle": "Add Money Flow to Home Screen", "quickAccess.homeAdd": "Add to Home Screen", "quickAccess.homeAdded": "✓ Added to Home Screen", "quickAccess.shortcutTitle": "Quick entry on iPhone", "quickAccess.shortcutHint": "Create a key for the Money Flow Shortcut. It is shown once.", "quickAccess.createKey": "Create key", "quickAccess.resetKey": "Reset key", "quickAccess.copyPrompt": "Copy this key — after closing, we will not show it again.", "quickAccess.copyKey": "Copy key",
+    "quickEntry.title": "New expense",
+    "quickEntry.prompt": "What did you spend?",
+    "quickEntry.placeholder": "For example: coffee 120 baht",
+    "quickEntry.submit": "Recognize",
     "actions.add": "Add",
     "actions.cancel": "Cancel",
     "actions.close": "Close",

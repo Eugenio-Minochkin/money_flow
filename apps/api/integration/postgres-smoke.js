@@ -7,6 +7,7 @@ import pg from "pg";
 import { migrate } from "../src/db.js";
 import { normalizePlannedDateKey } from "../src/plannedOccurrenceDates.js";
 import { createRepository } from "../src/repository.js";
+import { createShortcutExpenseDraft } from "../src/expenseDraftService.js";
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -26,7 +27,7 @@ test.before(async () => {
   const applied = await pool.query("SELECT filename FROM schema_migrations ORDER BY filename");
   assert.deepEqual(
     applied.rows.map((row) => row.filename),
-    ["001_initial.sql", "002_draft_confirm_flow.sql", "003_budget_topups.sql", "004_report_deliveries.sql", "005_exchange_rates.sql", "006_feedback.sql", "007_account_deletion.sql", "008_product_analytics.sql", "009_telegram_expense_editor.sql", "010_telegram_editor_prompt_message.sql", "011_planned_expense_disabled_at.sql", "012_planned_expense_starts_on.sql", "013_planned_payment_reminders.sql"]
+    ["001_initial.sql", "002_draft_confirm_flow.sql", "003_budget_topups.sql", "004_report_deliveries.sql", "005_exchange_rates.sql", "006_feedback.sql", "007_account_deletion.sql", "008_product_analytics.sql", "009_telegram_expense_editor.sql", "010_telegram_editor_prompt_message.sql", "011_planned_expense_disabled_at.sql", "012_planned_expense_starts_on.sql", "013_planned_payment_reminders.sql", "014_quick_access_tokens.sql"]
   );
 
   const sessions = await pool.query(`
@@ -140,6 +141,58 @@ test("saves a confirmed draft expense and reads it back", async () => {
   assert.equal(expenses.length, 1);
   assert.equal(expenses[0].description, "coffee");
   assert.deepEqual(expenses[0].tags, ["latte"]);
+});
+
+test("Quick Access token status and concurrent request idempotency are durable", async () => {
+  const user = await createSmokeUser(990014);
+  const token = await repo.createQuickAccessToken(user.id, "smoke-token-hash");
+  assert.deepEqual(await repo.getQuickAccessStatus(user.id), { configured: true, lastUsedAt: null });
+  const firstClaim = await repo.claimShortcutRequest(token.id, user.id, "durable-race-request");
+  const competingClaim = await repo.claimShortcutRequest(token.id, user.id, "durable-race-request");
+  assert.equal(firstClaim.state, "claimed");
+  assert.equal(competingClaim.state, "processing");
+  const created = await repo.completeShortcutRequest({
+    tokenId: token.id, userId: user.id, clientRequestId: "durable-race-request", claimVersion: firstClaim.claimVersion, sourceText: "coffee 120",
+    items: [expenseItem({ description: "durable race coffee", amount: 120 })]
+  });
+  const replay = await repo.waitForShortcutRequest(token.id, user.id, "durable-race-request");
+  assert.equal(replay.state, "completed");
+  assert.equal(replay.draft.id, created.draft.id);
+  const staleClaim = await repo.claimShortcutRequest(token.id, user.id, "stale-claim-request");
+  await pool.query(
+    "UPDATE quick_access_requests SET lease_expires_at = now() - interval '1 second' WHERE token_id = $1 AND client_request_id = $2",
+    [token.id, "stale-claim-request"]
+  );
+  const reclaimedClaim = await repo.claimShortcutRequest(token.id, user.id, "stale-claim-request");
+  assert.equal(reclaimedClaim.state, "claimed");
+  assert.notEqual(reclaimedClaim.claimVersion, staleClaim.claimVersion);
+  assert.equal(await repo.completeShortcutRequest({
+    tokenId: token.id, userId: user.id, clientRequestId: "stale-claim-request", claimVersion: staleClaim.claimVersion, sourceText: "coffee 120",
+    items: [expenseItem({ description: "stale worker coffee", amount: 120 })]
+  }), null);
+  const reclaimedDraft = await repo.completeShortcutRequest({
+    tokenId: token.id, userId: user.id, clientRequestId: "stale-claim-request", claimVersion: reclaimedClaim.claimVersion, sourceText: "coffee 120",
+    items: [expenseItem({ description: "reclaimed coffee", amount: 120 })]
+  });
+  assert.ok(reclaimedDraft?.draft?.id);
+  let parserCalls = 0;
+  const expenseParser = { parse: async () => {
+    parserCalls += 1;
+    return { expenses: [expenseItem({ description: "shortcut coffee", amount: 120 })] };
+  } };
+  const [first, second] = await Promise.all([
+    createShortcutExpenseDraft({ user, tokenId: token.id, clientRequestId: "shortcut-request-1", text: "coffee 120", expenseParser, repository: repo }),
+    createShortcutExpenseDraft({ user, tokenId: token.id, clientRequestId: "shortcut-request-1", text: "coffee 120", expenseParser, repository: repo })
+  ]);
+  assert.equal(parserCalls, 1);
+  assert.equal(first.draft.id, second.draft.id);
+  assert.deepEqual([first.replayed, second.replayed], [false, false]);
+  assert.equal((await pool.query("SELECT COUNT(*)::int AS count FROM drafts WHERE user_id = $1", [user.id])).rows[0].count, 3);
+  const otherUser = await createSmokeUser(990015);
+  assert.equal(await repo.claimShortcutRequest(token.id, otherUser.id, "foreign-request"), null);
+  assert.equal(await repo.revokeQuickAccessTokens(user.id), true);
+  assert.equal(await repo.findQuickAccessToken("smoke-token-hash"), null);
+  assert.deepEqual(await repo.getQuickAccessStatus(user.id), { configured: false, lastUsedAt: null });
 });
 
 test("saves feedback with source metadata", async () => {

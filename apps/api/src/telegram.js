@@ -17,6 +17,7 @@ import { renderAdminRichMessage } from "./adminRichMessage.js";
 import { formatProductStatsSections } from "./productStatsService.js";
 import { formatTechnicalStatsSections } from "./technicalStatsService.js";
 import { createExpenseExportService } from "./expenseExportService.js";
+import { createExpenseDraftFromText, ExpenseTextNotRecognizedError } from "./expenseDraftService.js";
 import { createTelegramJobQueue } from "./telegramJobQueue.js";
 import { renderDraftPreview } from "./draftPreview.js";
 import { formatPlannedPaymentReminder } from "./plannedPaymentReminderService.js";
@@ -591,19 +592,29 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
         promptChars: String(text ?? "").length
       };
       trace.start("llm_parse", llmMetadata);
-      let parsed;
+      let created;
       try {
-        parsed = await expenseParser.parse(text, {
+        created = await createExpenseDraftFromText({
+          user, text, source: "telegram", expenseParser, repository,
+          parserOptions: {
           userId: from.id,
-          defaultCurrency: user.base_currency ?? "THB",
-          timeZone: user.timezone,
           onLlmTrace(metadata) {
             llmMetadata = { ...llmMetadata, ...metadata };
           }
+          }
+          ,onBeforePersist() { trace.start("db_save"); }
+          ,onAfterPersist() { trace.end("db_save"); }
         });
       } catch (error) {
-        processingResult = "parser_failed";
-        await safeRecordAppEvent(repository, user.id, "expense_parse_failed", { inputType });
+        if (error instanceof ExpenseTextNotRecognizedError) {
+          processingResult = "amount_not_found";
+          await safeRecordAppEvent(repository, user.id, "expense_parse_failed", { inputType });
+          return deliverResultMessage({ token, chatId, loaderMessageId: loader.messageId,
+            text: inputType === "voice" && text ? botText(language, "amountNotFoundWithTranscript", { transcript: text }) : botText(language, "amountNotFound"),
+            replyMarkup: null, telegramClient, trace });
+        }
+        processingResult = error.expenseDraftStage === "persist" ? "draft_persist_failed" : "parser_failed";
+        if (error.expenseDraftStage !== "persist") await safeRecordAppEvent(repository, user.id, "expense_parse_failed", { inputType });
         await safeNotifyAdminError(adminAlertService, error, {
           source: "parser",
           operation: "expense_parse",
@@ -613,25 +624,7 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
         throw error;
       }
       trace.end("llm_parse", llmMetadata);
-      if (parsed.expenses.length === 0) {
-        processingResult = "amount_not_found";
-        await safeRecordAppEvent(repository, user.id, "expense_parse_failed", { inputType });
-        return deliverResultMessage({
-          token,
-          chatId,
-          loaderMessageId: loader.messageId,
-          text: inputType === "voice" && text
-            ? botText(language, "amountNotFoundWithTranscript", { transcript: text })
-            : botText(language, "amountNotFound"),
-          replyMarkup: null,
-          telegramClient,
-          trace
-        });
-      }
-
-      trace.start("db_save");
-      const draft = await repository.createDraft(user.id, text, parsed.expenses);
-      trace.end("db_save");
+      const draft = created;
       await safeRecordAppEvent(repository, user.id, "expense_draft_created", { inputType, draftType: "regular" });
       processingResult = "draft_created";
       processingDraftType = "regular";
@@ -639,8 +632,8 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
         token,
         chatId,
         loaderMessageId: loader.messageId,
-        text: await renderDraftPreview({ repository, user, items: parsed.expenses, language }),
-        replyMarkup: draftKeyboard(draft.id, parsed.expenses, miniAppUrl, from.id, language),
+        text: await renderDraftPreview({ repository, user, items: draft.items, language }),
+        replyMarkup: draftKeyboard(draft.id, draft.items, miniAppUrl, from.id, language),
         telegramClient,
         trace
       });

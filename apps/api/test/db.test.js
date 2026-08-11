@@ -29,6 +29,7 @@ test("migration files are listed in lexical order and include the Telegram edito
   assert.ok(files.includes("001_initial.sql"));
   assert.ok(files.includes("002_draft_confirm_flow.sql"));
   assert.ok(files.includes("008_product_analytics.sql"));
+  assert.ok(files.includes("014_quick_access_tokens.sql"));
   assert.ok(files.includes("010_telegram_editor_prompt_message.sql"));
   assert.deepEqual(files, [...files].sort());
 });

@@ -2,18 +2,13 @@
 <html lang="ru">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>Money Flow</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <link rel="stylesheet" href="/styles.css?v=20260711-product-analytics-review-v16" />
   </head>
   <body data-theme="light">
     <main class="shell">
-      <header class="topbar">
-        <div>
-          <p class="eyebrow">Money Flow</p>
-        </div>
-      </header>
 
       <section class="onboarding-state hidden" id="onboardingState">
         <div class="onboarding-state__icon" aria-hidden="true">👋</div>
@@ -305,6 +300,24 @@
           </div>
           <form class="settings-page" id="settingsForm">
             <section class="settings-section">
+              <h3 class="settings-section-title" data-i18n="quickAccess.title">⚡ Quick access</h3>
+              <div class="settings-card" id="quickAccessBlock">
+                <div class="settings-row settings-row--stacked hidden" id="homeScreenBlock">
+                  <strong data-i18n="quickAccess.homeTitle">Add Money Flow to Home Screen</strong>
+                  <button type="button" class="ghost-button" id="addToHomeScreenButton" data-i18n="quickAccess.homeAdd">Add to Home Screen</button>
+                  <p class="settings-hint hidden" id="homeScreenAddedState" data-i18n="quickAccess.homeAdded">✓ Added to Home Screen</p>
+                </div>
+                <div class="settings-row settings-row--stacked">
+                  <strong data-i18n="quickAccess.shortcutTitle">Quick entry on iPhone</strong>
+                  <p class="settings-hint" data-i18n="quickAccess.shortcutHint">Create a key for the Money Flow Shortcut. It is shown once.</p>
+                  <div class="button-row"><button type="button" class="ghost-button" id="createQuickAccessTokenButton" data-i18n="quickAccess.createKey">Create key</button><button type="button" class="ghost-button hidden" id="revokeQuickAccessTokenButton" data-i18n="quickAccess.resetKey">Reset key</button></div>
+                  <div class="hidden" id="quickAccessTokenReveal"><label><span data-i18n="quickAccess.copyPrompt">Copy this key — after closing, we will not show it again.</span><input readonly id="quickAccessTokenValue" /></label><button type="button" class="ghost-button" id="copyQuickAccessTokenButton" data-i18n="quickAccess.copyKey">Copy key</button></div>
+                  <p class="settings-hint hidden" id="quickAccessConfiguredState" data-i18n="quickAccess.configured">Quick entry is configured</p>
+                  <a class="ghost-button hidden" id="installShortcutLink" target="_blank" rel="noopener" data-i18n="quickAccess.install">Install Shortcut</a>
+                </div>
+              </div>
+            </section>
+            <section class="settings-section">
               <h3 class="settings-section-title" data-i18n="settings.sectionBudget">Budget</h3>
               <div class="settings-card">
                 <label class="settings-row">
@@ -475,6 +488,16 @@
       </div>
     </section>
 
+    <button class="quick-entry-fab hidden" id="openQuickEntryButton" type="button" aria-label="Add expense">+</button>
+    <div class="quick-entry-backdrop hidden" id="quickEntryBackdrop"></div>
+    <section class="quick-entry-sheet hidden" id="quickEntrySheet" role="dialog" aria-modal="true" aria-labelledby="quickEntryTitle">
+      <div class="quick-entry-sheet__handle" aria-hidden="true"></div>
+      <h2 id="quickEntryTitle" data-i18n="quickEntry.title">New expense</h2>
+      <form id="quickEntryForm" class="form-stack">
+        <label><span data-i18n="quickEntry.prompt">What did you spend?</span><textarea id="quickEntryText" required placeholder="For example: coffee 120 baht" data-i18n-placeholder="quickEntry.placeholder"></textarea></label>
+        <button type="submit" data-i18n="quickEntry.submit">Recognize</button>
+      </form>
+    </section>
     <nav class="bottom-tabs" aria-label="Sections" data-i18n-aria-label="navigation.sections">
       <button class="tab-button active" type="button" data-tab="dashboard">
         <span class="tab-button__icon" data-nav-icon="dashboard" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m4 11 8-7 8 7v9h-5v-6H9v6H4z"/></svg></span>

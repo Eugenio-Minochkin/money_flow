@@ -573,13 +573,15 @@ test("settings expose lightweight timezone controls", async () => {
   assert.match(html, /data-i18n="settings.timezone"/);
 });
 
-test("settings are grouped into four focused sections with evening reminder", async () => {
+test("settings are grouped into focused sections with quick access and evening reminder", async () => {
   const html = await readFile(join(miniAppRoot, "index.html"), "utf8");
   const settingsStart = html.indexOf('id="settingsTab"');
   const settingsEnd = html.indexOf("</main>", settingsStart);
   const settingsHtml = html.slice(settingsStart, settingsEnd);
 
-  assert.equal((settingsHtml.match(/class="settings-section"/g) ?? []).length, 4);
+  assert.equal((settingsHtml.match(/class="settings-section"/g) ?? []).length, 5);
+  assert.match(settingsHtml, /id="quickAccessBlock"/);
+  assert.match(settingsHtml, /id="createQuickAccessTokenButton"/);
   assert.match(settingsHtml, /data-i18n="settings.sectionBudget"/);
   assert.match(settingsHtml, /data-i18n="settings.sectionCurrencies"/);
   assert.match(settingsHtml, /data-i18n="settings.sectionNotifications"/);
@@ -633,4 +635,15 @@ test("settings exposes expense export actions that send only period", async () =
   assert.match(app, /\/api\/exports\/expenses/);
   assert.match(app, /body:\s*\{\s*period\s*\}/);
   assert.doesNotMatch(app, /body:\s*\{\s*telegramUserId,\s*period\s*\}/);
+});
+
+test("Quick Entry is unavailable during onboarding and Home Screen hides unsupported clients", async () => {
+  const html = await readFile(join(miniAppRoot, "index.html"), "utf8");
+  const app = await readFile(join(miniAppRoot, "app.js"), "utf8");
+  assert.match(html, /class="quick-entry-fab hidden"[^>]*id="openQuickEntryButton"/);
+  const onboarding = app.match(/function renderOnboardingState\(user\)\s*{[^]*?\n}/)?.[0] ?? "";
+  assert.match(onboarding, /#openQuickEntryButton/);
+  assert.match(app, /status === "unsupported"\) return/);
+  assert.match(app, /if \(data\.shortcutConfigured\)/);
+  assert.match(app, /#quickAccessConfiguredState/);
 });
