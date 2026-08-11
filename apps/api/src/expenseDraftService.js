@@ -16,8 +16,13 @@ export async function createExpenseDraftFromText({ user, text, source, expensePa
 }
 
 export async function createShortcutExpenseDraft({ user, tokenId, clientRequestId, text, expenseParser, repository }) {
-  const items = await parseExpenseItems({ user, text, expenseParser });
-  const result = await repository.createShortcutDraft({ tokenId, userId: user.id, clientRequestId, sourceText: text, items });
+  const result = await repository.createShortcutDraft({
+    tokenId,
+    userId: user.id,
+    clientRequestId,
+    sourceText: text,
+    createItems: () => parseExpenseItems({ user, text, expenseParser })
+  });
   if (!result) return null;
   if (!result.replayed) await repository.recordAppEvent?.(user.id, "quick_entry_draft_created", { source: "ios_shortcut" });
   return result;

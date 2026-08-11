@@ -6,6 +6,6 @@ The Shortcut must ask one Apple Import Question for the Quick Access key; do not
 1. Use **Dictate Text** and create a UUID once per run as `clientRequestId`.
 2. `POST /api/shortcut/expenses` with `Authorization: Bearer <key>` and JSON `{ "text": "…", "clientRequestId": "…" }`.
 3. Display the returned draft preview and ask the user to confirm or cancel.
-4. On confirmation, `POST /api/shortcut/drafts/<draftId>/confirm` with the same bearer token.
+4. On confirmation, `POST /api/shortcut/drafts/<draftId>/confirm` with the same bearer token; on Cancel, `POST /api/shortcut/drafts/<draftId>/cancel` with that token.
 
 The same `clientRequestId` must be retained on a network retry. The service accepts ordinary expense text only; it does not process bot commands, budget operations, photos, or server-side audio.

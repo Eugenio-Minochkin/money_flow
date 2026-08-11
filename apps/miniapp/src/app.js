@@ -132,9 +132,12 @@ function initializeTelegramQuickAccess() {
   const block = document.querySelector("#homeScreenBlock");
   const add = document.querySelector("#addToHomeScreenButton");
   const added = document.querySelector("#homeScreenAddedState");
-  block?.classList.remove("hidden");
-  void recordQuickAccessEvent("home_screen_prompted");
-  webApp.checkHomeScreenStatus((status) => { if (status === "added") { add?.classList.add("hidden"); added?.classList.remove("hidden"); } });
+  webApp.checkHomeScreenStatus((status) => {
+    if (status === "unsupported") return;
+    block?.classList.remove("hidden");
+    void recordQuickAccessEvent("home_screen_prompted");
+    if (status === "added") { add?.classList.add("hidden"); added?.classList.remove("hidden"); }
+  });
   add?.addEventListener("click", () => { try { webApp.addToHomeScreen(); } catch { /* optional capability */ } });
   webApp.onEvent?.("homeScreenAdded", () => { add?.classList.add("hidden"); added?.classList.remove("hidden"); void recordQuickAccessEvent("home_screen_added"); });
 }
@@ -157,10 +160,16 @@ async function revokeQuickAccessToken() {
 async function loadQuickAccessConfig() {
   if (!telegramUserId) return;
   const data = await api(`/api/quick-access?telegramUserId=${encodeURIComponent(telegramUserId)}`);
-  if (!data.iosShortcutUrl) return;
-  const link = document.querySelector("#installShortcutLink");
-  link.href = data.iosShortcutUrl;
-  link.classList.remove("hidden");
+  if (data.shortcutConfigured) {
+    document.querySelector("#quickAccessConfiguredState").classList.remove("hidden");
+    document.querySelector("#createQuickAccessTokenButton").classList.add("hidden");
+    document.querySelector("#revokeQuickAccessTokenButton").classList.remove("hidden");
+  }
+  if (data.iosShortcutUrl) {
+    const link = document.querySelector("#installShortcutLink");
+    link.href = data.iosShortcutUrl;
+    link.classList.remove("hidden");
+  }
 }
 
 document.querySelector("#settingsForm").addEventListener("submit", saveSettings);
@@ -283,6 +292,7 @@ async function loadDashboard() {
     renderOnboardingState(data.user);
     return data;
   }
+  document.querySelector("#openQuickEntryButton")?.classList.remove("hidden");
   dashboardState = data;
   setBaseCurrency(data.user?.base_currency ?? data.snapshot?.baseCurrency ?? "THB");
   renderSettings(data.user);
@@ -306,6 +316,7 @@ function renderOnboardingState(user) {
     document.getElementById(id)?.classList.add("hidden");
   }
   document.querySelector(".bottom-tabs")?.classList.add("hidden");
+  document.querySelector("#openQuickEntryButton")?.classList.add("hidden");
   document.querySelector("#onboardingOpenBotButton")?.addEventListener("click", () => {
     window.Telegram?.WebApp?.close();
   }, { once: true });
@@ -1919,6 +1930,7 @@ function renderDeletedState() {
   });
   bottomTabs?.classList.add("hidden");
   bottomTabs?.setAttribute("aria-hidden", "true");
+  document.querySelector("#openQuickEntryButton")?.classList.add("hidden");
   document.querySelectorAll("#settingsForm input, #settingsForm select, #settingsForm button").forEach((control) => {
     control.disabled = true;
   });

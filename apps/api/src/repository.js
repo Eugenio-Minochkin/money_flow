@@ -185,6 +185,17 @@ export function createRepository(pool, options = {}) {
       return result.rowCount > 0;
     },
 
+    async getQuickAccessStatus(userId) {
+      const result = await pool.query(
+        `SELECT last_used_at FROM quick_access_tokens
+         WHERE user_id = $1 AND revoked_at IS NULL
+         ORDER BY created_at DESC, id DESC LIMIT 1`,
+        [userId]
+      );
+      const token = result.rows[0] ?? null;
+      return { configured: Boolean(token), lastUsedAt: token?.last_used_at ?? null };
+    },
+
     async findQuickAccessToken(tokenHash) {
       const result = await pool.query(
         `UPDATE quick_access_tokens AS token SET last_used_at = now()
@@ -195,18 +206,19 @@ export function createRepository(pool, options = {}) {
       return result.rows[0] ?? null;
     },
 
-    async createShortcutDraft({ tokenId, userId, clientRequestId, sourceText, items }) {
+    async createShortcutDraft({ tokenId, userId, clientRequestId, sourceText, createItems }) {
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
+        const token = await client.query("SELECT id FROM quick_access_tokens WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL FOR UPDATE", [tokenId, userId]);
+        if (!token.rows[0]) { await client.query("ROLLBACK"); return null; }
         const prior = await client.query(
           `SELECT drafts.* FROM quick_access_requests requests JOIN drafts ON drafts.id = requests.draft_id
            WHERE requests.token_id = $1 AND requests.client_request_id = $2 FOR UPDATE`,
           [tokenId, clientRequestId]
         );
         if (prior.rows[0]) { await client.query("COMMIT"); return { draft: normalizeDraft(prior.rows[0]), replayed: true }; }
-        const token = await client.query("SELECT id FROM quick_access_tokens WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL FOR UPDATE", [tokenId, userId]);
-        if (!token.rows[0]) { await client.query("ROLLBACK"); return null; }
+        const items = await createItems();
         const status = items.some((item) => item.needs_review) ? "inbox" : "pending";
         const created = await client.query(
           "INSERT INTO drafts (user_id, status, source_text, items) VALUES ($1, $2, $3, $4) RETURNING *",

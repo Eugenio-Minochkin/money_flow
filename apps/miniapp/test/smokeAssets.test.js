@@ -636,3 +636,14 @@ test("settings exposes expense export actions that send only period", async () =
   assert.match(app, /body:\s*\{\s*period\s*\}/);
   assert.doesNotMatch(app, /body:\s*\{\s*telegramUserId,\s*period\s*\}/);
 });
+
+test("Quick Entry is unavailable during onboarding and Home Screen hides unsupported clients", async () => {
+  const html = await readFile(join(miniAppRoot, "index.html"), "utf8");
+  const app = await readFile(join(miniAppRoot, "app.js"), "utf8");
+  assert.match(html, /class="quick-entry-fab hidden"[^>]*id="openQuickEntryButton"/);
+  const onboarding = app.match(/function renderOnboardingState\(user\)\s*{[^]*?\n}/)?.[0] ?? "";
+  assert.match(onboarding, /#openQuickEntryButton/);
+  assert.match(app, /status === "unsupported"\) return/);
+  assert.match(app, /if \(data\.shortcutConfigured\)/);
+  assert.match(app, /#quickAccessConfiguredState/);
+});

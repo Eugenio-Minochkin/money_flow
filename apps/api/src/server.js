@@ -473,7 +473,14 @@ async function route(req, res) {
   if (req.method === "GET" && url.pathname === "/api/quick-access") {
     const auth = apiSecurity.resolveTelegramUserId(req, url);
     if (auth.error) return sendJson(res, 400, { error: auth.error });
-    return sendJson(res, 200, { iosShortcutUrl: config.iosShortcutUrl || null });
+    const user = await repository.getUserByTelegramId(auth.telegramUserId);
+    if (!user) return sendJson(res, 404, { error: "user_not_found" });
+    const status = await repository.getQuickAccessStatus(user.id);
+    return sendJson(res, 200, {
+      iosShortcutUrl: config.iosShortcutUrl || null,
+      shortcutConfigured: status.configured,
+      lastUsedAt: toIsoString(status.lastUsedAt)
+    });
   }
 
   if (req.method === "POST" && url.pathname === "/api/quick-access/events") {
@@ -536,6 +543,20 @@ async function route(req, res) {
       if (error instanceof CategoryRequiredError) return sendJson(res, 422, { error: "category_required" });
       throw error;
     }
+  }
+
+  const shortcutCancelMatch = url.pathname.match(/^\/api\/shortcut\/drafts\/(\d+)\/cancel$/);
+  if (req.method === "POST" && shortcutCancelMatch) {
+    const rawToken = bearerToken(req);
+    if (!rawToken) return sendJson(res, 401, { error: "quick_access_unauthorized" });
+    const user = await repository.findQuickAccessToken(hashQuickAccessToken(rawToken));
+    if (!user) return sendJson(res, 401, { error: "quick_access_unauthorized" });
+    const draftId = Number(shortcutCancelMatch[1]);
+    const draft = await repository.getDraftForTelegramUser(draftId, user.telegram_user_id);
+    if (!draft) return sendJson(res, 404, { error: "draft_not_found" });
+    const result = await repository.cancelDraft(draftId, user.telegram_user_id);
+    await repository.recordAppEvent?.(user.id, "quick_entry_canceled", { source: "ios_shortcut" });
+    return sendJson(res, 200, result);
   }
 
   if (req.method === "GET" && url.pathname === "/api/planned-expenses") {

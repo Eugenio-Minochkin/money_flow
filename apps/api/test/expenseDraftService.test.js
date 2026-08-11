@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createExpenseDraftFromText, ExpenseTextNotRecognizedError } from "../src/expenseDraftService.js";
+import { createExpenseDraftFromText, createShortcutExpenseDraft, ExpenseTextNotRecognizedError } from "../src/expenseDraftService.js";
 
 test("shared expense draft service creates the parser draft and records only safe source metadata", async () => {
   const calls = [];
@@ -30,4 +30,20 @@ test("shared expense draft service rejects parser results without ordinary expen
     }),
     ExpenseTextNotRecognizedError
   );
+});
+
+test("Shortcut replay is returned before the parser is invoked", async () => {
+  let parserCalls = 0;
+  const result = await createShortcutExpenseDraft({
+    user: { id: 7 }, tokenId: 9, clientRequestId: "request-123", text: "coffee 120",
+    expenseParser: { parse: async () => { parserCalls += 1; return { expenses: [] }; } },
+    repository: {
+      createShortcutDraft: async ({ createItems }) => {
+        assert.equal(typeof createItems, "function");
+        return { replayed: true, draft: { id: 42, items: [{ description: "coffee", amount: 120 }] } };
+      }
+    }
+  });
+  assert.equal(parserCalls, 0);
+  assert.equal(result.draft.id, 42);
 });
