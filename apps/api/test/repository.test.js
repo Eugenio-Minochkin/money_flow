@@ -7,6 +7,26 @@ import { createRepository, shouldInvalidateExpenseSnapshot } from "../src/reposi
 import * as repositoryModule from "../src/repository.js";
 import { formatSavedSummary } from "../src/telegramFormat.js";
 
+test("reads a completed Shortcut claim from the request status rather than draft status", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    const query = String(sql);
+    queries.push({ query, params });
+    if (query.startsWith("SELECT id FROM quick_access_tokens")) return { rows: [{ id: 9 }] };
+    if (query.startsWith("INSERT INTO quick_access_requests")) return { rows: [] };
+    if (query.includes("SELECT requests.status AS request_status")) {
+      return { rows: [{ request_status: "completed", status: "pending", id: 42, items: "[]" }] };
+    }
+    return { rows: [] };
+  }));
+
+  const result = await repo.claimShortcutRequest(9, 7, "completed-request");
+
+  assert.equal(result.state, "completed");
+  assert.equal(result.draft.id, 42);
+  assert.match(queries.at(-1).query, /requests\.status AS request_status/);
+});
+
 test("undoes an exact payment for an archived plan despite analytics failure", async () => {
   const queries = [];
   const client = {

@@ -225,7 +225,7 @@ export function createRepository(pool, options = {}) {
 
     async readShortcutRequest(tokenId, userId, clientRequestId) {
       const result = await pool.query(
-        `SELECT requests.status, drafts.* FROM quick_access_requests requests
+        `SELECT requests.status AS request_status, drafts.* FROM quick_access_requests requests
          JOIN quick_access_tokens token ON token.id = requests.token_id AND token.user_id = $2 AND token.revoked_at IS NULL
          LEFT JOIN drafts ON drafts.id = requests.draft_id
          WHERE requests.token_id = $1 AND requests.client_request_id = $3`,
@@ -233,7 +233,7 @@ export function createRepository(pool, options = {}) {
       );
       const row = result.rows[0] ?? null;
       if (!row) return null;
-      return row.status === "completed" ? { state: "completed", draft: normalizeDraft(row) } : { state: "processing" };
+      return row.request_status === "completed" ? { state: "completed", draft: normalizeDraft(row) } : { state: "processing" };
     },
 
     async waitForShortcutRequest(tokenId, userId, clientRequestId) {
