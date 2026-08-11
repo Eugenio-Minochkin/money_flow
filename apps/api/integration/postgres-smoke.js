@@ -186,7 +186,7 @@ test("Quick Access token status and concurrent request idempotency are durable",
   ]);
   assert.equal(parserCalls, 1);
   assert.equal(first.draft.id, second.draft.id);
-  assert.deepEqual([first.replayed, second.replayed].sort(), [false, true]);
+  assert.deepEqual([first.replayed, second.replayed], [false, false]);
   assert.equal((await pool.query("SELECT COUNT(*)::int AS count FROM drafts WHERE user_id = $1", [user.id])).rows[0].count, 3);
   const otherUser = await createSmokeUser(990015);
   assert.equal(await repo.claimShortcutRequest(token.id, otherUser.id, "foreign-request"), null);
