@@ -129,7 +129,7 @@ Run: `npm.cmd test`
 
 Expected: 0 failures.
 
-- [ ] **Step 3: Check the diff and create a draft PR**
+- [x] **Step 3: Check the diff and create a draft PR**
 
 Run: `git diff --check` then create a draft PR into `master`.
 
