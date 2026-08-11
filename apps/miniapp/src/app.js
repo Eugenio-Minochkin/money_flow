@@ -100,6 +100,67 @@ const CURRENCY_MARKS = {
 if (window.Telegram?.WebApp) {
   window.Telegram.WebApp.ready();
   window.Telegram.WebApp.expand();
+  try { window.Telegram.WebApp.requestFullscreen?.(); } catch { /* expand remains the fallback */ }
+}
+
+const quickEntrySheet = document.querySelector("#quickEntrySheet");
+const quickEntryBackdrop = document.querySelector("#quickEntryBackdrop");
+document.querySelector("#openQuickEntryButton")?.addEventListener("click", () => {
+  quickEntrySheet.classList.remove("hidden"); quickEntryBackdrop.classList.remove("hidden");
+  document.querySelector("#quickEntryText")?.focus();
+  void recordQuickAccessEvent("quick_entry_opened");
+});
+quickEntryBackdrop?.addEventListener("click", () => { closeQuickEntry(); void recordQuickAccessEvent("quick_entry_canceled"); });
+document.querySelector("#quickEntryForm")?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const text = document.querySelector("#quickEntryText").value.trim();
+  if (!text) return;
+  const data = await api("/api/quick-entry", { method: "POST", body: { telegramUserId, text } });
+  closeQuickEntry();
+  await openDraftInline(data.draft.id, { returnTab: "dashboard" });
+});
+function closeQuickEntry() { quickEntrySheet?.classList.add("hidden"); quickEntryBackdrop?.classList.add("hidden"); }
+
+function recordQuickAccessEvent(eventName) {
+  if (!telegramUserId) return Promise.resolve();
+  return api("/api/quick-access/events", { method: "POST", body: { telegramUserId, eventName } }).catch(() => {});
+}
+
+function initializeTelegramQuickAccess() {
+  const webApp = window.Telegram?.WebApp;
+  if (!webApp?.checkHomeScreenStatus || !webApp?.addToHomeScreen) return;
+  const block = document.querySelector("#homeScreenBlock");
+  const add = document.querySelector("#addToHomeScreenButton");
+  const added = document.querySelector("#homeScreenAddedState");
+  block?.classList.remove("hidden");
+  void recordQuickAccessEvent("home_screen_prompted");
+  webApp.checkHomeScreenStatus((status) => { if (status === "added") { add?.classList.add("hidden"); added?.classList.remove("hidden"); } });
+  add?.addEventListener("click", () => { try { webApp.addToHomeScreen(); } catch { /* optional capability */ } });
+  webApp.onEvent?.("homeScreenAdded", () => { add?.classList.add("hidden"); added?.classList.remove("hidden"); void recordQuickAccessEvent("home_screen_added"); });
+}
+
+async function createQuickAccessToken() {
+  const data = await api("/api/quick-access-tokens", { method: "POST", body: { telegramUserId } });
+  document.querySelector("#quickAccessTokenValue").value = data.token;
+  document.querySelector("#quickAccessTokenReveal").classList.remove("hidden");
+  document.querySelector("#createQuickAccessTokenButton").classList.add("hidden");
+  document.querySelector("#revokeQuickAccessTokenButton").classList.remove("hidden");
+}
+
+async function revokeQuickAccessToken() {
+  await api("/api/quick-access-tokens", { method: "DELETE", body: { telegramUserId } });
+  document.querySelector("#quickAccessTokenReveal").classList.add("hidden");
+  document.querySelector("#createQuickAccessTokenButton").classList.remove("hidden");
+  document.querySelector("#revokeQuickAccessTokenButton").classList.add("hidden");
+}
+
+async function loadQuickAccessConfig() {
+  if (!telegramUserId) return;
+  const data = await api(`/api/quick-access?telegramUserId=${encodeURIComponent(telegramUserId)}`);
+  if (!data.iosShortcutUrl) return;
+  const link = document.querySelector("#installShortcutLink");
+  link.href = data.iosShortcutUrl;
+  link.classList.remove("hidden");
 }
 
 document.querySelector("#settingsForm").addEventListener("submit", saveSettings);
@@ -143,6 +204,11 @@ document.querySelector("#displayCurrencyInput").addEventListener("change", updat
 document.querySelector("#interfaceLanguageInput").addEventListener("change", (event) => applyLanguage(event.target.value));
 document.querySelector("#interfaceThemeInput").addEventListener("change", (event) => applyTheme(event.target.value));
 document.querySelector("#detectTimezoneButton")?.addEventListener("click", detectTimezone);
+document.querySelector("#createQuickAccessTokenButton")?.addEventListener("click", createQuickAccessToken);
+document.querySelector("#revokeQuickAccessTokenButton")?.addEventListener("click", revokeQuickAccessToken);
+document.querySelector("#copyQuickAccessTokenButton")?.addEventListener("click", () => navigator.clipboard?.writeText(document.querySelector("#quickAccessTokenValue").value));
+initializeTelegramQuickAccess();
+void loadQuickAccessConfig().catch(() => {});
 document.querySelector("#openHistoryInboxButton")?.addEventListener("click", () => switchTab("history"));
 document.querySelector("#openAllHistoryButton")?.addEventListener("click", () => switchTab("history"));
 document.querySelectorAll("[data-export-period]").forEach((button) => {

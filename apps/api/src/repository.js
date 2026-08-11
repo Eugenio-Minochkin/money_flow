@@ -160,6 +160,67 @@ export function createRepository(pool, options = {}) {
       return result.rows[0] ?? null;
     },
 
+    async createQuickAccessToken(userId, tokenHash) {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query("UPDATE quick_access_tokens SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL", [userId]);
+        const result = await client.query(
+          "INSERT INTO quick_access_tokens (user_id, token_hash) VALUES ($1, $2) RETURNING *",
+          [userId, tokenHash]
+        );
+        await client.query("COMMIT");
+        return result.rows[0];
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally { client.release(); }
+    },
+
+    async revokeQuickAccessTokens(userId) {
+      const result = await pool.query(
+        "UPDATE quick_access_tokens SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL RETURNING id",
+        [userId]
+      );
+      return result.rowCount > 0;
+    },
+
+    async findQuickAccessToken(tokenHash) {
+      const result = await pool.query(
+        `UPDATE quick_access_tokens AS token SET last_used_at = now()
+         FROM users WHERE token.user_id = users.id AND token.token_hash = $1 AND token.revoked_at IS NULL
+         RETURNING token.id AS token_id, users.*`,
+        [tokenHash]
+      );
+      return result.rows[0] ?? null;
+    },
+
+    async createShortcutDraft({ tokenId, userId, clientRequestId, sourceText, items }) {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        const prior = await client.query(
+          `SELECT drafts.* FROM quick_access_requests requests JOIN drafts ON drafts.id = requests.draft_id
+           WHERE requests.token_id = $1 AND requests.client_request_id = $2 FOR UPDATE`,
+          [tokenId, clientRequestId]
+        );
+        if (prior.rows[0]) { await client.query("COMMIT"); return { draft: normalizeDraft(prior.rows[0]), replayed: true }; }
+        const token = await client.query("SELECT id FROM quick_access_tokens WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL FOR UPDATE", [tokenId, userId]);
+        if (!token.rows[0]) { await client.query("ROLLBACK"); return null; }
+        const status = items.some((item) => item.needs_review) ? "inbox" : "pending";
+        const created = await client.query(
+          "INSERT INTO drafts (user_id, status, source_text, items) VALUES ($1, $2, $3, $4) RETURNING *",
+          [userId, status, sourceText, JSON.stringify(items)]
+        );
+        await client.query("INSERT INTO quick_access_requests (token_id, client_request_id, draft_id) VALUES ($1, $2, $3)", [tokenId, clientRequestId, created.rows[0].id]);
+        await client.query("COMMIT");
+        return { draft: normalizeDraft(created.rows[0]), replayed: false };
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally { client.release(); }
+    },
+
     async requestAccountDeletion(telegramUserId, { source, ttlMinutes = ACCOUNT_DELETION_TTL_MINUTES, now = new Date() } = {}) {
       assertAccountDeletionSource(source);
       const currentNow = normalizeNow(now);

@@ -13,6 +13,8 @@ import { confirmDraftForApi } from "./draftConfirmation.js";
 import { createExchangeRateProvider } from "./exchangeRates.js";
 import { createExpenseExportService } from "./expenseExportService.js";
 import { createExpenseParser } from "./expenseParser.js";
+import { createExpenseDraftFromText, createShortcutExpenseDraft, ExpenseTextNotRecognizedError } from "./expenseDraftService.js";
+import { createQuickAccessToken, hashQuickAccessToken } from "./quickAccessService.js";
 import { handleHealth } from "./health.js";
 import { createJsonReader, createStaticHandler, sendJson } from "./http.js";
 import { handleDevRoute } from "./devRoutes.js";
@@ -288,6 +290,16 @@ function routePath(req) {
   }
 }
 
+function bearerToken(req) {
+  const value = String(req.headers.authorization ?? "");
+  const match = /^Bearer ([A-Za-z0-9_-]{43,})$/.exec(value);
+  return match?.[1] ?? null;
+}
+
+function isClientRequestId(value) {
+  return typeof value === "string" && /^[A-Za-z0-9_-]{8,128}$/.test(value);
+}
+
 function accountDeletionStatusResponse(result) {
   const response = {
     status: result.status,
@@ -426,6 +438,104 @@ async function route(req, res) {
       status: url.searchParams.get("status") ?? "inbox"
     });
     return sendJson(res, 200, { drafts });
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/quick-entry") {
+    const body = await readJson(req);
+    const auth = apiSecurity.resolveTelegramUserId(req, url, body);
+    if (auth.error) return sendJson(res, 400, { error: auth.error });
+    const user = await repository.getUserByTelegramId(auth.telegramUserId);
+    if (!user) return sendJson(res, 404, { error: "user_not_found" });
+    try {
+      const draft = await createExpenseDraftFromText({
+        user, text: body.text, source: "miniapp", expenseParser, repository
+      });
+      await repository.recordAppEvent?.(user.id, "quick_entry_submitted", { source: "miniapp" });
+      return sendJson(res, 201, { draft });
+    } catch (error) {
+      if (error instanceof ExpenseTextNotRecognizedError) return sendJson(res, 422, { error: error.code });
+      throw error;
+    }
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/quick-access-tokens") {
+    const body = await readJson(req);
+    const auth = apiSecurity.resolveTelegramUserId(req, url, body);
+    if (auth.error) return sendJson(res, 400, { error: auth.error });
+    const user = await repository.getUserByTelegramId(auth.telegramUserId);
+    if (!user) return sendJson(res, 404, { error: "user_not_found" });
+    const { token, tokenHash } = createQuickAccessToken();
+    await repository.createQuickAccessToken(user.id, tokenHash);
+    await repository.recordAppEvent?.(user.id, "quick_access_token_created", {});
+    return sendJson(res, 201, { token });
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/quick-access") {
+    const auth = apiSecurity.resolveTelegramUserId(req, url);
+    if (auth.error) return sendJson(res, 400, { error: auth.error });
+    return sendJson(res, 200, { iosShortcutUrl: config.iosShortcutUrl || null });
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/quick-access/events") {
+    const body = await readJson(req);
+    const auth = apiSecurity.resolveTelegramUserId(req, url, body);
+    if (auth.error) return sendJson(res, 400, { error: auth.error });
+    const user = await repository.getUserByTelegramId(auth.telegramUserId);
+    const eventName = String(body.eventName ?? "");
+    if (!user || !["quick_entry_opened", "quick_entry_canceled", "home_screen_prompted", "home_screen_added"].includes(eventName)) {
+      return sendJson(res, 400, { error: "invalid_quick_access_event" });
+    }
+    await repository.recordAppEvent?.(user.id, eventName, {});
+    return sendJson(res, 204, {});
+  }
+
+  if (req.method === "DELETE" && url.pathname === "/api/quick-access-tokens") {
+    const body = await readJson(req);
+    const auth = apiSecurity.resolveTelegramUserId(req, url, body);
+    if (auth.error) return sendJson(res, 400, { error: auth.error });
+    const user = await repository.getUserByTelegramId(auth.telegramUserId);
+    if (!user) return sendJson(res, 404, { error: "user_not_found" });
+    await repository.revokeQuickAccessTokens(user.id);
+    await repository.recordAppEvent?.(user.id, "quick_access_token_revoked", {});
+    return sendJson(res, 200, { ok: true });
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/shortcut/expenses") {
+    const body = await readJson(req);
+    const rawToken = bearerToken(req);
+    if (!rawToken) return sendJson(res, 401, { error: "quick_access_unauthorized" });
+    const user = await repository.findQuickAccessToken(hashQuickAccessToken(rawToken));
+    if (!user) return sendJson(res, 401, { error: "quick_access_unauthorized" });
+    if (!isClientRequestId(body.clientRequestId)) return sendJson(res, 400, { error: "invalid_client_request_id" });
+    try {
+      const result = await createShortcutExpenseDraft({ user, tokenId: user.token_id, clientRequestId: body.clientRequestId, text: body.text, expenseParser, repository });
+      if (!result) return sendJson(res, 401, { error: "quick_access_unauthorized" });
+      await repository.recordAppEvent?.(user.id, "quick_entry_submitted", { source: "ios_shortcut" });
+      return sendJson(res, result.replayed ? 200 : 201, { draft: result.draft, replayed: result.replayed });
+    } catch (error) {
+      if (error instanceof ExpenseTextNotRecognizedError) return sendJson(res, 422, { error: error.code });
+      throw error;
+    }
+  }
+
+  const shortcutConfirmMatch = url.pathname.match(/^\/api\/shortcut\/drafts\/(\d+)\/confirm$/);
+  if (req.method === "POST" && shortcutConfirmMatch) {
+    const rawToken = bearerToken(req);
+    if (!rawToken) return sendJson(res, 401, { error: "quick_access_unauthorized" });
+    const user = await repository.findQuickAccessToken(hashQuickAccessToken(rawToken));
+    if (!user) return sendJson(res, 401, { error: "quick_access_unauthorized" });
+    const draftId = Number(shortcutConfirmMatch[1]);
+    const draft = await repository.getDraftForTelegramUser(draftId, user.telegram_user_id);
+    if (!draft) return sendJson(res, 404, { error: "draft_not_found" });
+    try {
+      const result = await repository.saveDraftAsExpense(draftId, user.telegram_user_id);
+      await repository.recordAppEvent?.(user.id, "quick_entry_confirmed", { source: "ios_shortcut" });
+      return sendJson(res, 200, result);
+    } catch (error) {
+      if (error instanceof DraftCanceledError) return sendJson(res, 409, { error: "draft_canceled" });
+      if (error instanceof CategoryRequiredError) return sendJson(res, 422, { error: "category_required" });
+      throw error;
+    }
   }
 
   if (req.method === "GET" && url.pathname === "/api/planned-expenses") {

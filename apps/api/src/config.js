@@ -44,6 +44,7 @@ export function buildConfig(env) {
     telegramBotToken: env.TELEGRAM_BOT_TOKEN,
     adminTelegramIds: env.ADMIN_TELEGRAM_IDS ?? "",
     miniAppUrl: env.MINI_APP_URL ?? "http://localhost:3000",
+    iosShortcutUrl: env.IOS_SHORTCUT_URL ?? "",
     defaultMonthlyBudget: Number(env.DEFAULT_MONTHLY_BUDGET ?? 45000),
     openAiApiKey: env.OPENAI_API_KEY,
     openAiModel: env.OPENAI_MODEL ?? "gpt-5-mini",

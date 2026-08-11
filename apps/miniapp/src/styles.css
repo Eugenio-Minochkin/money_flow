@@ -71,7 +71,7 @@ body {
 .shell {
   width: min(100%, 812px);
   margin: 0 auto;
-  padding: 28px 16px 96px;
+  padding: max(12px, var(--tg-content-safe-area-inset-top, var(--tg-safe-area-inset-top, 0px))) 16px calc(96px + max(0px, var(--tg-content-safe-area-inset-bottom, var(--tg-safe-area-inset-bottom, 0px))));
 }
 
 .topbar {
@@ -81,6 +81,12 @@ body {
   gap: 16px;
   margin-bottom: 8px;
 }
+
+.quick-entry-fab { position: fixed; z-index: 21; left: 50%; bottom: calc(62px + max(10px, var(--tg-content-safe-area-inset-bottom, var(--tg-safe-area-inset-bottom, 0px)))); transform: translateX(-50%); width: 52px; height: 52px; border-radius: 50%; border: 0; background: var(--accent, #1677ff); color: white; font-size: 32px; line-height: 1; box-shadow: 0 8px 24px rgb(0 0 0 / 25%); }
+.quick-entry-backdrop { position: fixed; inset: 0; z-index: 29; background: rgb(0 0 0 / 35%); }
+.quick-entry-sheet { position: fixed; z-index: 30; inset: auto 0 0; padding: 12px 16px calc(20px + max(0px, var(--tg-content-safe-area-inset-bottom, var(--tg-safe-area-inset-bottom, 0px)))); border-radius: 22px 22px 0 0; background: var(--panel); box-shadow: 0 -10px 30px rgb(0 0 0 / 18%); }
+.quick-entry-sheet textarea { min-height: 96px; width: 100%; resize: vertical; }
+.quick-entry-sheet__handle { width: 42px; height: 4px; margin: 0 auto 14px; border-radius: 9px; background: var(--line); }
 
 .eyebrow,
 .expense-meta,
@@ -122,7 +128,7 @@ h2 {
   position: fixed;
   left: max(12px, calc((100vw - 812px) / 2 + 16px));
   right: max(12px, calc((100vw - 812px) / 2 + 16px));
-  bottom: max(10px, env(safe-area-inset-bottom));
+  bottom: max(10px, var(--tg-content-safe-area-inset-bottom, var(--tg-safe-area-inset-bottom, env(safe-area-inset-bottom))));
   z-index: 20;
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -2341,7 +2347,7 @@ button:disabled {
   }
 
   .bottom-tabs {
-    bottom: max(8px, env(safe-area-inset-bottom));
+    bottom: max(8px, var(--tg-content-safe-area-inset-bottom, var(--tg-safe-area-inset-bottom, env(safe-area-inset-bottom))));
     gap: 4px;
     padding: 5px;
   }
