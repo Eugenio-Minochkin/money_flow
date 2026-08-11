@@ -34,6 +34,14 @@ import {
 } from "./history.js";
 import { createTranslator } from "./i18n.js";
 import { inboxCountLabel, inboxDraftDescription, inboxDraftTotal, shouldShowInboxOnDashboard, updateFirstInboxItemCategory } from "./inbox.js";
+import {
+  TAB_ORDER,
+  canStartTabPager,
+  createTabPagerGesture,
+  finishTabPagerGesture,
+  moveTabPagerGesture
+} from "./tabPager.js";
+import { applyMiniAppTheme } from "./themeBackground.js";
 import { buildReserveSettingsView } from "./reserveSettings.js";
 import { runPlannedDisable } from "./plannedDisable.js";
 import { paidPlannedPaymentUndoOccurrences, runPlannedPaymentUndo } from "./plannedPaymentUndo.js";
@@ -65,7 +73,6 @@ const draftId = params.get("draftId");
 const percentNumber = new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 });
 const FLIP_SELECTOR = "[data-flip-card]";
 const FLIP_TOGGLE_SELECTOR = "[data-flip-toggle]";
-const TAB_ORDER = ["dashboard", "history", "plan", "settings"];
 const api = createApiClient();
 let dashboardState = null;
 let draftState = null;
@@ -83,6 +90,7 @@ let currentTheme = "light";
 let reserveSettingsExpanded = false;
 let settingsBaseline = "";
 let accountDeleted = false;
+let cancelTabPager = () => {};
 const plannedArchiveState = createPlannedArchiveState();
 
 const deleteAccountStartButton = document.getElementById("deleteAccountStartButton");
@@ -120,6 +128,14 @@ function syncFullscreenControlSafeArea() {
   document.documentElement.style.setProperty("--tg-fullscreen-control-extra-top", `${extraTop}px`);
 }
 
+function syncMiniAppThemeBackground() {
+  currentTheme = applyMiniAppTheme(currentTheme, {
+    documentElement: document.documentElement,
+    body: document.body,
+    webApp: window.Telegram?.WebApp
+  });
+}
+
 if (window.Telegram?.WebApp) {
   const webApp = window.Telegram.WebApp;
   webApp.ready();
@@ -130,8 +146,10 @@ if (window.Telegram?.WebApp) {
   webApp.onEvent?.("safeAreaChanged", syncFullscreenControlSafeArea);
   webApp.onEvent?.("contentSafeAreaChanged", syncFullscreenControlSafeArea);
   webApp.onEvent?.("fullscreenChanged", disableTelegramVerticalSwipes);
+  webApp.onEvent?.("themeChanged", syncMiniAppThemeBackground);
   try { webApp.requestFullscreen?.(); } catch { /* expand remains the fallback */ }
 }
+syncMiniAppThemeBackground();
 
 const quickEntrySheet = document.querySelector("#quickEntrySheet");
 const quickEntryBackdrop = document.querySelector("#quickEntryBackdrop");
@@ -398,8 +416,10 @@ async function loadQuickAccessConfig() {
   const data = await api(`/api/quick-access?telegramUserId=${encodeURIComponent(telegramUserId)}`);
   quickAccessShortcutUrl = data.iosShortcutUrl;
   const setup = document.querySelector("#setupQuickAccessButton");
+  const quickAccessSetupActions = document.querySelector("#quickAccessSetupActions");
+  quickAccessSetupActions?.classList.toggle("hidden", !quickAccessShortcutUrl);
+  document.querySelector("#quickAccessUnavailableState")?.classList.toggle("hidden", Boolean(quickAccessShortcutUrl));
   if (!quickAccessShortcutUrl) {
-    document.querySelector("#quickAccessUnavailableState")?.classList.remove("hidden");
     return;
   }
   if (setup) setup.disabled = false;
@@ -908,8 +928,9 @@ async function loadDraft(id, options = {}) {
   renderDraftEditor(draftState);
 }
 
-function switchTab(tab) {
+function switchTab(tab, { fromPager = false } = {}) {
   if (accountDeleted) return;
+  if (!fromPager) cancelTabPager();
   document.querySelector("#dashboardTab").classList.toggle("hidden", tab !== "dashboard");
   document.querySelector("#planTab").classList.toggle("hidden", tab !== "plan");
   document.querySelector("#historyTab").classList.toggle("hidden", tab !== "history");
@@ -934,32 +955,140 @@ function isTabSwipeBlocked() {
 }
 
 function installTabSwipeNavigation() {
-  let swipeStart = null;
+  const pager = document.querySelector("#tabPager");
+  let gesture = null;
+  let renderedNeighborIndex = null;
+  let animationTimer = null;
+
+  function page(index) {
+    return document.querySelector(`#${TAB_ORDER[index]}Tab`);
+  }
+
+  function currentIndex() {
+    return TAB_ORDER.findIndex((tab) => !document.querySelector(`#${tab}Tab`)?.classList.contains("hidden"));
+  }
+
+  function clearPager(activeIndex) {
+    clearTimeout(animationTimer);
+    animationTimer = null;
+    gesture = null;
+    renderedNeighborIndex = null;
+    pager?.classList.remove("is-dragging", "is-animating");
+    document.body.classList.remove("is-paging");
+    TAB_ORDER.forEach((_, index) => {
+      const tabPage = page(index);
+      tabPage?.classList.remove("is-pager-current", "is-pager-neighbor");
+      tabPage?.style.removeProperty("transform");
+      tabPage?.removeAttribute("aria-hidden");
+      if (activeIndex >= 0) tabPage?.classList.toggle("hidden", index !== activeIndex);
+    });
+  }
+
+  cancelTabPager = () => {
+    const activeTab = document.querySelector("[data-tab].active")?.dataset.tab;
+    clearPager(TAB_ORDER.indexOf(activeTab));
+  };
+
+  function renderGesture(nextGesture) {
+    const activePage = page(nextGesture.currentIndex);
+    if (!activePage) return;
+    pager?.classList.add("is-dragging");
+    document.body.classList.add("is-paging");
+    activePage.classList.add("is-pager-current");
+    activePage.style.transform = `translate3d(${nextGesture.visualDeltaX}px, 0, 0)`;
+
+    if (renderedNeighborIndex != null && renderedNeighborIndex !== nextGesture.neighborIndex) {
+      const oldNeighbor = page(renderedNeighborIndex);
+      oldNeighbor?.classList.add("hidden");
+      oldNeighbor?.classList.remove("is-pager-neighbor");
+      oldNeighbor?.style.removeProperty("transform");
+      oldNeighbor?.removeAttribute("aria-hidden");
+    }
+    renderedNeighborIndex = nextGesture.neighborIndex;
+    if (renderedNeighborIndex == null) return;
+
+    const neighbor = page(renderedNeighborIndex);
+    const offset = renderedNeighborIndex > nextGesture.currentIndex ? nextGesture.width : -nextGesture.width;
+    neighbor?.classList.remove("hidden");
+    neighbor?.classList.add("is-pager-neighbor");
+    neighbor?.setAttribute("aria-hidden", "true");
+    if (neighbor) neighbor.style.transform = `translate3d(${offset + nextGesture.visualDeltaX}px, 0, 0)`;
+  }
+
+  function settleGesture(result) {
+    if (!gesture || gesture.phase !== "dragging") {
+      clearPager(currentIndex());
+      return;
+    }
+    const activePage = page(gesture.currentIndex);
+    const neighbor = gesture.neighborIndex == null ? null : page(gesture.neighborIndex);
+    const commits = result.action === "commit";
+    const direction = gesture.neighborIndex > gesture.currentIndex ? -1 : 1;
+    pager?.classList.remove("is-dragging");
+    pager?.classList.add("is-animating");
+    if (activePage) activePage.style.transform = `translate3d(${commits ? direction * gesture.width : 0}px, 0, 0)`;
+    if (neighbor) {
+      const restingOffset = gesture.neighborIndex > gesture.currentIndex ? gesture.width : -gesture.width;
+      neighbor.style.transform = `translate3d(${commits ? 0 : restingOffset}px, 0, 0)`;
+    }
+    const settledIndex = commits ? result.nextIndex : gesture.currentIndex;
+    animationTimer = setTimeout(() => {
+      clearPager(settledIndex);
+      if (!commits) return;
+      switchTab(TAB_ORDER[result.nextIndex], { fromPager: true });
+      window.Telegram?.WebApp?.HapticFeedback?.selectionChanged?.();
+    }, 240);
+  }
+
   document.addEventListener("touchstart", (event) => {
-    swipeStart = null;
+    if (gesture || animationTimer) return;
     const touch = event.touches[0];
-    if (!touch || event.touches.length !== 1 || isTabSwipeBlocked()) return;
-    if (touch.clientX < 16 || touch.clientX > window.innerWidth - 16) return;
-    if (event.target.closest("input, textarea, select, button, a, [contenteditable='true']")) return;
-    swipeStart = { x: touch.clientX, y: touch.clientY };
+    const activeIndex = currentIndex();
+    if (!touch || !canStartTabPager({
+      blocked: isTabSwipeBlocked(),
+      currentIndex: activeIndex,
+      interactive: Boolean(event.target.closest("input, textarea, select, button, a, [contenteditable='true']")),
+      startX: touch.clientX,
+      touchCount: event.touches.length,
+      viewportWidth: window.innerWidth
+    })) return;
+    gesture = createTabPagerGesture({
+      currentIndex: activeIndex,
+      startX: touch.clientX,
+      startY: touch.clientY,
+      width: pager?.clientWidth || window.innerWidth
+    });
   }, { passive: true });
 
+  document.addEventListener("touchmove", (event) => {
+    if (!gesture) return;
+    const touch = event.touches[0];
+    if (!touch || event.touches.length !== 1 || isTabSwipeBlocked()) {
+      clearPager(currentIndex());
+      return;
+    }
+    gesture = moveTabPagerGesture(gesture, { x: touch.clientX, y: touch.clientY });
+    if (gesture.phase === "cancelled") {
+      clearPager(currentIndex());
+      return;
+    }
+    if (gesture.phase !== "dragging") return;
+    event.preventDefault();
+    renderGesture(gesture);
+  }, { passive: false });
+
   document.addEventListener("touchend", (event) => {
-    const start = swipeStart;
-    swipeStart = null;
-    if (!start || isTabSwipeBlocked()) return;
-    const touch = event.changedTouches[0];
-    const { x, y } = start;
-    if (!touch) return;
-    const deltaX = touch.clientX - x;
-    const deltaY = touch.clientY - y;
-    if (Math.abs(deltaX) < 60 || Math.abs(deltaX) <= Math.abs(deltaY)) return;
-    const currentIndex = TAB_ORDER.findIndex((tab) => !document.querySelector(`#${tab}Tab`)?.classList.contains("hidden"));
-    if (currentIndex < 0) return;
-    const nextIndex = currentIndex + (deltaX < 0 ? 1 : -1);
-    if (nextIndex < 0 || nextIndex >= TAB_ORDER.length) return;
-    switchTab(TAB_ORDER[nextIndex]);
-    window.Telegram?.WebApp?.HapticFeedback?.selectionChanged?.();
+    if (!gesture) return;
+    if (isTabSwipeBlocked()) {
+      clearPager(currentIndex());
+      return;
+    }
+    settleGesture(finishTabPagerGesture(gesture));
+  }, { passive: true });
+
+  document.addEventListener("touchcancel", () => {
+    if (!gesture) return;
+    settleGesture({ action: "snapback", currentIndex: gesture.currentIndex });
   }, { passive: true });
 }
 
@@ -2590,7 +2719,7 @@ function rerenderDashboardLanguageState() {
 
 function applyTheme(theme) {
   currentTheme = theme === "dark" ? "dark" : "light";
-  document.body.dataset.theme = currentTheme;
+  syncMiniAppThemeBackground();
 }
 
 function t(key, values = {}) {

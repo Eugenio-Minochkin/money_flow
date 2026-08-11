@@ -23,7 +23,7 @@ test("Mini App keeps app.js and styles.css cache-busters in sync", async () => {
   assert.ok(appVersion, "index.html should version app.js with a ?v= query");
   assert.ok(cssVersion, "index.html should version styles.css with a ?v= query");
   assert.equal(appVersion, cssVersion, "app.js and styles.css cache-busters must stay in sync");
-  assert.equal(appVersion, "20260811-quick-capture-ux-v1");
+  assert.equal(appVersion, "20260812-mobile-pager-v1");
   assert.notEqual(appVersion, "20260626-dashboard-v12", "app.js must not keep the stale dashboard-v12 cache-buster");
 });
 
@@ -38,8 +38,19 @@ test("fullscreen keeps the hero content below Telegram controls and disables ver
   assert.match(app, /const extraTop = Math\.max\(0, desiredTop - contentTop\);/);
   assert.match(app, /WebApp\?\.disableVerticalSwipes\?\.\(\)/);
   assert.match(app, /webApp\.onEvent\?\.\("fullscreenChanged",\s*disableTelegramVerticalSwipes\)/);
-  assert.match(css, /body\.is-fullscreen\s+\.hero-metric__summary\s*{[^}]*padding-top:\s*calc\(20px \+ var\(--tg-fullscreen-control-extra-top\)\)/s);
+  assert.match(css, /body\.is-fullscreen\s+\.hero-metric__summary\s*{[^}]*min-height:\s*calc\([^;]+\+ var\(--tg-fullscreen-control-extra-top\)\)[^}]*padding-top:\s*calc\(20px \+ var\(--tg-fullscreen-control-extra-top\)\)/s);
   assert.match(css, /body\s*{[^}]*overscroll-behavior-y:\s*none/s);
+});
+
+test("Mini App keeps the root scrolling surface and Telegram background in theme sync", async () => {
+  const app = await readFile(join(miniAppRoot, "app.js"), "utf8");
+  const css = await readFile(join(miniAppRoot, "styles.css"), "utf8");
+
+  assert.match(app, /applyMiniAppTheme\(currentTheme/);
+  assert.match(app, /webApp\.onEvent\?\.\("themeChanged",\s*syncMiniAppThemeBackground\)/);
+  assert.match(css, /html,\s*body\s*{[^}]*background:\s*var\(--bg\)/s);
+  assert.match(css, /html\s*{[^}]*min-height:\s*100%/s);
+  assert.match(css, /body\s*{[^}]*min-height:\s*100dvh/s);
 });
 
 test("Quick Entry stays visible and busy while recognition is pending", async () => {
@@ -98,23 +109,57 @@ test("Shortcut setup copies its key without rendering the raw credential", async
   }
 });
 
-test("horizontal tab swipe uses switchTab without conflicting with forms or sheets", async () => {
+test("interactive tab pager uses transforms without conflicting with forms or sheets", async () => {
+  const html = await readFile(join(miniAppRoot, "index.html"), "utf8");
   const app = await readFile(join(miniAppRoot, "app.js"), "utf8");
+  const css = await readFile(join(miniAppRoot, "styles.css"), "utf8");
 
-  assert.match(app, /const TAB_ORDER = \["dashboard", "history", "plan", "settings"\]/);
+  assert.match(html, /id="tabPager"/);
+  assert.equal((html.match(/class="tab-page(?: hidden)?"/g) ?? []).length, 4);
+  assert.match(app, /from "\.\/tabPager\.js"/);
+  assert.match(app, /let cancelTabPager = \(\) => \{\};/);
+  assert.match(app, /function switchTab\(tab, \{ fromPager = false \} = \{\}\)/);
+  assert.match(app, /if \(!fromPager\) cancelTabPager\(\);/);
   assert.match(app, /function installTabSwipeNavigation\(\)/);
   assert.match(app, /document\.addEventListener\("touchstart",/);
+  assert.match(app, /document\.addEventListener\("touchmove",/);
   assert.match(app, /document\.addEventListener\("touchend",/);
-  assert.match(app, /Math\.abs\(deltaX\) < 60/);
-  assert.match(app, /Math\.abs\(deltaX\) <= Math\.abs\(deltaY\)/);
+  assert.match(app, /event\.preventDefault\(\)/);
+  assert.match(app, /translate3d/);
   assert.match(app, /input, textarea, select/);
   assert.match(app, /isTabSwipeBlocked\(\)/);
   assert.match(app, /accountDeleted \|\| !bottomTabs \|\| bottomTabs\.classList\.contains\("hidden"\)/);
-  assert.match(app, /if \(currentIndex < 0\) return;/);
-  assert.match(app, /swipeStart = null;\s*const touch = event\.touches\[0\]/);
-  assert.match(app, /const start = swipeStart;\s*swipeStart = null;\s*if \(!start \|\| isTabSwipeBlocked\(\)\) return;/);
-  assert.match(app, /switchTab\(TAB_ORDER\[nextIndex\]\)/);
+  assert.match(app, /switchTab\(TAB_ORDER\[result\.nextIndex\], \{ fromPager: true \}\)/);
   assert.match(app, /HapticFeedback\?\.selectionChanged\?\.\(\)/);
+  assert.match(css, /\.tab-page\.is-pager-neighbor\s*{[^}]*position:\s*absolute/s);
+  assert.match(css, /\.tab-pager\s*{[^}]*touch-action:\s*pan-y/s);
+  assert.match(css, /\.tab-pager\.is-animating[^}]*transition:\s*transform/s);
+});
+
+test("hero geometry leaves responsive space before its facts card", async () => {
+  const css = await readFile(join(miniAppRoot, "styles.css"), "utf8");
+
+  assert.match(css, /\.hero-metric__summary\s*{[^}]*min-height:\s*clamp\(/s);
+  assert.match(css, /\.hero-metric__facts\s*{[^}]*margin:\s*0 12px/s);
+  assert.doesNotMatch(css, /\.hero-metric__facts\s*{[^}]*margin:\s*-\d+px/s);
+});
+
+test("future planned row has no orphan top divider", async () => {
+  const css = await readFile(join(miniAppRoot, "styles.css"), "utf8");
+
+  assert.match(css, /#plannedNotice\s*>\s*\.planned-due-row:first-child\s*{[^}]*border-top:\s*0/s);
+});
+
+test("Shortcut unavailable state hides the setup CTA until an install URL exists", async () => {
+  const html = await readFile(join(miniAppRoot, "index.html"), "utf8");
+  const app = await readFile(join(miniAppRoot, "app.js"), "utf8");
+
+  assert.match(html, /class="button-row hidden" id="quickAccessSetupActions"/);
+  assert.match(html, /class="settings-hint" id="quickAccessUnavailableState"/);
+  assert.match(app, /quickAccessSetupActions/);
+  assert.match(app, /classList\.toggle\("hidden",\s*!quickAccessShortcutUrl\)/);
+  assert.equal(translations.ru["quickAccess.installUnavailable"], "Shortcut пока недоступен — готовим установку.");
+  assert.equal(translations.en["quickAccess.installUnavailable"], "Shortcut is not available yet — we’re preparing installation.");
 });
 
 test("Mini App renders onboarding state before dashboard and history", async () => {
@@ -238,7 +283,7 @@ test("app guards data access and disables actions after account deletion", async
   assert.match(app, /async function loadHistory\(\)\s*{\s*if \(accountDeleted\) return;/);
   assert.match(app, /async function saveSettings\(event\)\s*{[^]*?if \(accountDeleted\) return;[^]*?await api\("\/api\/settings"/);
   assert.match(app, /async function requestExpenseExport\(period\)\s*{\s*if \(accountDeleted\) return;/);
-  assert.match(app, /function switchTab\(tab\)\s*{\s*if \(accountDeleted\) return;/);
+  assert.match(app, /function switchTab\(tab, \{ fromPager = false \} = \{\}\)\s*{\s*if \(accountDeleted\) return;/);
   assert.match(app, /function renderDeletedState\(\)[^]*accountDeleted = true;/);
   assert.match(app, /\.bottom-tabs/);
   assert.match(app, /#settingsForm input, #settingsForm select, #settingsForm button/);
@@ -501,7 +546,7 @@ test("dashboard keeps card tooltips and makes the hero an accessible disclosure"
   assert.doesNotMatch(app, /querySelectorAll\("\.dashboard-card\[data-dashboard-card\]"\)/);
   assert.match(css, /\.dashboard-card__flip-inner\s*{/);
   assert.match(css, /\.hero-metric__ribbon\s*{/);
-  assert.match(css, /\.hero-metric__summary\s*{[^}]*position:\s*relative[^}]*min-height:\s*154px/s);
+  assert.match(css, /\.hero-metric__summary\s*{[^}]*position:\s*relative[^}]*min-height:\s*clamp\(/s);
   assert.match(css, /\.hero-metric__facts\s*{[^}]*border-radius:\s*14px[^}]*background:\s*color-mix/s);
   assert.match(css, /\.hero-metric__details-toggle\s*{/);
   assert.match(css, /\.hero-metric__details\[hidden\]\s*{\s*display:\s*none/s);
