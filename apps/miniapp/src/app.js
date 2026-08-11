@@ -110,12 +110,11 @@ function syncFullscreenControlSafeArea() {
   const safeTop = Number(webApp.safeAreaInset?.top ?? 0);
   const isIOS = webApp.platform === "ios" || /iPad|iPhone|iPod/.test(navigator.userAgent);
   const iOSControlFallback = safeTop + 52;
-  const controlTop = isFullscreen && isIOS && contentTop < iOSControlFallback
-    ? iOSControlFallback
-    : contentTop;
+  const desiredTop = isFullscreen && isIOS ? Math.max(contentTop, iOSControlFallback) : contentTop;
+  const extraTop = Math.max(0, desiredTop - contentTop);
 
   document.body.classList.toggle("is-fullscreen", isFullscreen);
-  document.documentElement.style.setProperty("--tg-fullscreen-control-safe-area-top", `${controlTop}px`);
+  document.documentElement.style.setProperty("--tg-fullscreen-control-extra-top", `${extraTop}px`);
 }
 
 if (window.Telegram?.WebApp) {
@@ -125,6 +124,7 @@ if (window.Telegram?.WebApp) {
   disableTelegramVerticalSwipes();
   syncFullscreenControlSafeArea();
   webApp.onEvent?.("fullscreenChanged", syncFullscreenControlSafeArea);
+  webApp.onEvent?.("safeAreaChanged", syncFullscreenControlSafeArea);
   webApp.onEvent?.("contentSafeAreaChanged", syncFullscreenControlSafeArea);
   webApp.onEvent?.("fullscreenChanged", disableTelegramVerticalSwipes);
   try { webApp.requestFullscreen?.(); } catch { /* expand remains the fallback */ }
@@ -157,11 +157,18 @@ document.querySelector("#quickEntryForm")?.addEventListener("submit", async (eve
     closeQuickEntry({ force: true });
     await openDraftInline(data.draft.id, { returnTab: "dashboard" });
   } catch (error) {
-    quickEntryStatus.textContent = error.message;
+    quickEntryStatus.textContent = quickEntryErrorMessage(error);
   } finally {
     setQuickEntryPending(false);
   }
 });
+function quickEntryErrorMessage(error) {
+  const code = String(error?.body?.error ?? error?.message ?? "");
+  if (code === "amount_not_found") return t("quickEntry.error.amountNotFound");
+  if (/failed to fetch|networkerror|network request failed/i.test(code)) return t("quickEntry.error.network");
+  return t("quickEntry.error.generic");
+}
+
 function setQuickEntryPending(pending) {
   quickEntrySheet?.setAttribute("aria-busy", String(pending));
   if (quickEntryText) quickEntryText.disabled = pending;
@@ -743,6 +750,8 @@ function switchTab(tab) {
 }
 
 function isTabSwipeBlocked() {
+  const bottomTabs = document.querySelector(".bottom-tabs");
+  if (accountDeleted || !bottomTabs || bottomTabs.classList.contains("hidden")) return true;
   return [...document.querySelectorAll('[role="dialog"], #draftEditorSection, #expenseEditorSection, #plannedForm')]
     .some((element) => !element.classList.contains("hidden"));
 }
@@ -750,6 +759,7 @@ function isTabSwipeBlocked() {
 function installTabSwipeNavigation() {
   let swipeStart = null;
   document.addEventListener("touchstart", (event) => {
+    swipeStart = null;
     const touch = event.touches[0];
     if (!touch || event.touches.length !== 1 || isTabSwipeBlocked()) return;
     if (touch.clientX < 16 || touch.clientX > window.innerWidth - 16) return;
@@ -758,15 +768,17 @@ function installTabSwipeNavigation() {
   }, { passive: true });
 
   document.addEventListener("touchend", (event) => {
-    if (!swipeStart || isTabSwipeBlocked()) return;
-    const touch = event.changedTouches[0];
-    const { x, y } = swipeStart;
+    const start = swipeStart;
     swipeStart = null;
+    if (!start || isTabSwipeBlocked()) return;
+    const touch = event.changedTouches[0];
+    const { x, y } = start;
     if (!touch) return;
     const deltaX = touch.clientX - x;
     const deltaY = touch.clientY - y;
     if (Math.abs(deltaX) < 60 || Math.abs(deltaX) <= Math.abs(deltaY)) return;
     const currentIndex = TAB_ORDER.findIndex((tab) => !document.querySelector(`#${tab}Tab`)?.classList.contains("hidden"));
+    if (currentIndex < 0) return;
     const nextIndex = currentIndex + (deltaX < 0 ? 1 : -1);
     if (nextIndex < 0 || nextIndex >= TAB_ORDER.length) return;
     switchTab(TAB_ORDER[nextIndex]);

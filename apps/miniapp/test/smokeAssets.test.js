@@ -23,7 +23,7 @@ test("Mini App keeps app.js and styles.css cache-busters in sync", async () => {
   assert.ok(appVersion, "index.html should version app.js with a ?v= query");
   assert.ok(cssVersion, "index.html should version styles.css with a ?v= query");
   assert.equal(appVersion, cssVersion, "app.js and styles.css cache-busters must stay in sync");
-  assert.equal(appVersion, "20260811-mobile-ux-hotfix-v1");
+  assert.equal(appVersion, "20260811-mobile-ux-hotfix-v2");
   assert.notEqual(appVersion, "20260626-dashboard-v12", "app.js must not keep the stale dashboard-v12 cache-buster");
 });
 
@@ -34,9 +34,11 @@ test("fullscreen keeps the hero content below Telegram controls and disables ver
   assert.match(app, /function syncFullscreenControlSafeArea\(\)/);
   assert.match(app, /webApp\.onEvent\?\.\("fullscreenChanged",\s*syncFullscreenControlSafeArea\)/);
   assert.match(app, /webApp\.onEvent\?\.\("contentSafeAreaChanged",\s*syncFullscreenControlSafeArea\)/);
+  assert.match(app, /webApp\.onEvent\?\.\("safeAreaChanged",\s*syncFullscreenControlSafeArea\)/);
+  assert.match(app, /const extraTop = Math\.max\(0, desiredTop - contentTop\);/);
   assert.match(app, /WebApp\?\.disableVerticalSwipes\?\.\(\)/);
   assert.match(app, /webApp\.onEvent\?\.\("fullscreenChanged",\s*disableTelegramVerticalSwipes\)/);
-  assert.match(css, /body\.is-fullscreen\s+\.hero-metric__summary\s*{[^}]*padding-top:\s*calc\(20px \+ var\(--tg-fullscreen-control-safe-area-top\)\)/s);
+  assert.match(css, /body\.is-fullscreen\s+\.hero-metric__summary\s*{[^}]*padding-top:\s*calc\(20px \+ var\(--tg-fullscreen-control-extra-top\)\)/s);
   assert.match(css, /body\s*{[^}]*overscroll-behavior-y:\s*none/s);
 });
 
@@ -48,11 +50,14 @@ test("Quick Entry stays visible and busy while recognition is pending", async ()
   assert.match(html, /id="quickEntrySubmit"/);
   assert.match(app, /function setQuickEntryPending\(pending\)/);
   assert.match(app, /setQuickEntryPending\(true\);[\s\S]*?await api\("\/api\/quick-entry"/);
-  assert.match(app, /catch \(error\)\s*{[\s\S]*?quickEntryStatus\.textContent = error\.message/);
+  assert.match(app, /catch \(error\)\s*{[\s\S]*?quickEntryStatus\.textContent = quickEntryErrorMessage\(error\)/);
   assert.match(app, /finally\s*{\s*setQuickEntryPending\(false\);\s*}/);
   assert.match(app, /if \(quickEntryStatus && pending\) quickEntryStatus\.textContent = t\("quickEntry\.recognizing"\);/);
   for (const language of ["en", "ru"]) {
     assert.equal(typeof translations[language]["quickEntry.recognizing"], "string");
+    assert.equal(typeof translations[language]["quickEntry.error.amountNotFound"], "string");
+    assert.equal(typeof translations[language]["quickEntry.error.network"], "string");
+    assert.equal(typeof translations[language]["quickEntry.error.generic"], "string");
   }
 });
 
@@ -67,6 +72,10 @@ test("horizontal tab swipe uses switchTab without conflicting with forms or shee
   assert.match(app, /Math\.abs\(deltaX\) <= Math\.abs\(deltaY\)/);
   assert.match(app, /input, textarea, select/);
   assert.match(app, /isTabSwipeBlocked\(\)/);
+  assert.match(app, /accountDeleted \|\| !bottomTabs \|\| bottomTabs\.classList\.contains\("hidden"\)/);
+  assert.match(app, /if \(currentIndex < 0\) return;/);
+  assert.match(app, /swipeStart = null;\s*const touch = event\.touches\[0\]/);
+  assert.match(app, /const start = swipeStart;\s*swipeStart = null;\s*if \(!start \|\| isTabSwipeBlocked\(\)\) return;/);
   assert.match(app, /switchTab\(TAB_ORDER\[nextIndex\]\)/);
   assert.match(app, /HapticFeedback\?\.selectionChanged\?\.\(\)/);
 });

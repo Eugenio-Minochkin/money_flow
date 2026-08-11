@@ -628,7 +628,7 @@ body[data-theme="dark"] .monthly-forecast {
 }
 
 body.is-fullscreen .hero-metric__summary {
-  padding-top: calc(20px + var(--tg-fullscreen-control-safe-area-top));
+  padding-top: calc(20px + var(--tg-fullscreen-control-extra-top));
 }
 
 .hero-metric__copy {
