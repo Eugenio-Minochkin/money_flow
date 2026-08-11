@@ -90,6 +90,10 @@ body {
 .quick-entry-sheet__handle { width: 42px; height: 4px; margin: 0 auto 14px; border-radius: 9px; background: var(--line); }
 .quick-entry-status { min-height: 1.25em; color: var(--muted); font-size: 13px; font-weight: 700; }
 .quick-entry-spinner { display: inline-block; width: .9em; height: .9em; margin-right: .45em; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; vertical-align: -.1em; animation: quick-entry-spin .7s linear infinite; }
+.quick-capture-review { display: grid; gap: 12px; }
+.quick-capture-review h3 { margin: 0; font-size: 17px; }
+.quick-capture-review__item { display: grid; gap: 4px; padding: 12px; border: 1px solid var(--line); border-radius: 12px; }
+.quick-capture-review__item > span { color: var(--muted); font-size: 14px; }
 @keyframes quick-entry-spin { to { transform: rotate(360deg); } }
 
 .eyebrow,
@@ -2224,6 +2228,10 @@ button:disabled {
   text-align: center;
   white-space: pre-line;
 }
+
+.toast > span { display: block; margin-top: 3px; color: #c8ebe5; font-size: 13px; }
+.toast > div { display: flex; justify-content: center; gap: 8px; margin-top: 10px; }
+.toast button { min-height: 30px; padding: 4px 10px; border: 1px solid #b9ded8; border-radius: 8px; background: transparent; color: #fff; font: inherit; font-size: 13px; }
 
 .empty,
 .error {

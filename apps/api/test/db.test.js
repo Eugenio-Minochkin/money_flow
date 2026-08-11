@@ -30,8 +30,22 @@ test("migration files are listed in lexical order and include the Telegram edito
   assert.ok(files.includes("002_draft_confirm_flow.sql"));
   assert.ok(files.includes("008_product_analytics.sql"));
   assert.ok(files.includes("014_quick_access_tokens.sql"));
+  assert.ok(files.includes("015_quick_capture_safety.sql"));
+  assert.ok(files.includes("016_quick_access_token_single_active.sql"));
   assert.ok(files.includes("010_telegram_editor_prompt_message.sql"));
   assert.deepEqual(files, [...files].sort());
+});
+
+test("Quick Capture safety migration adds durable claims and inactive prepared keys", async () => {
+  const dir = resolve(dirname(fileURLToPath(import.meta.url)), "..", "migrations");
+  const sql = await readFile(resolve(dir, "015_quick_capture_safety.sql"), "utf8");
+
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS quick_capture_requests/i);
+  assert.match(sql, /UNIQUE\(user_id, client_request_id\)/i);
+  assert.match(sql, /status TEXT NOT NULL CHECK \(status IN \('processing', 'completed'\)\)/i);
+  assert.match(sql, /ADD COLUMN IF NOT EXISTS activated_at TIMESTAMPTZ/i);
+  assert.match(sql, /ADD COLUMN IF NOT EXISTS prepared_expires_at TIMESTAMPTZ/i);
+  assert.match(sql, /SET activated_at = created_at/i);
 });
 
 test("Telegram editor prompt migration adds a nullable prompt message reference", async () => {

@@ -27,6 +27,52 @@ test("reads a completed Shortcut claim from the request status rather than draft
   assert.match(queries.at(-1).query, /requests\.status AS request_status/);
 });
 
+test("prepared Quick Access token does not revoke the active token before activation", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql: String(sql), params });
+    return { rows: [{ id: 12 }] };
+  }));
+
+  await repo.prepareQuickAccessToken(7, "prepared-hash");
+
+  assert.equal(queries.length, 1);
+  assert.match(queries[0].sql, /INSERT INTO quick_access_tokens/);
+  assert.match(queries[0].sql, /prepared_expires_at/);
+  assert.doesNotMatch(queries[0].sql, /revoked_at = now\(\)/);
+});
+
+test("activating a prepared Quick Access token revokes active keys only inside its transaction", async () => {
+  const queries = [];
+  const client = {
+    async query(sql, params = []) {
+      const query = String(sql);
+      queries.push({ sql: query, params });
+      if (query.startsWith("SELECT id FROM users")) return { rows: [{ id: 7 }] };
+      if (query.includes("FROM quick_access_tokens") && query.includes("FOR UPDATE")) {
+        return { rows: [{ id: 12, activated_at: null, revoked_at: null, preparation_valid: true }] };
+      }
+      if (query.startsWith("UPDATE quick_access_tokens SET activated_at")) return { rows: [{ id: 12 }] };
+      return { rows: [] };
+    },
+    release() {}
+  };
+  const repo = createRepository({ async connect() { return client; } });
+
+  const result = await repo.activatePreparedQuickAccessToken(7, 12);
+
+  assert.equal(result.state, "activated");
+  const userLock = queries.findIndex(({ sql }) => sql.startsWith("SELECT id FROM users") && sql.includes("FOR UPDATE"));
+  const preparationLock = queries.findIndex(({ sql }) => sql.includes("FROM quick_access_tokens") && sql.includes("FOR UPDATE"));
+  const revoke = queries.findIndex(({ sql }) => sql.includes("SET revoked_at = now()"));
+  const activate = queries.findIndex(({ sql }) => sql.startsWith("UPDATE quick_access_tokens SET activated_at"));
+  assert.ok(userLock > 0);
+  assert.ok(preparationLock > userLock);
+  assert.ok(revoke > 0);
+  assert.ok(activate > revoke);
+  assert.ok(queries.some(({ sql }) => sql === "COMMIT"));
+});
+
 test("undoes an exact payment for an archived plan despite analytics failure", async () => {
   const queries = [];
   const client = {

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createExpenseDraftFromText, createShortcutExpenseDraft, ExpenseTextNotRecognizedError } from "../src/expenseDraftService.js";
+import { createExpenseDraftFromText, createMiniAppQuickCaptureDraft, createShortcutExpenseDraft, ExpenseTextNotRecognizedError } from "../src/expenseDraftService.js";
 
 test("shared expense draft service creates the parser draft and records only safe source metadata", async () => {
   const calls = [];
@@ -132,6 +132,51 @@ test("Same-process concurrent Shortcut retries share one parser call and draft",
   const second = createShortcutExpenseDraft(input);
   resolveParser();
   const [firstResult, secondResult] = await Promise.all([first, second]);
+  assert.equal(parserCalls, 1);
+  assert.equal(firstResult.draft.id, 44);
+  assert.equal(secondResult.draft.id, 44);
+});
+
+test("Mini App Quick Capture replays a completed user request without parsing another draft", async () => {
+  let parserCalls = 0;
+  const result = await createMiniAppQuickCaptureDraft({
+    user: { id: 7 }, clientRequestId: "miniapp-request-123", text: "coffee 120",
+    expenseParser: { parse: async () => { parserCalls += 1; return { expenses: [] }; } },
+    repository: {
+      claimMiniAppQuickCaptureRequest: async () => ({
+        state: "completed", draft: { id: 42, items: [{ description: "coffee", amount: 120 }] }
+      })
+    }
+  });
+
+  assert.equal(parserCalls, 0);
+  assert.equal(result.replayed, true);
+  assert.equal(result.draft.id, 42);
+});
+
+test("concurrent Mini App Quick Capture retries share one parser call and draft", async () => {
+  let parserCalls = 0;
+  let resolveParser;
+  const parserDone = new Promise((resolve) => { resolveParser = resolve; });
+  const input = {
+    user: { id: 7 }, clientRequestId: "miniapp-request-concurrent", text: "coffee 120",
+    expenseParser: { parse: async () => {
+      parserCalls += 1;
+      await parserDone;
+      return { expenses: [{ description: "coffee", amount: 120 } ] };
+    } },
+    repository: {
+      claimMiniAppQuickCaptureRequest: async () => ({ state: "claimed", claimVersion: 1 }),
+      completeMiniAppQuickCaptureRequest: async ({ items }) => ({ draft: { id: 44, items } }),
+      recordAppEvent: async () => {}
+    }
+  };
+
+  const first = createMiniAppQuickCaptureDraft(input);
+  const second = createMiniAppQuickCaptureDraft(input);
+  resolveParser();
+  const [firstResult, secondResult] = await Promise.all([first, second]);
+
   assert.equal(parserCalls, 1);
   assert.equal(firstResult.draft.id, 44);
   assert.equal(secondResult.draft.id, 44);
