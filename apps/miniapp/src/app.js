@@ -4,6 +4,7 @@ import { currencyOptions } from "./currencies.js";
 import { resolveDraftSaveResponse, classifyConfirmOutcome } from "./draftSave.js";
 import { advanceShortcutSetup } from "./quickAccessSetup.js";
 import { collectQuickCaptureReviewItems, quickCaptureItemNeedsReview } from "./quickCaptureReview.js";
+import { describeQuickCaptureSavedResult } from "./quickCaptureSavedResult.js";
 import { buildDashboardCards, buildHeroMetric, renderBudgetTopupBreakdown, renderDashboardCards } from "./dashboardCards.js";
 import {
   dateTimeLocal,
@@ -217,12 +218,12 @@ function resetQuickEntryView() {
 }
 
 function renderQuickCaptureSaved(expenses) {
-  const expense = expenses?.[0];
+  const result = describeQuickCaptureSavedResult(expenses);
   closeQuickEntry({ force: true });
   resetQuickEntryView();
   if (quickEntryText) quickEntryText.value = "";
-  if (!expense) return;
-  showQuickCaptureToast(expense);
+  if (result.kind === "single") showQuickCaptureToast(result.expense);
+  if (result.kind === "multiple") showToast(t("quickEntry.savedMultiple", { count: result.count }));
   void Promise.allSettled([loadDashboard(), loadHistory()]);
 }
 

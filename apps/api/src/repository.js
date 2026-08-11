@@ -174,6 +174,8 @@ export function createRepository(pool, options = {}) {
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
+        const owner = await client.query("SELECT id FROM users WHERE id = $1 FOR UPDATE", [userId]);
+        if (!owner.rows[0]) { await client.query("ROLLBACK"); return { state: "not_found" }; }
         const prepared = await client.query(
           `SELECT id, activated_at, revoked_at, prepared_expires_at > now() AS preparation_valid
            FROM quick_access_tokens

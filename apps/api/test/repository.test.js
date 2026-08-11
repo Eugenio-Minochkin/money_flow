@@ -48,6 +48,7 @@ test("activating a prepared Quick Access token revokes active keys only inside i
     async query(sql, params = []) {
       const query = String(sql);
       queries.push({ sql: query, params });
+      if (query.startsWith("SELECT id FROM users")) return { rows: [{ id: 7 }] };
       if (query.includes("FROM quick_access_tokens") && query.includes("FOR UPDATE")) {
         return { rows: [{ id: 12, activated_at: null, revoked_at: null, preparation_valid: true }] };
       }
@@ -61,8 +62,12 @@ test("activating a prepared Quick Access token revokes active keys only inside i
   const result = await repo.activatePreparedQuickAccessToken(7, 12);
 
   assert.equal(result.state, "activated");
+  const userLock = queries.findIndex(({ sql }) => sql.startsWith("SELECT id FROM users") && sql.includes("FOR UPDATE"));
+  const preparationLock = queries.findIndex(({ sql }) => sql.includes("FROM quick_access_tokens") && sql.includes("FOR UPDATE"));
   const revoke = queries.findIndex(({ sql }) => sql.includes("SET revoked_at = now()"));
   const activate = queries.findIndex(({ sql }) => sql.startsWith("UPDATE quick_access_tokens SET activated_at"));
+  assert.ok(userLock > 0);
+  assert.ok(preparationLock > userLock);
   assert.ok(revoke > 0);
   assert.ok(activate > revoke);
   assert.ok(queries.some(({ sql }) => sql === "COMMIT"));

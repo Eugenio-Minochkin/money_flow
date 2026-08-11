@@ -28,7 +28,7 @@ test.before(async () => {
   const applied = await pool.query("SELECT filename FROM schema_migrations ORDER BY filename");
   assert.deepEqual(
     applied.rows.map((row) => row.filename),
-    ["001_initial.sql", "002_draft_confirm_flow.sql", "003_budget_topups.sql", "004_report_deliveries.sql", "005_exchange_rates.sql", "006_feedback.sql", "007_account_deletion.sql", "008_product_analytics.sql", "009_telegram_expense_editor.sql", "010_telegram_editor_prompt_message.sql", "011_planned_expense_disabled_at.sql", "012_planned_expense_starts_on.sql", "013_planned_payment_reminders.sql", "014_quick_access_tokens.sql", "015_quick_capture_safety.sql"]
+    ["001_initial.sql", "002_draft_confirm_flow.sql", "003_budget_topups.sql", "004_report_deliveries.sql", "005_exchange_rates.sql", "006_feedback.sql", "007_account_deletion.sql", "008_product_analytics.sql", "009_telegram_expense_editor.sql", "010_telegram_editor_prompt_message.sql", "011_planned_expense_disabled_at.sql", "012_planned_expense_starts_on.sql", "013_planned_payment_reminders.sql", "014_quick_access_tokens.sql", "015_quick_capture_safety.sql", "016_quick_access_token_single_active.sql"]
   );
 
   const sessions = await pool.query(`
@@ -199,6 +199,29 @@ test("Quick Access token status and concurrent request idempotency are durable",
   assert.equal(await repo.revokeQuickAccessTokens(user.id), true);
   assert.equal(await repo.findQuickAccessToken("smoke-token-hash"), null);
   assert.deepEqual(await repo.getQuickAccessStatus(user.id), { configured: false, lastUsedAt: null });
+});
+
+test("concurrent Quick Access activations leave only the final key active", async () => {
+  const user = await createSmokeUser(990017);
+  const first = await repo.prepareQuickAccessToken(user.id, "concurrent-first-token-hash");
+  const second = await repo.prepareQuickAccessToken(user.id, "concurrent-second-token-hash");
+
+  const results = await Promise.all([
+    repo.activatePreparedQuickAccessToken(user.id, first.id),
+    repo.activatePreparedQuickAccessToken(user.id, second.id)
+  ]);
+  assert.deepEqual(results.map((result) => result.state).sort(), ["activated", "activated"]);
+  const active = await pool.query(
+    `SELECT id, token_hash FROM quick_access_tokens
+     WHERE user_id = $1 AND activated_at IS NOT NULL AND revoked_at IS NULL`,
+    [user.id]
+  );
+  assert.equal(active.rowCount, 1);
+  assert.ok(await repo.findQuickAccessToken(active.rows[0].token_hash));
+  const inactiveHash = active.rows[0].token_hash === "concurrent-first-token-hash"
+    ? "concurrent-second-token-hash"
+    : "concurrent-first-token-hash";
+  assert.equal(await repo.findQuickAccessToken(inactiveHash), null);
 });
 
 test("Mini App Quick Capture keeps one durable draft and expense across concurrent replays", async () => {

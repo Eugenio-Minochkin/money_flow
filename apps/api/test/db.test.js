@@ -31,6 +31,7 @@ test("migration files are listed in lexical order and include the Telegram edito
   assert.ok(files.includes("008_product_analytics.sql"));
   assert.ok(files.includes("014_quick_access_tokens.sql"));
   assert.ok(files.includes("015_quick_capture_safety.sql"));
+  assert.ok(files.includes("016_quick_access_token_single_active.sql"));
   assert.ok(files.includes("010_telegram_editor_prompt_message.sql"));
   assert.deepEqual(files, [...files].sort());
 });
