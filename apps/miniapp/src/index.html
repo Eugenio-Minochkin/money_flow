@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>Money Flow</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/styles.css?v=20260711-product-analytics-review-v16" />
+    <link rel="stylesheet" href="/styles.css?v=20260811-mobile-ux-hotfix-v1" />
   </head>
   <body data-theme="light">
     <main class="shell">
@@ -495,7 +495,8 @@
       <h2 id="quickEntryTitle" data-i18n="quickEntry.title">New expense</h2>
       <form id="quickEntryForm" class="form-stack">
         <label><span data-i18n="quickEntry.prompt">What did you spend?</span><textarea id="quickEntryText" required placeholder="For example: coffee 120 baht" data-i18n-placeholder="quickEntry.placeholder"></textarea></label>
-        <button type="submit" data-i18n="quickEntry.submit">Recognize</button>
+        <p class="quick-entry-status" id="quickEntryStatus" aria-live="polite"></p>
+        <button type="submit" id="quickEntrySubmit" data-i18n="quickEntry.submit">Recognize</button>
       </form>
     </section>
     <nav class="bottom-tabs" aria-label="Sections" data-i18n-aria-label="navigation.sections">
@@ -518,6 +519,6 @@
     </nav>
 
     <div class="toast hidden" id="toast" role="status" aria-live="polite"></div>
-    <script src="/app.js?v=20260711-product-analytics-review-v16" type="module"></script>
+    <script src="/app.js?v=20260811-mobile-ux-hotfix-v1" type="module"></script>
   </body>
 </html>
