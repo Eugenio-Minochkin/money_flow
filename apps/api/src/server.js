@@ -13,7 +13,7 @@ import { confirmDraftForApi } from "./draftConfirmation.js";
 import { createExchangeRateProvider } from "./exchangeRates.js";
 import { createExpenseExportService } from "./expenseExportService.js";
 import { createExpenseParser } from "./expenseParser.js";
-import { createExpenseDraftFromText, createShortcutExpenseDraft, ExpenseTextNotRecognizedError } from "./expenseDraftService.js";
+import { createExpenseDraftFromText, createShortcutExpenseDraft, ExpenseTextNotRecognizedError, ShortcutRequestInProgressError } from "./expenseDraftService.js";
 import { createQuickAccessToken, hashQuickAccessToken } from "./quickAccessService.js";
 import { handleHealth } from "./health.js";
 import { createJsonReader, createStaticHandler, sendJson } from "./http.js";
@@ -454,6 +454,7 @@ async function route(req, res) {
       return sendJson(res, 201, { draft });
     } catch (error) {
       if (error instanceof ExpenseTextNotRecognizedError) return sendJson(res, 422, { error: error.code });
+      if (error instanceof ShortcutRequestInProgressError) return sendJson(res, 409, { error: error.code });
       throw error;
     }
   }

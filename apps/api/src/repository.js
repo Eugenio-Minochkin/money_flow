@@ -206,27 +206,69 @@ export function createRepository(pool, options = {}) {
       return result.rows[0] ?? null;
     },
 
-    async createShortcutDraft({ tokenId, userId, clientRequestId, sourceText, createItems }) {
+    async claimShortcutRequest(tokenId, userId, clientRequestId) {
+      const token = await pool.query("SELECT id FROM quick_access_tokens WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL", [tokenId, userId]);
+      if (!token.rows[0]) return null;
+      const claimed = await pool.query(
+        `INSERT INTO quick_access_requests (token_id, client_request_id, status)
+         VALUES ($1, $2, 'processing') ON CONFLICT (token_id, client_request_id) DO NOTHING RETURNING id`,
+        [tokenId, clientRequestId]
+      );
+      if (claimed.rows[0]) return { state: "claimed" };
+      return this.readShortcutRequest(tokenId, userId, clientRequestId);
+    },
+
+    async readShortcutRequest(tokenId, userId, clientRequestId) {
+      const result = await pool.query(
+        `SELECT requests.status, drafts.* FROM quick_access_requests requests
+         JOIN quick_access_tokens token ON token.id = requests.token_id AND token.user_id = $2 AND token.revoked_at IS NULL
+         LEFT JOIN drafts ON drafts.id = requests.draft_id
+         WHERE requests.token_id = $1 AND requests.client_request_id = $3`,
+        [tokenId, userId, clientRequestId]
+      );
+      const row = result.rows[0] ?? null;
+      if (!row) return null;
+      return row.status === "completed" ? { state: "completed", draft: normalizeDraft(row) } : { state: "processing" };
+    },
+
+    async waitForShortcutRequest(tokenId, userId, clientRequestId) {
+      for (let attempt = 0; attempt < 1200; attempt += 1) {
+        const result = await this.readShortcutRequest(tokenId, userId, clientRequestId);
+        if (!result || result.state === "completed") return result;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      return null;
+    },
+
+    async releaseShortcutRequest(tokenId, userId, clientRequestId) {
+      await pool.query(
+        `DELETE FROM quick_access_requests requests USING quick_access_tokens token
+         WHERE requests.token_id = token.id AND token.id = $1 AND token.user_id = $2
+           AND requests.client_request_id = $3 AND requests.status = 'processing'`,
+        [tokenId, userId, clientRequestId]
+      );
+    },
+
+    async completeShortcutRequest({ tokenId, userId, clientRequestId, sourceText, items }) {
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
         const token = await client.query("SELECT id FROM quick_access_tokens WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL FOR UPDATE", [tokenId, userId]);
         if (!token.rows[0]) { await client.query("ROLLBACK"); return null; }
         const prior = await client.query(
-          `SELECT drafts.* FROM quick_access_requests requests JOIN drafts ON drafts.id = requests.draft_id
+          `SELECT requests.status, drafts.* FROM quick_access_requests requests LEFT JOIN drafts ON drafts.id = requests.draft_id
            WHERE requests.token_id = $1 AND requests.client_request_id = $2 FOR UPDATE`,
           [tokenId, clientRequestId]
         );
-        if (prior.rows[0]) { await client.query("COMMIT"); return { draft: normalizeDraft(prior.rows[0]), replayed: true }; }
-        const items = await createItems();
+        if (!prior.rows[0] || prior.rows[0].status !== "processing") { await client.query("ROLLBACK"); return null; }
         const status = items.some((item) => item.needs_review) ? "inbox" : "pending";
         const created = await client.query(
           "INSERT INTO drafts (user_id, status, source_text, items) VALUES ($1, $2, $3, $4) RETURNING *",
           [userId, status, sourceText, JSON.stringify(items)]
         );
-        await client.query("INSERT INTO quick_access_requests (token_id, client_request_id, draft_id) VALUES ($1, $2, $3)", [tokenId, clientRequestId, created.rows[0].id]);
+        await client.query("UPDATE quick_access_requests SET draft_id = $3, status = 'completed', completed_at = now() WHERE token_id = $1 AND client_request_id = $2 AND status = 'processing'", [tokenId, clientRequestId, created.rows[0].id]);
         await client.query("COMMIT");
-        return { draft: normalizeDraft(created.rows[0]), replayed: false };
+        return { draft: normalizeDraft(created.rows[0]) };
       } catch (error) {
         await client.query("ROLLBACK");
         throw error;

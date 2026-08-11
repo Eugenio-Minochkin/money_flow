@@ -14,7 +14,9 @@ CREATE TABLE IF NOT EXISTS quick_access_requests (
   id BIGSERIAL PRIMARY KEY,
   token_id BIGINT NOT NULL REFERENCES quick_access_tokens(id) ON DELETE CASCADE,
   client_request_id TEXT NOT NULL,
-  draft_id BIGINT NOT NULL REFERENCES drafts(id) ON DELETE CASCADE,
+  draft_id BIGINT REFERENCES drafts(id) ON DELETE CASCADE,
+  status TEXT NOT NULL CHECK (status IN ('processing', 'completed')),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  completed_at TIMESTAMPTZ,
   UNIQUE(token_id, client_request_id)
 );

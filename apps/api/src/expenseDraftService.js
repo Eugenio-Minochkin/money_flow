@@ -5,6 +5,12 @@ export class ExpenseTextNotRecognizedError extends Error {
   }
 }
 
+export class ShortcutRequestInProgressError extends Error {
+  constructor() { super("shortcut_request_in_progress"); this.code = "shortcut_request_in_progress"; }
+}
+
+const shortcutInFlight = new Map();
+
 export async function createExpenseDraftFromText({ user, text, source, expenseParser, repository, parserOptions = {}, onBeforePersist, onAfterPersist }) {
   const items = await parseExpenseItems({ user, text, expenseParser, parserOptions });
   onBeforePersist?.();
@@ -16,16 +22,33 @@ export async function createExpenseDraftFromText({ user, text, source, expensePa
 }
 
 export async function createShortcutExpenseDraft({ user, tokenId, clientRequestId, text, expenseParser, repository }) {
-  const result = await repository.createShortcutDraft({
-    tokenId,
-    userId: user.id,
-    clientRequestId,
-    sourceText: text,
-    createItems: () => parseExpenseItems({ user, text, expenseParser })
-  });
+  const key = `${tokenId}:${clientRequestId}`;
+  if (shortcutInFlight.has(key)) return shortcutInFlight.get(key);
+  const operation = createShortcutExpenseDraftOnce({ user, tokenId, clientRequestId, text, expenseParser, repository });
+  shortcutInFlight.set(key, operation);
+  try { return await operation; } finally { shortcutInFlight.delete(key); }
+}
+
+async function createShortcutExpenseDraftOnce({ user, tokenId, clientRequestId, text, expenseParser, repository }) {
+  const claim = await repository.claimShortcutRequest(tokenId, user.id, clientRequestId);
+  if (!claim) return null;
+  if (claim.state === "completed") return { draft: claim.draft, replayed: true };
+  if (claim.state === "processing") {
+    const completed = await repository.waitForShortcutRequest(tokenId, user.id, clientRequestId);
+    if (!completed) throw new ShortcutRequestInProgressError();
+    return { draft: completed.draft, replayed: true };
+  }
+  let result;
+  try {
+    const items = await parseExpenseItems({ user, text, expenseParser });
+    result = await repository.completeShortcutRequest({ tokenId, userId: user.id, clientRequestId, sourceText: text, items });
+  } catch (error) {
+    await repository.releaseShortcutRequest(tokenId, user.id, clientRequestId);
+    throw error;
+  }
   if (!result) return null;
-  if (!result.replayed) await repository.recordAppEvent?.(user.id, "quick_entry_draft_created", { source: "ios_shortcut" });
-  return result;
+  await repository.recordAppEvent?.(user.id, "quick_entry_draft_created", { source: "ios_shortcut" });
+  return { draft: result.draft, replayed: false };
 }
 
 async function parseExpenseItems({ user, text, expenseParser, parserOptions = {} }) {

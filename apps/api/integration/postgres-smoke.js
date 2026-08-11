@@ -7,6 +7,7 @@ import pg from "pg";
 import { migrate } from "../src/db.js";
 import { normalizePlannedDateKey } from "../src/plannedOccurrenceDates.js";
 import { createRepository } from "../src/repository.js";
+import { createShortcutExpenseDraft } from "../src/expenseDraftService.js";
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -146,27 +147,32 @@ test("Quick Access token status and concurrent request idempotency are durable",
   const user = await createSmokeUser(990014);
   const token = await repo.createQuickAccessToken(user.id, "smoke-token-hash");
   assert.deepEqual(await repo.getQuickAccessStatus(user.id), { configured: true, lastUsedAt: null });
+  const firstClaim = await repo.claimShortcutRequest(token.id, user.id, "durable-race-request");
+  const competingClaim = await repo.claimShortcutRequest(token.id, user.id, "durable-race-request");
+  assert.equal(firstClaim.state, "claimed");
+  assert.equal(competingClaim.state, "processing");
+  const created = await repo.completeShortcutRequest({
+    tokenId: token.id, userId: user.id, clientRequestId: "durable-race-request", sourceText: "coffee 120",
+    items: [expenseItem({ description: "durable race coffee", amount: 120 })]
+  });
+  const replay = await repo.waitForShortcutRequest(token.id, user.id, "durable-race-request");
+  assert.equal(replay.state, "completed");
+  assert.equal(replay.draft.id, created.draft.id);
   let parserCalls = 0;
-  const createItems = async () => {
+  const expenseParser = { parse: async () => {
     parserCalls += 1;
-    return [expenseItem({ description: "shortcut coffee", amount: 120 })];
-  };
+    return { expenses: [expenseItem({ description: "shortcut coffee", amount: 120 })] };
+  } };
   const [first, second] = await Promise.all([
-    repo.createShortcutDraft({ tokenId: token.id, userId: user.id, clientRequestId: "shortcut-request-1", sourceText: "coffee 120", createItems }),
-    repo.createShortcutDraft({ tokenId: token.id, userId: user.id, clientRequestId: "shortcut-request-1", sourceText: "coffee 120", createItems })
+    createShortcutExpenseDraft({ user, tokenId: token.id, clientRequestId: "shortcut-request-1", text: "coffee 120", expenseParser, repository: repo }),
+    createShortcutExpenseDraft({ user, tokenId: token.id, clientRequestId: "shortcut-request-1", text: "coffee 120", expenseParser, repository: repo })
   ]);
   assert.equal(parserCalls, 1);
   assert.equal(first.draft.id, second.draft.id);
   assert.deepEqual([first.replayed, second.replayed].sort(), [false, true]);
-  assert.equal((await pool.query("SELECT COUNT(*)::int AS count FROM drafts WHERE user_id = $1", [user.id])).rows[0].count, 1);
+  assert.equal((await pool.query("SELECT COUNT(*)::int AS count FROM drafts WHERE user_id = $1", [user.id])).rows[0].count, 2);
   const otherUser = await createSmokeUser(990015);
-  assert.equal(await repo.createShortcutDraft({
-    tokenId: token.id,
-    userId: otherUser.id,
-    clientRequestId: "foreign-request",
-    sourceText: "coffee 120",
-    createItems
-  }), null);
+  assert.equal(await repo.claimShortcutRequest(token.id, otherUser.id, "foreign-request"), null);
   assert.equal(await repo.revokeQuickAccessTokens(user.id), true);
   assert.equal(await repo.findQuickAccessToken("smoke-token-hash"), null);
   assert.deepEqual(await repo.getQuickAccessStatus(user.id), { configured: false, lastUsedAt: null });
