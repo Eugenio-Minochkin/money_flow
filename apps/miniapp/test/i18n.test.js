@@ -130,6 +130,26 @@ test("planned archive and recreate UX keys stay in parity for Russian and Englis
   }
 });
 
+test("plan and reserve explanation keys stay in parity for Russian and English", () => {
+  const keys = [
+    "plan.summaryTitle",
+    "plan.infoLabel",
+    "plan.infoPlannedTitle",
+    "plan.infoPlannedBody",
+    "plan.infoReserveTitle",
+    "plan.infoReserveBody",
+    "plan.moreActions",
+    "reserve.notSet",
+    "reserve.explanation",
+    "reserve.thisMonth",
+    "reserve.everyMonth"
+  ];
+
+  for (const language of ["ru", "en"]) {
+    for (const key of keys) assert.equal(typeof translations[language][key], "string", `${language}.${key}`);
+  }
+});
+
 test("settings translations cover interface themes", () => {
   assert.equal(createTranslator("ru")("settings.interfaceTheme"), "Тема интерфейса");
   assert.equal(createTranslator("ru")("settings.themeDark"), "Темная");

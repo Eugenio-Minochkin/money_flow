@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>Money Flow</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/styles.css?v=20260812-history-ux-v1" />
+    <link rel="stylesheet" href="/styles.css?v=20260812-plan-reserve-v1" />
   </head>
   <body data-theme="light">
     <main class="shell">
@@ -197,23 +197,37 @@
           <div class="section-heading planned-header planned-header--compact">
             <div class="planned-header__top">
               <div class="planned-header__title">
-                <h2 data-i18n="plan.plannedExpenses">Плановые траты</h2>
-                <span class="eyebrow" data-i18n="plan.budgetReserve">Резерв месяца</span>
+                <div class="planned-header__heading-row">
+                  <h2 data-i18n="screen.plan">План</h2>
+                  <details class="plan-info-disclosure">
+                    <summary data-i18n-aria-label="plan.infoLabel" aria-label="О плане">ⓘ</summary>
+                    <div class="plan-info-disclosure__body">
+                      <strong data-i18n="plan.infoPlannedTitle">Плановые оплаты</strong>
+                      <p data-i18n="plan.infoPlannedBody">Регулярные или разовые платежи, которые предстоит оплатить. Money Flow заранее учитывает их при расчёте доступных денег.</p>
+                      <strong data-i18n="plan.infoReserveTitle">Резерв бюджета</strong>
+                      <p data-i18n="plan.infoReserveBody">Деньги, которые вы хотите сохранить. Это не расход, но резерв уменьшает сумму, доступную для трат.</p>
+                    </div>
+                  </details>
+                </div>
               </div>
-              <button type="button" id="togglePlannedForm" data-i18n="plan.addPlanned">+ Добавить</button>
-            </div>
-
-            <div class="planned-header__summary">
-              <strong id="plannedReserveTotal">...</strong>
-              <div class="planned-summary-rows" id="plannedReservePaidRemaining"></div>
+              <button type="button" id="togglePlannedForm" data-i18n="plan.addPlanned">+ Плановая</button>
             </div>
           </div>
+          <section class="planned-summary-card" aria-labelledby="plannedSummaryTitle">
+            <span class="eyebrow" id="plannedSummaryTitle" data-i18n="plan.summaryTitle">Плановые оплаты</span>
+            <strong id="plannedReserveTotal">...</strong>
+            <div class="planned-summary-progress" id="plannedSummaryProgress" aria-hidden="true">
+              <span class="planned-summary-progress__fill" id="plannedSummaryProgressFill"></span>
+            </div>
+            <div class="planned-summary-rows" id="plannedReservePaidRemaining"></div>
+          </section>
           <form class="form-stack hidden" id="plannedForm"></form>
           <section class="reserve-settings plan-reserve-section" id="reserveSettingsBlock">
             <button class="reserve-summary" id="reserveSummaryButton" type="button" aria-expanded="false" aria-controls="reserveForm">
               <span class="reserve-summary__text">
                 <strong id="reserveSummaryTitle" data-i18n="reserve.settingsTitle">Резерв бюджета</strong>
                 <small id="reserveSummaryMeta"></small>
+                <small id="reserveSummaryDescription"></small>
               </span>
               <span class="reserve-summary__status">
                 <span id="reserveSummaryStatus" data-i18n="reserve.add">Добавить</span>
@@ -545,6 +559,6 @@
     </nav>
 
     <div class="toast hidden" id="toast" role="status" aria-live="polite"></div>
-    <script src="/app.js?v=20260812-history-ux-v1" type="module"></script>
+    <script src="/app.js?v=20260812-plan-reserve-v1" type="module"></script>
   </body>
 </html>

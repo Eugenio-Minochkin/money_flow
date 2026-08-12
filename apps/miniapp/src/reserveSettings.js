@@ -3,9 +3,12 @@ export function buildReserveSettingsView({
   reserveSummary,
   template,
   currency,
+  displayAmount,
+  displayCurrency,
   isExpanded = false,
   t,
-  moneyBase
+  moneyBase,
+  moneyDisplay
 }) {
   const hasReserve = Boolean(reserve);
   const isActive = reserve?.status === "active";
@@ -13,9 +16,12 @@ export function buildReserveSettingsView({
   const recurrenceEnabled = template?.is_active === true;
   const amount = reserve?.reserve_amount;
   const title = (reserve?.title ?? "").trim();
-  const meta = hasReserve
-    ? [moneyBase(amount, currency), title].filter(Boolean).join(" · ")
+  const display = isActive && displayCurrency && displayCurrency !== currency
+    ? moneyDisplay?.(displayAmount, displayCurrency)
     : "";
+  const meta = hasReserve
+    ? [title, moneyBase(amount, currency), display].filter(Boolean).join(" · ")
+    : t("reserve.notSet");
 
   return {
     isExpanded,
@@ -24,17 +30,18 @@ export function buildReserveSettingsView({
     isDisabled,
     title: t("reserve.settingsTitle"),
     meta,
-    status: reserveStatus({ isActive, isDisabled, reserveSummary, t }),
+    description: hasReserve
+      ? t(recurrenceEnabled ? "reserve.everyMonth" : "reserve.thisMonth")
+      : t("reserve.explanation"),
+    status: reserveStatus({ isActive, isDisabled, t }),
     disabledNote: isDisabled ? t("reserve.disabledThisMonth") : "",
     showScope: isExpanded && recurrenceEnabled,
     showDisable: isExpanded && isActive
   };
 }
 
-function reserveStatus({ isActive, isDisabled, reserveSummary, t }) {
+function reserveStatus({ isActive, isDisabled, t }) {
   if (isDisabled) return t("reserve.enableAgain");
   if (!isActive) return t("reserve.add");
-  if (reserveSummary?.status === "used_up") return t("reserve.statusUsedUp");
-  if (reserveSummary?.status === "partially_used") return t("reserve.statusAtRisk");
-  return t("reserve.statusSaved");
+  return t("actions.edit");
 }

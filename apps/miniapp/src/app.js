@@ -64,6 +64,7 @@ import {
   isPlannedPaid,
   nextUnpaidPlannedItem,
   parseDueDays,
+  plannedPaidPercent,
   recurrenceLabel as plannedRecurrenceLabel,
   weekdayOptions as plannedWeekdayOptions
 } from "./planned.js";
@@ -1365,12 +1366,16 @@ function renderReserveSettings() {
       is_active: document.querySelector("#reserveRecurringInput")?.checked === true
     },
     currency,
+    displayAmount: dashboardState?.snapshot?.display?.reserveAmount,
+    displayCurrency: dashboardState?.snapshot?.display?.currency ?? dashboardState?.user?.display_currency,
     isExpanded: reserveSettingsExpanded,
     t,
-    moneyBase
+    moneyBase,
+    moneyDisplay
   });
   setOptionalText("#reserveSummaryTitle", view.title);
   setOptionalText("#reserveSummaryMeta", view.meta);
+  setOptionalText("#reserveSummaryDescription", view.description);
   setOptionalText("#reserveSummaryStatus", view.status);
 
   const summaryButton = document.querySelector("#reserveSummaryButton");
@@ -1399,6 +1404,8 @@ function renderPlannedMonthSummary(items) {
   setHtml("#plannedReservePaidRemaining", currentLanguage === "ru"
     ? `${plannedSummaryRowHtml("Оплачено", paid)}${plannedSummaryRowHtml("Осталось", remaining)}`
     : `${plannedSummaryRowHtml("Paid", paid)}${plannedSummaryRowHtml("Remaining", remaining)}`);
+  const progress = document.querySelector("#plannedSummaryProgressFill");
+  if (progress) progress.style.width = `${plannedPaidPercent(summary)}%`;
 }
 
 function plannedSummaryMoneyParts(baseAmount, baseCurrency, displayAmount, displayCurrency) {
@@ -1898,21 +1905,25 @@ function renderPlannedExpenses(items) {
       })
       .join("");
     return `
-    <article class="expense-row" style="--category-color: ${categoryColor(item.category_slug)}">
-      <div class="expense-main">
-        <div class="expense-title">${escapeHtml(item.description)}</div>
-        <div class="expense-meta">${recurrenceLabel(item)} · ${escapeHtml(categoryLabel(item.category_slug, currentLanguage))}${progress ? ` · ${progress}` : ""}</div>
+    <article class="planned-expense-card" style="--category-color: ${categoryColor(item.category_slug)}">
+      <div class="planned-expense-card__main">
+        <div class="planned-expense-card__heading">
+          <strong>${escapeHtml(item.description)}</strong>
+          <span class="planned-expense-card__amount">${formatMoney(item.amount, item.currency)}<em>${moneyDisplay(item.display?.amount, item.display?.currency)}</em></span>
+        </div>
+        <div class="planned-expense-card__meta">${recurrenceLabel(item)} · ${escapeHtml(categoryLabel(item.category_slug, currentLanguage))}</div>
+        <div class="planned-expense-card__status">${escapeHtml(progress)}</div>
       </div>
-      <div class="expense-actions">
-        <div class="expense-amount">${formatMoney(item.amount, item.currency)}
-          <em>${moneyDisplay(item.display?.amount, item.display?.currency)}</em>
-        </div>
-        <div class="button-row compact">
-          <button type="button" data-pay-planned="${item.id}"${paid ? " disabled" : ""}>${paid ? t("actions.paid") : t("actions.pay")}</button>
-          <button type="button" class="ghost-button" data-edit-planned="${item.id}">${t("actions.edit")}</button>
-          <button type="button" class="danger-button" data-delete-planned="${item.id}">${t("actions.disable")}</button>
-        </div>
-        ${undoButtons ? `<div class="button-row compact">${undoButtons}</div>` : ""}
+      <div class="planned-expense-card__actions">
+        <button type="button" data-pay-planned="${escapeAttribute(item.id)}"${paid ? " disabled" : ""}>${paid ? t("actions.paid") : t("actions.pay")}</button>
+        <button type="button" class="ghost-button" data-edit-planned="${escapeAttribute(item.id)}">${t("actions.edit")}</button>
+        <details class="planned-expense-card__menu" data-planned-overflow>
+          <summary aria-label="${escapeAttribute(t("plan.moreActions"))}">⋯</summary>
+          <div class="planned-expense-card__overflow">
+            ${undoButtons}
+            <button type="button" class="danger-button" data-delete-planned="${escapeAttribute(item.id)}">${t("actions.disable")}</button>
+          </div>
+        </details>
       </div>
     </article>
   `;
