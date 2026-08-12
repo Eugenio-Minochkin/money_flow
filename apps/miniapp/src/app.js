@@ -69,13 +69,6 @@ import { COMMON_TIMEZONES, detectBrowserTimeZone, normalizeSettingsTimeZone, sho
 const params = new URLSearchParams(window.location.search);
 const telegramUserId = params.get("telegramUserId") || window.Telegram?.WebApp?.initDataUnsafe?.user?.id;
 const draftId = params.get("draftId");
-const heroVariant = params.get("heroVariant");
-const heroPreview = params.get("heroPreview") === "1";
-const heroVariantNames = new Set(["evolution", "product", "minimal"]);
-
-if (heroVariantNames.has(heroVariant)) {
-  document.querySelector(".hero-metric")?.setAttribute("data-layout", heroVariant);
-}
 
 const percentNumber = new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 });
 const FLIP_SELECTOR = "[data-flip-card]";
@@ -485,7 +478,7 @@ document.querySelector("#interfaceThemeInput").addEventListener("change", (event
 document.querySelector("#detectTimezoneButton")?.addEventListener("click", detectTimezone);
 document.querySelector("#setupQuickAccessButton")?.addEventListener("click", createQuickAccessToken);
 document.querySelector("#reconfigureQuickAccessButton")?.addEventListener("click", reconfigureQuickAccessToken);
-if (!heroPreview) initializeTelegramQuickAccess();
+initializeTelegramQuickAccess();
 installTabSwipeNavigation();
 void loadQuickAccessConfig().catch(() => {});
 document.querySelector("#openHistoryInboxButton")?.addEventListener("click", () => switchTab("history"));
@@ -534,59 +527,7 @@ document.addEventListener("click", (event) => {
 });
 
 applyLanguage(currentLanguage);
-if (heroPreview && heroVariantNames.has(heroVariant)) {
-  renderHeroPreview();
-} else {
-  load().catch(showError);
-}
-
-function renderHeroPreview() {
-  applyLanguage("ru");
-  document.body.classList.add("is-fullscreen");
-  document.body.dataset.heroPreview = "true";
-  document.documentElement.dataset.heroPreview = "true";
-  document.documentElement.style.setProperty("--tg-fullscreen-control-extra-top", "52px");
-
-  setText("#heroTitle", "Можно потратить сегодня");
-  setText("#safeToSpend", "75 THB");
-  setText("#safeToSpendDisplay", "≈ $2,80");
-  setText("#heroHint", "Осталось немного от дневного ориентира");
-  setText("#heroSpentLabel", "Сегодня потрачено");
-  setText("#heroSpentValue", "1 011 THB / 1 086 THB");
-  setText("#heroMonthLabel", "До конца месяца свободно");
-  setText("#heroMonthValue", "17 582 THB");
-  const progress = document.querySelector("#heroProgress");
-  if (progress) {
-    progress.style.width = "93%";
-    progress.dataset.state = "danger";
-  }
-
-  const notice = document.querySelector("#plannedNotice");
-  if (notice) {
-    notice.classList.remove("hidden");
-    notice.innerHTML = `
-      <article class="planned-due-row planned-due-row--compact planned-due-row--future">
-        <span class="planned-due-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="15" rx="3"/><path d="M8 3v4m8-4v4M8 11h8"/></svg></span>
-        <div class="planned-due-main">
-          <span class="planned-due-label">Следующая плановая</span>
-          <strong class="planned-due-title">Яндекс плюс</strong>
-          <em class="planned-due-meta">19 авг. · 188 THB · ≈$5,78</em>
-        </div>
-      </article>
-    `;
-  }
-
-  setText("#forecastSummaryTotal", "К концу месяца: 35 647 THB");
-  setText("#forecastSummaryStatus", "В пределах бюджета на 6 353 THB");
-  setText("#budgetPlanSummary", "Свободно 17 582 THB · Плановые 3 417 THB");
-  document.querySelector("#openQuickEntryButton")?.classList.remove("hidden");
-
-  const telegramChrome = document.createElement("div");
-  telegramChrome.className = "hero-preview__telegram-chrome";
-  telegramChrome.setAttribute("aria-hidden", "true");
-  telegramChrome.innerHTML = `<span class="hero-preview__close">× <b>Close</b></span><span class="hero-preview__actions">⌄　•••</span>`;
-  document.body.appendChild(telegramChrome);
-}
+load().catch(showError);
 
 async function load() {
   if (!telegramUserId) throw new Error("No Telegram user id. Open Mini App from the bot.");

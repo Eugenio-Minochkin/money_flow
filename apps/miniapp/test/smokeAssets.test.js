@@ -23,7 +23,7 @@ test("Mini App keeps app.js and styles.css cache-busters in sync", async () => {
   assert.ok(appVersion, "index.html should version app.js with a ?v= query");
   assert.ok(cssVersion, "index.html should version styles.css with a ?v= query");
   assert.equal(appVersion, cssVersion, "app.js and styles.css cache-busters must stay in sync");
-  assert.equal(appVersion, "20260812-hero-exploration-v5");
+  assert.equal(appVersion, "20260812-compact-hero-v1");
   assert.notEqual(appVersion, "20260626-dashboard-v12", "app.js must not keep the stale dashboard-v12 cache-buster");
 });
 
@@ -38,7 +38,7 @@ test("fullscreen keeps the hero content below Telegram controls and disables ver
   assert.match(app, /const extraTop = Math\.max\(0, desiredTop - contentTop\);/);
   assert.match(app, /WebApp\?\.disableVerticalSwipes\?\.\(\)/);
   assert.match(app, /webApp\.onEvent\?\.\("fullscreenChanged",\s*disableTelegramVerticalSwipes\)/);
-  assert.match(css, /body\.is-fullscreen\s+\.hero-metric__summary\s*{[^}]*min-height:\s*calc\([^;]+\+ var\(--tg-fullscreen-control-extra-top\)\)[^}]*padding-top:\s*calc\(20px \+ var\(--tg-fullscreen-control-extra-top\)\)/s);
+  assert.match(css, /\.hero-metric__summary\s*{[^}]*min-height:\s*calc\(140px \+ var\(--tg-fullscreen-control-extra-top, 0px\)\)[^}]*padding:\s*calc\(22px \+ var\(--tg-fullscreen-control-extra-top, 0px\)\) 16px 14px/s);
   assert.match(css, /body\s*{[^}]*overscroll-behavior-y:\s*none/s);
 });
 
@@ -139,25 +139,19 @@ test("interactive tab pager uses transforms without conflicting with forms or sh
 test("hero geometry leaves responsive space before its facts card", async () => {
   const css = await readFile(join(miniAppRoot, "styles.css"), "utf8");
 
-  assert.match(css, /\.hero-metric__summary\s*{[^}]*min-height:\s*clamp\(/s);
+  assert.match(css, /\.hero-metric__summary\s*{[^}]*min-height:\s*calc\(140px \+ var\(--tg-fullscreen-control-extra-top, 0px\)\)/s);
   assert.match(css, /\.hero-metric__facts\s*{[^}]*margin:\s*0 12px/s);
   assert.doesNotMatch(css, /\.hero-metric__facts\s*{[^}]*margin:\s*-\d+px/s);
 });
 
-test("hero exploration stays query-scoped and keeps three removable layout variants", async () => {
+test("compact hero is the production layout without exploration switches", async () => {
   const app = await readFile(new URL("../src/app.js", import.meta.url), "utf8");
   const css = await readFile(new URL("../src/styles.css", import.meta.url), "utf8");
 
-  assert.match(app, /params\.get\("heroVariant"\)/);
-  assert.match(app, /params\.get\("heroPreview"\) === "1"/);
-  assert.match(app, /new Set\(\["evolution", "product", "minimal"\]\)/);
-  assert.match(app, /setAttribute\("data-layout", heroVariant\)/);
-  assert.match(app, /if \(heroPreview && heroVariantNames\.has\(heroVariant\)\)/);
-  assert.match(app, /function renderHeroPreview\(\)/);
-  assert.match(css, /\.hero-metric\[data-layout="evolution"\]/);
-  assert.match(css, /\.hero-metric\[data-layout="product"\]/);
-  assert.match(css, /\.hero-metric\[data-layout="minimal"\]/);
-  assert.doesNotMatch(css, /\.shell\[data-layout/);
+  assert.doesNotMatch(app, /heroVariant|heroPreview|renderHeroPreview/);
+  assert.doesNotMatch(css, /data-layout|hero-preview/);
+  assert.match(css, /\.hero-metric__summary\s*{[^}]*display:\s*flex[^}]*align-items:\s*center/s);
+  assert.match(css, /\.hero-metric__ribbon\s*{[^}]*width:\s*clamp\(326px,\s*96vw,\s*380px\)[^}]*height:\s*210px/s);
 });
 
 test("future planned row has no orphan top divider", async () => {
@@ -562,7 +556,7 @@ test("dashboard keeps card tooltips and makes the hero an accessible disclosure"
   assert.doesNotMatch(app, /querySelectorAll\("\.dashboard-card\[data-dashboard-card\]"\)/);
   assert.match(css, /\.dashboard-card__flip-inner\s*{/);
   assert.match(css, /\.hero-metric__ribbon\s*{/);
-  assert.match(css, /\.hero-metric__summary\s*{[^}]*position:\s*relative[^}]*min-height:\s*clamp\(/s);
+  assert.match(css, /\.hero-metric__summary\s*{[^}]*position:\s*relative[^}]*min-height:\s*calc\(140px \+ var\(--tg-fullscreen-control-extra-top, 0px\)\)/s);
   assert.match(css, /\.hero-metric__facts\s*{[^}]*border-radius:\s*14px[^}]*background:\s*color-mix/s);
   assert.match(css, /\.hero-metric__details-toggle\s*{/);
   assert.match(css, /\.hero-metric__details\[hidden\]\s*{\s*display:\s*none/s);
@@ -625,7 +619,7 @@ test("hero ribbon fills the upper right hero background instead of a small inset
   const css = await readFile(join(miniAppRoot, "styles.css"), "utf8");
 
   assert.match(html, /hero-metric__ribbon[^>]*preserveAspectRatio="xMidYMid slice"/);
-  assert.match(css, /\.hero-metric__ribbon\s*{[^}]*top:\s*-24px[^}]*right:\s*-48px[^}]*width:\s*clamp\(300px,\s*88vw,\s*350px\)[^}]*height:\s*210px/s);
+  assert.match(css, /\.hero-metric__ribbon\s*{[^}]*top:\s*-32px[^}]*right:\s*-58px[^}]*width:\s*clamp\(326px,\s*96vw,\s*380px\)[^}]*height:\s*210px/s);
 });
 
 test("all four bottom navigation icons have explicit stable SVG identities", async () => {
