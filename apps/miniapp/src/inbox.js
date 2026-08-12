@@ -20,6 +20,17 @@ export function shouldShowInboxOnDashboard(drafts) {
   return Array.isArray(drafts) && drafts.length > 0;
 }
 
+export function inboxSummaryPreview(drafts, language = "en", formatMoney = (amount, currency) => `${amount} ${currency}`) {
+  const firstItem = drafts?.[0]?.items?.[0];
+  if (!firstItem) return "";
+  const description = firstItem.description || drafts[0].source_text || (language === "ru" ? "Черновик" : "Draft");
+  const currency = firstItem.currency ?? firstItem.currency_original ?? "THB";
+  const preview = `${description} · ${formatMoney(Number(firstItem.amount ?? 0), currency)}`;
+  const remaining = drafts.length - 1;
+  if (remaining <= 0) return preview;
+  return `${preview} · ${language === "ru" ? `+ ещё ${remaining}` : `+ ${remaining} more`}`;
+}
+
 export function inboxCountLabel(count, language = "en") {
   const total = Math.max(0, Number(count) || 0);
   if (language === "ru") {

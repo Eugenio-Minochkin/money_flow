@@ -5,7 +5,7 @@ import { resolveDraftSaveResponse, classifyConfirmOutcome } from "./draftSave.js
 import { advanceShortcutSetup } from "./quickAccessSetup.js";
 import { collectQuickCaptureReviewItems, quickCaptureItemNeedsReview } from "./quickCaptureReview.js";
 import { describeQuickCaptureSavedResult } from "./quickCaptureSavedResult.js";
-import { buildDashboardCards, buildHeroMetric, renderBudgetTopupBreakdown, renderDashboardCards } from "./dashboardCards.js";
+import { buildDashboardCards, buildHeroMetric, renderBudgetTopupBreakdown, renderDashboardCards, shouldShowForecastDifference } from "./dashboardCards.js";
 import {
   dateTimeLocal,
   escapeAttribute,
@@ -33,7 +33,7 @@ import {
   shiftCalendarMonth
 } from "./history.js";
 import { createTranslator } from "./i18n.js";
-import { inboxCountLabel, inboxDraftDescription, inboxDraftTotal, shouldShowInboxOnDashboard, updateFirstInboxItemCategory } from "./inbox.js";
+import { inboxCountLabel, inboxDraftDescription, inboxDraftTotal, inboxSummaryPreview, shouldShowInboxOnDashboard, updateFirstInboxItemCategory } from "./inbox.js";
 import {
   TAB_ORDER,
   canStartTabPager,
@@ -98,16 +98,6 @@ const deleteAccountAdvanceButton = document.getElementById("deleteAccountAdvance
 const deleteAccountCancelButton = document.getElementById("deleteAccountCancelButton");
 const deleteAccountConfirmInput = document.getElementById("deleteAccountConfirmInput");
 const deleteAccountConfirmButton = document.getElementById("deleteAccountConfirmButton");
-
-const CURRENCY_MARKS = {
-  THB: `<svg viewBox="0 0 30 20" role="img" aria-label="THB"><rect width="30" height="20" fill="#c6283c"/><rect y="3.2" width="30" height="13.6" fill="#fff"/><rect y="5.6" width="30" height="8.8" fill="#243a8f"/></svg>`,
-  USD: `<svg viewBox="0 0 30 20" role="img" aria-label="USD"><rect width="30" height="20" fill="#fff"/><g fill="#b22234"><rect y="0" width="30" height="1.54"/><rect y="3.08" width="30" height="1.54"/><rect y="6.16" width="30" height="1.54"/><rect y="9.24" width="30" height="1.54"/><rect y="12.32" width="30" height="1.54"/><rect y="15.4" width="30" height="1.54"/><rect y="18.48" width="30" height="1.52"/></g><rect width="12.8" height="10.8" fill="#3c3b6e"/></svg>`,
-  RUB: `<svg viewBox="0 0 30 20" role="img" aria-label="RUB"><rect width="30" height="20" fill="#fff"/><rect y="6.67" width="30" height="6.66" fill="#1f57a4"/><rect y="13.33" width="30" height="6.67" fill="#d52b1e"/></svg>`,
-  IDR: `<svg viewBox="0 0 30 20" role="img" aria-label="IDR"><rect width="30" height="10" fill="#ce1126"/><rect y="10" width="30" height="10" fill="#fff"/></svg>`,
-  EUR: `<svg viewBox="0 0 30 20" role="img" aria-label="EUR"><rect width="30" height="20" fill="#1f57a4"/><circle cx="15" cy="10" r="5.4" fill="none" stroke="#f6c745" stroke-width="1.5" stroke-dasharray="1 2"/></svg>`,
-  BYN: `<svg viewBox="0 0 30 20" role="img" aria-label="BYN"><rect width="30" height="20" fill="#c8313e"/><rect y="13.2" width="30" height="6.8" fill="#238b45"/><rect width="6" height="20" fill="#fff"/><path d="M1 2h4M1 6h4M1 10h4M1 14h4M1 18h4" stroke="#c8313e" stroke-width="1"/></svg>`,
-  GEL: `<svg viewBox="0 0 30 20" role="img" aria-label="GEL"><rect width="30" height="20" fill="#fff"/><rect x="13" width="4" height="20" fill="#d52b1e"/><rect y="8" width="30" height="4" fill="#d52b1e"/><g stroke="#d52b1e" stroke-width="1.4"><path d="M6 4v4M4 6h4M24 4v4M22 6h4M6 14v4M4 16h4M24 14v4M22 16h4"/></g></svg>`
-};
 
 function disableTelegramVerticalSwipes() {
   window.Telegram?.WebApp?.disableVerticalSwipes?.();
@@ -471,8 +461,6 @@ document.querySelectorAll("[data-tab]").forEach((button) => {
 });
 document.querySelector("#settingsForm")?.addEventListener("input", updateSettingsDirtyState);
 document.querySelector("#settingsForm")?.addEventListener("change", updateSettingsDirtyState);
-document.querySelector("#baseCurrencyInput").addEventListener("change", updateSettingsDecorations);
-document.querySelector("#displayCurrencyInput").addEventListener("change", updateSettingsDecorations);
 document.querySelector("#interfaceLanguageInput").addEventListener("change", (event) => applyLanguage(event.target.value));
 document.querySelector("#interfaceThemeInput").addEventListener("change", (event) => applyTheme(event.target.value));
 document.querySelector("#detectTimezoneButton")?.addEventListener("click", detectTimezone);
@@ -481,7 +469,6 @@ document.querySelector("#reconfigureQuickAccessButton")?.addEventListener("click
 initializeTelegramQuickAccess();
 installTabSwipeNavigation();
 void loadQuickAccessConfig().catch(() => {});
-document.querySelector("#openHistoryInboxButton")?.addEventListener("click", () => switchTab("history"));
 document.querySelector("#openAllHistoryButton")?.addEventListener("click", () => switchTab("history"));
 document.querySelectorAll("[data-export-period]").forEach((button) => {
   button.addEventListener("click", () => requestExpenseExport(button.dataset.exportPeriod));
@@ -682,8 +669,7 @@ function renderMonthlyForecast(snapshot, analytics) {
   );
   const perDay = t("monthlyForecast.perDay");
   const hasBudget = Number.isFinite(monthlyBudget) && monthlyBudget > 0;
-  const roundedDifference = Math.round(difference * 100) / 100;
-  const isOverBudget = roundedDifference > 0;
+  const isOverBudget = shouldShowForecastDifference(forecast, monthlyBudget);
   const forecastSection = document.querySelector("#monthlyForecast");
 
   setText("#forecastSummaryTotal", t("monthlyForecast.summaryTotal", { amount: moneyBase(forecast) }));
@@ -731,7 +717,7 @@ function renderMonthlyForecast(snapshot, analytics) {
   }
 
   document.querySelector("#forecastBudgetRow").classList.toggle("hidden", !hasBudget);
-  document.querySelector("#forecastDiffRow").classList.toggle("hidden", !hasBudget);
+  document.querySelector("#forecastDiffRow").classList.toggle("hidden", !isOverBudget);
 }
 
 async function loadHistory() {
@@ -1276,7 +1262,6 @@ function renderSettings(user) {
   if (showCurrentMonthBudgetOverride) {
     document.querySelector("#currentMonthBudgetInput").value = Math.round(Number(dashboardState.currentMonthBudget.amount));
   }
-  document.querySelector("#weeklyBudgetInput").value = user.weekly_budget_amount == null ? "" : Math.round(Number(user.weekly_budget_amount));
   document.querySelector("#baseCurrencyInput").value = user.base_currency ?? "THB";
   document.querySelector("#displayCurrencyInput").value = user.display_currency ?? "USD";
   document.querySelector("#interfaceLanguageInput").value = currentLanguage;
@@ -1295,7 +1280,6 @@ function renderSettings(user) {
     ? "current_and_future"
     : "current";
   renderReserveSettings();
-  updateSettingsDecorations();
   setSettingsDirtyBaseline();
 }
 
@@ -1600,13 +1584,19 @@ function renderDashboardInboxDrafts(drafts) {
   const block = document.querySelector("#dashboardInboxBlock");
   const list = document.querySelector("#dashboardInboxDrafts");
   const title = document.querySelector("#dashboardInboxTitle");
+  const preview = document.querySelector("#dashboardInboxPreview");
+  const wasHidden = block.classList.contains("hidden");
   if (!shouldShowInboxOnDashboard(drafts)) {
     block.classList.add("hidden");
+    block.open = false;
     list.innerHTML = "";
+    preview.textContent = "";
     return;
   }
   block.classList.remove("hidden");
+  if (wasHidden) block.open = true;
   title.textContent = inboxCountLabel(drafts.length, currentLanguage);
+  preview.textContent = inboxSummaryPreview(drafts, currentLanguage, formatMoney);
   list.innerHTML = drafts.slice(0, 2).map((draft) => {
     const total = inboxDraftTotal(draft);
     const description = inboxDraftDescription(draft);
@@ -2229,7 +2219,6 @@ async function saveSettings(event) {
       telegramUserId,
       settings: {
         monthlyBudgetAmount: Number(document.querySelector("#budgetInput").value),
-        weeklyBudgetAmount: document.querySelector("#weeklyBudgetInput").value.trim(),
         baseCurrency: document.querySelector("#baseCurrencyInput").value,
         displayCurrency: document.querySelector("#displayCurrencyInput").value,
         interfaceLanguage: document.querySelector("#interfaceLanguageInput").value,
@@ -2611,7 +2600,6 @@ function input(name) {
 function collectSettingsState() {
   return JSON.stringify({
     monthlyBudgetAmount: document.querySelector("#budgetInput")?.value ?? "",
-    weeklyBudgetAmount: document.querySelector("#weeklyBudgetInput")?.value ?? "",
     baseCurrency: document.querySelector("#baseCurrencyInput")?.value ?? "",
     displayCurrency: document.querySelector("#displayCurrencyInput")?.value ?? "",
     dailyEntryReminderEnabled: document.querySelector("#dailyReminderInput")?.checked === true,
@@ -2633,25 +2621,6 @@ function updateSettingsDirtyState() {
   const dirty = settingsBaseline !== "" && collectSettingsState() !== settingsBaseline;
   status.textContent = dirty ? t("settings.unsavedChanges") : t("settings.saveHint");
   status.dataset.state = dirty ? "dirty" : "clean";
-}
-
-function updateSettingsDecorations() {
-  updateCurrencyMark("#baseCurrencyMark", "#baseCurrencyInput");
-  updateCurrencyMark("#displayCurrencyMark", "#displayCurrencyInput");
-}
-
-function updateCurrencyMark(markSelector, inputSelector) {
-  const mark = document.querySelector(markSelector);
-  const select = document.querySelector(inputSelector);
-  if (!mark || !select) return;
-  mark.innerHTML = currencyMarkHtml(select.value);
-}
-
-function currencyMarkHtml(currency) {
-  const normalized = String(currency ?? "").toUpperCase();
-  const svg = CURRENCY_MARKS[normalized];
-  if (svg) return svg;
-  return `<span class="currency-code-fallback">${escapeHtml(normalized || "???")}</span>`;
 }
 
 function option(value, selected, label = value) {
@@ -2680,7 +2649,6 @@ function applyLanguage(language) {
   const labels = [
     ["#budgetInput", "settings.monthlyBudget"],
     ["#currentMonthBudgetInput", "settings.currentMonthBudget"],
-    ["#weeklyBudgetInput", "settings.weeklyBudget"],
     ["#baseCurrencyInput", "settings.baseCurrency"],
     ["#displayCurrencyInput", "settings.displayCurrency"],
     ["#interfaceLanguageInput", "settings.interfaceLanguage"],
@@ -2694,7 +2662,6 @@ function applyLanguage(language) {
   const save = document.querySelector("#settingsForm button[type='submit']");
   if (save) save.textContent = t("actions.save");
   updateSettingsDirtyState();
-  updateSettingsDecorations();
   renderReserveSettings();
   updateHistoryFilterChips();
   if (historyCalendarDraft) renderHistoryCalendar();
@@ -2715,6 +2682,8 @@ function rerenderDashboardLanguageState() {
   renderPlannedMonthSummary(plannedExpenses);
   renderPlannedExpenses(plannedExpenses);
   renderLatest(dashboardState.latestExpenses ?? []);
+  renderDashboardInboxDrafts(inboxState);
+  renderInboxDrafts(inboxState);
 }
 
 function applyTheme(theme) {

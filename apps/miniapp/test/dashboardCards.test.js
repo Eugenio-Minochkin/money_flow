@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildDashboardCards, buildHeroMetric, renderBudgetTopupBreakdown, renderDashboardCards } from "../src/dashboardCards.js";
+import { buildDashboardCards, buildHeroMetric, renderBudgetTopupBreakdown, renderDashboardCards, shouldShowForecastDifference } from "../src/dashboardCards.js";
 
 const labels = {
   "dashboard.available": "доступно",
@@ -51,6 +51,13 @@ const helpers = {
   moneyDisplay: (value) => (value == null ? "" : `~$${value}`),
   percent: (value) => `${value}%`
 };
+
+test("shows forecast difference only when the forecast is over budget", () => {
+  assert.equal(shouldShowForecastDifference(48001, 48000), true);
+  assert.equal(shouldShowForecastDifference(48000, 48000), false);
+  assert.equal(shouldShowForecastDifference(47000, 48000), false);
+  assert.equal(shouldShowForecastDifference(1000, 0), false);
+});
 
 const semanticSnapshot = {
   today: 676,

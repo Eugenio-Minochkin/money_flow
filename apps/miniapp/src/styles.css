@@ -92,7 +92,6 @@ body {
   margin-bottom: 8px;
 }
 
-.quick-entry-fab { position: fixed; z-index: 21; left: 50%; bottom: calc(62px + max(10px, var(--tg-content-safe-area-inset-bottom, var(--tg-safe-area-inset-bottom, 0px)))); transform: translateX(-50%); width: 52px; height: 52px; border-radius: 50%; border: 0; background: var(--accent, #1677ff); color: white; font-size: 32px; line-height: 1; box-shadow: 0 8px 24px rgb(0 0 0 / 25%); }
 .quick-entry-backdrop { position: fixed; inset: 0; z-index: 29; background: rgb(0 0 0 / 35%); }
 .quick-entry-sheet { position: fixed; z-index: 30; inset: auto 0 0; padding: 12px 16px calc(20px + max(0px, var(--tg-content-safe-area-inset-bottom, var(--tg-safe-area-inset-bottom, 0px)))); border-radius: 22px 22px 0 0; background: var(--panel); box-shadow: 0 -10px 30px rgb(0 0 0 / 18%); }
 .quick-entry-sheet textarea { min-height: 96px; width: 100%; resize: vertical; }
@@ -148,7 +147,7 @@ h2 {
   bottom: max(10px, var(--tg-content-safe-area-inset-bottom, var(--tg-safe-area-inset-bottom, env(safe-area-inset-bottom))));
   z-index: 20;
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 4px;
   margin: 0;
   border: 1px solid var(--line);
@@ -200,6 +199,28 @@ h2 {
   color: #0b746b;
 }
 
+.quick-entry-action {
+  align-self: start;
+  justify-self: center;
+  z-index: 1;
+  width: 52px;
+  height: 52px;
+  transform: translateY(-15px);
+  border: 0;
+  border-radius: 50%;
+  background: var(--accent);
+  color: white;
+  box-shadow: 0 8px 22px rgb(15 139 127 / 28%);
+  font-size: 32px;
+  line-height: 1;
+  padding: 0 0 4px;
+}
+
+.bottom-tabs .quick-entry-action.hidden {
+  display: block;
+  visibility: hidden;
+}
+
 .tab-button__icon {
   display: grid;
   place-items: center;
@@ -245,6 +266,12 @@ h2 {
 
 .tab-page {
   width: 100%;
+}
+
+#historyTab,
+#planTab,
+#settingsTab {
+  padding-top: var(--tg-fullscreen-control-extra-top, 0px);
 }
 
 .tab-page.is-pager-current,
@@ -1140,13 +1167,7 @@ body[data-theme="dark"] .monthly-forecast {
 }
 
 .dashboard-inbox {
-  margin-top: 12px;
   border-color: var(--line);
-  background: var(--panel);
-}
-
-.dashboard-inbox .section-heading {
-  background: var(--surface-soft, var(--panel));
 }
 
 .inbox-draft-row {
@@ -1790,51 +1811,6 @@ select {
   padding: 9px 10px;
 }
 
-.currency-control {
-  position: relative;
-  display: grid;
-}
-
-.currency-control select {
-  padding-left: 42px;
-}
-
-.currency-mark {
-  position: absolute;
-  left: 10px;
-  top: 50%;
-  z-index: 1;
-  display: grid;
-  place-items: center;
-  width: 24px;
-  height: 16px;
-  transform: translateY(-50%);
-}
-
-.currency-mark svg {
-  display: block;
-  width: 24px;
-  height: 16px;
-  overflow: hidden;
-  border: 1px solid rgb(37 29 24 / 18%);
-  border-radius: 3px;
-  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 25%);
-}
-
-.currency-code-fallback {
-  display: inline-grid;
-  place-items: center;
-  min-width: 24px;
-  height: 16px;
-  border: 1px solid var(--line);
-  border-radius: 3px;
-  background: var(--panel);
-  color: var(--muted);
-  font-size: 8px;
-  font-weight: 800;
-  line-height: 1;
-}
-
 .toggle-setting {
   display: flex;
   align-items: center;
@@ -2310,7 +2286,7 @@ button:disabled {
 
 @media (max-width: 640px) {
   .shell {
-    padding: 14px 16px 88px;
+    padding: max(14px, var(--tg-content-safe-area-inset-top, var(--tg-safe-area-inset-top, 0px))) 16px calc(96px + max(0px, var(--tg-content-safe-area-inset-bottom, var(--tg-safe-area-inset-bottom, 0px))));
   }
 
   .tabs {
