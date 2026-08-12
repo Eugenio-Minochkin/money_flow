@@ -19,6 +19,11 @@ Money Flow UI should feel light and direct. Favor quick comprehension over dense
 - Use compact or collapsible sections for secondary settings.
 - Keep high-frequency settings easy to scan and low-frequency settings tucked away.
 
+## Editing
+
+- Edit saved expenses and active planned payments in the shared modal shell over the screen where editing started. Closing or saving must not switch tabs, reset History filters, or discard the user's scroll position.
+- On narrow screens, keep the page behind the modal inert and fixed. Let long forms scroll inside the modal while Save and Close remain clearly available.
+
 ## Planned Payment Archive
 
 - Keep disabled plans collapsed by default and load archive data only after the user expands it. Do not add archive rows to the main dashboard response.
