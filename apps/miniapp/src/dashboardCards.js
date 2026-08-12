@@ -2,6 +2,13 @@ import { escapeHtml } from "./formatters.js";
 
 const budgetTopupExpandedByContainer = new WeakMap();
 
+export function shouldShowForecastDifference(forecast, monthlyBudget) {
+  const budget = Number(monthlyBudget);
+  if (!Number.isFinite(budget) || budget <= 0) return false;
+  const difference = Number(forecast) - budget;
+  return Math.round(difference * 100) / 100 > 0;
+}
+
 export function remainingLine(label, amount) {
   return cardLine(label, amount);
 }

@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>Money Flow</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/styles.css?v=20260812-compact-hero-v1" />
+    <link rel="stylesheet" href="/styles.css?v=20260812-miniapp-polish-v1" />
   </head>
   <body data-theme="light">
     <main class="shell">
@@ -56,13 +56,21 @@
           </div>
         </section>
 
-        <section class="inbox-block dashboard-inbox hidden" id="dashboardInboxBlock">
-          <div class="section-heading compact-heading">
-            <h3 id="dashboardInboxTitle">Needs review</h3>
-            <button type="button" class="ghost-button" id="openHistoryInboxButton" data-i18n="actions.open">Open</button>
+        <details class="dashboard-disclosure dashboard-inbox hidden" id="dashboardInboxBlock">
+          <summary class="dashboard-disclosure__summary">
+            <span class="dashboard-disclosure__icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M12 3a7 7 0 1 0 7 7"/><path d="M12 7v4l3 2M17 3h4v4"/></svg>
+            </span>
+            <span class="dashboard-disclosure__copy">
+              <strong id="dashboardInboxTitle">Needs review</strong>
+              <span id="dashboardInboxPreview"></span>
+            </span>
+            <span class="dashboard-disclosure__chevron" aria-hidden="true">›</span>
+          </summary>
+          <div class="dashboard-disclosure__body">
+            <div class="expense-list" id="dashboardInboxDrafts"></div>
           </div>
-          <div class="expense-list" id="dashboardInboxDrafts"></div>
-        </section>
+        </details>
 
         <section class="section form-section hidden" id="draftEditorSection">
           <div class="section-heading">
@@ -336,10 +344,6 @@
                     <button type="button" id="saveCurrentMonthBudgetButton" class="ghost-button" data-i18n="settings.editCurrentMonthBudget">Edit current month budget</button>
                   </div>
                 </div>
-                <label class="settings-row">
-                  <span data-i18n="settings.weeklyBudget">Weekly plan</span>
-                  <input id="weeklyBudgetInput" name="weeklyBudgetAmount" type="number" min="1" step="1" inputmode="decimal" placeholder="Automatic from budget" data-i18n-placeholder="settings.weeklyBudgetPlaceholder" />
-                </label>
               </div>
             </section>
             <section class="settings-section">
@@ -348,33 +352,27 @@
                 <p class="settings-hint" data-i18n="settings.currencyHint">Accounting is what expenses are calculated in. Display is what amounts are shown in.</p>
                 <label class="settings-row">
                   <span data-i18n="settings.baseCurrency">Base currency</span>
-                  <div class="currency-control">
-                    <span class="currency-mark" id="baseCurrencyMark" aria-hidden="true"></span>
-                    <select id="baseCurrencyInput" name="baseCurrency">
-                      <option value="THB">THB - Thai baht</option>
-                      <option value="USD">USD - US dollar</option>
-                      <option value="RUB">RUB - Russian ruble</option>
-                      <option value="IDR">IDR - Indonesian rupiah</option>
-                      <option value="EUR">EUR - Euro</option>
-                      <option value="BYN">BYN - Belarusian ruble</option>
-                      <option value="GEL">GEL - Georgian lari</option>
-                    </select>
-                  </div>
+                  <select id="baseCurrencyInput" name="baseCurrency">
+                    <option value="THB">🇹🇭 THB — Thai baht</option>
+                    <option value="USD">🇺🇸 USD — US dollar</option>
+                    <option value="RUB">🇷🇺 RUB — Russian ruble</option>
+                    <option value="IDR">🇮🇩 IDR — Indonesian rupiah</option>
+                    <option value="EUR">🇪🇺 EUR — Euro</option>
+                    <option value="BYN">🇧🇾 BYN — Belarusian ruble</option>
+                    <option value="GEL">🇬🇪 GEL — Georgian lari</option>
+                  </select>
                 </label>
                 <label class="settings-row">
                   <span data-i18n="settings.displayCurrency">Display currency</span>
-                  <div class="currency-control">
-                    <span class="currency-mark" id="displayCurrencyMark" aria-hidden="true"></span>
-                    <select id="displayCurrencyInput" name="displayCurrency">
-                      <option value="USD">USD - US dollar</option>
-                      <option value="THB">THB - Thai baht</option>
-                      <option value="RUB">RUB - Russian ruble</option>
-                      <option value="IDR">IDR - Indonesian rupiah</option>
-                      <option value="EUR">EUR - Euro</option>
-                      <option value="BYN">BYN - Belarusian ruble</option>
-                      <option value="GEL">GEL - Georgian lari</option>
-                    </select>
-                  </div>
+                  <select id="displayCurrencyInput" name="displayCurrency">
+                    <option value="USD">🇺🇸 USD — US dollar</option>
+                    <option value="THB">🇹🇭 THB — Thai baht</option>
+                    <option value="RUB">🇷🇺 RUB — Russian ruble</option>
+                    <option value="IDR">🇮🇩 IDR — Indonesian rupiah</option>
+                    <option value="EUR">🇪🇺 EUR — Euro</option>
+                    <option value="BYN">🇧🇾 BYN — Belarusian ruble</option>
+                    <option value="GEL">🇬🇪 GEL — Georgian lari</option>
+                  </select>
                 </label>
               </div>
             </section>
@@ -491,7 +489,6 @@
       </div>
     </section>
 
-    <button class="quick-entry-fab hidden" id="openQuickEntryButton" type="button" aria-label="Add expense">+</button>
     <div class="quick-entry-backdrop hidden" id="quickEntryBackdrop"></div>
     <section class="quick-entry-sheet hidden" id="quickEntrySheet" role="dialog" aria-modal="true" aria-labelledby="quickEntryTitle">
       <div class="quick-entry-sheet__handle" aria-hidden="true"></div>
@@ -516,9 +513,10 @@
         <span class="tab-button__label">Dashboard</span>
       </button>
       <button class="tab-button" type="button" data-tab="history">
-        <span class="tab-button__icon" data-nav-icon="history" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 20V8a7 7 0 0 1 14 0v12"/><path d="M3 20h18M8 8h8"/></svg></span>
+        <span class="tab-button__icon" data-nav-icon="history" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5M12 7v5l3 2"/></svg></span>
         <span class="tab-button__label">History</span>
       </button>
+      <button class="quick-entry-action hidden" id="openQuickEntryButton" type="button" aria-label="Add expense" data-i18n-aria-label="quickEntry.addExpense">+</button>
       <button class="tab-button" type="button" data-tab="plan">
         <span class="tab-button__icon" data-nav-icon="plan" data-nav-shape="calendar" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 11h18M8 15h.01M12 15h.01M16 15h.01M8 18h.01M12 18h.01M16 18h.01"/></svg></span>
         <span class="tab-button__label">Plan</span>
@@ -530,6 +528,6 @@
     </nav>
 
     <div class="toast hidden" id="toast" role="status" aria-live="polite"></div>
-    <script src="/app.js?v=20260812-compact-hero-v1" type="module"></script>
+    <script src="/app.js?v=20260812-miniapp-polish-v1" type="module"></script>
   </body>
 </html>

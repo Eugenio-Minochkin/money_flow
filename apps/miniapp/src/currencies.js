@@ -1,11 +1,11 @@
 export const currencies = [
-  ["THB", "THB - Thai baht"],
-  ["USD", "USD - US dollar"],
-  ["RUB", "RUB - Russian ruble"],
-  ["IDR", "IDR - Indonesian rupiah"],
-  ["EUR", "EUR - Euro"],
-  ["BYN", "BYN - Belarusian ruble"],
-  ["GEL", "GEL - Georgian lari"]
+  ["THB", "🇹🇭 THB — Thai baht"],
+  ["USD", "🇺🇸 USD — US dollar"],
+  ["RUB", "🇷🇺 RUB — Russian ruble"],
+  ["IDR", "🇮🇩 IDR — Indonesian rupiah"],
+  ["EUR", "🇪🇺 EUR — Euro"],
+  ["BYN", "🇧🇾 BYN — Belarusian ruble"],
+  ["GEL", "🇬🇪 GEL — Georgian lari"]
 ];
 
 export function currencyOptions(selected, option) {

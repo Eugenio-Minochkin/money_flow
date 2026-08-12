@@ -23,7 +23,7 @@ test("Mini App keeps app.js and styles.css cache-busters in sync", async () => {
   assert.ok(appVersion, "index.html should version app.js with a ?v= query");
   assert.ok(cssVersion, "index.html should version styles.css with a ?v= query");
   assert.equal(appVersion, cssVersion, "app.js and styles.css cache-busters must stay in sync");
-  assert.equal(appVersion, "20260812-compact-hero-v1");
+  assert.equal(appVersion, "20260812-miniapp-polish-v1");
   assert.notEqual(appVersion, "20260626-dashboard-v12", "app.js must not keep the stale dashboard-v12 cache-buster");
 });
 
@@ -39,6 +39,8 @@ test("fullscreen keeps the hero content below Telegram controls and disables ver
   assert.match(app, /WebApp\?\.disableVerticalSwipes\?\.\(\)/);
   assert.match(app, /webApp\.onEvent\?\.\("fullscreenChanged",\s*disableTelegramVerticalSwipes\)/);
   assert.match(css, /\.hero-metric__summary\s*{[^}]*min-height:\s*calc\(140px \+ var\(--tg-fullscreen-control-extra-top, 0px\)\)[^}]*padding:\s*calc\(22px \+ var\(--tg-fullscreen-control-extra-top, 0px\)\) 16px 14px/s);
+  assert.match(css, /#historyTab,\s*#planTab,\s*#settingsTab\s*{[^}]*padding-top:\s*var\(--tg-fullscreen-control-extra-top, 0px\)/s);
+  assert.doesNotMatch(css, /#dashboardTab[^}]*padding-top:\s*var\(--tg-fullscreen-control-extra-top/s);
   assert.match(css, /body\s*{[^}]*overscroll-behavior-y:\s*none/s);
 });
 
@@ -455,7 +457,7 @@ test("dashboard cards match the rounded reference layout with stateful progress 
 test("dashboard uses compact iPhone card sizing", async () => {
   const css = await readFile(join(miniAppRoot, "styles.css"), "utf8");
 
-  assert.match(css, /@media \(max-width:\s*640px\)\s*{[^}]*\.shell\s*{[^}]*padding:\s*14px 16px 88px/s);
+  assert.match(css, /@media \(max-width:\s*640px\)\s*{[^}]*\.shell\s*{[^}]*padding:\s*max\(14px, var\(--tg-content-safe-area-inset-top,[^;]+\)\) 16px calc\(96px \+ max\(0px, var\(--tg-content-safe-area-inset-bottom,/s);
   assert.match(css, /@media \(max-width:\s*640px\)[^]*\.dashboard-card,[^}]*\.dashboard-card__face--back\s*{[^}]*min-height:\s*140px/s);
   assert.match(css, /@media \(max-width:\s*640px\)[^]*\.dashboard-card__face--front\s*{[^}]*gap:\s*5px[^}]*padding:\s*12px/s);
   assert.match(css, /@media \(max-width:\s*640px\)[^]*\.dashboard-card__amount\s*{[^}]*font-size:\s*clamp\(19px,\s*5\.5vw,\s*23px\)/s);
@@ -631,6 +633,8 @@ test("all four bottom navigation icons have explicit stable SVG identities", asy
   assert.equal((html.match(/data-nav-icon="/g) ?? []).length, 4);
   assert.match(html, /data-nav-icon="plan"[^>]*data-nav-shape="calendar"/);
   assert.match(html, /data-nav-icon="settings"[^>]*data-nav-shape="gear"/);
+  assert.match(html, /data-nav-icon="history"[^>]*><svg[^>]*><path d="M3 12a9 9 0 1 0 3-6\.7"/);
+  assert.doesNotMatch(html, /data-nav-icon="history"[^>]*><svg[^>]*><path d="M5 20V8/);
 });
 
 test("dashboard light theme uses the approved warm surface system", async () => {
@@ -749,22 +753,22 @@ test("reserve settings live in Plan instead of Settings", async () => {
   assert.doesNotMatch(settingsHtml, /id="reserveForm"/);
 });
 
-test("currency selectors use stable markers and language selector has no flag", async () => {
+test("currency selectors use native option labels without overlay markers", async () => {
   const html = await readFile(join(miniAppRoot, "index.html"), "utf8");
   const app = await readFile(join(miniAppRoot, "app.js"), "utf8");
   const css = await readFile(join(miniAppRoot, "styles.css"), "utf8");
 
-  assert.match(html, /id="baseCurrencyMark"/);
-  assert.match(html, /id="displayCurrencyMark"/);
+  assert.doesNotMatch(html, /id="baseCurrencyMark"/);
+  assert.doesNotMatch(html, /id="displayCurrencyMark"/);
+  assert.match(html, /<option value="THB">🇹🇭 THB — Thai baht<\/option>/);
   assert.doesNotMatch(html, /interfaceLanguageFlag/);
   assert.doesNotMatch(html, /flag-icon/);
   assert.doesNotMatch(html, /data-currency/);
   assert.doesNotMatch(html, /data-language/);
-  assert.match(app, /updateSettingsDecorations/);
-  assert.match(app, /CURRENCY_MARKS/);
+  assert.doesNotMatch(app, /updateSettingsDecorations/);
+  assert.doesNotMatch(app, /CURRENCY_MARKS/);
   assert.doesNotMatch(app, /updateCurrencyFlags/);
-  assert.match(css, /\.currency-mark/);
-  assert.match(css, /\.currency-code-fallback/);
+  assert.doesNotMatch(css, /\.currency-mark/);
   assert.doesNotMatch(css, /data-currency/);
   assert.doesNotMatch(css, /data-language/);
 });
@@ -782,13 +786,39 @@ test("settings exposes expense export actions that send only period", async () =
   assert.doesNotMatch(app, /body:\s*\{\s*telegramUserId,\s*period\s*\}/);
 });
 
-test("Quick Entry is unavailable during onboarding and Home Screen hides unsupported clients", async () => {
+test("Quick Entry is a five-slot navigation action and is unavailable during onboarding", async () => {
   const html = await readFile(join(miniAppRoot, "index.html"), "utf8");
   const app = await readFile(join(miniAppRoot, "app.js"), "utf8");
-  assert.match(html, /class="quick-entry-fab hidden"[^>]*id="openQuickEntryButton"/);
+  const css = await readFile(join(miniAppRoot, "styles.css"), "utf8");
+  assert.equal((html.match(/<button class="tab-button(?: active)?" type="button" data-tab=/g) ?? []).length, 4);
+  assert.match(html, /<nav class="bottom-tabs"[^>]*>[\s\S]*data-tab="dashboard"[\s\S]*data-tab="history"[\s\S]*id="openQuickEntryButton"[\s\S]*data-tab="plan"[\s\S]*data-tab="settings"[\s\S]*<\/nav>/);
+  assert.match(html, /class="quick-entry-action hidden"[^>]*id="openQuickEntryButton"[^>]*data-i18n-aria-label="quickEntry\.addExpense"/);
+  assert.doesNotMatch(css, /\.quick-entry-fab/);
+  assert.match(css, /\.bottom-tabs\s*{[^}]*grid-template-columns:\s*repeat\(5,/s);
+  assert.match(css, /\.quick-entry-action\s*{[^}]*transform:\s*translateY\(-15px\)/s);
   const onboarding = app.match(/function renderOnboardingState\(user\)\s*{[^]*?\n}/)?.[0] ?? "";
   assert.match(onboarding, /#openQuickEntryButton/);
   assert.match(app, /status === "unsupported"\) return/);
   assert.match(app, /if \(data\.shortcutConfigured\)/);
   assert.match(app, /#quickAccessConfiguredState/);
+  assert.equal(translations.ru["quickEntry.addExpense"], "Добавить расход");
+  assert.equal(translations.en["quickEntry.addExpense"], "Add expense");
+});
+
+test("Settings omits weekly budget from the form, dirty state and PATCH payload", async () => {
+  const html = await readFile(join(miniAppRoot, "index.html"), "utf8");
+  const app = await readFile(join(miniAppRoot, "app.js"), "utf8");
+
+  assert.doesNotMatch(html, /weeklyBudgetInput|weeklyBudgetAmount|settings\.weeklyBudget/);
+  assert.doesNotMatch(app, /weeklyBudgetInput|weeklyBudgetAmount|settings\.weeklyBudget/);
+});
+
+test("Dashboard inbox uses an open-by-default disclosure with summary preview", async () => {
+  const html = await readFile(join(miniAppRoot, "index.html"), "utf8");
+  const app = await readFile(join(miniAppRoot, "app.js"), "utf8");
+
+  assert.match(html, /<details class="dashboard-disclosure dashboard-inbox hidden" id="dashboardInboxBlock">/);
+  assert.match(html, /id="dashboardInboxPreview"/);
+  assert.match(app, /if \(wasHidden\) block\.open = true/);
+  assert.match(app, /inboxSummaryPreview\(drafts, currentLanguage/);
 });

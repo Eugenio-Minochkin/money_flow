@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   inboxCountLabel,
   inboxDraftDescription,
+  inboxSummaryPreview,
   inboxDraftTotal,
   shouldShowInboxOnDashboard,
   updateFirstInboxItemCategory
@@ -66,4 +67,17 @@ test("inboxCountLabel never leaves a bare count placeholder", () => {
     assert.doesNotMatch(inboxCountLabel(2, language), /\{count\}/);
   }
   assert.equal(inboxCountLabel(0, "ru"), "Нужно проверить 0 трат");
+});
+
+test("inboxSummaryPreview shows the first draft and the remaining count", () => {
+  const drafts = [
+    { items: [{ description: "молоко", amount: 20, currency: "THB" }] },
+    { items: [{ description: "такси", amount: 120, currency: "THB" }] },
+    { items: [{ description: "кофе", amount: 80, currency: "THB" }] }
+  ];
+  const format = (amount, currency) => `${amount} ${currency}`;
+
+  assert.equal(inboxSummaryPreview(drafts.slice(0, 1), "ru", format), "молоко · 20 THB");
+  assert.equal(inboxSummaryPreview(drafts, "ru", format), "молоко · 20 THB · + ещё 2");
+  assert.equal(inboxSummaryPreview(drafts, "en", format), "молоко · 20 THB · + 2 more");
 });
