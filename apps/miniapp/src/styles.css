@@ -913,10 +913,10 @@ body.is-fullscreen .hero-metric[data-layout="evolution"] .hero-metric__summary,
 }
 
 .hero-metric[data-layout="evolution"] .hero-metric__ribbon {
-  top: -34px;
-  right: -54px;
-  width: clamp(286px, 82vw, 326px);
-  height: 176px;
+  top: -32px;
+  right: -58px;
+  width: clamp(326px, 96vw, 380px);
+  height: 210px;
 }
 
 .hero-metric[data-layout="evolution"] .hero-metric__facts {
