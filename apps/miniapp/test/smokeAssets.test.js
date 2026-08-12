@@ -23,7 +23,7 @@ test("Mini App keeps app.js and styles.css cache-busters in sync", async () => {
   assert.ok(appVersion, "index.html should version app.js with a ?v= query");
   assert.ok(cssVersion, "index.html should version styles.css with a ?v= query");
   assert.equal(appVersion, cssVersion, "app.js and styles.css cache-busters must stay in sync");
-  assert.equal(appVersion, "20260812-mobile-pager-v1");
+  assert.equal(appVersion, "20260812-hero-exploration-v4");
   assert.notEqual(appVersion, "20260626-dashboard-v12", "app.js must not keep the stale dashboard-v12 cache-buster");
 });
 
@@ -142,6 +142,22 @@ test("hero geometry leaves responsive space before its facts card", async () => 
   assert.match(css, /\.hero-metric__summary\s*{[^}]*min-height:\s*clamp\(/s);
   assert.match(css, /\.hero-metric__facts\s*{[^}]*margin:\s*0 12px/s);
   assert.doesNotMatch(css, /\.hero-metric__facts\s*{[^}]*margin:\s*-\d+px/s);
+});
+
+test("hero exploration stays query-scoped and keeps three removable layout variants", async () => {
+  const app = await readFile(new URL("../src/app.js", import.meta.url), "utf8");
+  const css = await readFile(new URL("../src/styles.css", import.meta.url), "utf8");
+
+  assert.match(app, /params\.get\("heroVariant"\)/);
+  assert.match(app, /params\.get\("heroPreview"\) === "1"/);
+  assert.match(app, /new Set\(\["evolution", "product", "minimal"\]\)/);
+  assert.match(app, /setAttribute\("data-layout", heroVariant\)/);
+  assert.match(app, /if \(heroPreview && heroVariantNames\.has\(heroVariant\)\)/);
+  assert.match(app, /function renderHeroPreview\(\)/);
+  assert.match(css, /\.hero-metric\[data-layout="evolution"\]/);
+  assert.match(css, /\.hero-metric\[data-layout="product"\]/);
+  assert.match(css, /\.hero-metric\[data-layout="minimal"\]/);
+  assert.doesNotMatch(css, /\.shell\[data-layout/);
 });
 
 test("future planned row has no orphan top divider", async () => {
