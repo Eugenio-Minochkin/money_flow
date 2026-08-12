@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import * as plannedModule from "../src/planned.js";
 
 import {
   calculatePlannedMonthSummary,
@@ -12,6 +13,13 @@ import {
   nextUnpaidPlannedItem,
   parseDueDays
 } from "../src/planned.js";
+
+test("planned summary progress is safe for empty and fully paid months", () => {
+  assert.equal(typeof plannedModule.plannedPaidPercent, "function");
+  assert.equal(plannedModule.plannedPaidPercent({ total: 0, paid: 0 }), 0);
+  assert.equal(plannedModule.plannedPaidPercent({ total: 100, paid: 25 }), 25);
+  assert.equal(plannedModule.plannedPaidPercent({ total: 100, paid: 120 }), 100);
+});
 
 test("parses due days from comma separated input", () => {
   assert.deepEqual(parseDueDays("4, 18, nope, 40, 0"), [4, 18]);

@@ -4,7 +4,12 @@ import { buildReserveSettingsView } from "../src/reserveSettings.js";
 
 const t = (key) => ({
   "reserve.settingsTitle": "Budget reserve",
+  "reserve.notSet": "No reserve set",
+  "reserve.explanation": "Reserved money is not an expense, but reduces what is available to spend.",
+  "reserve.thisMonth": "This month only",
+  "reserve.everyMonth": "Every month",
   "reserve.add": "Add",
+  "actions.edit": "Edit",
   "reserve.enableAgain": "Enable again",
   "reserve.disabledThisMonth": "Reserve disabled this month",
   "reserve.statusSaved": "Saved",
@@ -19,7 +24,8 @@ test("builds a collapsed add row when there is no reserve", () => {
 
   assert.equal(view.isExpanded, false);
   assert.equal(view.title, "Budget reserve");
-  assert.equal(view.meta, "");
+  assert.equal(view.meta, "No reserve set");
+  assert.equal(view.description, "Reserved money is not an expense, but reduces what is available to spend.");
   assert.equal(view.status, "Add");
   assert.equal(view.showScope, false);
   assert.equal(view.showDisable, false);
@@ -31,13 +37,18 @@ test("builds a collapsed active reserve row with amount, title, and status", () 
     reserveSummary: { status: "partially_used" },
     template: { is_active: true },
     currency: "THB",
+    displayAmount: 122.51,
+    displayCurrency: "USD",
     t,
-    moneyBase
+    moneyBase,
+    moneyDisplay: (value, currency) => `~${value} ${currency}`
   });
 
   assert.equal(view.isExpanded, false);
-  assert.equal(view.meta, "4000 THB · Trip");
-  assert.equal(view.status, "At risk");
+  assert.equal(view.title, "Budget reserve");
+  assert.equal(view.meta, "Trip · 4000 THB · ~122.51 USD");
+  assert.equal(view.description, "Every month");
+  assert.equal(view.status, "Edit");
   assert.equal(view.showScope, false);
   assert.equal(view.showDisable, false);
 });
@@ -68,7 +79,9 @@ test("keeps disabled reserve compact with an enable action", () => {
   });
 
   assert.equal(view.isExpanded, false);
-  assert.equal(view.meta, "1000 THB · Test");
+  assert.equal(view.title, "Budget reserve");
+  assert.equal(view.meta, "Test · 1000 THB");
+  assert.equal(view.description, "This month only");
   assert.equal(view.status, "Enable again");
   assert.equal(view.disabledNote, "Reserve disabled this month");
   assert.equal(view.showScope, false);

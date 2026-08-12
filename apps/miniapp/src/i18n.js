@@ -179,7 +179,14 @@ export const translations = {
     "onboarding.title": "Завершите настройку Money Flow",
     "onboarding.continueInBot": "Продолжите настройку в Telegram-боте. Источник перехода уже сохранён.",
     "onboarding.openBot": "Продолжить в боте",
-    "plan.addPlanned": "+ Добавить",
+    "plan.addPlanned": "+ Плановая",
+    "plan.summaryTitle": "Плановые оплаты",
+    "plan.infoLabel": "О плане",
+    "plan.infoPlannedTitle": "Плановые оплаты",
+    "plan.infoPlannedBody": "Регулярные или разовые платежи, которые предстоит оплатить. Money Flow заранее учитывает их при расчёте доступных денег.",
+    "plan.infoReserveTitle": "Резерв бюджета",
+    "plan.infoReserveBody": "Деньги, которые вы хотите сохранить. Это не расход, но резерв уменьшает сумму, доступную для трат.",
+    "plan.moreActions": "Ещё действия",
     "plan.budgetReserve": "Резерв месяца",
     "plan.dayOfMonth": "День месяца",
     "plan.daysOfMonth": "Дни месяца",
@@ -358,6 +365,10 @@ export const translations = {
     "reserve.blocked": "Резерв на этот месяц не создан: сумма резерва больше свободного бюджета. Уменьшите резерв или измените бюджет/плановые траты.",
     "reserve.validationError": "Резерв больше свободного бюджета. Уменьшите сумму или измените бюджет/плановые траты."
     ,"reserve.settingsTitle": "Резерв бюджета"
+    ,"reserve.notSet": "Резерв не задан"
+    ,"reserve.explanation": "Деньги в резерве не считаются расходом, но уменьшают сумму, доступную для трат."
+    ,"reserve.thisMonth": "Только этот месяц"
+    ,"reserve.everyMonth": "Каждый месяц"
     ,"reserve.add": "Добавить"
     ,"reserve.enableAgain": "Включить снова"
     ,"reserve.disabledThisMonth": "Резерв отключён на этот месяц"
@@ -557,7 +568,14 @@ export const translations = {
     "onboarding.title": "Finish setting up Money Flow",
     "onboarding.continueInBot": "Continue setup in the Telegram bot. Your link source is already saved.",
     "onboarding.openBot": "Continue in bot",
-    "plan.addPlanned": "+ Add",
+    "plan.addPlanned": "+ Planned",
+    "plan.summaryTitle": "Planned payments",
+    "plan.infoLabel": "About the plan",
+    "plan.infoPlannedTitle": "Planned payments",
+    "plan.infoPlannedBody": "Recurring or one-off payments that are due. Money Flow includes them ahead of time when calculating available money.",
+    "plan.infoReserveTitle": "Budget reserve",
+    "plan.infoReserveBody": "Money you want to protect. It is not an expense, but it reduces the amount available to spend.",
+    "plan.moreActions": "More actions",
     "plan.budgetReserve": "month reserve",
     "plan.dayOfMonth": "Day of month",
     "plan.daysOfMonth": "Days of month",
@@ -736,6 +754,10 @@ export const translations = {
     "reserve.blocked": "This month’s reserve wasn’t created: the reserve is higher than your free budget. Please reduce the reserve or adjust your budget/planned expenses.",
     "reserve.validationError": "The reserve is higher than your free budget. Please reduce the amount or adjust your budget/planned expenses."
     ,"reserve.settingsTitle": "Budget reserve"
+    ,"reserve.notSet": "No reserve set"
+    ,"reserve.explanation": "Reserved money is not an expense, but reduces the amount available to spend."
+    ,"reserve.thisMonth": "This month only"
+    ,"reserve.everyMonth": "Every month"
     ,"reserve.add": "Add"
     ,"reserve.enableAgain": "Enable again"
     ,"reserve.disabledThisMonth": "Reserve disabled this month"
