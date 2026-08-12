@@ -104,6 +104,146 @@ body {
 .quick-capture-review__item > span { color: var(--muted); font-size: 14px; }
 @keyframes quick-entry-spin { to { transform: rotate(360deg); } }
 
+body.edit-modal-open {
+  overflow: hidden;
+}
+
+.edit-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 49;
+  background: rgb(0 0 0 / 48%);
+  backdrop-filter: blur(2px);
+}
+
+.edit-modal {
+  position: fixed;
+  inset: max(12px, var(--tg-content-safe-area-inset-top, var(--tg-safe-area-inset-top, env(safe-area-inset-top)))) 12px max(12px, var(--tg-content-safe-area-inset-bottom, var(--tg-safe-area-inset-bottom, env(safe-area-inset-bottom))));
+  z-index: 50;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  width: min(calc(100% - 24px), 520px);
+  height: fit-content;
+  max-height: calc(100dvh - 24px);
+  margin: auto;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  background: var(--panel);
+  box-shadow: 0 24px 70px rgb(0 0 0 / 30%);
+}
+
+.edit-modal__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.edit-modal__header h2 {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.edit-modal__close {
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--ink);
+  font-size: 22px;
+  line-height: 1;
+  padding: 0 0 3px;
+}
+
+.edit-modal__body {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 12px 14px;
+}
+
+.edit-modal .form-stack {
+  gap: 8px;
+  padding: 0;
+}
+
+.edit-modal .edit-card {
+  gap: 8px;
+  padding: 0;
+  border: 0;
+}
+
+.edit-modal label {
+  gap: 4px;
+  font-size: 12px;
+}
+
+.edit-modal input,
+.edit-modal select {
+  min-height: 40px;
+  padding: 8px 9px;
+  font-size: 14px;
+}
+
+.edit-modal__advanced {
+  border-block: 1px solid var(--line);
+}
+
+.edit-modal__advanced summary {
+  padding: 9px 0;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.edit-modal__advanced-fields {
+  display: grid;
+  gap: 8px;
+  padding: 0 0 10px;
+}
+
+.edit-modal .button-row {
+  position: sticky;
+  bottom: -12px;
+  z-index: 1;
+  margin: 2px -14px -12px;
+  padding: 10px 14px calc(12px + max(0px, env(safe-area-inset-bottom)));
+  border-top: 1px solid var(--line);
+  background: var(--panel);
+}
+
+@media (max-width: 430px) {
+  .edit-modal {
+    inset: max(8px, var(--tg-content-safe-area-inset-top, var(--tg-safe-area-inset-top, env(safe-area-inset-top)))) 8px max(8px, var(--tg-content-safe-area-inset-bottom, var(--tg-safe-area-inset-bottom, env(safe-area-inset-bottom))));
+    width: calc(100% - 16px);
+    max-height: calc(100dvh - 16px);
+    border-radius: 20px;
+  }
+
+  .edit-modal__body {
+    padding: 10px 12px;
+  }
+
+  .edit-modal .field-grid {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 8px;
+  }
+
+  .edit-modal .button-row {
+    bottom: -10px;
+    margin: 2px -12px -10px;
+    padding-inline: 12px;
+  }
+}
+
 .eyebrow,
 .expense-meta,
 .bar-row-display,

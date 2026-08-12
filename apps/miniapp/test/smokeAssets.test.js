@@ -23,7 +23,7 @@ test("Mini App keeps app.js and styles.css cache-busters in sync", async () => {
   assert.ok(appVersion, "index.html should version app.js with a ?v= query");
   assert.ok(cssVersion, "index.html should version styles.css with a ?v= query");
   assert.equal(appVersion, cssVersion, "app.js and styles.css cache-busters must stay in sync");
-  assert.equal(appVersion, "20260812-plan-reserve-v1");
+  assert.equal(appVersion, "20260813-edit-modal-v2");
   assert.notEqual(appVersion, "20260626-dashboard-v12", "app.js must not keep the stale dashboard-v12 cache-buster");
 });
 
@@ -613,6 +613,40 @@ test("dashboard latest expenses use three tappable icon rows that open the exist
   assert.match(css, /\.dashboard-expense-row\s*{/);
   assert.match(css, /\.dashboard-expense-row:active\s*{/);
   assert.match(css, /\.dashboard-expense-icon\s*{/);
+});
+
+test("expense and planned edits share one modal without inline scrolling or tab navigation", async () => {
+  const html = await readFile(join(miniAppRoot, "index.html"), "utf8");
+  const css = await readFile(join(miniAppRoot, "styles.css"), "utf8");
+  const app = await readFile(join(miniAppRoot, "app.js"), "utf8");
+
+  assert.match(html, /id="editModalBackdrop"/);
+  assert.match(html, /id="editModal"[^>]+role="dialog"[^>]+aria-modal="true"[^>]+aria-labelledby="editModalTitle"/);
+  assert.match(html, /id="editModalBody"/);
+  assert.equal((html.match(/id="expenseForm"/g) ?? []).length, 1);
+  assert.equal((html.match(/id="plannedForm"/g) ?? []).length, 1);
+
+  assert.match(app, /createEditModalController\(/);
+  assert.match(app, /renderExpenseEditor\(expense, \{ returnTab: options\.returnTab \?\? "history" \}\)/);
+  assert.match(app, /openEditModal\(\{[^}]*form:[^}]*titleText:/s);
+  assert.match(app, /<details class="edit-modal__advanced">[\s\S]*?<summary>\$\{t\("forms\.additional"\)\}<\/summary>[\s\S]*?name="\$\{prefix\}-budget_impact"[\s\S]*?name="\$\{prefix\}-spent_at"[\s\S]*?name="\$\{prefix\}-tags"[\s\S]*?<\/details>/);
+  assert.match(app, /const plannedTagsField = `[\s\S]*?name="planned-tags"[\s\S]*?`;/);
+  assert.match(app, /const plannedTags = mode === "edit" \? `[\s\S]*?<details class="edit-modal__advanced">[\s\S]*?<summary>\$\{t\("forms\.additional"\)\}<\/summary>[\s\S]*?\$\{plannedTagsField\}[\s\S]*?<\/details>/);
+  const expenseEditor = app.match(/function renderExpenseEditor\(expense, options = \{\}\)\s*\{[^]*?\n\}/)?.[0] ?? "";
+  assert.doesNotMatch(expenseEditor, /switchTab|scrollIntoView/);
+  const plannedActions = app.match(/function bindPlannedActions\(container, items\)\s*\{[^]*?\n\}/)?.[0] ?? "";
+  const plannedEditHandlers = [...plannedActions.matchAll(/querySelectorAll\("\[data-edit-planned\]"\)[^]*?openPlannedEditor\(item\);/g)];
+  assert.equal(plannedEditHandlers.length, 2);
+  plannedEditHandlers.forEach(([handler]) => assert.doesNotMatch(handler, /switchTab\("plan"\)|scrollIntoView/));
+
+  assert.match(css, /body\.edit-modal-open\s*{[^}]*overflow:\s*hidden/s);
+  assert.match(css, /\.edit-modal-backdrop\s*{[^}]*position:\s*fixed[^}]*inset:\s*0/s);
+  assert.match(css, /\.edit-modal\s*{[^}]*position:\s*fixed[^}]*height:\s*fit-content[^}]*overflow:\s*hidden/s);
+  assert.match(css, /\.edit-modal__body\s*{[^}]*overflow-y:\s*auto[^}]*overscroll-behavior:\s*contain/s);
+  assert.match(css, /\.edit-modal \.form-stack\s*{[^}]*gap:\s*8px[^}]*padding:\s*0/s);
+  assert.match(css, /\.edit-modal__advanced\s*{/);
+  assert.match(css, /@media \(max-width:\s*430px\)[^]*\.edit-modal \.field-grid\s*{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\) minmax\(0,\s*1fr\)/s);
+  assert.match(css, /\.edit-modal__actions|\.edit-modal \.button-row/);
 });
 
 test("language changes rerender cached dynamic dashboard content without another request", async () => {

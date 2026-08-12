@@ -36,6 +36,7 @@ import {
   shiftCalendarMonth
 } from "./history.js";
 import { createTranslator } from "./i18n.js";
+import { createEditModalController, runEditModalSave } from "./editModal.js";
 import { inboxCountLabel, inboxDraftDescription, inboxDraftTotal, inboxSummaryPreview, shouldShowInboxOnDashboard, updateFirstInboxItemCategory } from "./inbox.js";
 import {
   TAB_ORDER,
@@ -82,7 +83,6 @@ let dashboardState = null;
 let draftState = null;
 let draftDirty = false;
 let draftReturnTab = "dashboard";
-let expenseReturnTab = "dashboard";
 let historyState = [];
 let inboxState = [];
 let historyFilterState = historyFilterFromLaunchParams(params);
@@ -102,6 +102,14 @@ const deleteAccountAdvanceButton = document.getElementById("deleteAccountAdvance
 const deleteAccountCancelButton = document.getElementById("deleteAccountCancelButton");
 const deleteAccountConfirmInput = document.getElementById("deleteAccountConfirmInput");
 const deleteAccountConfirmButton = document.getElementById("deleteAccountConfirmButton");
+const editModal = createEditModalController({
+  modal: document.getElementById("editModal"),
+  backdrop: document.getElementById("editModalBackdrop"),
+  modalBody: document.getElementById("editModalBody"),
+  title: document.getElementById("editModalTitle"),
+  documentBody: document.body,
+  pageRoot: document.querySelector(".shell")
+});
 
 function disableTelegramVerticalSwipes() {
   window.Telegram?.WebApp?.disableVerticalSwipes?.();
@@ -511,8 +519,11 @@ document.querySelector("#historyCalendarGrid")?.addEventListener("click", (event
 });
 document.querySelector("#applyHistoryPeriodButton")?.addEventListener("click", applyHistoryCustomRange);
 document.querySelector("#resetHistoryPeriodButton")?.addEventListener("click", resetHistoryPeriod);
+document.querySelector("#closeEditModalButton")?.addEventListener("click", closeEditModal);
+document.querySelector("#editModalBackdrop")?.addEventListener("click", closeEditModal);
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") closeDashboardTooltips();
+  if (event.key === "Escape" && editModal.isOpen()) closeEditModal();
   if (event.key === "Escape" && !document.querySelector("#historyDateSheet")?.classList.contains("hidden")) {
     closeHistoryDatePicker();
   }
@@ -1007,7 +1018,7 @@ function switchTab(tab, { fromPager = false } = {}) {
 function isTabSwipeBlocked() {
   const bottomTabs = document.querySelector(".bottom-tabs");
   if (accountDeleted || !bottomTabs || bottomTabs.classList.contains("hidden")) return true;
-  return [...document.querySelectorAll('[role="dialog"], #draftEditorSection, #expenseEditorSection, #plannedForm')]
+  return [...document.querySelectorAll('[role="dialog"], #draftEditorSection, #plannedForm')]
     .some((element) => !element.classList.contains("hidden"));
 }
 
@@ -1805,8 +1816,20 @@ function renderPlannedForm(item = {}, { mode = "create", sourcePlannedExpenseId 
   const title = mode === "recreate" ? t("plan.createAgain") : mode === "edit" ? t("plan.saveExisting") : t("plan.addPlanned");
   const submitLabel = mode === "recreate" ? t("plan.createAgain") : mode === "edit" ? t("plan.saveExisting") : t("plan.saveNew");
   const recreateSession = mode === "recreate" ? createPlannedRecreateSession() : null;
+  const plannedTagsField = `
+    <label>
+      <span>${t("forms.tagsComma")}</span>
+      <input name="planned-tags" value="${escapeAttribute((item.tags ?? []).join(", "))}" />
+    </label>
+  `;
+  const plannedTags = mode === "edit" ? `
+    <details class="edit-modal__advanced">
+      <summary>${t("forms.additional")}</summary>
+      <div class="edit-modal__advanced-fields">${plannedTagsField}</div>
+    </details>
+  ` : plannedTagsField;
   form.innerHTML = `
-    <h3>${title}</h3>
+    ${mode === "edit" ? "" : `<h3>${title}</h3>`}
     ${mode === "recreate" ? `
       <label>
         <span>${t("plan.startsOn")}</span>
@@ -1860,10 +1883,7 @@ function renderPlannedForm(item = {}, { mode = "create", sourcePlannedExpenseId 
         <input name="planned-due_date" type="date" value="${dueDate}" />
       </label>
     </div>
-    <label>
-      <span>${t("forms.tagsComma")}</span>
-      <input name="planned-tags" value="${escapeAttribute((item.tags ?? []).join(", "))}" />
-    </label>
+    ${plannedTags}
     <div class="button-row">
       <button type="submit">${submitLabel}</button>
       <button type="button" class="ghost-button" id="resetPlannedForm">${t("plan.reset")}</button>
@@ -1876,7 +1896,10 @@ function renderPlannedForm(item = {}, { mode = "create", sourcePlannedExpenseId 
     sourcePlannedExpenseId,
     recreateSession
   });
-  form.querySelector("#resetPlannedForm").addEventListener("click", () => renderPlannedForm());
+  form.querySelector("#resetPlannedForm").addEventListener("click", () => {
+    if (mode === "edit") renderPlannedForm(item, { mode: "edit" });
+    else renderPlannedForm();
+  });
   form.querySelector("#cancelPlannedForm").addEventListener("click", closeAndResetPlannedForm);
   form.querySelector('[name="planned-recurrence"]').addEventListener("change", syncPlannedRecurrenceFields);
   syncPlannedRecurrenceFields();
@@ -1934,6 +1957,16 @@ function renderPlannedExpenses(items) {
 function closeAndResetPlannedForm() {
   renderPlannedForm();
   document.querySelector("#plannedForm").classList.add("hidden");
+}
+
+function openPlannedEditor(item) {
+  if (!item) return;
+  renderPlannedForm(item, { mode: "edit" });
+  openEditModal({
+    form: document.querySelector("#plannedForm"),
+    titleText: t("plan.saveExisting"),
+    onClose: closeAndResetPlannedForm
+  });
 }
 
 async function refreshPlannedArchive({ force = false } = {}) {
@@ -2044,10 +2077,7 @@ function bindPlannedActions(container, items) {
   container.querySelectorAll("[data-edit-planned]").forEach((button) => {
     button.addEventListener("click", () => {
       const item = items.find((planned) => String(planned.id) === button.dataset.editPlanned);
-      switchTab("plan");
-      renderPlannedForm(item, { mode: "edit" });
-      document.querySelector("#plannedForm").classList.remove("hidden");
-      document.querySelector("#plannedForm").scrollIntoView({ behavior: "smooth", block: "start" });
+      openPlannedEditor(item);
     });
   });
   container.querySelectorAll("[data-delete-planned]").forEach((button) => {
@@ -2149,10 +2179,7 @@ function bindPlannedActions(container, items) {
       button.addEventListener("click", () => {
         const item = items.find((planned) => String(planned.id) === button.dataset.editPlanned);
         popover.classList.add("hidden");
-        switchTab("plan");
-        renderPlannedForm(item, { mode: "edit" });
-        document.querySelector("#plannedForm").classList.remove("hidden");
-        document.querySelector("#plannedForm").scrollIntoView({ behavior: "smooth", block: "start" });
+        openPlannedEditor(item);
       });
     });
     popover.querySelectorAll("[data-open-plan-tab]").forEach((button) => {
@@ -2191,13 +2218,7 @@ function renderDraftEditor(draft) {
 
 function renderExpenseEditor(expense, options = {}) {
   if (!expense) return;
-  expenseReturnTab = options.returnTab ?? "dashboard";
-  switchTab("dashboard");
-  const section = document.querySelector("#expenseEditorSection");
-  const title = document.querySelector("#expenseEditorTitle");
   const form = document.querySelector("#expenseForm");
-  if (title) title.textContent = currentLanguage === "ru" ? `Расход: ${expense.description}` : `Expense: ${expense.description}`;
-  section.classList.remove("hidden");
   form.innerHTML = `
     <div class="form-stack">
       ${editableItemFields({
@@ -2217,7 +2238,10 @@ function renderExpenseEditor(expense, options = {}) {
   `;
   form.onsubmit = (event) => saveExpense(event, expense.id);
   form.querySelector("#closeExpenseEditorButton").addEventListener("click", closeExpenseEditor);
-  section.scrollIntoView({ behavior: "smooth", block: "start" });
+  openEditModal({
+    form,
+    titleText: currentLanguage === "ru" ? `Расход: ${expense.description}` : `Expense: ${expense.description}`
+  });
 }
 
 function closeDraftEditor() {
@@ -2229,8 +2253,15 @@ function closeDraftEditor() {
 }
 
 function closeExpenseEditor() {
-  document.querySelector("#expenseEditorSection").classList.add("hidden");
-  switchTab(expenseReturnTab);
+  closeEditModal();
+}
+
+function openEditModal({ form, titleText, onClose = null }) {
+  editModal.open({ form, titleText, onClose });
+}
+
+function closeEditModal() {
+  editModal.close();
 }
 
 function editableItemFields(item, prefix, index) {
@@ -2254,22 +2285,27 @@ function editableItemFields(item, prefix, index) {
         <span>${t("forms.category")}</span>
         <select name="${prefix}-category_slug">${categories.map(([slug]) => option(slug, item.category_slug, categoryLabel(slug, currentLanguage))).join("")}</select>
       </label>
-      <label>
-        <span>${currentLanguage === "ru" ? "Тип расхода" : "Expense type"}</span>
-        <select name="${prefix}-budget_impact">
-          ${option("regular", item.budget_impact ?? "regular", currentLanguage === "ru" ? "Обычная" : "Regular")}
-          ${option("planned", item.budget_impact ?? "regular", currentLanguage === "ru" ? "Плановая" : "Planned")}
-          ${option("large_oneoff", item.budget_impact ?? "regular", currentLanguage === "ru" ? "Крупная" : "Large")}
-        </select>
-      </label>
-      <label>
-        <span>${t("forms.dateAndTime")}</span>
-        <input name="${prefix}-spent_at" type="datetime-local" value="${dateTimeLocal(item.spent_at, dashboardState?.user?.timezone)}" required />
-      </label>
-      <label>
-        <span>${t("forms.tagsComma")}</span>
-        <input name="${prefix}-tags" value="${escapeAttribute((item.tags ?? []).join(", "))}" />
-      </label>
+      <details class="edit-modal__advanced">
+        <summary>${t("forms.additional")}</summary>
+        <div class="edit-modal__advanced-fields">
+          <label>
+            <span>${currentLanguage === "ru" ? "Тип расхода" : "Expense type"}</span>
+            <select name="${prefix}-budget_impact">
+              ${option("regular", item.budget_impact ?? "regular", currentLanguage === "ru" ? "Обычная" : "Regular")}
+              ${option("planned", item.budget_impact ?? "regular", currentLanguage === "ru" ? "Плановая" : "Planned")}
+              ${option("large_oneoff", item.budget_impact ?? "regular", currentLanguage === "ru" ? "Крупная" : "Large")}
+            </select>
+          </label>
+          <label>
+            <span>${t("forms.dateAndTime")}</span>
+            <input name="${prefix}-spent_at" type="datetime-local" value="${dateTimeLocal(item.spent_at, dashboardState?.user?.timezone)}" required />
+          </label>
+          <label>
+            <span>${t("forms.tagsComma")}</span>
+            <input name="${prefix}-tags" value="${escapeAttribute((item.tags ?? []).join(", "))}" />
+          </label>
+        </div>
+      </details>
     </fieldset>
   `;
 }
@@ -2554,12 +2590,16 @@ async function cancelDraftFromEditor() {
 
 async function saveExpense(event, expenseId) {
   event.preventDefault();
-  await api(`/api/expenses/${expenseId}`, { method: "PATCH", body: { telegramUserId, expense: collectItem("expense", {}) } });
-  document.querySelector("#expenseEditorSection").classList.add("hidden");
-  await loadDashboard();
-  await loadHistory();
+  await runEditModalSave({
+    save: () => api(`/api/expenses/${expenseId}`, { method: "PATCH", body: { telegramUserId, expense: collectItem("expense", {}) } }),
+    refresh: async () => {
+      await loadDashboard();
+      await loadHistory();
+    },
+    close: closeEditModal,
+    restore: editModal.restore
+  });
   showToast(t("toast.expenseSaved"));
-  switchTab(expenseReturnTab);
 }
 
 async function savePlanned(event, {
@@ -2610,7 +2650,14 @@ async function savePlanned(event, {
   const method = plannedId ? "PATCH" : "POST";
   const path = plannedId ? `/api/planned-expenses/${plannedId}` : "/api/planned-expenses";
   try {
-    await api(path, { method, body: { telegramUserId, plannedExpense: collectPlanned() } });
+    const save = () => api(path, { method, body: { telegramUserId, plannedExpense: collectPlanned() } });
+    if (plannedId) {
+      await runEditModalSave({ save, refresh: loadDashboard, close: closeEditModal, restore: editModal.restore });
+    } else {
+      await save();
+      closeAndResetPlannedForm();
+      await loadDashboard();
+    }
   } catch (error) {
     if (error.message === "reserve_conflicts_with_planned_change") {
       showToast(t("reserve.plannedChangeError"));
@@ -2618,8 +2665,6 @@ async function savePlanned(event, {
     }
     throw error;
   }
-  closeAndResetPlannedForm();
-  await loadDashboard();
   showToast(plannedId ? t("toast.plannedSaved") : t("toast.plannedAdded"));
 }
 
