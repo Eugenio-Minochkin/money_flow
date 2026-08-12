@@ -7,9 +7,16 @@ export function createCapturedTelegramClient() {
   return {
     messages,
     callbackAnswers,
-    async sendMessage({ chatId, text, replyMarkup }) {
+    async sendMessage({ chatId, text, replyMarkup, replyParameters }) {
       messageIdSequence += 1;
-      const message = { method: "sendMessage", chatId, text, replyMarkup, message_id: messageIdSequence };
+      const message = {
+        method: "sendMessage",
+        chatId,
+        text,
+        replyMarkup,
+        ...(replyParameters ? { replyParameters } : {}),
+        message_id: messageIdSequence
+      };
       messages.push(message);
       return { ok: true, result: message };
     },
