@@ -15,6 +15,7 @@ import {
 } from "../../../packages/shared/src/time.js";
 import { calculateReserveState, validateReserveCapacity } from "../../../packages/shared/src/reserve.js";
 import { createExchangeRateProvider } from "./exchangeRates.js";
+import { matchesExpenseSearch, parseAmountSearch } from "./expenseSearch.js";
 import {
   normalizePlannedDateKey,
   plannedOccurrenceDateKeysForPeriod
@@ -3238,9 +3239,10 @@ export function createRepository(pool, options = {}) {
         ? (localDateRangeBounds(fromDate, toDate, timeZone) ?? localPeriodBounds(options.now ?? new Date(), "month", timeZone))
         : localPeriodBounds(options.now ?? new Date(), period, timeZone);
       const search = String(options.search ?? "").trim();
+      const amountSearch = parseAmountSearch(search);
       const params = [user.id, bounds.start, bounds.end];
       let searchSql = "";
-      if (search) {
+      if (search && !amountSearch) {
         params.push(`%${search.toLowerCase()}%`);
         const searchParam = `$${params.length}`;
         searchSql = `AND (
@@ -3258,7 +3260,10 @@ export function createRepository(pool, options = {}) {
          ORDER BY spent_at DESC`,
         params
       );
-      return result.rows.map((row) => withDisplay(row, user));
+      const expenses = result.rows.map((row) => withDisplay(row, user));
+      return amountSearch
+        ? expenses.filter((expense) => matchesExpenseSearch({ ...expense, base_currency: user.base_currency }, search))
+        : expenses;
     },
 
     async listExpenseExportRowsForTelegramUser(telegramUserId, options = {}) {

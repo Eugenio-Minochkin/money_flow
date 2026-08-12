@@ -1,5 +1,6 @@
 import { buildDashboardRequestPath, createApiClient, isOnboardingDashboardResponse } from "./apiClient.js";
 import { categories, categoryColor, categoryLabel } from "./categories.js";
+import { categoryIconSvg } from "./categoryIcons.js";
 import { currencyOptions } from "./currencies.js";
 import { resolveDraftSaveResponse, classifyConfirmOutcome } from "./draftSave.js";
 import { advanceShortcutSetup } from "./quickAccessSetup.js";
@@ -21,6 +22,7 @@ import {
 } from "./formatters.js";
 import {
   buildCalendarMonth,
+  buildHistoryAnalytics,
   canNavigateToMonth,
   buildHistoryRequestParams,
   createCalendarDraft,
@@ -28,6 +30,7 @@ import {
   formatCustomRangeLabel,
   groupByDay,
   historyFilterFromLaunchParams,
+  historySummaryKey,
   periodTotal,
   selectRangeDate,
   shiftCalendarMonth
@@ -438,6 +441,14 @@ document.querySelector("#historySearchForm").addEventListener("submit", (event) 
   event.preventDefault();
   loadHistory();
 });
+document.querySelector("#historySearch")?.addEventListener("input", updateHistorySearchClear);
+document.querySelector("#historySearchClear")?.addEventListener("click", () => {
+  const search = document.querySelector("#historySearch");
+  search.value = "";
+  updateHistorySearchClear();
+  search.focus();
+  loadHistory().catch(showError);
+});
 document.querySelector("#togglePlannedForm").addEventListener("click", () => {
   const form = document.querySelector("#plannedForm");
   form.classList.toggle("hidden");
@@ -735,6 +746,8 @@ async function loadHistory() {
   renderInboxDrafts(inboxState);
   renderHistory(historyState);
   renderHistoryPeriodSummary(historyState);
+  renderHistoryAnalytics(historyState);
+  updateHistorySearchClear();
 }
 
 function selectHistoryPeriod(period) {
@@ -772,6 +785,11 @@ function updateHistoryFilterChips() {
   const customActive = historyFilterState.period === "custom";
   dateButton?.classList.toggle("active", customActive);
   dateButton?.setAttribute("aria-pressed", String(customActive));
+  if (dateButton) {
+    dateButton.textContent = customActive
+      ? formatCustomRangeLabel(historyFilterState.fromDate, historyFilterState.toDate, currentLanguage)
+      : t("history.customPeriod");
+  }
   updateHistoryFilterCurrent();
 }
 
@@ -897,7 +915,9 @@ function renderHistoryPeriodSummary(expenses) {
   if (!summary) return;
   const total = periodTotal(expenses);
   const count = expenses.length;
-  const title = historyPeriodTitle();
+  const title = historySummaryKey(document.querySelector("#historySearch")?.value)
+    ? t("history.total.filtered")
+    : historyPeriodTitle();
   summary.innerHTML = `
     <div class="history-summary-card">
       <span class="history-summary-label">${escapeHtml(title)}</span>
@@ -905,6 +925,56 @@ function renderHistoryPeriodSummary(expenses) {
       <small class="history-summary-meta">${escapeHtml(expenseCountLabel(count, currentLanguage))}</small>
     </div>
   `;
+}
+
+function updateHistorySearchClear() {
+  const hasSearch = Boolean(document.querySelector("#historySearch")?.value);
+  document.querySelector("#historySearchClear")?.classList.toggle("hidden", !hasSearch);
+}
+
+function renderHistoryAnalytics(expenses) {
+  const analytics = buildHistoryAnalytics(expenses);
+  const disclosure = document.querySelector("#historyAnalytics");
+  disclosure?.classList.toggle("hidden", analytics.count === 0);
+  if (!analytics.count) return;
+
+  const leading = analytics.categories[0];
+  setText("#historyAnalyticsPreview", leading
+    ? t("history.analyticsPreview", {
+      category: categoryLabel(leading.category_slug, currentLanguage),
+      share: Math.round(leading.share)
+    })
+    : "");
+  setText("#historyDonutTotal", moneyBase(analytics.total));
+  setText("#historyDonutCount", expenseCountLabel(analytics.count, currentLanguage));
+
+  let cursor = 0;
+  const segments = analytics.categories.map((item, index) => {
+    const start = cursor;
+    cursor = index === analytics.categories.length - 1 ? 100 : cursor + item.share;
+    return `${categoryColor(item.category_slug)} ${start}% ${cursor}%`;
+  });
+  const donut = document.querySelector("#historyCategoryDonut");
+  if (donut) donut.style.background = `conic-gradient(${segments.join(", ")})`;
+
+  const ranking = document.querySelector("#historyCategoryRanking");
+  ranking.innerHTML = analytics.categories.map((item) => `
+    <div class="history-category-rank" style="--category-color:${categoryColor(item.category_slug)}">
+      <span>${escapeHtml(categoryLabel(item.category_slug, currentLanguage))}</span>
+      <strong>${escapeHtml(moneyBase(item.amount))} · ${item.share.toFixed(1)}%</strong>
+    </div>
+  `).join("");
+
+  const top = document.querySelector("#historyTopExpenses");
+  top.innerHTML = analytics.topExpenses.map((expense) => historyAnalyticsExpenseRow(expense)).join("");
+}
+
+function historyAnalyticsExpenseRow(expense) {
+  return `<div class="history-analytics-expense" style="--category-color:${categoryColor(expense.category_slug)}">
+    <span class="dashboard-expense-icon" aria-hidden="true">${categoryIconSvg(expense.category_slug)}</span>
+    <span><strong>${escapeHtml(expense.description)}</strong><small>${escapeHtml(categoryLabel(expense.category_slug, currentLanguage))}</small></span>
+    <b>${escapeHtml(moneyBase(expense.amount_base ?? 0))}</b>
+  </div>`;
 }
 
 async function loadDraft(id, options = {}) {
@@ -1488,7 +1558,7 @@ function dashboardExpenseRow(expense) {
     ?? "THB";
   return `
     <button type="button" class="dashboard-expense-row" data-edit-expense="${escapeAttribute(expense.id)}" aria-label="${escapeAttribute(`${t("actions.edit")}: ${expense.description}`)}" style="--category-color: ${categoryColor(expense.category_slug)}">
-      <span class="dashboard-expense-icon" aria-hidden="true">${dashboardCategoryIcon(expense.category_slug)}</span>
+      <span class="dashboard-expense-icon" aria-hidden="true">${categoryIconSvg(expense.category_slug)}</span>
       <span class="dashboard-expense-main">
         <strong>${escapeHtml(expense.description)}</strong>
         <span>${formatDate(expense.spent_at, currentLanguage, userTimeZone())}</span>
@@ -1499,25 +1569,6 @@ function dashboardExpenseRow(expense) {
       </span>
     </button>
   `;
-}
-
-function dashboardCategoryIcon(slug) {
-  const icons = {
-    food_cafe: '<path d="M5 8h11v5a5 5 0 0 1-5 5H10a5 5 0 0 1-5-5z"/><path d="M16 10h2a2 2 0 0 1 0 4h-2M7 5h7"/>',
-    groceries: '<path d="M5 9h14l-1 11H6z"/><path d="M9 9a3 3 0 0 1 6 0"/>',
-    transport: '<rect x="4" y="5" width="16" height="13" rx="3"/><path d="M7 9h10M7 14h10"/><circle cx="8" cy="19" r="1"/><circle cx="16" cy="19" r="1"/>',
-    health: '<path d="M12 21s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 11c0 5.6-7 10-7 10z"/><path d="M9 13h6m-3-3v6"/>',
-    sport_activities: '<path d="m7 5 3 3-4 4-3-3zm10 0-3 3 4 4 3-3zM9 15h6m-5-7h4"/>',
-    home: '<path d="m4 11 8-7 8 7v9h-5v-6H9v6H4z"/>',
-    travel: '<path d="M4 16 20 8l-6 12-3-5zM11 15l-3-3"/>',
-    subscriptions: '<rect x="5" y="3" width="14" height="18" rx="3"/><path d="M9 7h6m-6 4h6m-6 4h4"/>',
-    education: '<path d="m3 9 9-5 9 5-9 5z"/><path d="M7 12v5c3 2 7 2 10 0v-5"/>',
-    gifts_help: '<rect x="4" y="9" width="16" height="11" rx="2"/><path d="M12 9v11M3 9h18V6H3zM12 6c-4 0-4-4-1-4 2 0 1 4 1 4zm0 0c4 0 4-4 1-4-2 0-1 4-1 4z"/>',
-    entertainment: '<path d="M7 4h10l2 16-7-3-7 3z"/><circle cx="9" cy="10" r="1"/><circle cx="15" cy="10" r="1"/><path d="M9 14h6"/>',
-    gear: '<path d="M6 7h12l2 13H4z"/><path d="M9 7a3 3 0 0 1 6 0"/>'
-  };
-  const content = icons[slug] ?? '<circle cx="12" cy="12" r="8"/><path d="M8 12h8m-4-4v8"/>';
-  return `<svg viewBox="0 0 24 24" focusable="false">${content}</svg>`;
 }
 
 function renderHistory(expenses) {
@@ -1690,12 +1741,14 @@ async function openDraftInline(id, options = {}) {
 
 function expenseRow(expense) {
   const impactLabel = budgetImpactLabel(expense.budget_impact);
+  const tags = (expense.tags ?? []).map((tag) => `#${tag}`).join(" ");
   return `
-    <article class="expense-row" style="--category-color: ${categoryColor(expense.category_slug)}">
+    <article class="expense-row history-expense-row" style="--category-color: ${categoryColor(expense.category_slug)}">
+      <span class="dashboard-expense-icon" aria-hidden="true">${categoryIconSvg(expense.category_slug)}</span>
       <div class="expense-main">
         <div class="expense-title">${escapeHtml(expense.description)}</div>
         ${impactLabel ? `<div class="expense-meta">${impactLabel}</div>` : ""}
-        <div class="expense-meta">${formatDate(expense.spent_at, currentLanguage, userTimeZone())} · ${escapeHtml(categoryLabel(expense.category_slug, currentLanguage))}</div>
+        <div class="expense-meta">${formatDate(expense.spent_at, currentLanguage, userTimeZone())} · ${escapeHtml(categoryLabel(expense.category_slug, currentLanguage))}${tags ? ` · ${escapeHtml(tags)}` : ""}</div>
       </div>
       <div class="expense-actions">
         <div class="expense-amount">${formatMoney(expense.amount_original, expense.currency_original)}
@@ -2665,6 +2718,9 @@ function applyLanguage(language) {
   renderReserveSettings();
   updateHistoryFilterChips();
   if (historyCalendarDraft) renderHistoryCalendar();
+  renderHistory(historyState);
+  renderHistoryPeriodSummary(historyState);
+  renderHistoryAnalytics(historyState);
   renderPlannedArchive();
   rerenderDashboardLanguageState();
 }

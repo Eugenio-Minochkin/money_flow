@@ -3284,6 +3284,67 @@ test("listExpensesForTelegramUser keeps search working with dates using dynamic 
   assert.match(listCall.sql, /spent_at >= \$2 AND spent_at < \$3/);
 });
 
+test("listExpensesForTelegramUser matches original, base and display amounts inside period bounds", async () => {
+  const calls = [];
+  const row = {
+    id: "1",
+    amount_original: 2200,
+    currency_original: "RUB",
+    amount_base: 950,
+    converted_amounts: { USD: 26.65 },
+    description: "Coffee",
+    category_slug: "food_cafe",
+    tags: [],
+    spent_at: new Date("2026-06-10T10:00:00Z")
+  };
+  const repo = createRepository(fakePool((sql, params) => {
+    calls.push({ sql: String(sql), params });
+    if (String(sql).startsWith("SELECT * FROM users")) {
+      return { rows: [{ id: "1", telegram_user_id: "100", base_currency: "THB", display_currency: "USD" }] };
+    }
+    return { rows: [row] };
+  }));
+
+  for (const search of ["2 200 RUB", "950 THB", "$26,65"]) {
+    const expenses = await repo.listExpensesForTelegramUser(100, {
+      period: "month",
+      search,
+      now: new Date("2026-06-16T15:00:00+07:00")
+    });
+    assert.equal(expenses.length, 1, search);
+  }
+  assert.doesNotMatch(calls.at(-1).sql, /LIKE/);
+  assert.match(calls.at(-1).sql, /spent_at >= \$2 AND spent_at < \$3/);
+});
+
+test("listExpensesForTelegramUser matches zero-decimal display amounts as rendered", async () => {
+  const row = {
+    id: "1",
+    amount_original: 26.65,
+    currency_original: "USD",
+    amount_base: 950.49,
+    converted_amounts: { THB: 950.49 },
+    description: "Coffee",
+    category_slug: "food_cafe",
+    tags: [],
+    spent_at: new Date("2026-06-10T10:00:00Z")
+  };
+  const repo = createRepository(fakePool((sql) => {
+    if (String(sql).startsWith("SELECT * FROM users")) {
+      return { rows: [{ id: "1", telegram_user_id: "100", base_currency: "THB", display_currency: "THB" }] };
+    }
+    return { rows: [row] };
+  }));
+
+  const expenses = await repo.listExpensesForTelegramUser(100, {
+    period: "month",
+    search: "950 THB",
+    now: new Date("2026-06-16T15:00:00+07:00")
+  });
+
+  assert.equal(expenses.length, 1);
+});
+
 test("listExpensesForTelegramUser falls back to month for unknown period", async () => {
   const calls = [];
   const repo = createRepository(fakePool((sql, params) => {

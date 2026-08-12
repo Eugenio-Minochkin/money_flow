@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>Money Flow</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/styles.css?v=20260812-miniapp-polish-v1" />
+    <link rel="stylesheet" href="/styles.css?v=20260812-history-ux-v1" />
   </head>
   <body data-theme="light">
     <main class="shell">
@@ -272,12 +272,13 @@
             </div>
             <div class="expense-list" id="inboxDrafts"></div>
           </section>
-          <form class="inline-form" id="historySearchForm">
-            <label>
-              <span data-i18n="history.search">Поиск</span>
-              <input id="historySearch" name="search" placeholder="описание, категория, тег" data-i18n-placeholder="history.searchPlaceholder" />
+          <form class="history-search" id="historySearchForm" role="search">
+            <label class="history-search__field">
+              <span class="history-search__icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="m16 16 4 4"/></svg></span>
+              <span class="visually-hidden" data-i18n="history.search">Поиск</span>
+              <input id="historySearch" name="search" placeholder="Описание, категория, тег или сумма" data-i18n-placeholder="history.searchPlaceholder" />
+              <button type="button" class="history-search__clear hidden" id="historySearchClear" aria-label="Очистить поиск" data-i18n-aria-label="history.clearSearch">×</button>
             </label>
-            <button type="submit" data-i18n="actions.find">Найти</button>
           </form>
           <section class="history-filters" id="historyFilters">
             <div class="history-filter-title">
@@ -291,9 +292,25 @@
                 <button type="button" class="history-filter-chip" data-history-period="last7" data-i18n="history.last7">7 дней</button>
                 <button type="button" class="history-filter-chip active" data-history-period="month" data-i18n="history.thisMonth">Месяц</button>
               </div>
-              <button type="button" class="history-filter-chip history-date-action" id="openHistoryDatePicker" data-i18n="history.customPeriod">Даты</button>
+              <button type="button" class="history-filter-chip history-date-action" id="openHistoryDatePicker" data-i18n="history.customPeriod">Выбрать даты</button>
             </div>
             <div class="history-period-summary" id="historyPeriodSummary"></div>
+            <details class="history-analytics" id="historyAnalytics">
+              <summary>
+                <span><strong data-i18n="history.analytics">Аналитика периода</strong><small id="historyAnalyticsPreview"></small></span>
+                <span class="history-analytics__chevron" aria-hidden="true">›</span>
+              </summary>
+              <div class="history-analytics__body">
+                <div class="history-donut-layout">
+                  <div class="history-donut" id="historyCategoryDonut"><div><strong id="historyDonutTotal"></strong><span id="historyDonutCount"></span></div></div>
+                  <div class="history-category-ranking" id="historyCategoryRanking"></div>
+                </div>
+                <section class="history-top-expenses">
+                  <h3 data-i18n="history.topExpenses">Крупнейшие расходы</h3>
+                  <div id="historyTopExpenses"></div>
+                </section>
+              </div>
+            </details>
           </section>
           <div class="section-heading history-saved-heading compact-heading hidden" id="historySavedHeading">
             <h3 data-i18n="history.savedExpenses">Записанные расходы</h3>
@@ -528,6 +545,6 @@
     </nav>
 
     <div class="toast hidden" id="toast" role="status" aria-live="polite"></div>
-    <script src="/app.js?v=20260812-miniapp-polish-v1" type="module"></script>
+    <script src="/app.js?v=20260812-history-ux-v1" type="module"></script>
   </body>
 </html>
