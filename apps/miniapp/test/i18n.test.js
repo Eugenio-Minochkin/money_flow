@@ -11,6 +11,7 @@ test("Mini App translations cover dashboard, plan, history and settings labels",
     "actions.edit",
     "actions.find",
     "actions.pay",
+    "forms.additional",
     "dashboard.safeToday",
     "dashboard.safeToSpendPerDay",
     "dashboard.todayRemaining",
@@ -123,6 +124,26 @@ test("planned archive and recreate UX keys stay in parity for Russian and Englis
     "plan.startsOn",
     "toast.plannedRecreated",
     "toast.plannedRefreshWarning"
+  ];
+
+  for (const language of ["ru", "en"]) {
+    for (const key of keys) assert.equal(typeof translations[language][key], "string", `${language}.${key}`);
+  }
+});
+
+test("plan and reserve explanation keys stay in parity for Russian and English", () => {
+  const keys = [
+    "plan.summaryTitle",
+    "plan.infoLabel",
+    "plan.infoPlannedTitle",
+    "plan.infoPlannedBody",
+    "plan.infoReserveTitle",
+    "plan.infoReserveBody",
+    "plan.moreActions",
+    "reserve.notSet",
+    "reserve.explanation",
+    "reserve.thisMonth",
+    "reserve.everyMonth"
   ];
 
   for (const language of ["ru", "en"]) {

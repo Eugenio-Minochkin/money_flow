@@ -48,6 +48,13 @@ export function calculatePlannedMonthSummary(items, now = new Date()) {
   return summary;
 }
 
+export function plannedPaidPercent(summary = {}) {
+  const total = Number(summary.total ?? 0);
+  const paid = Number(summary.paid ?? 0);
+  if (!Number.isFinite(total) || total <= 0 || !Number.isFinite(paid)) return 0;
+  return Math.min(100, Math.max(0, Math.round((paid / total) * 100)));
+}
+
 export function defaultPlannedCurrency(item = {}, baseCurrency = "THB") {
   return item.currency || baseCurrency || "THB";
 }

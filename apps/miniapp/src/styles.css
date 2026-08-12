@@ -122,7 +122,8 @@ body.edit-modal-open {
   z-index: 50;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  width: min(calc(100% - 24px), 560px);
+  width: min(calc(100% - 24px), 520px);
+  height: fit-content;
   max-height: calc(100dvh - 24px);
   margin: auto;
   overflow: hidden;
@@ -137,7 +138,7 @@ body.edit-modal-open {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 16px 16px 12px;
+  padding: 12px 14px 10px;
   border-bottom: 1px solid var(--line);
 }
 
@@ -150,13 +151,13 @@ body.edit-modal-open {
 
 .edit-modal__close {
   flex: 0 0 auto;
-  width: 40px;
-  height: 40px;
+  width: 34px;
+  height: 34px;
   border: 0;
   border-radius: 50%;
   background: var(--accent-soft);
   color: var(--ink);
-  font-size: 25px;
+  font-size: 22px;
   line-height: 1;
   padding: 0 0 3px;
 }
@@ -165,20 +166,56 @@ body.edit-modal-open {
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 16px;
+  padding: 12px 14px;
+}
+
+.edit-modal .form-stack {
+  gap: 8px;
+  padding: 0;
 }
 
 .edit-modal .edit-card {
+  gap: 8px;
   padding: 0;
   border: 0;
 }
 
+.edit-modal label {
+  gap: 4px;
+  font-size: 12px;
+}
+
+.edit-modal input,
+.edit-modal select {
+  min-height: 40px;
+  padding: 8px 9px;
+  font-size: 14px;
+}
+
+.edit-modal__advanced {
+  border-block: 1px solid var(--line);
+}
+
+.edit-modal__advanced summary {
+  padding: 9px 0;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.edit-modal__advanced-fields {
+  display: grid;
+  gap: 8px;
+  padding: 0 0 10px;
+}
+
 .edit-modal .button-row {
   position: sticky;
-  bottom: -16px;
+  bottom: -12px;
   z-index: 1;
-  margin: 4px -16px -16px;
-  padding: 12px 16px calc(16px + max(0px, env(safe-area-inset-bottom)));
+  margin: 2px -14px -12px;
+  padding: 10px 14px calc(12px + max(0px, env(safe-area-inset-bottom)));
   border-top: 1px solid var(--line);
   background: var(--panel);
 }
@@ -192,17 +229,18 @@ body.edit-modal-open {
   }
 
   .edit-modal__body {
-    padding: 14px;
+    padding: 10px 12px;
   }
 
   .edit-modal .field-grid {
-    grid-template-columns: minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 8px;
   }
 
   .edit-modal .button-row {
-    bottom: -14px;
-    margin: 4px -14px -14px;
-    padding-inline: 14px;
+    bottom: -10px;
+    margin: 2px -12px -10px;
+    padding-inline: 12px;
   }
 }
 
@@ -1565,23 +1603,93 @@ body[data-theme="dark"] .monthly-forecast {
   min-width: 0;
 }
 
-.planned-header__title .eyebrow {
-  margin: 0;
+.planned-header__heading-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.plan-info-disclosure {
+  position: relative;
+}
+
+.plan-info-disclosure > summary {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 17px;
+  list-style: none;
+}
+
+.plan-info-disclosure > summary::-webkit-details-marker,
+.planned-expense-card__menu > summary::-webkit-details-marker {
+  display: none;
+}
+
+.plan-info-disclosure__body {
+  position: absolute;
+  z-index: 6;
+  top: calc(100% + 8px);
+  left: 0;
+  display: grid;
+  width: min(300px, calc(100vw - 56px));
+  gap: 5px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel);
+  padding: 12px;
+  box-shadow: var(--shadow);
+}
+
+.plan-info-disclosure__body strong {
+  font-size: 13px;
+}
+
+.plan-info-disclosure__body p {
+  margin: 0 0 5px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 .planned-header__top button {
   flex: 0 0 auto;
 }
 
-.planned-header__summary {
+.planned-summary-card {
   display: grid;
-  gap: 4px;
+  gap: 7px;
+  margin: 0 14px 12px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface-soft);
+  padding: 12px;
 }
 
-.planned-header__summary strong {
+.planned-summary-card > strong {
   font-size: 26px;
   line-height: 1.08;
   overflow-wrap: anywhere;
+}
+
+.planned-summary-progress {
+  height: 7px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 15%, var(--line));
+}
+
+.planned-summary-progress__fill {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width .2s ease;
 }
 
 .planned-summary-rows {
@@ -1611,10 +1719,126 @@ body[data-theme="dark"] .monthly-forecast {
   overflow-wrap: anywhere;
 }
 
-.planned-header__summary em,
+.planned-summary-card em,
 .planned-summary-row__amount em {
   color: var(--usd);
   font-style: normal;
+}
+
+#plannedExpenses {
+  gap: 10px;
+  padding: 0 14px;
+}
+
+.planned-expense-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px 10px;
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--category-color, var(--accent));
+  border-radius: 14px;
+  background: var(--panel);
+  padding: 11px 12px;
+}
+
+.planned-expense-card__main,
+.planned-expense-card__heading {
+  min-width: 0;
+}
+
+.planned-expense-card__main {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 3px;
+}
+
+.planned-expense-card__heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.planned-expense-card__heading strong {
+  overflow-wrap: anywhere;
+}
+
+.planned-expense-card__amount {
+  flex: 0 0 auto;
+  font-weight: 900;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.planned-expense-card__amount em {
+  display: block;
+  color: var(--usd);
+  font-size: 12px;
+  font-style: normal;
+}
+
+.planned-expense-card__meta,
+.planned-expense-card__status {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.planned-expense-card__status {
+  color: var(--ink);
+}
+
+.planned-expense-card__actions {
+  position: relative;
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 40px;
+  gap: 7px;
+  margin-top: 2px;
+}
+
+.planned-expense-card__actions > button,
+.planned-expense-card__menu > summary {
+  min-height: 36px;
+  padding: 7px 9px;
+  font-size: 12px;
+}
+
+.planned-expense-card__menu {
+  position: relative;
+}
+
+.planned-expense-card__menu > summary {
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--ink);
+  cursor: pointer;
+  list-style: none;
+  font-size: 20px;
+  line-height: 1;
+}
+
+.planned-expense-card__overflow {
+  position: absolute;
+  z-index: 5;
+  top: calc(100% + 6px);
+  right: 0;
+  display: grid;
+  width: min(260px, calc(100vw - 64px));
+  gap: 7px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+  padding: 8px;
+  box-shadow: var(--shadow);
+}
+
+.planned-expense-card__overflow button {
+  width: 100%;
 }
 
 .expense-list,
@@ -1822,7 +2046,7 @@ body[data-theme="dark"] .monthly-forecast {
 }
 
 .planned-archive {
-  margin-top: 14px;
+  margin: 14px 14px 0;
   border-top: 1px solid var(--line);
   padding-top: 10px;
 }
@@ -2190,6 +2414,10 @@ button:disabled {
   gap: 6px;
 }
 
+.plan-reserve-section {
+  margin: 0 14px 12px;
+}
+
 .reserve-summary {
   display: flex;
   align-items: center;
@@ -2223,6 +2451,10 @@ button:disabled {
   font-weight: 750;
   line-height: 1.25;
   overflow-wrap: anywhere;
+}
+
+#reserveSummaryDescription {
+  font-weight: 650;
 }
 
 .reserve-summary__status {
@@ -2522,8 +2754,12 @@ button:disabled {
     padding: 8px 11px;
   }
 
-  .planned-header__summary strong {
+  .planned-summary-card > strong {
     font-size: 22px;
+  }
+
+  .planned-expense-card {
+    grid-template-columns: minmax(0, 1fr) auto;
   }
 
   .settings-row,

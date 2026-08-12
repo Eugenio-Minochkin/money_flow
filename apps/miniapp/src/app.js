@@ -65,6 +65,7 @@ import {
   isPlannedPaid,
   nextUnpaidPlannedItem,
   parseDueDays,
+  plannedPaidPercent,
   recurrenceLabel as plannedRecurrenceLabel,
   weekdayOptions as plannedWeekdayOptions
 } from "./planned.js";
@@ -1376,12 +1377,16 @@ function renderReserveSettings() {
       is_active: document.querySelector("#reserveRecurringInput")?.checked === true
     },
     currency,
+    displayAmount: dashboardState?.snapshot?.display?.reserveAmount,
+    displayCurrency: dashboardState?.snapshot?.display?.currency ?? dashboardState?.user?.display_currency,
     isExpanded: reserveSettingsExpanded,
     t,
-    moneyBase
+    moneyBase,
+    moneyDisplay
   });
   setOptionalText("#reserveSummaryTitle", view.title);
   setOptionalText("#reserveSummaryMeta", view.meta);
+  setOptionalText("#reserveSummaryDescription", view.description);
   setOptionalText("#reserveSummaryStatus", view.status);
 
   const summaryButton = document.querySelector("#reserveSummaryButton");
@@ -1410,6 +1415,8 @@ function renderPlannedMonthSummary(items) {
   setHtml("#plannedReservePaidRemaining", currentLanguage === "ru"
     ? `${plannedSummaryRowHtml("Оплачено", paid)}${plannedSummaryRowHtml("Осталось", remaining)}`
     : `${plannedSummaryRowHtml("Paid", paid)}${plannedSummaryRowHtml("Remaining", remaining)}`);
+  const progress = document.querySelector("#plannedSummaryProgressFill");
+  if (progress) progress.style.width = `${plannedPaidPercent(summary)}%`;
 }
 
 function plannedSummaryMoneyParts(baseAmount, baseCurrency, displayAmount, displayCurrency) {
@@ -1809,6 +1816,18 @@ function renderPlannedForm(item = {}, { mode = "create", sourcePlannedExpenseId 
   const title = mode === "recreate" ? t("plan.createAgain") : mode === "edit" ? t("plan.saveExisting") : t("plan.addPlanned");
   const submitLabel = mode === "recreate" ? t("plan.createAgain") : mode === "edit" ? t("plan.saveExisting") : t("plan.saveNew");
   const recreateSession = mode === "recreate" ? createPlannedRecreateSession() : null;
+  const plannedTagsField = `
+    <label>
+      <span>${t("forms.tagsComma")}</span>
+      <input name="planned-tags" value="${escapeAttribute((item.tags ?? []).join(", "))}" />
+    </label>
+  `;
+  const plannedTags = mode === "edit" ? `
+    <details class="edit-modal__advanced">
+      <summary>${t("forms.additional")}</summary>
+      <div class="edit-modal__advanced-fields">${plannedTagsField}</div>
+    </details>
+  ` : plannedTagsField;
   form.innerHTML = `
     ${mode === "edit" ? "" : `<h3>${title}</h3>`}
     ${mode === "recreate" ? `
@@ -1864,10 +1883,7 @@ function renderPlannedForm(item = {}, { mode = "create", sourcePlannedExpenseId 
         <input name="planned-due_date" type="date" value="${dueDate}" />
       </label>
     </div>
-    <label>
-      <span>${t("forms.tagsComma")}</span>
-      <input name="planned-tags" value="${escapeAttribute((item.tags ?? []).join(", "))}" />
-    </label>
+    ${plannedTags}
     <div class="button-row">
       <button type="submit">${submitLabel}</button>
       <button type="button" class="ghost-button" id="resetPlannedForm">${t("plan.reset")}</button>
@@ -1912,21 +1928,25 @@ function renderPlannedExpenses(items) {
       })
       .join("");
     return `
-    <article class="expense-row" style="--category-color: ${categoryColor(item.category_slug)}">
-      <div class="expense-main">
-        <div class="expense-title">${escapeHtml(item.description)}</div>
-        <div class="expense-meta">${recurrenceLabel(item)} · ${escapeHtml(categoryLabel(item.category_slug, currentLanguage))}${progress ? ` · ${progress}` : ""}</div>
+    <article class="planned-expense-card" style="--category-color: ${categoryColor(item.category_slug)}">
+      <div class="planned-expense-card__main">
+        <div class="planned-expense-card__heading">
+          <strong>${escapeHtml(item.description)}</strong>
+          <span class="planned-expense-card__amount">${formatMoney(item.amount, item.currency)}<em>${moneyDisplay(item.display?.amount, item.display?.currency)}</em></span>
+        </div>
+        <div class="planned-expense-card__meta">${recurrenceLabel(item)} · ${escapeHtml(categoryLabel(item.category_slug, currentLanguage))}</div>
+        <div class="planned-expense-card__status">${escapeHtml(progress)}</div>
       </div>
-      <div class="expense-actions">
-        <div class="expense-amount">${formatMoney(item.amount, item.currency)}
-          <em>${moneyDisplay(item.display?.amount, item.display?.currency)}</em>
-        </div>
-        <div class="button-row compact">
-          <button type="button" data-pay-planned="${item.id}"${paid ? " disabled" : ""}>${paid ? t("actions.paid") : t("actions.pay")}</button>
-          <button type="button" class="ghost-button" data-edit-planned="${item.id}">${t("actions.edit")}</button>
-          <button type="button" class="danger-button" data-delete-planned="${item.id}">${t("actions.disable")}</button>
-        </div>
-        ${undoButtons ? `<div class="button-row compact">${undoButtons}</div>` : ""}
+      <div class="planned-expense-card__actions">
+        <button type="button" data-pay-planned="${escapeAttribute(item.id)}"${paid ? " disabled" : ""}>${paid ? t("actions.paid") : t("actions.pay")}</button>
+        <button type="button" class="ghost-button" data-edit-planned="${escapeAttribute(item.id)}">${t("actions.edit")}</button>
+        <details class="planned-expense-card__menu" data-planned-overflow>
+          <summary aria-label="${escapeAttribute(t("plan.moreActions"))}">⋯</summary>
+          <div class="planned-expense-card__overflow">
+            ${undoButtons}
+            <button type="button" class="danger-button" data-delete-planned="${escapeAttribute(item.id)}">${t("actions.disable")}</button>
+          </div>
+        </details>
       </div>
     </article>
   `;
@@ -2265,22 +2285,27 @@ function editableItemFields(item, prefix, index) {
         <span>${t("forms.category")}</span>
         <select name="${prefix}-category_slug">${categories.map(([slug]) => option(slug, item.category_slug, categoryLabel(slug, currentLanguage))).join("")}</select>
       </label>
-      <label>
-        <span>${currentLanguage === "ru" ? "Тип расхода" : "Expense type"}</span>
-        <select name="${prefix}-budget_impact">
-          ${option("regular", item.budget_impact ?? "regular", currentLanguage === "ru" ? "Обычная" : "Regular")}
-          ${option("planned", item.budget_impact ?? "regular", currentLanguage === "ru" ? "Плановая" : "Planned")}
-          ${option("large_oneoff", item.budget_impact ?? "regular", currentLanguage === "ru" ? "Крупная" : "Large")}
-        </select>
-      </label>
-      <label>
-        <span>${t("forms.dateAndTime")}</span>
-        <input name="${prefix}-spent_at" type="datetime-local" value="${dateTimeLocal(item.spent_at, dashboardState?.user?.timezone)}" required />
-      </label>
-      <label>
-        <span>${t("forms.tagsComma")}</span>
-        <input name="${prefix}-tags" value="${escapeAttribute((item.tags ?? []).join(", "))}" />
-      </label>
+      <details class="edit-modal__advanced">
+        <summary>${t("forms.additional")}</summary>
+        <div class="edit-modal__advanced-fields">
+          <label>
+            <span>${currentLanguage === "ru" ? "Тип расхода" : "Expense type"}</span>
+            <select name="${prefix}-budget_impact">
+              ${option("regular", item.budget_impact ?? "regular", currentLanguage === "ru" ? "Обычная" : "Regular")}
+              ${option("planned", item.budget_impact ?? "regular", currentLanguage === "ru" ? "Плановая" : "Planned")}
+              ${option("large_oneoff", item.budget_impact ?? "regular", currentLanguage === "ru" ? "Крупная" : "Large")}
+            </select>
+          </label>
+          <label>
+            <span>${t("forms.dateAndTime")}</span>
+            <input name="${prefix}-spent_at" type="datetime-local" value="${dateTimeLocal(item.spent_at, dashboardState?.user?.timezone)}" required />
+          </label>
+          <label>
+            <span>${t("forms.tagsComma")}</span>
+            <input name="${prefix}-tags" value="${escapeAttribute((item.tags ?? []).join(", "))}" />
+          </label>
+        </div>
+      </details>
     </fieldset>
   `;
 }
