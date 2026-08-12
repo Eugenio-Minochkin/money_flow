@@ -62,6 +62,7 @@ const ONBOARDING_STEPS = ["language", "budget_setup", "base_currency", "monthly_
 const FEEDBACK_PENDING_TTL_MS = 30 * 60_000;
 const MIN_FEEDBACK_MESSAGE_LENGTH = 3;
 const RICH_MESSAGE_MAX_LENGTH = 32768;
+const EXPENSE_PROCESSING_CUSTOM_EMOJI_ID = "6003518287214808258";
 const pendingFeedbackByTelegramUser = new Map();
 const ACCOUNT_DELETION_SOURCE_TELEGRAM = "telegram";
 
@@ -463,7 +464,7 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
       return handleOnboardingMessage({ text: onboardingTextInput, user, repository, token, chatId, miniAppUrl, telegramUserId: from.id, telegramClient, now, trace });
     }
 
-    const loader = await sendExpenseProcessingMessage(token, chatId, language, telegramClient, trace);
+    const loader = await sendExpenseProcessingMessage(token, chatId, language, telegramClient, trace, message.message_id);
     try {
       let text = rawText;
       if (!text && hasVoice) {
@@ -984,9 +985,21 @@ async function transcribeVoice(message, voiceTranscriber, trace) {
   });
 }
 
-async function sendExpenseProcessingMessage(token, chatId, language, telegramClient, trace) {
+async function sendExpenseProcessingMessage(token, chatId, language, telegramClient, trace, sourceMessageId) {
   try {
-    const result = await sendTelegramResponse(trace, () => sendMessage(token, chatId, botText(language, "expenseProcessing"), null, telegramClient));
+    const replyParameters = sourceMessageId == null ? null : {
+      message_id: sourceMessageId,
+      allow_sending_without_reply: true
+    };
+    const result = await sendTelegramResponse(trace, () => sendMessage(
+      token,
+      chatId,
+      botText(language, "expenseProcessing"),
+      null,
+      telegramClient,
+      null,
+      { replyParameters, retryPlainText: false }
+    ));
     return { messageId: extractMessageId(result) };
   } catch (error) {
     console.error("[telegram] failed to send expense processing loader", error.message);
@@ -2163,6 +2176,7 @@ async function safeConfirmDraftCleanup({ repository, telegramUserId, draftId, no
 async function handleCancelDraft(trace, token, telegramClient, callback, draftId, telegramUserId, language, repository, user, now) {
   const chatId = callback.message?.chat?.id;
   const messageId = callback.message?.message_id;
+  const sourceMessageId = callback.message?.reply_to_message?.message_id;
   trace.start("db_save");
   const outcome = await repository.cancelDraft(draftId, telegramUserId);
   trace.end("db_save");
@@ -2198,7 +2212,25 @@ async function handleCancelDraft(trace, token, telegramClient, callback, draftId
           .catch((markupError) => console.error("[telegram] could not clear old draft keyboard", markupError.message));
       }
     }
-    return sendMessage(token, chatId, text, { inline_keyboard: [] }, telegramClient);
+    const replyParameters = sourceMessageId == null ? null : {
+      message_id: sourceMessageId,
+      allow_sending_without_reply: true
+    };
+    try {
+      return await sendMessage(
+        token,
+        chatId,
+        text,
+        { inline_keyboard: [] },
+        telegramClient,
+        null,
+        { replyParameters, retryPlainText: false }
+      );
+    } catch (error) {
+      if (!replyParameters) throw error;
+      console.error("[telegram] replying with cancelled draft failed, falling back without reply", error.message);
+      return sendMessage(token, chatId, text, { inline_keyboard: [] }, telegramClient);
+    }
   });
 }
 
@@ -2616,13 +2648,23 @@ function nextLogMessageId() {
   return logMessageIdSequence;
 }
 
-async function sendMessage(token, chatId, text, replyMarkup, telegramClient, plainTextFallback = null) {
+async function sendMessage(token, chatId, text, replyMarkup, telegramClient, plainTextFallback = null, options = {}) {
+  const { replyParameters = null, retryPlainText = true } = options;
+  const clientMessage = {
+    chatId,
+    text,
+    replyMarkup,
+    ...(replyParameters ? { replyParameters } : {})
+  };
   if (telegramClient) {
     try {
-      return await telegramClient.sendMessage({ chatId, text, replyMarkup });
+      return await telegramClient.sendMessage(clientMessage);
     } catch (error) {
-      if (!shouldRetryPlainText(error)) throw error;
-      return telegramClient.sendMessage({ chatId, text: plainTextFallback ?? stripTelegramHtml(text), replyMarkup });
+      if (!retryPlainText || !shouldRetryPlainText(error)) throw error;
+      return telegramClient.sendMessage({
+        ...clientMessage,
+        text: plainTextFallback ?? stripTelegramHtml(text)
+      });
     }
   }
   if (!token) {
@@ -2634,12 +2676,13 @@ async function sendMessage(token, chatId, text, replyMarkup, telegramClient, pla
     chat_id: chatId,
     text,
     parse_mode: "HTML",
+    reply_parameters: replyParameters,
     reply_markup: replyMarkup
   };
   try {
     return await telegramRequest(token, "sendMessage", body);
   } catch (error) {
-    if (!shouldRetryPlainText(error)) throw error;
+    if (!retryPlainText || !shouldRetryPlainText(error)) throw error;
     console.error("[telegram] sendMessage HTML rejected, retrying plain text", error.message);
     return telegramRequest(token, "sendMessage", {
       ...body,
@@ -2649,8 +2692,8 @@ async function sendMessage(token, chatId, text, replyMarkup, telegramClient, pla
   }
 }
 
-export async function sendTelegramMessage({ token, chatId, text, replyMarkup = null, telegramClient = null }) {
-  return sendMessage(token, chatId, text, replyMarkup, telegramClient);
+export async function sendTelegramMessage({ token, chatId, text, replyMarkup = null, replyParameters = null, telegramClient = null }) {
+  return sendMessage(token, chatId, text, replyMarkup, telegramClient, null, { replyParameters });
 }
 
 async function sendAdminStatsMessage({ token, chatId, sections, command, reportType, telegramClient }) {
@@ -3275,7 +3318,7 @@ function botText(language, key, values = {}) {
       plannedCancelMessage: "❌ Плановая трата отменена",
       categoryUpdatedCallback: "Категория обновлена",
       draftCancelled: "Черновик отменен.",
-      draftCanceledMessage: "🗑 Черновик отменён.\nРасход не был сохранён.",
+      draftCanceledMessage: "🗑 Черновик отменён, расход не сохранён",
       expenseDeletedMessage: "🗑 Запись удалена.\nРасход удалён из Mini App и больше не учитывается.",
       chooseCategoryAlert: "Сначала выберите категорию.",
       draftCanceledAlert: "Этот черновик уже отменён.",
@@ -3283,7 +3326,7 @@ function botText(language, key, values = {}) {
       editInMiniApp: "Редактирование доступно в Mini App.",
       exportChoosePeriod: "Экспорт расходов в CSV. Выбери период:",
       exportPreparingCallback: "Готовлю экспорт",
-      expenseProcessing: "⏳ Заношу расход…",
+      expenseProcessing: `<tg-emoji emoji-id="${EXPENSE_PROCESSING_CUSTOM_EMOJI_ID}">🎲</tg-emoji> Заношу расход…`,
       draftSavingCallback: "Сохраняю…",
       draftSaveFailed: "⚠️ Не удалось сохранить расход. Попробуйте ещё раз.",
       movedCallback: "Перенесено",
@@ -3327,7 +3370,7 @@ function botText(language, key, values = {}) {
       plannedCancelMessage: "❌ Planned expense cancelled",
       categoryUpdatedCallback: "Category updated",
       draftCancelled: "Draft cancelled.",
-      draftCanceledMessage: "🗑 Draft canceled.\nThis expense was not saved.",
+      draftCanceledMessage: "🗑 Draft cancelled, expense not saved",
       expenseDeletedMessage: "🗑 Entry deleted.\nThis expense was deleted in Mini App and no longer counts.",
       chooseCategoryAlert: "Please choose a category first.",
       draftCanceledAlert: "This draft was canceled.",
@@ -3335,7 +3378,7 @@ function botText(language, key, values = {}) {
       editInMiniApp: "Editing is available in Mini App.",
       exportChoosePeriod: "Export expenses to CSV. Choose a period:",
       exportPreparingCallback: "Preparing export",
-      expenseProcessing: "⏳ Adding expense…",
+      expenseProcessing: `<tg-emoji emoji-id="${EXPENSE_PROCESSING_CUSTOM_EMOJI_ID}">🎲</tg-emoji> Adding expense…`,
       draftSavingCallback: "Saving…",
       draftSaveFailed: "⚠️ Could not save this expense. Please try again.",
       movedCallback: "Moved",

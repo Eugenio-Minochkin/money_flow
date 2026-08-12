@@ -17,17 +17,45 @@ test("exports the Telegram message sender used by the production server", async 
     }
   };
   const replyMarkup = { inline_keyboard: [[{ text: "Open", url: "https://example.com" }]] };
+  const replyParameters = { message_id: 21, allow_sending_without_reply: true };
 
   const result = await sendTelegramMessage({
     token: "unused-with-client",
     chatId: 100,
     text: "Release digest",
     replyMarkup,
+    replyParameters,
     telegramClient
   });
 
-  assert.deepEqual(calls, [{ chatId: 100, text: "Release digest", replyMarkup }]);
+  assert.deepEqual(calls, [{ chatId: 100, text: "Release digest", replyMarkup, replyParameters }]);
   assert.deepEqual(result, { ok: true, result: { message_id: 42 } });
+});
+
+test("Telegram message sender maps native reply parameters to the Bot API body", async () => {
+  const requests = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options) => {
+    requests.push({ url, body: JSON.parse(options.body) });
+    return { ok: true, async json() { return { ok: true, result: { message_id: 42 } }; } };
+  };
+
+  try {
+    await sendTelegramMessage({
+      token: "test-token",
+      chatId: 100,
+      text: "Reply",
+      replyParameters: { message_id: 21, allow_sending_without_reply: true }
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  assert.match(requests[0].url, /\/sendMessage$/);
+  assert.deepEqual(requests[0].body.reply_parameters, {
+    message_id: 21,
+    allow_sending_without_reply: true
+  });
 });
 
 test("exports a Rich Message sender that preserves the injected response", async () => {
@@ -4876,6 +4904,48 @@ test("regular draft delivery stores the originating telegram chat and message id
   assert.equal(refs[0].messageId, 777);
 });
 
+test("expense processing loader uses the selected custom emoji and replies to the source message in RU and EN", async () => {
+  const cases = [
+    { language: "ru", rawText: "переведи 1000", expectedText: '<tg-emoji emoji-id="6003518287214808258">🎲</tg-emoji> Заношу расход…' },
+    { language: "en", rawText: "transfer 1000", expectedText: '<tg-emoji emoji-id="6003518287214808258">🎲</tg-emoji> Adding expense…' }
+  ];
+
+  for (const { language, rawText, expectedText } of cases) {
+    const calls = [];
+    await processQueuedMessage({
+      message: { chat: { id: 5 }, message_id: 321 },
+      from: { id: 100 },
+      user: { id: 1, interface_language: language, base_currency: "THB", onboarding_step: "completed", timezone: "Asia/Bangkok" },
+      rawText,
+      inputType: "text",
+      repository: { async recordAppEvent() {} },
+      token: null,
+      miniAppUrl: "http://x",
+      expenseParser: { async parse() { throw new Error("expense parser should not be called"); } },
+      telegramClient: {
+        async sendMessage(message) {
+          calls.push({ method: "sendMessage", ...message });
+          return { ok: true, result: { message_id: 777 } };
+        },
+        async editMessageText(message) {
+          calls.push({ method: "editMessageText", ...message });
+          return { ok: true, result: { message_id: 777 } };
+        }
+      },
+      now: () => new Date("2026-06-30T10:00:00Z"),
+      trace: stubTrace()
+    });
+
+    assert.deepEqual(calls[0], {
+      method: "sendMessage",
+      chatId: 5,
+      text: expectedText,
+      replyMarkup: null,
+      replyParameters: { message_id: 321, allow_sending_without_reply: true }
+    });
+  }
+});
+
 test("processQueuedMessage creates budget top-up draft before expense parser", async () => {
   let topupDraft = null;
   let expenseParserCalled = false;
@@ -5844,8 +5914,8 @@ test("updateDraftMessageToDraftState sends a fallback message and clears the old
 
 test("draftCanceledMessageText and savedSummaryKeyboard are localized", async () => {
   const { draftCanceledMessageText, savedSummaryKeyboard } = await import("../src/telegram.js");
-  assert.match(draftCanceledMessageText("en"), /Draft canceled/);
-  assert.match(draftCanceledMessageText("ru"), /Черновик отменён/);
+  assert.equal(draftCanceledMessageText("en"), "🗑 Draft cancelled, expense not saved");
+  assert.equal(draftCanceledMessageText("ru"), "🗑 Черновик отменён, расход не сохранён");
   const kb = savedSummaryKeyboard("http://x", 100, "en");
   assert.ok(kb.inline_keyboard[0][0].web_app?.url?.includes("telegramUserId=100"));
 });
@@ -5967,19 +6037,97 @@ test("cancel callback with a real cancel edits the draft into the canceled messa
       id: "callback-cancel-real",
       data: "cancel:42",
       from: { id: 100 },
-      message: { chat: { id: 10 }, message_id: 55 }
+      message: { chat: { id: 10 }, message_id: 55, reply_to_message: { message_id: 21 } }
     }
   });
 
   const edit = calls.find((call) => call.method === "editMessageText");
   assert.ok(edit);
   assert.equal(edit.messageId, 55);
-  assert.equal(edit.text, "🗑 Черновик отменён.\nРасход не был сохранён.");
+  assert.equal(edit.text, "🗑 Черновик отменён, расход не сохранён");
   assert.deepEqual(edit.replyMarkup, { inline_keyboard: [] });
   assert.equal(calls.some((call) => call.method === "sendMessage"), false);
   assert.deepEqual(repo.events, [
     { userId: 1, eventName: "expense_draft_cancelled", metadata: { draftType: "regular" } }
   ]);
+});
+
+test("cancel callback fallback sends a native reply to the source message", async () => {
+  const calls = [];
+  const repo = fakeRepository();
+  repo.cancelDraft = async () => ({ canceled: true });
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: repo,
+    telegramClient: {
+      ...capturingClient(calls),
+      async editMessageText(message) {
+        calls.push({ method: "editMessageText", ...message });
+        throw new Error("edit failed");
+      }
+    }
+  });
+
+  await bot.handleUpdate({
+    callback_query: {
+      id: "callback-cancel-reply-fallback",
+      data: "cancel:42",
+      from: { id: 100 },
+      message: { chat: { id: 10 }, message_id: 55, reply_to_message: { message_id: 21 } }
+    }
+  });
+
+  const sent = calls.find((call) => call.method === "sendMessage");
+  assert.ok(sent);
+  assert.equal(sent.text, "🗑 Черновик отменён, расход не сохранён");
+  assert.deepEqual(sent.replyParameters, { message_id: 21, allow_sending_without_reply: true });
+});
+
+test("cancel callback retries without reply when Telegram rejects the source reply", async () => {
+  const calls = [];
+  const repo = fakeRepository();
+  repo.cancelDraft = async () => ({ canceled: true });
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: repo,
+    telegramClient: {
+      ...capturingClient(calls),
+      async editMessageText(message) {
+        calls.push({ method: "editMessageText", ...message });
+        throw new Error("edit failed");
+      },
+      async sendMessage(message) {
+        calls.push({ method: "sendMessage", ...message });
+        if (message.replyParameters) {
+          throw Object.assign(new Error("reply unavailable"), { status: 400 });
+        }
+        return { ok: true };
+      }
+    }
+  });
+
+  await assert.doesNotReject(bot.handleUpdate({
+    callback_query: {
+      id: "callback-cancel-no-reply-fallback",
+      data: "cancel:42",
+      from: { id: 100 },
+      message: { chat: { id: 10 }, message_id: 55, reply_to_message: { message_id: 21 } }
+    }
+  }));
+
+  const sends = calls.filter((call) => call.method === "sendMessage");
+  assert.equal(sends.length, 2);
+  assert.deepEqual(sends[0].replyParameters, { message_id: 21, allow_sending_without_reply: true });
+  assert.equal(sends[1].replyParameters, undefined);
+  assert.equal(sends[1].text, "🗑 Черновик отменён, расход не сохранён");
+});
+
+test("draft cancellation message is localized as one line without a trailing period", async () => {
+  const { draftCanceledMessageText } = await import("../src/telegram.js");
+  assert.equal(draftCanceledMessageText("ru"), "🗑 Черновик отменён, расход не сохранён");
+  assert.equal(draftCanceledMessageText("en"), "🗑 Draft cancelled, expense not saved");
 });
 
 test("confirm callback clears the old draft keyboard and sends a new message when editing fails", async () => {
