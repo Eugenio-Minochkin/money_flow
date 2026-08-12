@@ -666,13 +666,10 @@ body[data-theme="dark"] .monthly-forecast {
 
 .hero-metric__summary {
   position: relative;
-  min-height: clamp(190px, 25svh, 230px);
-  padding: 20px 16px 28px;
-}
-
-body.is-fullscreen .hero-metric__summary {
-  min-height: calc(clamp(190px, 25svh, 230px) + var(--tg-fullscreen-control-extra-top));
-  padding-top: calc(20px + var(--tg-fullscreen-control-extra-top));
+  display: flex;
+  align-items: center;
+  min-height: calc(140px + var(--tg-fullscreen-control-extra-top, 0px));
+  padding: calc(22px + var(--tg-fullscreen-control-extra-top, 0px)) 16px 14px;
 }
 
 .hero-metric__copy {
@@ -725,11 +722,11 @@ body.is-fullscreen .hero-metric__summary {
 
 .hero-metric__ribbon {
   position: absolute;
-  top: -24px;
-  right: -48px;
+  top: -32px;
+  right: -58px;
   z-index: 1;
   display: block;
-  width: clamp(300px, 88vw, 350px);
+  width: clamp(326px, 96vw, 380px);
   height: 210px;
   color: var(--hero-state);
   filter: drop-shadow(0 7px 12px color-mix(in srgb, var(--hero-state) 13%, transparent));
@@ -762,9 +759,9 @@ body.is-fullscreen .hero-metric__summary {
   position: relative;
   z-index: 2;
   display: grid;
-  gap: 8px;
+  gap: 7px;
   margin: 0 12px;
-  padding: 11px 12px 12px;
+  padding: 10px 12px;
   border: 1px solid #e9e1d7;
   border-radius: 14px;
   background: color-mix(in srgb, #fff 88%, #f3efe8);
@@ -875,7 +872,7 @@ body.is-fullscreen .hero-metric__summary {
 .hero-metric__details-toggle {
   position: relative;
   width: 100%;
-  min-height: 42px;
+  min-height: 38px;
   border: 0;
   background: transparent;
   color: #244f49;
@@ -902,7 +899,7 @@ body.is-fullscreen .hero-metric__summary {
 
 @media (max-width: 360px) {
   .hero-metric__summary {
-    min-height: clamp(186px, 25svh, 214px);
+    min-height: calc(136px + var(--tg-fullscreen-control-extra-top, 0px));
     padding-inline: 13px;
   }
 
