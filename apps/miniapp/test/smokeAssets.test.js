@@ -23,7 +23,7 @@ test("Mini App keeps app.js and styles.css cache-busters in sync", async () => {
   assert.ok(appVersion, "index.html should version app.js with a ?v= query");
   assert.ok(cssVersion, "index.html should version styles.css with a ?v= query");
   assert.equal(appVersion, cssVersion, "app.js and styles.css cache-busters must stay in sync");
-  assert.equal(appVersion, "20260812-miniapp-polish-v1");
+  assert.equal(appVersion, "20260812-history-ux-v1");
   assert.notEqual(appVersion, "20260626-dashboard-v12", "app.js must not keep the stale dashboard-v12 cache-buster");
 });
 
@@ -344,15 +344,41 @@ test("history date picker wires draft interactions without removed date inputs",
   assert.doesNotMatch(app, /#historyCustomRange/);
 });
 
-test("history period picker CSS isolates horizontal scroll and respects safe areas", async () => {
+test("history period picker CSS avoids horizontal scroll and respects safe areas", async () => {
   const css = await readFile(join(miniAppRoot, "styles.css"), "utf8");
 
   assert.match(css, /\.history-period-row\s*{[^}]*min-width:\s*0/s);
-  assert.match(css, /\.history-filter-chips\s*{[^}]*min-width:\s*0[^}]*overflow-x:\s*auto/s);
-  assert.match(css, /\.history-date-action\s*{[^}]*flex:\s*0 0 auto/s);
+  assert.match(css, /\.history-filter-chips\s*{[^}]*min-width:\s*0[^}]*overflow-x:\s*visible/s);
+  assert.match(css, /\.history-date-action\s*{[^}]*width:\s*100%/s);
   assert.match(css, /\.history-date-sheet\s*{[^}]*position:\s*fixed[^}]*bottom:\s*0/s);
   assert.match(css, /\.history-date-sheet\s*{[^}]*env\(safe-area-inset-bottom\)/s);
   assert.doesNotMatch(css, /\.history-custom-range\s*{/);
+});
+
+test("history refresh uses a four-column period grid, separate dates action and compact search", async () => {
+  const [html, css] = await Promise.all([
+    readFile(new URL("../src/index.html", import.meta.url), "utf8"),
+    readFile(new URL("../src/styles.css", import.meta.url), "utf8")
+  ]);
+  assert.match(html, /id="historyQuickPeriods"[\s\S]*data-history-period="today"[\s\S]*data-history-period="yesterday"[\s\S]*data-history-period="last7"[\s\S]*data-history-period="month"/);
+  assert.match(html, /id="historyQuickPeriods"[\s\S]*<\/div>\s*<button[^>]+id="openHistoryDatePicker"/);
+  assert.match(html, /id="historySearchClear"/);
+  assert.doesNotMatch(html, /id="historySearchForm"[\s\S]{0,700}data-i18n="actions\.find"/);
+  assert.match(css, /\.history-filter-chips\s*{[^}]*display:\s*grid[^}]*grid-template-columns:\s*repeat\(4,\s*minmax\(0,\s*1fr\)\)[^}]*overflow-x:\s*visible/s);
+});
+
+test("history includes collapsed period analytics and reuses shared category icons", async () => {
+  const [html, app, icons] = await Promise.all([
+    readFile(new URL("../src/index.html", import.meta.url), "utf8"),
+    readFile(new URL("../src/app.js", import.meta.url), "utf8"),
+    readFile(new URL("../src/categoryIcons.js", import.meta.url), "utf8")
+  ]);
+  assert.match(html, /<details[^>]+id="historyAnalytics"(?![^>]*\sopen)[^>]*>/);
+  assert.match(html, /id="historyCategoryDonut"/);
+  assert.match(html, /id="historyTopExpenses"/);
+  assert.match(app, /import \{ categoryIconSvg \} from "\.\/categoryIcons\.js"/);
+  assert.doesNotMatch(app, /function dashboardCategoryIcon/);
+  assert.match(icons, /export function categoryIconSvg/);
 });
 
 test("Mini App has a documented local preview server", async () => {
@@ -573,7 +599,7 @@ test("dashboard latest expenses use three tappable icon rows that open the exist
 
   assert.match(app, /expenses\.slice\(0,\s*3\)\.map\(dashboardExpenseRow\)/);
   assert.match(app, /function dashboardExpenseRow\(expense\)/);
-  assert.match(app, /function dashboardCategoryIcon\(slug\)/);
+  assert.match(app, /categoryIconSvg\(expense\.category_slug\)/);
   assert.match(app, /<svg[^>]+viewBox="0 0 24 24"/);
   const latestRenderer = app.match(/function renderLatest\(expenses\)\s*{[^]*?\n}/)?.[0] ?? "";
   assert.match(latestRenderer, /bindExpenseActions\(list,\s*expenses,\s*\{\s*returnTab:\s*"dashboard"\s*\}\)/);

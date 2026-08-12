@@ -11,9 +11,62 @@ import {
   groupByDay,
   historyFilterFromLaunchParams,
   periodTotal,
+  buildHistoryAnalytics,
+  historySummaryKey,
   selectRangeDate,
   shiftCalendarMonth
 } from "../src/history.js";
+
+test("history analytics combines categories after the largest five and sorts top expenses", () => {
+  const expenses = [
+    ["food_cafe", 40, "Coffee"],
+    ["transport", 30, "Taxi"],
+    ["health", 20, "Doctor"],
+    ["home", 10, "Lamp"],
+    ["travel", 8, "Train"],
+    ["education", 7, "Book"],
+    ["gifts_help", 5, "Gift"]
+  ].map(([category_slug, amount_base, description], index) => ({ id: index + 1, category_slug, amount_base, description }));
+
+  const analytics = buildHistoryAnalytics(expenses, 5);
+
+  assert.equal(analytics.total, 120);
+  assert.equal(analytics.count, 7);
+  assert.deepEqual(analytics.categories.map(({ category_slug, amount }) => [category_slug, amount]), [
+    ["food_cafe", 40],
+    ["transport", 30],
+    ["health", 20],
+    ["home", 10],
+    ["travel", 8],
+    ["other", 12]
+  ]);
+  assert.deepEqual(analytics.topExpenses.map((item) => item.description), ["Coffee", "Taxi", "Doctor"]);
+  assert.equal(analytics.categories[0].share, 33.33);
+});
+
+test("history analytics returns a stable empty model", () => {
+  assert.deepEqual(buildHistoryAnalytics([]), { total: 0, count: 0, categories: [], topExpenses: [] });
+});
+
+test("history analytics keeps one Other slice when stored Other and small categories coexist", () => {
+  const analytics = buildHistoryAnalytics([
+    { category_slug: "food_cafe", amount_base: 50 },
+    { category_slug: "transport", amount_base: 30 },
+    { category_slug: "other", amount_base: 40 },
+    { category_slug: "education", amount_base: 5 }
+  ], 2);
+
+  assert.deepEqual(analytics.categories.map(({ category_slug, amount }) => [category_slug, amount]), [
+    ["food_cafe", 50],
+    ["transport", 30],
+    ["other", 45]
+  ]);
+});
+
+test("history summary uses filtered wording only when a search query is active", () => {
+  assert.equal(historySummaryKey(""), null);
+  assert.equal(historySummaryKey(" coffee "), "history.total.filtered");
+});
 
 test("history launch uses the exact weekly report range as a custom filter", () => {
   assert.deepEqual(historyFilterFromLaunchParams(new URLSearchParams({

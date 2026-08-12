@@ -14,6 +14,39 @@ export function periodTotal(expenses) {
   return expenses.reduce((sum, expense) => sum + Number(expense.amount_base ?? 0), 0);
 }
 
+export function buildHistoryAnalytics(expenses, categoryLimit = 5) {
+  if (!expenses.length) return { total: 0, count: 0, categories: [], topExpenses: [] };
+  const total = periodTotal(expenses);
+  const categoryTotals = new Map();
+  for (const expense of expenses) {
+    const slug = expense.category_slug || "other";
+    categoryTotals.set(slug, (categoryTotals.get(slug) ?? 0) + Number(expense.amount_base ?? 0));
+  }
+  const storedOther = categoryTotals.get("other") ?? 0;
+  const sorted = [...categoryTotals.entries()]
+    .filter(([category_slug]) => category_slug !== "other")
+    .map(([category_slug, amount]) => ({ category_slug, amount }))
+    .sort((left, right) => right.amount - left.amount);
+  const categories = sorted.slice(0, categoryLimit);
+  const remainder = storedOther + sorted.slice(categoryLimit).reduce((sum, item) => sum + item.amount, 0);
+  if (remainder > 0) categories.push({ category_slug: "other", amount: remainder });
+  for (const item of categories) {
+    item.share = total > 0 ? Math.round((item.amount / total) * 10_000) / 100 : 0;
+  }
+  return {
+    total,
+    count: expenses.length,
+    categories,
+    topExpenses: [...expenses]
+      .sort((left, right) => Number(right.amount_base ?? 0) - Number(left.amount_base ?? 0))
+      .slice(0, 3)
+  };
+}
+
+export function historySummaryKey(search) {
+  return String(search ?? "").trim() ? "history.total.filtered" : null;
+}
+
 export function expenseCountLabel(count, language = "ru") {
   const n = Math.abs(Number(count) || 0);
   if (language === "en") {
