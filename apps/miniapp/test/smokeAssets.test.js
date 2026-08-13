@@ -23,7 +23,7 @@ test("Mini App keeps app.js and styles.css cache-busters in sync", async () => {
   assert.ok(appVersion, "index.html should version app.js with a ?v= query");
   assert.ok(cssVersion, "index.html should version styles.css with a ?v= query");
   assert.equal(appVersion, cssVersion, "app.js and styles.css cache-busters must stay in sync");
-  assert.equal(appVersion, "20260813-startup-v1");
+  assert.equal(appVersion, "20260813-settings-v1");
   assert.notEqual(appVersion, "20260626-dashboard-v12", "app.js must not keep the stale dashboard-v12 cache-buster");
 });
 
@@ -243,6 +243,44 @@ test("settings tab contains account deletion danger zone after settings form", a
   assert.ok(deleteSection < settingsTabEnd, "danger zone must remain inside the settings tab");
 });
 
+test("settings uses autosave controls without the old global submit or dirty state", async () => {
+  const html = await readFile(join(miniAppRoot, "index.html"), "utf8");
+  const app = await readFile(join(miniAppRoot, "app.js"), "utf8");
+  const settingsStart = html.indexOf('id="settingsForm"');
+  const settingsEnd = html.indexOf("</form>", settingsStart);
+  const settingsMarkup = html.slice(settingsStart, settingsEnd);
+
+  assert.doesNotMatch(settingsMarkup, /type="submit"/);
+  assert.doesNotMatch(settingsMarkup, /settingsDirtyState|settings-dirty-state/);
+  assert.doesNotMatch(app, /addEventListener\("submit", saveSettings\)/);
+  assert.match(app, /#settingsForm"\)\?\.addEventListener\("submit", \(event\) => event\.preventDefault\(\)\)/);
+  assert.match(app, /createSettingsSaveQueue/);
+  assert.match(app, /scheduleSettingsAutosave/);
+});
+
+test("regular monthly budget is confirmed separately from autosave", async () => {
+  const app = await readFile(join(miniAppRoot, "app.js"), "utf8");
+  const handlerStart = app.indexOf("async function saveMonthlyBudget");
+  const handlerEnd = app.indexOf("async function requestExpenseExport", handlerStart);
+  const handler = app.slice(handlerStart, handlerEnd);
+
+  assert.ok(handlerStart >= 0);
+  assert.match(handler, /commitMonthlyBudgetChange/);
+  assert.match(handler, /settingsSaveQueue\.enqueue/);
+  assert.match(handler, /window\.confirm/);
+  assert.match(app, /#budgetInput"\)\?\.addEventListener\("keydown"[^]*event\.key !== "Enter"[^]*event\.currentTarget\.blur\(\)/);
+});
+
+test("account deletion is collapsed by default and resets when closed", async () => {
+  const html = await readFile(join(miniAppRoot, "index.html"), "utf8");
+  const app = await readFile(join(miniAppRoot, "app.js"), "utf8");
+
+  assert.match(html, /<details[^>]+id="deleteAccountSection"[^>]*>/);
+  assert.match(html, /<summary[^>]+class="danger-zone__summary"[^]*data-i18n="settings\.deleteDataTitle"/);
+  assert.doesNotMatch(html, /<details[^>]+id="deleteAccountSection"[^>]+open/);
+  assert.match(app, /deleteAccountSection\?\.addEventListener\("toggle"[^]*setDeleteAccountStage\("start"\)/);
+});
+
 test("account deletion markup and app wire every required control", async () => {
   const html = await readFile(join(miniAppRoot, "index.html"), "utf8");
   const app = await readFile(join(miniAppRoot, "app.js"), "utf8");
@@ -281,6 +319,7 @@ test("account deletion has complete English and Russian visible copy", () => {
   const keys = [
     "settings.dangerZone",
     "settings.deleteDataTitle",
+    "settings.deleteDataDisclosureHint",
     "settings.deleteDataHint",
     "settings.deleteDataButton",
     "settings.deleteDataWarningTitle",
@@ -330,7 +369,7 @@ test("app guards data access and disables actions after account deletion", async
   assert.match(app, /let accountDeleted = false;/);
   assert.match(app, /async function loadDashboard\(\)\s*{\s*if \(accountDeleted\) return;/);
   assert.match(app, /async function performHistoryLoad\(\)\s*{\s*if \(accountDeleted\) return;/);
-  assert.match(app, /async function saveSettings\(event\)\s*{[^]*?if \(accountDeleted\) return;[^]*?await api\("\/api\/settings"/);
+  assert.match(app, /function scheduleSettingsAutosave\(\)\s*{\s*if \(accountDeleted\) return Promise\.resolve\(\);[^]*?settingsSaveQueue\.enqueue/);
   assert.match(app, /async function requestExpenseExport\(period\)\s*{\s*if \(accountDeleted\) return;/);
   assert.match(app, /function switchTab\(tab, \{ fromPager = false \} = \{\}\)\s*{\s*if \(accountDeleted\) return;/);
   assert.match(app, /function renderDeletedState\(\)[^]*accountDeleted = true;/);

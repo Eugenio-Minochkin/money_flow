@@ -69,7 +69,14 @@ import {
   recurrenceLabel as plannedRecurrenceLabel,
   weekdayOptions as plannedWeekdayOptions
 } from "./planned.js";
-import { COMMON_TIMEZONES, detectBrowserTimeZone, normalizeSettingsTimeZone, shouldShowCurrentMonthBudgetOverride } from "./settings.js";
+import {
+  COMMON_TIMEZONES,
+  commitMonthlyBudgetChange,
+  createSettingsSaveQueue,
+  detectBrowserTimeZone,
+  normalizeSettingsTimeZone,
+  shouldShowCurrentMonthBudgetOverride
+} from "./settings.js";
 import { createHistoryLoader } from "./historyLoad.js";
 import { finishStartup, markStartup } from "./startupTiming.js";
 
@@ -95,7 +102,7 @@ let currentLanguage = "en";
 let translate = createTranslator(currentLanguage);
 let currentTheme = "light";
 let reserveSettingsExpanded = false;
-let settingsBaseline = "";
+let preserveSettingsControlsDuringRefresh = false;
 let accountDeleted = false;
 let cancelTabPager = () => {};
 const plannedArchiveState = createPlannedArchiveState();
@@ -106,6 +113,32 @@ const deleteAccountAdvanceButton = document.getElementById("deleteAccountAdvance
 const deleteAccountCancelButton = document.getElementById("deleteAccountCancelButton");
 const deleteAccountConfirmInput = document.getElementById("deleteAccountConfirmInput");
 const deleteAccountConfirmButton = document.getElementById("deleteAccountConfirmButton");
+const deleteAccountSection = document.getElementById("deleteAccountSection");
+const settingsSaveQueue = createSettingsSaveQueue({
+  save: async (settings) => {
+    const result = await api("/api/settings", {
+      method: "PATCH",
+      body: { telegramUserId, settings }
+    });
+    if (dashboardState?.user && result.user) dashboardState.user = result.user;
+    return settingsStateFromUser(result.user);
+  },
+  onError: (_error, confirmed) => {
+    restoreAutosaveControls(confirmed);
+    showToast(t("toast.settingsSaveFailed"));
+  },
+  onIdle: async () => {
+    preserveSettingsControlsDuringRefresh = true;
+    try {
+      await loadDashboard();
+      showToast(t("toast.settingsSaved"));
+    } catch {
+      showToast(t("toast.settingsRefreshFailed"));
+    } finally {
+      preserveSettingsControlsDuringRefresh = false;
+    }
+  }
+});
 const editModal = createEditModalController({
   modal: document.getElementById("editModal"),
   backdrop: document.getElementById("editModalBackdrop"),
@@ -439,7 +472,6 @@ async function loadQuickAccessConfig() {
   }
 }
 
-document.querySelector("#settingsForm").addEventListener("submit", saveSettings);
 document.querySelector("#reserveForm")?.addEventListener("submit", saveReserve);
 document.querySelector("#disableReserveButton")?.addEventListener("click", disableReserve);
 document.querySelector("#reserveSummaryButton")?.addEventListener("click", () => {
@@ -481,10 +513,24 @@ document.querySelector("#plannedArchiveToggle")?.addEventListener("click", async
 document.querySelectorAll("[data-tab]").forEach((button) => {
   button.addEventListener("click", () => switchTab(button.dataset.tab));
 });
-document.querySelector("#settingsForm")?.addEventListener("input", updateSettingsDirtyState);
-document.querySelector("#settingsForm")?.addEventListener("change", updateSettingsDirtyState);
-document.querySelector("#interfaceLanguageInput").addEventListener("change", (event) => applyLanguage(event.target.value));
-document.querySelector("#interfaceThemeInput").addEventListener("change", (event) => applyTheme(event.target.value));
+document.querySelector("#settingsForm")?.addEventListener("submit", (event) => event.preventDefault());
+for (const selector of ["#baseCurrencyInput", "#displayCurrencyInput", "#dailyReminderInput", "#timezoneInput"]) {
+  document.querySelector(selector)?.addEventListener("change", scheduleSettingsAutosave);
+}
+document.querySelector("#interfaceLanguageInput").addEventListener("change", (event) => {
+  applyLanguage(event.target.value);
+  scheduleSettingsAutosave();
+});
+document.querySelector("#interfaceThemeInput").addEventListener("change", (event) => {
+  applyTheme(event.target.value);
+  scheduleSettingsAutosave();
+});
+document.querySelector("#budgetInput")?.addEventListener("change", saveMonthlyBudget);
+document.querySelector("#budgetInput")?.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter") return;
+  event.preventDefault();
+  event.currentTarget.blur();
+});
 document.querySelector("#detectTimezoneButton")?.addEventListener("click", detectTimezone);
 document.querySelector("#setupQuickAccessButton")?.addEventListener("click", createQuickAccessToken);
 document.querySelector("#reconfigureQuickAccessButton")?.addEventListener("click", reconfigureQuickAccessToken);
@@ -502,6 +548,9 @@ deleteAccountConfirmInput?.addEventListener("input", () => {
   deleteAccountConfirmButton.disabled = deleteAccountConfirmInput.value !== "DELETE";
 });
 deleteAccountConfirmButton?.addEventListener("click", confirmAccountDeletion);
+deleteAccountSection?.addEventListener("toggle", () => {
+  if (!deleteAccountSection.open) setDeleteAccountStage("start");
+});
 document.querySelectorAll("[data-history-period]").forEach((chip) => {
   chip.addEventListener("click", () => selectHistoryPeriod(chip.dataset.historyPeriod));
 });
@@ -579,7 +628,7 @@ async function loadDashboard() {
   document.querySelector("#openQuickEntryButton")?.classList.remove("hidden");
   dashboardState = data;
   setBaseCurrency(data.user?.base_currency ?? data.snapshot?.baseCurrency ?? "THB");
-  renderSettings(data.user);
+  if (!preserveSettingsControlsDuringRefresh) renderSettings(data.user);
   renderPlannedForm();
   renderSnapshot(data.snapshot);
   renderPlannedNotice(data.plannedExpenses ?? []);
@@ -1029,6 +1078,10 @@ async function loadDraft(id, options = {}) {
 function switchTab(tab, { fromPager = false } = {}) {
   if (accountDeleted) return;
   if (!fromPager) cancelTabPager();
+  if (tab === "settings") {
+    if (deleteAccountSection) deleteAccountSection.open = false;
+    setDeleteAccountStage("start");
+  }
   document.querySelector("#dashboardTab").classList.toggle("hidden", tab !== "dashboard");
   document.querySelector("#planTab").classList.toggle("hidden", tab !== "plan");
   document.querySelector("#historyTab").classList.toggle("hidden", tab !== "history");
@@ -1386,7 +1439,7 @@ function renderSettings(user) {
     ? "current_and_future"
     : "current";
   renderReserveSettings();
-  setSettingsDirtyBaseline();
+  settingsSaveQueue.reset(settingsStateFromUser(user));
 }
 
 function renderReserveSettings() {
@@ -2336,28 +2389,33 @@ function editableItemFields(item, prefix, index) {
   `;
 }
 
-async function saveSettings(event) {
-  event.preventDefault();
+async function saveMonthlyBudget() {
   if (accountDeleted) return;
-  await api("/api/settings", {
-    method: "PATCH",
-    body: {
-      telegramUserId,
-      settings: {
-        monthlyBudgetAmount: Number(document.querySelector("#budgetInput").value),
-        baseCurrency: document.querySelector("#baseCurrencyInput").value,
-        displayCurrency: document.querySelector("#displayCurrencyInput").value,
-        interfaceLanguage: document.querySelector("#interfaceLanguageInput").value,
-        interfaceTheme: document.querySelector("#interfaceThemeInput").value,
-        timezone: document.querySelector("#timezoneInput").value,
-        dailyEntryReminderEnabled: document.querySelector("#dailyReminderInput").checked,
-        usdThbRate: Number(document.querySelector("#usdThbRateInput").value)
-      }
+  const input = document.querySelector("#budgetInput");
+  const confirmedSettings = settingsSaveQueue.confirmed();
+  const currentValue = Number(confirmedSettings?.monthlyBudgetAmount ?? dashboardState?.user?.monthly_budget_amount);
+  const currency = confirmedSettings?.baseCurrency ?? dashboardState?.user?.base_currency ?? "THB";
+  const outcome = await commitMonthlyBudgetChange({
+    currentValue,
+    rawValue: input?.value,
+    confirm: ({ currentValue: from, nextValue: to }) => window.confirm(t("confirmations.monthlyBudgetChange", {
+      from: formatMoney(from, currency),
+      to: formatMoney(to, currency)
+    })),
+    save: async (monthlyBudgetAmount) => {
+      const result = await settingsSaveQueue.enqueue({
+        ...collectAutosaveSettingsState(),
+        monthlyBudgetAmount
+      });
+      if (result.status === "failed") throw result.error;
     }
   });
-  await loadDashboard();
-  setSettingsDirtyBaseline();
-  showToast(t("toast.settingsSaved"));
+  if (["cancelled", "failed"].includes(outcome.status) && input) input.value = Math.round(currentValue);
+}
+
+function scheduleSettingsAutosave() {
+  if (accountDeleted) return Promise.resolve();
+  return settingsSaveQueue.enqueue(collectAutosaveSettingsState());
 }
 
 async function requestExpenseExport(period) {
@@ -2481,7 +2539,7 @@ function detectTimezone() {
   const input = document.querySelector("#timezoneInput");
   if (!input) return;
   input.value = detectBrowserTimeZone();
-  updateSettingsDirtyState();
+  scheduleSettingsAutosave();
 }
 
 function renderTimezoneOptions(value) {
@@ -2504,7 +2562,6 @@ async function saveCurrentMonthBudget() {
     }
   });
   await loadDashboard();
-  setSettingsDirtyBaseline();
   showToast(t("toast.settingsSaved"));
 }
 
@@ -2755,30 +2812,43 @@ function input(name) {
   return document.querySelector(`[name="${name}"]`);
 }
 
-function collectSettingsState() {
-  return JSON.stringify({
-    monthlyBudgetAmount: document.querySelector("#budgetInput")?.value ?? "",
-    baseCurrency: document.querySelector("#baseCurrencyInput")?.value ?? "",
-    displayCurrency: document.querySelector("#displayCurrencyInput")?.value ?? "",
+function settingsStateFromUser(user = {}) {
+  return {
+    monthlyBudgetAmount: Math.round(Number(user.monthly_budget_amount ?? 45000)),
+    baseCurrency: user.base_currency ?? "THB",
+    displayCurrency: user.display_currency ?? "USD",
+    dailyEntryReminderEnabled: user.daily_entry_reminder_enabled !== false,
+    interfaceLanguage: user.interface_language === "ru" ? "ru" : "en",
+    interfaceTheme: user.interface_theme === "dark" ? "dark" : "light",
+    timezone: normalizeSettingsTimeZone(user.timezone),
+    usdThbRate: Number(user.usd_thb_rate ?? 32.65)
+  };
+}
+
+function collectAutosaveSettingsState() {
+  const confirmed = settingsSaveQueue.confirmed();
+  return {
+    monthlyBudgetAmount: Number(confirmed?.monthlyBudgetAmount ?? document.querySelector("#budgetInput")?.value),
+    baseCurrency: document.querySelector("#baseCurrencyInput")?.value ?? "THB",
+    displayCurrency: document.querySelector("#displayCurrencyInput")?.value ?? "USD",
     dailyEntryReminderEnabled: document.querySelector("#dailyReminderInput")?.checked === true,
-    interfaceLanguage: document.querySelector("#interfaceLanguageInput")?.value ?? "",
-    interfaceTheme: document.querySelector("#interfaceThemeInput")?.value ?? "",
-    timezone: document.querySelector("#timezoneInput")?.value ?? "",
-    usdThbRate: document.querySelector("#usdThbRateInput")?.value ?? ""
-  });
+    interfaceLanguage: document.querySelector("#interfaceLanguageInput")?.value ?? "en",
+    interfaceTheme: document.querySelector("#interfaceThemeInput")?.value ?? "light",
+    timezone: document.querySelector("#timezoneInput")?.value ?? "Asia/Bangkok",
+    usdThbRate: Number(document.querySelector("#usdThbRateInput")?.value ?? 32.65)
+  };
 }
 
-function setSettingsDirtyBaseline() {
-  settingsBaseline = collectSettingsState();
-  updateSettingsDirtyState();
-}
-
-function updateSettingsDirtyState() {
-  const status = document.querySelector("#settingsDirtyState");
-  if (!status) return;
-  const dirty = settingsBaseline !== "" && collectSettingsState() !== settingsBaseline;
-  status.textContent = dirty ? t("settings.unsavedChanges") : t("settings.saveHint");
-  status.dataset.state = dirty ? "dirty" : "clean";
+function restoreAutosaveControls(settings) {
+  if (!settings) return;
+  document.querySelector("#baseCurrencyInput").value = settings.baseCurrency;
+  document.querySelector("#displayCurrencyInput").value = settings.displayCurrency;
+  document.querySelector("#dailyReminderInput").checked = settings.dailyEntryReminderEnabled;
+  document.querySelector("#interfaceLanguageInput").value = settings.interfaceLanguage;
+  document.querySelector("#interfaceThemeInput").value = settings.interfaceTheme;
+  renderTimezoneOptions(settings.timezone);
+  applyLanguage(settings.interfaceLanguage);
+  applyTheme(settings.interfaceTheme);
 }
 
 function option(value, selected, label = value) {
@@ -2817,9 +2887,6 @@ function applyLanguage(language) {
     const label = document.querySelector(selector)?.closest("label")?.querySelector("span");
     if (label) label.textContent = t(key);
   }
-  const save = document.querySelector("#settingsForm button[type='submit']");
-  if (save) save.textContent = t("actions.save");
-  updateSettingsDirtyState();
   renderReserveSettings();
   updateHistoryFilterChips();
   if (historyCalendarDraft) renderHistoryCalendar();
