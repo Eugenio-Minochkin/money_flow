@@ -26,7 +26,8 @@ test("planned reminder paid callback acks first and renders the shared saved sum
   assert.equal(repository.dashboardCalls, 1);
   const edit = calls.find((call) => call.method === "editMessageText");
   assert.match(edit.text, /Saved:/);
-  assert.match(edit.text, /Planned today/);
+  assert.match(edit.text, /── <b>Today<\/b> ──/);
+  assert.doesNotMatch(edit.text, /Planned today|Large today|Total today/);
   assert.deepEqual(edit.replyMarkup.inline_keyboard.map((row) => row[0].text), ["📱 Open Mini App"]);
   assert.doesNotMatch(JSON.stringify(edit.replyMarkup), /Edit|Delete/);
 });

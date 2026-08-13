@@ -1,6 +1,6 @@
 import { normalizeAcquisitionSource, normalizeReportMarker } from "./productAnalytics.js";
 
-export function createMiniAppLaunchService({ repository, now = () => new Date() }) {
+export function createMiniAppLaunchService({ repository, now = () => new Date(), syncTelegramCommandMenu = null }) {
   return {
     async loadDashboard({ auth, reportType, reportKey, timeZone, timing, defer = (operation) => operation() } = {}) {
       if (!auth?.verified || !auth.profile || Number(auth.profile.id) !== Number(auth.telegramUserId)) {
@@ -14,6 +14,9 @@ export function createMiniAppLaunchService({ repository, now = () => new Date() 
         acquisitionSource,
         acquisitionSeenAt: now()
       }));
+      if (user.is_new && syncTelegramCommandMenu) {
+        defer(() => safeSyncCommandMenu(syncTelegramCommandMenu, user));
+      }
 
       const candidateMarker = normalizeReportMarker(reportType, reportKey);
       const reportMarker = candidateMarker && await measure(timing, "report_lookup", () => repository.hasReportDelivery?.(
@@ -55,6 +58,18 @@ export function createMiniAppLaunchService({ repository, now = () => new Date() 
       return dashboard;
     }
   };
+}
+
+async function safeSyncCommandMenu(syncTelegramCommandMenu, user) {
+  try {
+    await syncTelegramCommandMenu({
+      chatId: Number(user.telegram_user_id),
+      language: user.interface_language ?? "en",
+      onboardingStep: user.onboarding_step ?? "language"
+    });
+  } catch (error) {
+    console.warn("[telegram] new-user command menu sync failed", error.message);
+  }
 }
 
 async function scheduleRecord(repository, userId, eventName, metadata) {

@@ -115,9 +115,11 @@ export function formatSavedSummary(total, snapshot, options = {}) {
   const largeToday = Number(snapshot.largeToday ?? snapshot.largeTodayTotal ?? 0);
   const totalToday = todayTotal + plannedToday + largeToday;
   const forecastPlanDelta = Number(snapshot.forecastMonthTotal ?? 0) - Number(snapshot.monthlyBudget ?? 0);
-  const planLine = forecastPlanDelta > 0
-    ? `⚠️ ${t(language, "forecastAboveBy")} <b>${formatMoney(Math.abs(forecastPlanDelta), currency, language)}</b>`
-    : `🟢 ${t(language, "forecastBelowBy")} <b>${formatMoney(Math.abs(forecastPlanDelta), currency, language)}</b>`;
+  const planLine = forecastPlanDelta === 0
+    ? null
+    : forecastPlanDelta > 0
+      ? `⚠️ ${t(language, "forecastAboveBy")} <b>${formatMoney(Math.abs(forecastPlanDelta), currency, language)}</b>`
+      : `🟢 ${t(language, "forecastBelowBy")} <b>${formatMoney(Math.abs(forecastPlanDelta), currency, language)}</b>`;
   const recovery = formatRecoveryAdvice(snapshot, language);
   const savedLines = formatSavedExpenseLines(options.expenses, total, currency, language);
   const todayLine = `${t(language, "regular")}: <b>${formatMoney(todayTotal, currency, language)} / ${formatMoney(dayPlanLimit, currency, language)}</b>`;
@@ -129,23 +131,26 @@ export function formatSavedSummary(total, snapshot, options = {}) {
     `✅ <b>${t(language, "savedExpense")}:</b>`,
     savedLines,
     "",
-    `📌 <b>${t(language, "today")}</b>`,
+    `── <b>${t(language, "today")}</b> ──`,
     todayLine,
-    remainingLine,
+    remainingLine
+  ];
+  if (plannedToday !== 0) lines.push(`🧾 ${t(language, "plannedToday")}: <b>${formatMoney(plannedToday, currency, language)}</b>`);
+  if (largeToday !== 0) lines.push(`📦 ${t(language, "largeToday")}: <b>${formatMoney(largeToday, currency, language)}</b>`);
+  if (plannedToday !== 0 || largeToday !== 0) {
+    lines.push(`${t(language, "totalToday")}: <b>${formatMoney(totalToday, currency, language)}</b>`);
+  }
+  lines.push(
     "",
-    `🧾 ${t(language, "plannedToday")}: <b>${formatMoney(plannedToday, currency, language)}</b>`,
-    `📦 ${t(language, "largeToday")}: <b>${formatMoney(largeToday, currency, language)}</b>`,
-    `${t(language, "totalToday")}: <b>${formatMoney(totalToday, currency, language)}</b>`,
-    "",
-    `<b>${t(language, "month")}</b>`,
+    `── <b>${t(language, "month")}</b> ──`,
     `📅 <b>${t(language, "spent")}:</b> ${formatMoney(snapshot.month, currency, language)} / ${formatMoney(snapshot.monthlyBudget, currency, language)}${progress}`,
     `🧾 <b>${t(language, "reservedPlanned")}:</b> ${formatMoney(snapshot.plannedRemaining, currency, language)}`,
     `${Number(snapshot.freeRemaining) < 0 ? "🔴" : "🟢"} <b>${t(language, "freeAfterPlanned")}:</b> <b>${formatMoney(snapshot.freeRemaining, currency, language)}</b>`,
     "",
-    `🔮 <b>${t(language, "forecastMonthEnd")}</b>`,
-    `${t(language, "expectedSpending")}: <b>${formatMoney(snapshot.forecastMonthTotal ?? 0, currency, language)}</b>`,
-    planLine
-  ];
+    `── <b>${t(language, "forecast")}</b> ──`,
+    `${t(language, "expectedSpending")}: <b>${formatMoney(snapshot.forecastMonthTotal ?? 0, currency, language)}</b>`
+  );
+  if (planLine) lines.push(planLine);
   if (recovery) lines.push("", recovery);
   return lines.join("\n");
 }
@@ -199,23 +204,27 @@ export function formatTotals(command, snapshot, options = {}) {
   }
   const lines = [
     `💰 <b>${t(language, "budget")}:</b> ${formatMoney(snapshot.monthlyBudget, currency, language)}`,
-    `📅 <b>${t(language, "month")}:</b> ${formatMoney(snapshot.month, currency, language)}`,
-    `🧾 <b>${t(language, "planned")}:</b> ${formatMoney(snapshot.plannedRemaining, currency, language)}`,
-    `🟢 <b>${t(language, "free")}:</b> ${formatMoney(snapshot.freeRemaining, currency, language)}`,
-    `⚡️ <b>${t(language, "safeToSpend")}:</b> ${formatMoney(snapshot.safeToSpendPerDay, currency, language)}/${t(language, "day")}`,
-    `${t(language, "status")}: ${escapeHtml(statusLabel(snapshot.status, language))}`
+    `📅 <b>${t(language, "month")}:</b> ${formatMoney(snapshot.month, currency, language)}`
   ];
+  if (Number(snapshot.plannedRemaining ?? 0) !== 0) {
+    lines.push(`🧾 <b>${t(language, "planned")}:</b> ${formatMoney(snapshot.plannedRemaining, currency, language)}`);
+  }
+  lines.push(`🟢 <b>${t(language, "free")}:</b> ${formatMoney(snapshot.freeRemaining, currency, language)}`);
   if (snapshot.reserve) {
     const reserveStatus = snapshot.reserve.status === "saved"
       ? (language === "en" ? "Reserve saved" : "Резерв сохранён")
       : snapshot.reserve.status === "partially_used"
         ? (language === "en" ? "Reserve at risk" : "Резерв под угрозой")
         : (language === "en" ? "Reserve used up" : "Резерв съеден");
-    lines.splice(4, 0,
+    lines.push(
       `🛡 <b>${reserveStatus}:</b> ${formatMoney(snapshot.reserve.eatenAmount, currency, language)}`,
       `💵 <b>${language === "en" ? "Available for regular spending" : "Доступно на обычные расходы"}:</b> ${formatMoney(snapshot.availableRegular, currency, language)}`
     );
   }
+  lines.push(
+    `⚡️ <b>${t(language, "safeToSpend")}:</b> ${formatMoney(snapshot.safeToSpendPerDay, currency, language)}/${t(language, "day")}`,
+    `${t(language, "status")}: ${escapeHtml(statusLabel(snapshot.status, language))}`
+  );
   return lines.join("\n");
 }
 

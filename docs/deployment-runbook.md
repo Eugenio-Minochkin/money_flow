@@ -47,6 +47,24 @@ PR description checks:
   such as tokens, env values, `initData`, cookies, authorization headers, raw
   request bodies, or personal financial details.
 
+### Telegram Bot Menu and Main Mini App checklist
+
+For changes to the Telegram command menu, verify the two entry points remain
+separate after deployment:
+
+- the chat Menu Button opens the command list (`setChatMenuButton` uses
+  `menu_button.type = commands`);
+- BotFather has a Main Mini App configured for the production bot, so Telegram
+  continues to show the native `Open App` entry independently of the Menu
+  Button;
+- RU and EN personal command scopes follow Money Flow's saved
+  `interface_language`, and `/start` disappears only after onboarding;
+- `/start`, `/app`, `/settings`, and `/delete_me` still work when typed
+  manually even though they are not shown in the completed-user menu.
+
+BotFather configuration is an owner-operated production action. A code change
+or merged PR does not authorize an agent to modify it.
+
 ## Expense Parser Rollout And Rollback
 
 Parser rollout is an owner-operated production change. Merging parser code or

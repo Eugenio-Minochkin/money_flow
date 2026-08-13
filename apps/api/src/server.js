@@ -43,7 +43,7 @@ import {
   updatePlannedPaymentReminderMessages,
   updateTelegramMessageAfterExpenseDelete
 } from "./telegram.js";
-import { syncTelegramCommandMenu } from "./telegramCommands.js";
+import { syncTelegramCommandMenu, syncTelegramUserCommandMenu } from "./telegramCommands.js";
 import { createVoiceTranscriber } from "./voiceTranscriber.js";
 
 const root = resolve(fileURLToPath(new URL("../../..", import.meta.url)));
@@ -80,7 +80,10 @@ const repository = createRepository(pool, {
   defaultMonthlyBudget: config.defaultMonthlyBudget,
   exchangeRates: createExchangeRateProvider({ pool, adminAlertService })
 });
-const miniAppLaunchService = createMiniAppLaunchService({ repository });
+const miniAppLaunchService = createMiniAppLaunchService({
+  repository,
+  syncTelegramCommandMenu: syncUserTelegramCommandMenu
+});
 const adminStatsService = createAdminStatsService({ pool });
 const expenseParser = createExpenseParser({
   apiKey: config.openAiApiKey,
@@ -190,6 +193,21 @@ if (config.telegramBotToken) {
   void syncTelegramCommandMenu({ token: config.telegramBotToken })
     .catch((error) => console.error("[telegram] command menu sync failed", error.message));
 }
+
+async function syncUserTelegramCommandMenu({ chatId, language, onboardingStep }) {
+  try {
+    return await syncTelegramUserCommandMenu({
+      token: config.telegramBotToken,
+      chatId,
+      language,
+      onboardingStep
+    });
+  } catch (error) {
+    console.warn("[telegram] user command menu sync failed", error.message);
+    return { ok: false };
+  }
+}
+
 const rateLimiter = createRateLimiter({
   limit: config.rateLimitMax,
   windowMs: config.rateLimitWindowMs,
@@ -789,6 +807,11 @@ async function route(req, res) {
       throw error;
     }
     if (!user) return sendJson(res, 404, { error: "user_not_found" });
+    await syncUserTelegramCommandMenu({
+      chatId: auth.telegramUserId,
+      language: user.interface_language,
+      onboardingStep: user.onboarding_step
+    });
     return sendJson(res, 200, { user });
   }
 

@@ -33,6 +33,37 @@ test("creates an authenticated startapp user and records entry before onboarding
   assert.equal(calls.some((call) => call.name === "recordAppEvent:dashboard_opened"), false);
 });
 
+test("new Mini App user schedules a personalized onboarding command menu", async () => {
+  const calls = [];
+  const deferred = [];
+  const syncCalls = [];
+  const user = {
+    id: 7,
+    telegram_user_id: 100,
+    interface_language: "ru",
+    onboarding_step: "language",
+    is_new: true
+  };
+  const service = createMiniAppLaunchService({
+    repository: fakeRepository(calls, { user }),
+    syncTelegramCommandMenu: async (input) => syncCalls.push(input)
+  });
+
+  await service.loadDashboard({
+    auth: verifiedAuth(),
+    defer: (operation) => deferred.push(operation)
+  });
+  assert.equal(syncCalls.length, 0);
+  assert.equal(deferred.length, 1);
+
+  await deferred[0]();
+  assert.deepEqual(syncCalls, [{
+    chatId: 100,
+    language: "ru",
+    onboardingStep: "language"
+  }]);
+});
+
 test("repeated onboarding launch relies on singleton insertion without creating a duplicate user", async () => {
   const calls = [];
   const user = { id: 7, telegram_user_id: 100, onboarding_step: "budget_setup", is_new: false };

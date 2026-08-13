@@ -210,9 +210,12 @@ test("formats saved summary with budget context", () => {
   assert.match(normalized, /Осталось: <b>1 400 THB<\/b>/);
   assert.match(normalized, /735 THB \/ 42 000 THB/);
   assert.match(text, /1,75%/);
-  assert.match(text, /Плановые сегодня/);
-  assert.match(text, /Крупные сегодня/);
-  assert.match(text, /Всего за день/);
+  assert.match(text, /── <b>Сегодня<\/b> ──/);
+  assert.match(text, /── <b>Месяц<\/b> ──/);
+  assert.match(text, /── <b>Прогноз<\/b> ──/);
+  assert.doesNotMatch(text, /Плановые сегодня/);
+  assert.doesNotMatch(text, /Крупные сегодня/);
+  assert.doesNotMatch(text, /Всего за день/);
   assert.match(text, /Вернуться в бюджет/);
   assert.match(text, /675 THB/);
 });
@@ -298,7 +301,7 @@ test("saved summary month block separates reserved planned and free money after 
   assert.match(normalized, /46 691 THB \/ 51 000 THB \(91,55%\)/);
   assert.match(normalized, /В резерве на плановые:<\/b> 3 273 THB/);
   assert.match(normalized, /🟢 <b>Свободно после плановых:<\/b> <b>1 036 THB<\/b>/);
-  assert.match(normalized, /\n\n🔮 <b>Прогноз на конец месяца<\/b>\nОжидаемые траты: <b>55 453 THB<\/b>\n⚠️ Выше бюджета на <b>4 453 THB<\/b>/);
+  assert.match(normalized, /\n\n── <b>Прогноз<\/b> ──\nОжидаемые траты: <b>55 453 THB<\/b>\n⚠️ Выше бюджета на <b>4 453 THB<\/b>/);
 
   // The free amount is no longer shown under the ambiguous bare "Осталось" label.
   assert.doesNotMatch(normalized, /Осталось: <b>1 036 THB<\/b>/);
@@ -334,7 +337,7 @@ test("saved summary month block separates reserved planned and free money after 
   assert.match(normalized, /46,691 THB \/ 51,000 THB \(91.55%\)/);
   assert.match(normalized, /Reserved for planned payments:<\/b> 3,273 THB/);
   assert.match(normalized, /🟢 <b>Free after planned payments:<\/b> <b>1,036 THB<\/b>/);
-  assert.match(normalized, /\n\n🔮 <b>Forecast for month end<\/b>\nExpected spending: <b>55,453 THB<\/b>\n⚠️ Above budget by <b>4,453 THB<\/b>/);
+  assert.match(normalized, /\n\n── <b>Forecast<\/b> ──\nExpected spending: <b>55,453 THB<\/b>\n⚠️ Above budget by <b>4,453 THB<\/b>/);
 
   assert.ok(
     normalized.indexOf("Reserved for planned payments") < normalized.indexOf("Free after planned payments"),
@@ -402,6 +405,22 @@ test("formats saved summary with planned and large daily aggregates", () => {
   assert.match(normalized, /Всего за день: <b>3 802 THB<\/b>/);
 });
 
+test("saved summary hides a zero forecast deviation but preserves negative financial values", () => {
+  const text = formatSavedSummary(80, {
+    ...snapshot(),
+    monthlyBudget: 123456789,
+    forecastMonthTotal: 123456789,
+    freeRemaining: -123456789,
+    plannedToday: 0,
+    largeToday: 0
+  }, { language: "en" });
+  const normalized = normalizeSpaces(text);
+
+  assert.match(normalized, /-123,456,789 THB/);
+  assert.doesNotMatch(normalized, /Planned today|Large today|Total today/);
+  assert.doesNotMatch(normalized, /Above budget by|Below budget by/);
+});
+
 test("formats saved summary overrun when regular spend exceeds the day budget", () => {
   const text = formatSavedSummary(500, {
     ...snapshot(),
@@ -419,6 +438,17 @@ test("formats saved summary overrun when regular spend exceeds the day budget", 
 test("formats command totals for month and budget", () => {
   assert.match(normalizeSpaces(formatTotals("/month", snapshot())), /735 THB \/ 42 000 THB/);
   assert.match(normalizeSpaces(formatTotals("/budget", snapshot())), /15 270 THB/);
+});
+
+test("budget command omits an empty planned reserve without hiding useful status", () => {
+  const text = formatTotals("/budget", {
+    ...snapshot(),
+    plannedRemaining: 0
+  }, { language: "en" });
+
+  assert.doesNotMatch(text, /Planned:/);
+  assert.match(text, /Remaining:/);
+  assert.match(text, /Status:/);
 });
 
 test("formats reserve and available regular spending in budget command", () => {
@@ -573,7 +603,7 @@ test("multi-expense saved summary lists each expense and a total", () => {
   assert.match(text, /taxi/);
   const normalized = normalizeSpaces(text);
   assert.match(normalized, /<b>Total:<\/b> 280 THB/);
-  assert.ok(normalized.indexOf("coffee") < normalized.indexOf("📌"), "saved-expense lines appear before the today header");
+  assert.ok(normalized.indexOf("coffee") < normalized.indexOf("── <b>Today"), "saved-expense lines appear before the today header");
 });
 
 test("draft preview and saved summary show the same category label for a slug", () => {

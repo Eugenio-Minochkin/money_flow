@@ -1481,7 +1481,7 @@ test("confirm callback saves draft and returns an informative summary", async ()
     assert.match(calls[0][1].text, /<b>Месяц<\/b>/);
     assert.match(calls[0][1].text.replaceAll("\u00a0", " "), /Потрачено:<\/b> 735 THB \/ 42 000 THB/);
     assert.match(calls[0][1].text, /1,75%/);
-    assert.match(calls[0][1].text, /Плановые сегодня/);
+    assert.doesNotMatch(calls[0][1].text, /Плановые сегодня|Крупные сегодня|Всего за день/);
   } finally {
     console.log = originalLog;
   }
@@ -2885,6 +2885,80 @@ test("new user chooses language and completes budget setup in one message before
   assert.doesNotMatch(JSON.stringify(repo.events), /20000/);
 });
 
+test("/start self-heals a completed user's localized private command menu", async () => {
+  const messages = [];
+  const commandCalls = [];
+  const repo = fakeRepository();
+  repo.user = { id: 1, interface_language: "ru", base_currency: "THB", onboarding_step: "completed" };
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: repo,
+    telegramClient: {
+      ...captureTelegramClient(messages),
+      async setMyCommands(payload) { commandCalls.push(payload); return { ok: true }; },
+      async setChatMenuButton() { return { ok: true }; }
+    }
+  });
+
+  await bot.handleUpdate(textUpdate("/start", 100));
+
+  assert.equal(commandCalls.length, 1);
+  assert.deepEqual(commandCalls[0].scope, { type: "chat", chatId: 10 });
+  assert.equal(commandCalls[0].commands.some((command) => command.command === "start"), false);
+  assert.equal(commandCalls[0].commands.find((command) => command.command === "help").description, "❓ Как пользоваться");
+  assert.equal(messages.length, 1);
+});
+
+test("/help gives short equivalent guidance in RU and EN without entering expense parsing", async () => {
+  for (const [language, title, example] of [
+    ["ru", "Как пользоваться Money Flow", "кофе 120"],
+    ["en", "How to use Money Flow", "coffee 120"]
+  ]) {
+    const messages = [];
+    const repo = fakeRepository();
+    repo.user = { id: 1, interface_language: language, base_currency: "THB", onboarding_step: "completed" };
+    const bot = createTelegramBot({
+      token: "test-token",
+      miniAppUrl: "http://localhost:3000",
+      repository: repo,
+      telegramClient: captureTelegramClient(messages),
+      expenseParser: { async parse() { throw new Error("help must not enter the parser"); } }
+    });
+
+    await bot.handleUpdate(textUpdate("/help", 100));
+
+    assert.match(messages[0].text, new RegExp(title));
+    assert.match(messages[0].text, new RegExp(example));
+    assert.match(messages[0].text, /\/last/);
+    assert.match(messages[0].text, /Mini App/);
+  }
+});
+
+test("completing Telegram onboarding replaces the menu with the compact set", async () => {
+  const messages = [];
+  const commandCalls = [];
+  const repo = fakeRepository();
+  repo.user = { id: 1, interface_language: "en", base_currency: "THB", onboarding_step: "budget_setup", onboarding_data: {} };
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: repo,
+    now: () => new Date("2026-06-05T10:00:00+07:00"),
+    telegramClient: {
+      ...captureTelegramClient(messages),
+      async setMyCommands(payload) { commandCalls.push(payload); return { ok: true }; },
+      async setChatMenuButton() { return { ok: true }; }
+    }
+  });
+
+  await bot.handleUpdate(textUpdate("USD 2000", 100));
+
+  assert.equal(repo.user.onboarding_step, "completed");
+  assert.equal(commandCalls.length, 1);
+  assert.equal(commandCalls[0].commands.some((command) => command.command === "start"), false);
+});
+
 test("Russian language callback sends Russian budget setup text", async () => {
   const messages = [];
   const repo = fakeRepository();
@@ -4054,12 +4128,13 @@ test("admin release send reports a duplicate automatic run without a success sum
   assert.doesNotMatch(messages[0].text, /отправлен/);
 });
 
-test("command menus include delete_me in English and Russian", () => {
+test("command menus hide technical commands in English and Russian", () => {
   const enCommands = buildTelegramCommandMenu();
   const ruCommands = buildTelegramCommandMenu("ru");
 
-  assert.ok(enCommands.some((command) => command.command === "delete_me"));
-  assert.ok(ruCommands.some((command) => command.command === "delete_me"));
+  for (const commands of [enCommands, ruCommands]) {
+    assert.equal(commands.some((command) => ["app", "settings", "delete_me"].includes(command.command)), false);
+  }
 });
 
 test("/delete_me restarts a pending Telegram account deletion request with warning buttons", async () => {
@@ -4672,6 +4747,12 @@ function captureTelegramClient(messages) {
       return { ok: true };
     },
     async deleteMessage() {
+      return { ok: true };
+    },
+    async setMyCommands() {
+      return { ok: true };
+    },
+    async setChatMenuButton() {
       return { ok: true };
     }
   };
