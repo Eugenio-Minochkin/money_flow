@@ -11,6 +11,7 @@ import {
   isPlannedPaid,
   nextPlannedItem,
   nextUnpaidPlannedItem,
+  plannedPaymentStatus,
   parseDueDays
 } from "../src/planned.js";
 
@@ -48,6 +49,23 @@ test("detects due and paid planned items", () => {
   assert.equal(isDueToday({ recurrence: "weekly", weekday: 2 }, today), true);
   assert.equal(isPlannedPaid({ paid_count: 1 }), true);
   assert.equal(isPlannedPaid({ paid_month: null }), false);
+});
+
+test("classifies planned payment presentation status without changing occurrence progress", () => {
+  const now = new Date("2026-06-16T10:00:00+07:00");
+
+  assert.equal(plannedPaymentStatus({
+    recurrence: "monthly",
+    due_day: 6,
+    paid_occurrence_dates: ["2026-06-06"]
+  }, now), "paid");
+  assert.equal(plannedPaymentStatus({ recurrence: "monthly", due_day: 20 }, now), "unpaid");
+  assert.equal(plannedPaymentStatus({ recurrence: "monthly", due_day: 6 }, now), "overdue");
+  assert.equal(plannedPaymentStatus({
+    recurrence: "twice_monthly",
+    due_days: [4, 17],
+    paid_occurrence_dates: ["2026-06-04"]
+  }, now), "unpaid");
 });
 
 test("finds next unpaid planned item and skips already paid items", () => {

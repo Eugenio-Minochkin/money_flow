@@ -62,9 +62,9 @@ import {
   calculatePlannedMonthSummary,
   defaultPlannedCurrency,
   dueOrOverduePlannedOccurrences,
-  isPlannedPaid,
   nextUnpaidPlannedItem,
   parseDueDays,
+  plannedPaymentStatus,
   plannedPaidPercent,
   recurrenceLabel as plannedRecurrenceLabel,
   weekdayOptions as plannedWeekdayOptions
@@ -1761,23 +1761,17 @@ function expenseRow(expense) {
   const impactLabel = budgetImpactLabel(expense.budget_impact);
   const tags = (expense.tags ?? []).map((tag) => `#${tag}`).join(" ");
   return `
-    <article class="expense-row history-expense-row" style="--category-color: ${categoryColor(expense.category_slug)}">
+    <button type="button" class="expense-row history-expense-row" data-edit-expense="${escapeAttribute(expense.id)}" aria-label="${escapeAttribute(`${t("actions.edit")}: ${expense.description}`)}" style="--category-color: ${categoryColor(expense.category_slug)}">
       <span class="dashboard-expense-icon" aria-hidden="true">${categoryIconSvg(expense.category_slug)}</span>
-      <div class="expense-main">
-        <div class="expense-title">${escapeHtml(expense.description)}</div>
-        ${impactLabel ? `<div class="expense-meta">${impactLabel}</div>` : ""}
-        <div class="expense-meta">${formatDate(expense.spent_at, currentLanguage, userTimeZone())} · ${escapeHtml(categoryLabel(expense.category_slug, currentLanguage))}${tags ? ` · ${escapeHtml(tags)}` : ""}</div>
-      </div>
-      <div class="expense-actions">
-        <div class="expense-amount">${formatMoney(expense.amount_original, expense.currency_original)}
-          <em>${moneyDisplay(expense.display?.amount, expense.display?.currency)}</em>
-        </div>
-        <div class="button-row compact">
-          <button type="button" class="ghost-button" data-edit-expense="${expense.id}">${t("actions.edit")}</button>
-          <button type="button" class="danger-button" data-delete-expense="${expense.id}">${t("actions.delete")}</button>
-        </div>
-      </div>
-    </article>
+      <span class="expense-main">
+        <span class="expense-title">${escapeHtml(expense.description)}</span>
+        ${impactLabel ? `<span class="expense-meta">${impactLabel}</span>` : ""}
+        <span class="expense-meta">${formatDate(expense.spent_at, currentLanguage, userTimeZone())} · ${escapeHtml(categoryLabel(expense.category_slug, currentLanguage))}${tags ? ` · ${escapeHtml(tags)}` : ""}</span>
+      </span>
+      <span class="expense-amount history-expense-amount">${formatMoney(expense.amount_original, expense.currency_original)}
+        <em>${moneyDisplay(expense.display?.amount, expense.display?.currency)}</em>
+      </span>
+    </button>
   `;
 }
 
@@ -1792,16 +1786,6 @@ function bindExpenseActions(container, expenses, options = {}) {
     button.addEventListener("click", () => {
       const expense = expenses.find((item) => String(item.id) === button.dataset.editExpense);
       renderExpenseEditor(expense, { returnTab: options.returnTab ?? "history" });
-    });
-  });
-  container.querySelectorAll("[data-delete-expense]").forEach((button) => {
-    button.addEventListener("click", async () => {
-      const expense = expenses.find((item) => String(item.id) === button.dataset.deleteExpense);
-      if (!window.confirm(currentLanguage === "ru" ? `Удалить расход "${expense.description}"?` : `Delete expense "${expense.description}"?`)) return;
-      await api(`/api/expenses/${expense.id}`, { method: "DELETE", body: { telegramUserId, language: currentLanguage } });
-      await loadDashboard();
-      await loadHistory();
-      showToast(t("toast.expenseDeleted"));
     });
   });
 }
@@ -1918,9 +1902,11 @@ function renderPlannedExpenses(items) {
     list.innerHTML = `<div class="empty">${t("plan.noPlanned")}</div>`;
     return;
   }
+  const today = new Date(`${localDateKeyInTimeZone(new Date(), userTimeZone())}T12:00:00`);
   list.innerHTML = items.map((item) => {
-    const paid = isPlannedPaid(item);
-    const progress = plannedPaymentProgressLabel(item);
+    const status = plannedPaymentStatus(item, today);
+    const paid = status === "paid";
+    const progress = plannedPaymentProgressLabel(item, status, today);
     const undoButtons = paidPlannedPaymentUndoOccurrences(item)
       .map((occurrenceDate) => {
         const date = formatDateOnly(`${occurrenceDate}T12:00:00.000Z`, currentLanguage, "UTC");
@@ -1929,17 +1915,17 @@ function renderPlannedExpenses(items) {
       .join("");
     return `
     <article class="planned-expense-card" style="--category-color: ${categoryColor(item.category_slug)}">
-      <div class="planned-expense-card__main">
-        <div class="planned-expense-card__heading">
+      <button type="button" class="planned-expense-card__main" data-edit-planned="${escapeAttribute(item.id)}" aria-label="${escapeAttribute(`${t("actions.edit")}: ${item.description}`)}">
+        <span class="dashboard-expense-icon" aria-hidden="true">${categoryIconSvg(item.category_slug)}</span>
+        <span class="planned-expense-card__content">
           <strong>${escapeHtml(item.description)}</strong>
-          <span class="planned-expense-card__amount">${formatMoney(item.amount, item.currency)}<em>${moneyDisplay(item.display?.amount, item.display?.currency)}</em></span>
-        </div>
-        <div class="planned-expense-card__meta">${recurrenceLabel(item)} · ${escapeHtml(categoryLabel(item.category_slug, currentLanguage))}</div>
-        <div class="planned-expense-card__status">${escapeHtml(progress)}</div>
-      </div>
+          <span class="planned-expense-card__meta">${recurrenceLabel(item)} · ${escapeHtml(categoryLabel(item.category_slug, currentLanguage))}</span>
+          <span class="planned-expense-card__status planned-expense-card__status--${status}">${escapeHtml(progress)}</span>
+        </span>
+        <span class="planned-expense-card__amount">${formatMoney(item.amount, item.currency)}<em>${moneyDisplay(item.display?.amount, item.display?.currency)}</em></span>
+      </button>
       <div class="planned-expense-card__actions">
         <button type="button" data-pay-planned="${escapeAttribute(item.id)}"${paid ? " disabled" : ""}>${paid ? t("actions.paid") : t("actions.pay")}</button>
-        <button type="button" class="ghost-button" data-edit-planned="${escapeAttribute(item.id)}">${t("actions.edit")}</button>
         <details class="planned-expense-card__menu" data-planned-overflow>
           <summary aria-label="${escapeAttribute(t("plan.moreActions"))}">⋯</summary>
           <div class="planned-expense-card__overflow">
@@ -2063,14 +2049,14 @@ function renderPlannedArchive() {
   });
 }
 
-function plannedPaymentProgressLabel(item) {
-  const occurrences = buildPlannedOccurrences(item);
-  if (!occurrences.length) return "";
+function plannedPaymentProgressLabel(item, status = plannedPaymentStatus(item), now = new Date()) {
+  const occurrences = buildPlannedOccurrences(item, now);
+  const statusLabel = t(`plan.status${status[0].toUpperCase()}${status.slice(1)}`);
+  if (!occurrences.length) return statusLabel;
   const paid = occurrences.filter((occurrence) => occurrence.paid).length;
-  if (occurrences.length === 1) {
-    return paid ? t("plan.paidSuffix") : (currentLanguage === "ru" ? "не оплачено" : "unpaid");
-  }
-  return `${paid}/${occurrences.length} ${currentLanguage === "ru" ? "оплачено" : "paid"}`;
+  if (occurrences.length === 1) return statusLabel;
+  const progress = `${paid}/${occurrences.length} ${t("plan.paidSuffix")}`;
+  return status === "paid" ? progress : `${progress} · ${statusLabel}`;
 }
 
 function bindPlannedActions(container, items) {
@@ -2231,13 +2217,15 @@ function renderExpenseEditor(expense, options = {}) {
         spent_at: expense.spent_at
       }, "expense", 0)}
       <div class="button-row">
-        <button type="submit">${currentLanguage === "ru" ? "Сохранить расход" : "Save expense"}</button>
-        <button type="button" class="ghost-button" id="closeExpenseEditorButton">${t("actions.close")}</button>
+        <button type="submit">${t("actions.saveExpense")}</button>
+        <button type="button" class="danger-button" data-delete-expense="${escapeAttribute(expense.id)}">${t("actions.delete")}</button>
       </div>
     </div>
   `;
   form.onsubmit = (event) => saveExpense(event, expense.id);
-  form.querySelector("#closeExpenseEditorButton").addEventListener("click", closeExpenseEditor);
+  form.querySelector("[data-delete-expense]").addEventListener("click", (event) => {
+    deleteExpense(expense, event.currentTarget).catch(showError);
+  });
   openEditModal({
     form,
     titleText: currentLanguage === "ru" ? `Расход: ${expense.description}` : `Expense: ${expense.description}`
@@ -2600,6 +2588,29 @@ async function saveExpense(event, expenseId) {
     restore: editModal.restore
   });
   showToast(t("toast.expenseSaved"));
+}
+
+async function deleteExpense(expense, button) {
+  const confirmation = currentLanguage === "ru"
+    ? `Удалить расход "${expense.description}"?`
+    : `Delete expense "${expense.description}"?`;
+  if (!window.confirm(confirmation)) return;
+  button.disabled = true;
+  try {
+    await runEditModalSave({
+      save: () => api(`/api/expenses/${expense.id}`, { method: "DELETE", body: { telegramUserId, language: currentLanguage } }),
+      refresh: async () => {
+        await loadDashboard();
+        await loadHistory();
+      },
+      close: closeEditModal,
+      restore: editModal.restore
+    });
+    showToast(t("toast.expenseDeleted"));
+  } catch (error) {
+    button.disabled = false;
+    throw error;
+  }
 }
 
 async function savePlanned(event, {

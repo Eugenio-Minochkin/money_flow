@@ -23,7 +23,7 @@ test("Mini App keeps app.js and styles.css cache-busters in sync", async () => {
   assert.ok(appVersion, "index.html should version app.js with a ?v= query");
   assert.ok(cssVersion, "index.html should version styles.css with a ?v= query");
   assert.equal(appVersion, cssVersion, "app.js and styles.css cache-busters must stay in sync");
-  assert.equal(appVersion, "20260813-edit-modal-v2");
+  assert.equal(appVersion, "20260813-unified-rows-v1");
   assert.notEqual(appVersion, "20260626-dashboard-v12", "app.js must not keep the stale dashboard-v12 cache-buster");
 });
 
@@ -615,6 +615,20 @@ test("dashboard latest expenses use three tappable icon rows that open the exist
   assert.match(css, /\.dashboard-expense-icon\s*{/);
 });
 
+test("history expenses are compact tappable rows without permanent actions", async () => {
+  const app = await readFile(join(miniAppRoot, "app.js"), "utf8");
+  const css = await readFile(join(miniAppRoot, "styles.css"), "utf8");
+
+  const historyRow = app.match(/function expenseRow\(expense\)\s*{[^]*?\n}/)?.[0] ?? "";
+  assert.match(historyRow, /<button[^>]+class="expense-row history-expense-row"[^>]+data-edit-expense/);
+  assert.match(historyRow, /dashboard-expense-icon/);
+  assert.match(historyRow, /history-expense-amount/);
+  assert.doesNotMatch(historyRow, /data-delete-expense|button-row compact|>\$\{t\("actions\.edit"\)\}<\/button>/);
+  assert.match(css, /\.history-expense-row\s*{[^}]*grid-template-columns:\s*38px minmax\(0,\s*1fr\) auto/s);
+  assert.match(css, /\.history-expense-row:focus-visible\s*{/);
+  assert.match(css, /body\[data-theme="dark"\] \.history-day-heading\s*{[^}]*background:[^}]*color:\s*var\(--ink\)/s);
+});
+
 test("expense and planned edits share one modal without inline scrolling or tab navigation", async () => {
   const html = await readFile(join(miniAppRoot, "index.html"), "utf8");
   const css = await readFile(join(miniAppRoot, "styles.css"), "utf8");
@@ -634,6 +648,9 @@ test("expense and planned edits share one modal without inline scrolling or tab 
   assert.match(app, /const plannedTags = mode === "edit" \? `[\s\S]*?<details class="edit-modal__advanced">[\s\S]*?<summary>\$\{t\("forms\.additional"\)\}<\/summary>[\s\S]*?\$\{plannedTagsField\}[\s\S]*?<\/details>/);
   const expenseEditor = app.match(/function renderExpenseEditor\(expense, options = \{\}\)\s*\{[^]*?\n\}/)?.[0] ?? "";
   assert.doesNotMatch(expenseEditor, /switchTab|scrollIntoView/);
+  assert.match(expenseEditor, /type="submit"[^>]*>\$\{t\("actions\.saveExpense"\)}/);
+  assert.match(expenseEditor, /data-delete-expense/);
+  assert.doesNotMatch(expenseEditor, /closeExpenseEditorButton|t\("actions\.close"\)/);
   const plannedActions = app.match(/function bindPlannedActions\(container, items\)\s*\{[^]*?\n\}/)?.[0] ?? "";
   const plannedEditHandlers = [...plannedActions.matchAll(/querySelectorAll\("\[data-edit-planned\]"\)[^]*?openPlannedEditor\(item\);/g)];
   assert.equal(plannedEditHandlers.length, 2);
@@ -641,7 +658,7 @@ test("expense and planned edits share one modal without inline scrolling or tab 
 
   assert.match(css, /body\.edit-modal-open\s*{[^}]*overflow:\s*hidden/s);
   assert.match(css, /\.edit-modal-backdrop\s*{[^}]*position:\s*fixed[^}]*inset:\s*0/s);
-  assert.match(css, /\.edit-modal\s*{[^}]*position:\s*fixed[^}]*height:\s*fit-content[^}]*overflow:\s*hidden/s);
+  assert.match(css, /\.edit-modal\s*{[^}]*--edit-modal-safe-top:[^;]*--tg-fullscreen-control-extra-top[^;]*;[^}]*top:\s*var\(--edit-modal-safe-top\)[^}]*max-height:\s*calc\(100dvh - var\(--edit-modal-safe-top\) - var\(--edit-modal-safe-bottom\)\)[^}]*overflow:\s*hidden/s);
   assert.match(css, /\.edit-modal__body\s*{[^}]*overflow-y:\s*auto[^}]*overscroll-behavior:\s*contain/s);
   assert.match(css, /\.edit-modal \.form-stack\s*{[^}]*gap:\s*8px[^}]*padding:\s*0/s);
   assert.match(css, /\.edit-modal__advanced\s*{/);
@@ -726,21 +743,29 @@ test("Plan separates planned payment summary, explanation, and budget reserve", 
   assert.match(css, /\.planned-summary-row__amount\s*{[^}]*color:\s*var\(--ink\)/s);
 });
 
-test("active planned cards keep primary actions on one row and move destructive actions into overflow", async () => {
+test("active planned cards share expense visuals while Pay stays direct and destructive actions stay in overflow", async () => {
   const app = await readFile(join(miniAppRoot, "app.js"), "utf8");
   const css = await readFile(join(miniAppRoot, "styles.css"), "utf8");
 
   const renderBlock = app.slice(app.indexOf("function renderPlannedExpenses"), app.indexOf("function closeAndResetPlannedForm"));
   assert.match(renderBlock, /class="planned-expense-card"/);
-  assert.match(renderBlock, /class="planned-expense-card__actions"[^]*data-pay-planned[^]*data-edit-planned[^]*data-planned-overflow/s);
+  assert.match(renderBlock, /localDateKeyInTimeZone\(new Date\(\), userTimeZone\(\)\)/);
+  assert.match(renderBlock, /class="planned-expense-card__main"[^>]+data-edit-planned/);
+  assert.match(renderBlock, /class="dashboard-expense-icon"[^]*categoryIconSvg\(item\.category_slug\)/);
+  assert.match(renderBlock, /plannedPaymentStatus\(item, today\)/);
+  assert.match(renderBlock, /planned-expense-card__status planned-expense-card__status--\$\{status\}/);
+  assert.match(renderBlock, /class="planned-expense-card__actions"[^]*data-pay-planned[^]*data-planned-overflow/s);
   assert.match(renderBlock, /class="planned-expense-card__overflow"[^]*data-delete-planned/s);
   const permanentActions = renderBlock.slice(
     renderBlock.indexOf('class="planned-expense-card__actions"'),
     renderBlock.indexOf('class="planned-expense-card__overflow"')
   );
+  assert.doesNotMatch(permanentActions, /actions\.edit/);
   assert.doesNotMatch(permanentActions, /data-delete-planned/);
-  assert.match(css, /\.planned-expense-card__actions\s*{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\) minmax\(0,\s*1fr\) 40px/s);
-  assert.match(css, /@media \(max-width: 430px\)[^]*\.planned-expense-card\s*{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\) auto/s);
+  assert.match(css, /\.planned-expense-card__actions\s*{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\) 40px/s);
+  assert.match(css, /\.planned-expense-card__status--paid\s*{[^}]*color:\s*var\(--green\)/s);
+  assert.match(css, /\.planned-expense-card__status--overdue\s*{[^}]*color:\s*var\(--red\)/s);
+  assert.match(css, /\.planned-expense-card__main\s*{[^}]*grid-template-columns:\s*38px minmax\(0,\s*1fr\) auto/s);
 });
 
 test("planned disable uses the focused helper and prefers the server-owned month summary", async () => {
