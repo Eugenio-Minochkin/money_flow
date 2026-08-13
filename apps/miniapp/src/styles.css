@@ -2382,7 +2382,7 @@ button:disabled {
 }
 
 .danger-zone {
-  margin: 18px 16px calc(118px + env(safe-area-inset-bottom));
+  margin: 18px 16px 0;
   border-top: 1px solid var(--line);
 }
 
