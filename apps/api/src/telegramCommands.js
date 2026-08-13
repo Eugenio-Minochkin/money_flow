@@ -1,54 +1,115 @@
-const DEFAULT_COMMANDS = [
-  { command: "start", description: "Start Money Flow" },
-  { command: "feedback", description: "Send feedback to the developer" },
-  { command: "today", description: "Show today's spending" },
-  { command: "week", description: "Show this week's spending" },
-  { command: "month", description: "Show this month's spending" },
-  { command: "budget", description: "Show budget status" },
-  { command: "app", description: "Open the Mini App" },
-  { command: "settings", description: "Open settings" },
-  { command: "last", description: "Edit the latest expense" },
-  { command: "export", description: "Export expenses to CSV" },
-  { command: "delete_me", description: "Delete my data" }
+const EN_COMMANDS = [
+  { command: "today", description: "📌 Today's spending" },
+  { command: "week", description: "📆 This week's spending" },
+  { command: "month", description: "📅 This month's spending" },
+  { command: "budget", description: "💰 Budget status" },
+  { command: "last", description: "✏️ Latest expense" },
+  { command: "export", description: "📤 Export expenses" },
+  { command: "feedback", description: "💬 Send feedback" },
+  { command: "help", description: "❓ How to use Money Flow" }
 ];
 
 const RU_COMMANDS = [
-  { command: "start", description: "Запустить Money Flow" },
-  { command: "feedback", description: "Отправить feedback разработчику" },
-  { command: "today", description: "Показать расходы за сегодня" },
-  { command: "week", description: "Показать расходы за неделю" },
-  { command: "month", description: "Показать расходы за месяц" },
-  { command: "budget", description: "Показать состояние бюджета" },
-  { command: "app", description: "Открыть Mini App" },
-  { command: "settings", description: "Открыть настройки" },
-  { command: "last", description: "Изменить последний расход" },
-  { command: "export", description: "Экспортировать расходы в CSV" },
-  { command: "delete_me", description: "\u0423\u0434\u0430\u043b\u0438\u0442\u044c \u043c\u043e\u0438 \u0434\u0430\u043d\u043d\u044b\u0435" }
+  { command: "today", description: "📌 Расходы сегодня" },
+  { command: "week", description: "📆 Расходы за неделю" },
+  { command: "month", description: "📅 Расходы за месяц" },
+  { command: "budget", description: "💰 Состояние бюджета" },
+  { command: "last", description: "✏️ Последний расход" },
+  { command: "export", description: "📤 Экспорт расходов" },
+  { command: "feedback", description: "💬 Обратная связь" },
+  { command: "help", description: "❓ Как пользоваться" }
 ];
 
-export function buildTelegramCommandMenu(language = "en") {
-  return (language === "ru" ? RU_COMMANDS : DEFAULT_COMMANDS).map((command) => ({ ...command }));
+const START_COMMAND = {
+  en: { command: "start", description: "Start Money Flow" },
+  ru: { command: "start", description: "Начать работу с Money Flow" }
+};
+
+export function buildTelegramCommandMenu(language = "en", { onboarding = false } = {}) {
+  const normalizedLanguage = language === "ru" ? "ru" : "en";
+  const commands = normalizedLanguage === "ru" ? RU_COMMANDS : EN_COMMANDS;
+  const menu = onboarding ? [START_COMMAND[normalizedLanguage], ...commands] : commands;
+  return menu.map((command) => ({ ...command }));
 }
 
 export async function syncTelegramCommandMenu({ token, telegramClient = null, fetchImpl = fetch } = {}) {
   if (!token && !telegramClient) return { skipped: true };
-  await setMyCommands({ token, telegramClient, fetchImpl, commands: buildTelegramCommandMenu() });
-  await setMyCommands({ token, telegramClient, fetchImpl, commands: buildTelegramCommandMenu("ru"), languageCode: "ru" });
+  await setMyCommands({
+    token,
+    telegramClient,
+    fetchImpl,
+    commands: buildTelegramCommandMenu("en", { onboarding: true })
+  });
+  await setMyCommands({
+    token,
+    telegramClient,
+    fetchImpl,
+    commands: buildTelegramCommandMenu("ru", { onboarding: true }),
+    languageCode: "ru"
+  });
+  await setChatMenuButton({ token, telegramClient, fetchImpl });
   return { ok: true };
 }
 
-async function setMyCommands({ token, telegramClient, fetchImpl, commands, languageCode = null }) {
+export async function syncTelegramUserCommandMenu({
+  token,
+  telegramClient = null,
+  fetchImpl = fetch,
+  chatId,
+  language = "en",
+  onboardingStep = "completed"
+} = {}) {
+  if ((!token && !telegramClient) || chatId == null) return { skipped: true };
+  const onboarding = onboardingStep !== "completed";
+  await setMyCommands({
+    token,
+    telegramClient,
+    fetchImpl,
+    commands: buildTelegramCommandMenu(language, { onboarding }),
+    scope: { type: "chat", chatId }
+  });
+  await setChatMenuButton({ token, telegramClient, fetchImpl, chatId });
+  return { ok: true };
+}
+
+async function setMyCommands({ token, telegramClient, fetchImpl, commands, languageCode = null, scope = null }) {
   if (telegramClient?.setMyCommands) {
-    const payload = languageCode ? { commands, languageCode } : { commands };
+    const payload = { commands };
+    if (languageCode) payload.languageCode = languageCode;
+    if (scope) payload.scope = scope;
     return telegramClient.setMyCommands(payload);
   }
 
-  const body = languageCode ? { commands, language_code: languageCode } : { commands };
-  const response = await fetchImpl(`https://api.telegram.org/bot${token}/setMyCommands`, {
+  const body = { commands };
+  if (languageCode) body.language_code = languageCode;
+  if (scope) body.scope = telegramCommandScopeBody(scope);
+  return callTelegramApi({ token, fetchImpl, method: "setMyCommands", body });
+}
+
+async function setChatMenuButton({ token, telegramClient, fetchImpl, chatId = null }) {
+  const menuButton = { type: "commands" };
+  if (telegramClient?.setChatMenuButton) {
+    const payload = { menuButton };
+    if (chatId != null) payload.chatId = chatId;
+    return telegramClient.setChatMenuButton(payload);
+  }
+
+  const body = { menu_button: menuButton };
+  if (chatId != null) body.chat_id = chatId;
+  return callTelegramApi({ token, fetchImpl, method: "setChatMenuButton", body });
+}
+
+function telegramCommandScopeBody(scope) {
+  if (scope?.type === "chat") return { type: "chat", chat_id: scope.chatId };
+  return scope;
+}
+
+async function callTelegramApi({ token, fetchImpl, method, body }) {
+  const response = await fetchImpl(`https://api.telegram.org/bot${token}/${method}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body)
   });
-  if (!response.ok) throw new Error(`Telegram setMyCommands failed: ${response.status}`);
+  if (!response.ok) throw new Error(`Telegram ${method} failed: ${response.status}`);
   return response.json();
 }
