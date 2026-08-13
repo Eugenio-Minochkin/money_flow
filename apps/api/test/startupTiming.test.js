@@ -47,3 +47,27 @@ test("startup timing rejects arbitrary phase names and logs one privacy-safe slo
   });
   assert.doesNotMatch(JSON.stringify(warnings), /telegram|initData|token|user/i);
 });
+
+test("startup timing accepts granular reserve lock phases", () => {
+  const timing = createStartupTiming({ now: () => 0 });
+
+  for (const phase of [
+    "reserve_user_lock",
+    "reserve_past_lock",
+    "financial_month_lock",
+    "reserve_rollover",
+    "reserve_current_lock",
+    "reserve_template_lock"
+  ]) {
+    timing.add(phase, 1);
+  }
+
+  assert.deepEqual(timing.snapshot(), {
+    reserve_user_lock: 1,
+    reserve_past_lock: 1,
+    financial_month_lock: 1,
+    reserve_rollover: 1,
+    reserve_current_lock: 1,
+    reserve_template_lock: 1
+  });
+});

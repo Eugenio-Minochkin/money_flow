@@ -698,10 +698,10 @@ export function createRepository(pool, options = {}) {
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
-        const userResult = await client.query(
+        const userResult = await measureStartupPhase(timing, "reserve_user_lock", () => client.query(
           `SELECT * FROM users WHERE telegram_user_id = $1 FOR UPDATE`,
           [telegramUserId]
-        );
+        ));
         const user = userResult.rows[0];
         if (!user) {
           await client.query("ROLLBACK");
@@ -709,38 +709,40 @@ export function createRepository(pool, options = {}) {
         }
         const userTimeZone = normalizeTimeZone(user.timezone);
         const currentPeriod = timeZoneMonthKey(now, userTimeZone);
-        const pastResult = await client.query(
+        const pastResult = await measureStartupPhase(timing, "reserve_past_lock", () => client.query(
           `SELECT * FROM monthly_reserve_instances
            WHERE user_id = $1 AND status = 'active' AND period < $2
            ORDER BY period
            FOR UPDATE`,
           [user.id, currentPeriod]
-        );
+        ));
         await lockFinancialMonths(
           client,
           user.id,
           [...pastResult.rows.map((instance) => instance.period), currentPeriod],
           timing
         );
-        for (const instance of pastResult.rows) {
-          await closeReserveInstance(client, user, instance, now);
-        }
+        await measureStartupPhase(timing, "reserve_rollover", async () => {
+          for (const instance of pastResult.rows) {
+            await closeReserveInstance(client, user, instance, now);
+          }
+        });
 
-        const currentResult = await client.query(
+        const currentResult = await measureStartupPhase(timing, "reserve_current_lock", () => client.query(
           `SELECT * FROM monthly_reserve_instances
            WHERE user_id = $1 AND period = $2
            FOR UPDATE`,
           [user.id, currentPeriod]
-        );
+        ));
         let current = currentResult.rows[0] ?? null;
         let recurringReserveBlocked = false;
         if (!current) {
-          const templateResult = await client.query(
+          const templateResult = await measureStartupPhase(timing, "reserve_template_lock", () => client.query(
             `SELECT * FROM recurring_reserve_templates
              WHERE user_id = $1 AND is_active = true
              FOR UPDATE`,
             [user.id]
-          );
+          ));
           const template = templateResult.rows[0];
           if (template) {
             const currentBudget = await currentMonthBudget(client, user, now);
@@ -4260,7 +4262,7 @@ function sameExpenseFinancialInputs(left, right) {
 
 async function lockFinancialMonths(client, userId, monthKeys, timing = null) {
   for (const monthKey of [...new Set(monthKeys.filter(Boolean))].sort()) {
-    await measureStartupPhase(timing, "lock", () => client.query(
+    await measureStartupPhase(timing, "financial_month_lock", () => client.query(
       "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
       [`money-flow:${userId}:${monthKey}`]
     ));
