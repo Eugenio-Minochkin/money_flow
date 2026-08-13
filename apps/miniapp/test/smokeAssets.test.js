@@ -23,7 +23,7 @@ test("Mini App keeps app.js and styles.css cache-busters in sync", async () => {
   assert.ok(appVersion, "index.html should version app.js with a ?v= query");
   assert.ok(cssVersion, "index.html should version styles.css with a ?v= query");
   assert.equal(appVersion, cssVersion, "app.js and styles.css cache-busters must stay in sync");
-  assert.equal(appVersion, "20260813-settings-v1");
+  assert.equal(appVersion, "20260813-startup-v3");
   assert.notEqual(appVersion, "20260626-dashboard-v12", "app.js must not keep the stale dashboard-v12 cache-buster");
 });
 
@@ -33,7 +33,7 @@ test("Mini App acknowledges Telegram before evaluating the module and measures u
   const startupTiming = await readFile(join(miniAppRoot, "startupTiming.js"), "utf8");
   const telegramSdk = html.indexOf("telegram-web-app.js");
   const ready = html.indexOf("WebApp.ready");
-  const appModule = html.indexOf("app.js?v=");
+  const appModule = html.indexOf('<script src="/app.js?v=');
 
   assert.ok(telegramSdk >= 0 && ready > telegramSdk && appModule > ready);
   assert.match(html, /performance\.mark\("mf:html_start"\)/);
@@ -48,6 +48,35 @@ test("Mini App acknowledges Telegram before evaluating the module and measures u
   for (const measure of ["telegram_sdk", "app_bootstrap", "dashboard_request", "dashboard_render", "dashboard_total", "history_request"]) {
     assert.match(startupTiming, new RegExp(`mf:${measure}`));
   }
+});
+
+test("Mini App starts CSS and module fetches before the blocking Telegram SDK", async () => {
+  const html = await readFile(join(miniAppRoot, "index.html"), "utf8");
+  const telegramSdk = html.indexOf('<script src="https://telegram.org/js/telegram-web-app.js"');
+  const preconnect = html.indexOf('<link rel="preconnect" href="https://telegram.org"');
+  const stylesheet = html.indexOf('<link rel="stylesheet" href="/styles.css?v=20260813-startup-v3"');
+  const modulePreload = html.indexOf('<link rel="modulepreload" href="/app.js?v=20260813-startup-v3"');
+  const appExecution = html.indexOf('<script src="/app.js?v=20260813-startup-v3" type="module">');
+
+  assert.ok(preconnect >= 0 && preconnect < telegramSdk);
+  assert.ok(stylesheet >= 0 && stylesheet < telegramSdk);
+  assert.ok(modulePreload >= 0 && modulePreload < telegramSdk);
+  assert.ok(appExecution > telegramSdk, "app.js must still execute after Telegram bootstrap");
+});
+
+test("Mini App reports privacy-safe startup timings after Dashboard becomes usable", async () => {
+  const app = await readFile(new URL("../src/app.js", import.meta.url), "utf8");
+  const startup = await readFile(new URL("../src/startupTiming.js", import.meta.url), "utf8");
+  const loadBlock = app.slice(app.indexOf("async function load()"), app.indexOf("async function loadDashboard()"));
+
+  assert.match(loadBlock, /const startupTimings = finishStartup\(\)/);
+  assert.match(loadBlock, /void reportStartupTimings\(startupTimings\)/);
+  assert.match(app, /api\("\/api\/startup-timing"/);
+  assert.match(startup, /navigation_ttfb/);
+  assert.match(startup, /telegram_sdk_resource/);
+  assert.match(startup, /app_entry_resource/);
+  assert.match(startup, /styles_resource/);
+  assert.doesNotMatch(startup, /telegramUserId|initData/);
 });
 
 test("ordinary Mini App startup leaves History out of the Dashboard critical path", async () => {

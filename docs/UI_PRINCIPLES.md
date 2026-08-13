@@ -58,3 +58,4 @@ Money Flow UI should feel light and direct. Favor quick comprehension over dense
 - Check that cards, buttons, labels, and amounts do not overlap on narrow screens.
 - Russian and English interface text should sound natural, simple, and human. Check dashboard changes at 375, 390, and 430 CSS pixels, including long English labels.
 - Acknowledge the Telegram shell before the main module graph evaluates; keep the early bootstrap visual-free and let the main app own safe-area, theme, fullscreen, and interaction listeners exactly once.
+- Discover CSS and the root module in the document head so their downloads overlap the Telegram SDK wait; preloading must not execute app code before Telegram acknowledgement.
