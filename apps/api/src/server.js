@@ -29,6 +29,7 @@ import { createReportService } from "./reportService.js";
 import { readAppRevision } from "./revision.js";
 import { DraftCanceledError, CategoryRequiredError, createRepository } from "./repository.js";
 import { shouldRateLimitRequest } from "./routing.js";
+import { createStartupTiming } from "./startupTiming.js";
 import {
   createTelegramBot,
   draftCanceledMessageText,
@@ -355,24 +356,47 @@ async function route(req, res) {
   }
 
   if (req.method === "GET" && url.pathname === "/api/dashboard") {
-    const auth = apiSecurity.resolveTelegramUserId(req, url);
-    if (auth.error) return sendJson(res, 400, { error: auth.error });
-    const telegramUserId = auth.telegramUserId;
-    const timeZone = req.headers["x-user-timezone"];
-    if (auth.verified) {
-      const dashboard = await miniAppLaunchService.loadDashboard({
-        auth,
-        reportType: url.searchParams.get("reportType"),
-        reportKey: url.searchParams.get("reportKey"),
-        timeZone
+    const timing = createStartupTiming();
+    const deferred = [];
+    const defer = (operation) => deferred.push(operation);
+    const runDeferred = () => {
+      const operations = deferred.splice(0);
+      queueMicrotask(async () => {
+        for (const operation of operations) await operation();
       });
-      if (!dashboard) return sendJson(res, 404, { error: "user_not_found" });
-      return sendJson(res, 200, dashboard);
+    };
+    res.once("finish", runDeferred);
+    const sendDashboard = (status, body) => {
+      timing.finish({ route: "/api/dashboard", status });
+      res.setHeader("server-timing", timing.serverTiming());
+      return sendJson(res, status, body);
+    };
+    try {
+      const auth = await timing.measure("auth", () => apiSecurity.resolveTelegramUserId(req, url));
+      if (auth.error) return sendDashboard(400, { error: auth.error });
+      const telegramUserId = auth.telegramUserId;
+      const timeZone = req.headers["x-user-timezone"];
+      if (auth.verified) {
+        const dashboard = await miniAppLaunchService.loadDashboard({
+          auth,
+          reportType: url.searchParams.get("reportType"),
+          reportKey: url.searchParams.get("reportKey"),
+          timeZone,
+          timing,
+          defer
+        });
+        if (!dashboard) return sendDashboard(404, { error: "user_not_found" });
+        return sendDashboard(200, dashboard);
+      }
+      if (timeZone) await timing.measure("timezone_sync", () => repository.syncUserTimezone(telegramUserId, timeZone));
+      const dashboard = await timing.measure("repository_dashboard", () => repository.dashboard(telegramUserId, undefined, timing));
+      if (!dashboard) return sendDashboard(404, { error: "user_not_found" });
+      return sendDashboard(200, dashboard);
+    } catch (error) {
+      timing.finish({ route: "/api/dashboard", status: error.statusCode ?? 500 });
+      if (!res.headersSent) res.setHeader("server-timing", timing.serverTiming());
+      throw error;
     }
-    if (timeZone) await repository.syncUserTimezone(telegramUserId, timeZone);
-    const dashboard = await repository.dashboard(telegramUserId);
-    if (!dashboard) return sendJson(res, 404, { error: "user_not_found" });
-    return sendJson(res, 200, dashboard);
   }
 
   if (req.method === "PUT" && url.pathname === "/api/reserve/current") {
@@ -1003,7 +1027,10 @@ async function route(req, res) {
   }
 
   if (req.method === "GET") {
-    return serveStatic(res, url.pathname === "/" ? "/index.html" : url.pathname);
+    return serveStatic(res, url.pathname === "/" ? "/index.html" : url.pathname, {
+      searchParams: url.searchParams,
+      requestHeaders: req.headers
+    });
   }
 
   sendJson(res, 404, { error: "not_found" });

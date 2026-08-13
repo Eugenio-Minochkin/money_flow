@@ -693,15 +693,15 @@ export function createRepository(pool, options = {}) {
       return result.rows[0] ?? null;
     },
 
-    async openReserveMonth(telegramUserId, now = new Date()) {
+    async openReserveMonth(telegramUserId, now = new Date(), timing = null) {
       if (typeof pool.connect !== "function") return null;
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
-        const userResult = await client.query(
+        const userResult = await measureStartupPhase(timing, "reserve_user_lock", () => client.query(
           `SELECT * FROM users WHERE telegram_user_id = $1 FOR UPDATE`,
           [telegramUserId]
-        );
+        ));
         const user = userResult.rows[0];
         if (!user) {
           await client.query("ROLLBACK");
@@ -709,33 +709,40 @@ export function createRepository(pool, options = {}) {
         }
         const userTimeZone = normalizeTimeZone(user.timezone);
         const currentPeriod = timeZoneMonthKey(now, userTimeZone);
-        const pastResult = await client.query(
+        const pastResult = await measureStartupPhase(timing, "reserve_past_lock", () => client.query(
           `SELECT * FROM monthly_reserve_instances
            WHERE user_id = $1 AND status = 'active' AND period < $2
            ORDER BY period
            FOR UPDATE`,
           [user.id, currentPeriod]
+        ));
+        await lockFinancialMonths(
+          client,
+          user.id,
+          [...pastResult.rows.map((instance) => instance.period), currentPeriod],
+          timing
         );
-        await lockFinancialMonths(client, user.id, [...pastResult.rows.map((instance) => instance.period), currentPeriod]);
-        for (const instance of pastResult.rows) {
-          await closeReserveInstance(client, user, instance, now);
-        }
+        await measureStartupPhase(timing, "reserve_rollover", async () => {
+          for (const instance of pastResult.rows) {
+            await closeReserveInstance(client, user, instance, now);
+          }
+        });
 
-        const currentResult = await client.query(
+        const currentResult = await measureStartupPhase(timing, "reserve_current_lock", () => client.query(
           `SELECT * FROM monthly_reserve_instances
            WHERE user_id = $1 AND period = $2
            FOR UPDATE`,
           [user.id, currentPeriod]
-        );
+        ));
         let current = currentResult.rows[0] ?? null;
         let recurringReserveBlocked = false;
         if (!current) {
-          const templateResult = await client.query(
+          const templateResult = await measureStartupPhase(timing, "reserve_template_lock", () => client.query(
             `SELECT * FROM recurring_reserve_templates
              WHERE user_id = $1 AND is_active = true
              FOR UPDATE`,
             [user.id]
-          );
+          ));
           const template = templateResult.rows[0];
           if (template) {
             const currentBudget = await currentMonthBudget(client, user, now);
@@ -3821,49 +3828,68 @@ export function createRepository(pool, options = {}) {
       };
     },
 
-    async dashboard(telegramUserId, now = new Date()) {
+    async dashboard(telegramUserId, now = new Date(), timing = null) {
       const user = await this.getUserByTelegramId(telegramUserId);
       if (!user) return null;
       const timeZone = userTimezone(user);
       const reserveOpening = typeof pool.connect === "function"
-        ? await this.openReserveMonth(telegramUserId, now)
+        ? await measureStartupPhase(timing, "reserve", () => this.openReserveMonth(telegramUserId, now, timing))
         : null;
-      const reserveInstanceResult = typeof pool.connect === "function"
-        ? await pool.query(
-            `SELECT * FROM monthly_reserve_instances
-             WHERE user_id = $1 AND period = $2`,
-            [user.id, timeZoneMonthKey(now, normalizeTimeZone(user.timezone))]
-          )
-        : { rows: [] };
-      const reserveInstance = reserveInstanceResult.rows[0] ?? null;
+      const reserveData = await measureStartupPhase(timing, "reserve_reads", async () => {
+        const reserveInstanceResult = typeof pool.connect === "function"
+          ? await pool.query(
+              `SELECT * FROM monthly_reserve_instances
+               WHERE user_id = $1 AND period = $2`,
+              [user.id, timeZoneMonthKey(now, normalizeTimeZone(user.timezone))]
+            )
+          : { rows: [] };
+        const reserveTemplateResult = typeof pool.connect === "function"
+          ? await pool.query(
+              `SELECT * FROM recurring_reserve_templates WHERE user_id = $1`,
+              [user.id]
+            )
+          : { rows: [] };
+        const pendingReserveEventsResult = typeof pool.connect === "function"
+          ? await pool.query(
+              `SELECT * FROM closed_reserve_events
+               WHERE user_id = $1 AND miniapp_delivered_at IS NULL
+               ORDER BY period, id`,
+              [user.id]
+            )
+          : { rows: [] };
+        return { reserveInstanceResult, reserveTemplateResult, pendingReserveEventsResult };
+      });
+      const reserveInstance = reserveData.reserveInstanceResult.rows[0] ?? null;
       const calculationTimeZone = reserveInstance?.status === "active"
         ? reserveInstance.timezone
         : timeZone;
-      const reserveTemplateResult = typeof pool.connect === "function"
-        ? await pool.query(
-            `SELECT * FROM recurring_reserve_templates WHERE user_id = $1`,
-            [user.id]
-          )
-        : { rows: [] };
-      const pendingReserveEventsResult = typeof pool.connect === "function"
-        ? await pool.query(
-            `SELECT * FROM closed_reserve_events
-             WHERE user_id = $1 AND miniapp_delivered_at IS NULL
-             ORDER BY period, id`,
-            [user.id]
-          )
-        : { rows: [] };
-      const currentBudget = await currentMonthBudget(pool, user, now, calculationTimeZone);
-      const totals = await this.totals(user.id, now, calculationTimeZone);
-      const monthBaseline = await monthBaselineTotal(pool, user.id, now, calculationTimeZone);
+      const currentBudget = await measureStartupPhase(
+        timing,
+        "budget",
+        () => currentMonthBudget(pool, user, now, calculationTimeZone)
+      );
+      const totals = await measureStartupPhase(timing, "totals", () => this.totals(user.id, now, calculationTimeZone));
+      const monthBaseline = await measureStartupPhase(
+        timing,
+        "baseline",
+        () => monthBaselineTotal(pool, user.id, now, calculationTimeZone)
+      );
       totals.month += monthBaseline;
       totals.monthDisplay += displayFromBase(monthBaseline, user);
       totals.regularMonth += monthBaseline;
       totals.regularMonthDisplay += displayFromBase(monthBaseline, user);
-      const plannedExpenses = await listPlannedExpensesForTelegramUserAt(pool, telegramUserId, now);
+      const plannedExpenses = await measureStartupPhase(
+        timing,
+        "planned",
+        () => listPlannedExpensesForTelegramUserAt(pool, telegramUserId, now)
+      );
       const plannedRemainingTotal = calculatePlannedRemaining(plannedExpenses, now, calculationTimeZone);
       const plannedThisWeekTotal = calculatePlannedThisWeek(plannedExpenses, now, calculationTimeZone);
-      const paidPlannedMonthTotal = await paidPlannedTotalForMonth(pool, user.id, now, calculationTimeZone);
+      const paidPlannedMonthTotal = await measureStartupPhase(
+        timing,
+        "paid_planned",
+        () => paidPlannedTotalForMonth(pool, user.id, now, calculationTimeZone)
+      );
       const rawActiveReserveAmount = reserveInstance?.status === "active" ? Number(reserveInstance.reserve_amount) : 0;
       const activeReserveAmount = roundForDisplayCurrency(rawActiveReserveAmount, user.base_currency);
       const activeReserveDisplayAmount = displayFromBase(activeReserveAmount, user);
@@ -3898,7 +3924,7 @@ export function createRepository(pool, options = {}) {
       const freeRemaining = roundForDisplayCurrency(monthRemaining - reservedAhead, user.base_currency);
       const weekRemainingRaw = roundForDisplayCurrency(resolvedWeeklyBudget - totals.week, user.base_currency);
       const weekAvailable = roundForDisplayCurrency(Math.min(weekRemainingRaw, freeRemaining), user.base_currency);
-      const dayBudgetSnapshot = await getOrCreateDailyBudgetSnapshot(pool, user, now, {
+      const dayBudgetSnapshot = await measureStartupPhase(timing, "snapshot", () => getOrCreateDailyBudgetSnapshot(pool, user, now, {
         todayTotal: totals.today,
         monthTotal: totals.month,
         todayDisplayTotal: totals.todayDisplay,
@@ -3925,8 +3951,8 @@ export function createRepository(pool, options = {}) {
         displayCurrency: user.display_currency ?? "USD",
         budgetAdviceEnabled: user.budget_advice_enabled !== false,
         timeZone: calculationTimeZone
-      });
-      const latest = await pool.query(
+      }));
+      const latest = await measureStartupPhase(timing, "latest", () => pool.query(
         `SELECT id, amount_original, currency_original, amount_base, converted_amounts, budget_impact,
                 description, category_slug, tags, spent_at
          FROM expenses
@@ -3934,7 +3960,7 @@ export function createRepository(pool, options = {}) {
          ORDER BY spent_at DESC
          LIMIT 5`,
         [user.id]
-      );
+      ));
       const snapshot = calculateBudgetSnapshot({
         todayTotal: totals.today,
         weekTotal: totals.week,
@@ -3976,15 +4002,19 @@ export function createRepository(pool, options = {}) {
       snapshot.display.todayTotal = roundMoney(totals.todayDisplayTotal);
       snapshot.display.plannedToday = roundMoney(totals.plannedTodayDisplay);
       snapshot.display.largeToday = roundMoney(totals.largeTodayDisplay);
-      const topCategories = await this.topCategories(user.id, now);
-      const analytics = await dashboardAnalytics(pool, user, topCategories, snapshot, now, calculationTimeZone);
+      const topCategories = await measureStartupPhase(timing, "top_categories", () => this.topCategories(user.id, now));
+      const analytics = await measureStartupPhase(
+        timing,
+        "dashboard_analytics",
+        () => dashboardAnalytics(pool, user, topCategories, snapshot, now, calculationTimeZone)
+      );
       return {
         user,
         currentMonthBudget: currentBudget,
         reserveInstance,
-        reserveTemplate: reserveTemplateResult.rows[0] ?? null,
+        reserveTemplate: reserveData.reserveTemplateResult.rows[0] ?? null,
         recurringReserveBlocked: reserveOpening?.recurringReserveBlocked === true,
-        closedReserveEvents: pendingReserveEventsResult.rows,
+        closedReserveEvents: reserveData.pendingReserveEventsResult.rows,
         snapshot,
         plannedMonthSummary,
         latestExpenses: latest.rows.map((row) => withDisplay(row, user)),
@@ -4230,13 +4260,17 @@ function sameExpenseFinancialInputs(left, right) {
     && String(left.budget_impact) === String(right.budget_impact);
 }
 
-async function lockFinancialMonths(client, userId, monthKeys) {
+async function lockFinancialMonths(client, userId, monthKeys, timing = null) {
   for (const monthKey of [...new Set(monthKeys.filter(Boolean))].sort()) {
-    await client.query(
+    await measureStartupPhase(timing, "financial_month_lock", () => client.query(
       "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
       [`money-flow:${userId}:${monthKey}`]
-    );
+    ));
   }
+}
+
+function measureStartupPhase(timing, name, operation) {
+  return timing ? timing.measure(name, operation) : operation();
 }
 
 async function closedReserveMonths(client, userId, monthKeys) {

@@ -62,6 +62,57 @@ test("loads a completed dashboard and records exactly one ordinary dashboard eve
   assert.equal(calls.some((call) => call.name.startsWith("recordAppEventOnce:")), false);
 });
 
+test("onboarding preserves miniapp entry ordering instead of deferring it past the singleton event", async () => {
+  const calls = [];
+  const deferred = [];
+  const user = { id: 7, telegram_user_id: 100, onboarding_step: "budget_setup", is_new: false };
+  const service = createMiniAppLaunchService({ repository: fakeRepository(calls, { user }) });
+
+  await service.loadDashboard({ auth: verifiedAuth(), defer: (operation) => deferred.push(operation) });
+
+  assert.equal(deferred.length, 0);
+  assert.deepEqual(calls.map((call) => call.name), [
+    "upsertTelegramUser",
+    "recordAppEvent:miniapp_opened",
+    "recordAppEventOnce:onboarding_started"
+  ]);
+});
+
+test("completed dashboard does not wait for launch analytics", async (t) => {
+  t.mock.method(console, "warn", () => {});
+  const calls = [];
+  const analyticsResolvers = [];
+  const deferredAnalytics = [];
+  const user = { id: 7, telegram_user_id: 100, onboarding_step: "completed", is_new: false };
+  const dashboard = { user, snapshot: { remaining: 42 } };
+  const repository = fakeRepository(calls, { user, dashboard });
+  repository.recordAppEvent = (userId, eventName, metadata) => {
+    calls.push({ name: `recordAppEvent:${eventName}`, userId, metadata });
+    return new Promise((resolve, reject) => analyticsResolvers.push({ eventName, resolve, reject }));
+  };
+  const service = createMiniAppLaunchService({ repository });
+
+  const result = await Promise.race([
+    service.loadDashboard({
+      auth: verifiedAuth(),
+      defer: (operation) => deferredAnalytics.push(operation)
+    }),
+    new Promise((_, reject) => setTimeout(() => reject(new Error("dashboard waited for analytics")), 30))
+  ]);
+
+  assert.deepEqual(result, dashboard);
+  assert.equal(analyticsResolvers.length, 0);
+  assert.equal(deferredAnalytics.length, 2);
+  deferredAnalytics.forEach((operation) => operation());
+  assert.deepEqual(
+    analyticsResolvers.map((entry) => entry.eventName),
+    ["miniapp_opened", "dashboard_opened"]
+  );
+  analyticsResolvers[0].reject(new Error("analytics unavailable"));
+  analyticsResolvers[1].resolve();
+  await new Promise((resolve) => setImmediate(resolve));
+});
+
 test("records a report click only for a matching successful delivery", async () => {
   const calls = [];
   const user = { id: 7, telegram_user_id: 100, onboarding_step: "completed", is_new: false };

@@ -4,8 +4,18 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>Money Flow</title>
+    <script>performance.mark("mf:html_start")</script>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="/styles.css?v=20260813-unified-rows-v2" />
+    <script>
+      performance.mark("mf:telegram_sdk_available");
+      if (window.Telegram?.WebApp) {
+        window.Telegram.WebApp.ready();
+        window.Telegram.WebApp.expand();
+        window.__moneyFlowTelegramBootstrapped = true;
+        performance.mark("mf:telegram_ready");
+      }
+    </script>
+    <link rel="stylesheet" href="/styles.css?v=20260813-startup-v1" />
   </head>
   <body data-theme="light">
     <main class="shell">
@@ -567,6 +577,6 @@
     </nav>
 
     <div class="toast hidden" id="toast" role="status" aria-live="polite"></div>
-    <script src="/app.js?v=20260813-unified-rows-v2" type="module"></script>
+    <script src="/app.js?v=20260813-startup-v1" type="module"></script>
   </body>
 </html>

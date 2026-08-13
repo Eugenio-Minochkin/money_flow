@@ -7,6 +7,43 @@ import { createRepository, shouldInvalidateExpenseSnapshot } from "../src/reposi
 import * as repositoryModule from "../src/repository.js";
 import { formatSavedSummary } from "../src/telegramFormat.js";
 
+test("openReserveMonth reports each potentially blocking reserve phase", async () => {
+  const phases = [];
+  const client = {
+    async query(sql) {
+      const query = String(sql);
+      if (query === "BEGIN" || query === "COMMIT" || query === "ROLLBACK") return { rows: [] };
+      if (query.includes("FROM users")) {
+        return { rows: [{ id: 7, telegram_user_id: "100", timezone: "Asia/Bangkok" }] };
+      }
+      if (query.includes("status = 'active' AND period <")) return { rows: [] };
+      if (query.includes("pg_advisory_xact_lock")) return { rows: [] };
+      if (query.includes("FROM monthly_reserve_instances")) return { rows: [] };
+      if (query.includes("FROM recurring_reserve_templates")) return { rows: [] };
+      throw new Error(`Unexpected SQL: ${query}`);
+    },
+    release() {}
+  };
+  const repository = createRepository({ async connect() { return client; } });
+  const timing = {
+    measure(name, operation) {
+      phases.push(name);
+      return operation();
+    }
+  };
+
+  await repository.openReserveMonth(100, new Date("2026-08-13T10:00:00+07:00"), timing);
+
+  assert.deepEqual(phases, [
+    "reserve_user_lock",
+    "reserve_past_lock",
+    "financial_month_lock",
+    "reserve_rollover",
+    "reserve_current_lock",
+    "reserve_template_lock"
+  ]);
+});
+
 test("reads a completed Shortcut claim from the request status rather than draft status", async () => {
   const queries = [];
   const repo = createRepository(fakePool((sql, params) => {
@@ -859,14 +896,33 @@ test("recreates an invalidated daily snapshot from the updated monthly budget", 
     return { rows: [] };
   }));
   const now = new Date("2026-06-23T10:00:00+07:00");
+  const measuredPhases = [];
+  const timing = {
+    measure(name, operation) {
+      measuredPhases.push(name);
+      return operation();
+    }
+  };
 
   await repo.updateMonthlyBudget(100, 48000, now);
-  const dashboard = await repo.dashboard(100, now);
+  const dashboard = await repo.dashboard(100, now, timing);
 
   assert.equal(storedDayBudget, 449.38);
   assert.equal(dashboard.snapshot.dayPlanLimit, 449.38);
   assert.equal(dashboard.snapshot.dayRemaining, 66.38);
   assert.equal(dashboard.snapshot.safeToSpendPerDay, 401.5);
+  assert.deepEqual(measuredPhases, [
+    "reserve_reads",
+    "budget",
+    "totals",
+    "baseline",
+    "planned",
+    "paid_planned",
+    "snapshot",
+    "latest",
+    "top_categories",
+    "dashboard_analytics"
+  ]);
 });
 
 test("updateMonthlyBudget deletes daily_budget_snapshots for current day after user update", async () => {
