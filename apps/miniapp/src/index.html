@@ -15,7 +15,7 @@
         performance.mark("mf:telegram_ready");
       }
     </script>
-    <link rel="stylesheet" href="/styles.css?v=20260813-startup-v1" />
+    <link rel="stylesheet" href="/styles.css?v=20260813-settings-v1" />
   </head>
   <body data-theme="light">
     <main class="shell">
@@ -460,17 +460,18 @@
               </div>
             </section>
             <input id="usdThbRateInput" name="usdThbRate" type="hidden" value="32.65" />
-            <div class="settings-actions">
-              <button type="submit" data-i18n="actions.save">Save</button>
-              <small class="settings-dirty-state" id="settingsDirtyState" data-i18n="settings.saveHint">No unsaved changes</small>
-            </div>
           </form>
 
-          <section class="settings-section danger-zone" id="deleteAccountSection">
-            <h3 class="settings-section-title danger-zone__label" data-i18n="settings.dangerZone">Danger zone</h3>
+          <details class="settings-section danger-zone" id="deleteAccountSection">
+            <summary class="danger-zone__summary">
+              <span class="danger-zone__summary-copy">
+                <strong data-i18n="settings.deleteDataTitle">Delete data</strong>
+                <small data-i18n="settings.deleteDataDisclosureHint">Irreversible action</small>
+              </span>
+              <span class="danger-zone__chevron" aria-hidden="true">›</span>
+            </summary>
             <div class="settings-card danger-zone__card">
               <div class="delete-account-state" id="deleteAccountStartState">
-                <strong data-i18n="settings.deleteDataTitle">Delete data</strong>
                 <p class="settings-hint" data-i18n="settings.deleteDataHint">Permanently delete your Money Flow data.</p>
                 <div class="button-row">
                   <button type="button" class="danger-button" id="deleteAccountStartButton" data-i18n="settings.deleteDataButton">Delete my data</button>
@@ -492,7 +493,7 @@
               </div>
               <button type="button" class="ghost-button delete-account-cancel hidden" id="deleteAccountCancelButton" data-i18n="settings.deleteDataCancel">Cancel</button>
             </div>
-          </section>
+          </details>
 
         </section>
       </section>
@@ -577,6 +578,6 @@
     </nav>
 
     <div class="toast hidden" id="toast" role="status" aria-live="polite"></div>
-    <script src="/app.js?v=20260813-startup-v1" type="module"></script>
+    <script src="/app.js?v=20260813-settings-v1" type="module"></script>
   </body>
 </html>
