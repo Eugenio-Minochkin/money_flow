@@ -48,6 +48,7 @@ test("Mini App translations cover dashboard, plan, history and settings labels",
     "plan.nextPlanned",
     "plan.todayDue",
     "plan.plannedExpenses",
+    "plan.disableExisting",
     "plan.statusPaid",
     "plan.statusUnpaid",
     "plan.statusOverdue",
@@ -110,6 +111,11 @@ test("planned disable UX keys stay in parity for Russian and English", () => {
       assert.ok(translations[language][key].length > 0, `${language}.${key} must not be empty`);
     }
   }
+});
+
+test("planned edit disable action is explicit in Russian and English", () => {
+  assert.equal(createTranslator("ru")("plan.disableExisting"), "Отключить плановую");
+  assert.equal(createTranslator("en")("plan.disableExisting"), "Disable planned");
 });
 
 test("planned archive and recreate UX keys stay in parity for Russian and English", () => {
