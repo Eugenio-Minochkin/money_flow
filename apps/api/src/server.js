@@ -7,6 +7,7 @@ import { createAdminAlertService } from "./adminAlerts.js";
 import { config, requireRuntimeConfig } from "./config.js";
 import { createAdminStatsService } from "./adminStatsService.js";
 import { createApiSecurity } from "./apiSecurity.js";
+import { recordClientStartupTiming } from "./clientStartupTiming.js";
 import { migrate, pool } from "./db.js";
 import { createDailyReminderService } from "./dailyReminderService.js";
 import { confirmDraftForApi } from "./draftConfirmation.js";
@@ -352,6 +353,15 @@ async function route(req, res) {
     if (!apiSecurity.isValidTelegramWebhook(req)) return sendJson(res, 401, { error: "invalid_webhook_secret" });
     const update = await readJson(req);
     await bot.handleUpdate(update);
+    return sendJson(res, 200, { ok: true });
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/startup-timing") {
+    const body = await readJson(req);
+    const auth = apiSecurity.resolveVerifiedTelegramUserId(req);
+    if (auth.error) return sendJson(res, 400, { error: auth.error });
+    const timings = recordClientStartupTiming(body.timings);
+    if (!timings) return sendJson(res, 400, { error: "invalid_startup_timings" });
     return sendJson(res, 200, { ok: true });
   }
 

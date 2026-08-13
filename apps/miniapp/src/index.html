@@ -5,6 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>Money Flow</title>
     <script>performance.mark("mf:html_start")</script>
+    <link rel="preconnect" href="https://telegram.org" />
+    <link rel="stylesheet" href="/styles.css?v=20260813-startup-v3" />
+    <link rel="modulepreload" href="/app.js?v=20260813-startup-v3" />
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script>
       performance.mark("mf:telegram_sdk_available");
@@ -15,7 +18,6 @@
         performance.mark("mf:telegram_ready");
       }
     </script>
-    <link rel="stylesheet" href="/styles.css?v=20260813-settings-v1" />
   </head>
   <body data-theme="light">
     <main class="shell">
@@ -578,6 +580,6 @@
     </nav>
 
     <div class="toast hidden" id="toast" role="status" aria-live="polite"></div>
-    <script src="/app.js?v=20260813-settings-v1" type="module"></script>
+    <script src="/app.js?v=20260813-startup-v3" type="module"></script>
   </body>
 </html>

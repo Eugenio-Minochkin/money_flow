@@ -596,7 +596,8 @@ async function load() {
   const dashboard = await loadDashboard();
   if (isOnboardingDashboardResponse(dashboard)) return;
   markStartup("dashboard_usable");
-  finishStartup();
+  const startupTimings = finishStartup();
+  void reportStartupTimings(startupTimings);
   if (params.get("view") === "history") {
     await ensureHistoryLoaded();
     switchTab("history");
@@ -612,6 +613,15 @@ async function load() {
     returnTab: "dashboard",
     row: document.querySelector(`[data-inbox-location="dashboard"][data-draft-row="${draftId}"]`)
       ?? document.querySelector(`[data-draft-row="${draftId}"]`)
+  });
+}
+
+function reportStartupTimings(timings) {
+  return api("/api/startup-timing", {
+    method: "POST",
+    body: { timings }
+  }).catch(() => {
+    // Diagnostics are best-effort and never delay or fail Dashboard startup.
   });
 }
 

@@ -208,6 +208,17 @@ test("dashboard route delegates verified launches to the Mini App launch service
   assert.match(block, /catch \(error\)[^]*?timing\.finish\(\{ route: "\/api\/dashboard", status: error\.statusCode \?\? 500 \}\)/);
 });
 
+test("client startup timing route requires verified Mini App auth and logs only sanitized timings", async () => {
+  const source = await readFile(new URL("../src/server.js", import.meta.url), "utf8");
+  const block = endpointBlock(source, "/api/startup-timing");
+
+  assert.match(block, /req\.method === "POST"/);
+  assert.match(block, /apiSecurity\.resolveVerifiedTelegramUserId\(req\)/);
+  assert.match(block, /recordClientStartupTiming\(body\.timings\)/);
+  assert.match(block, /invalid_startup_timings/);
+  assert.doesNotMatch(block, /telegramUserId|recordAppEvent|repository\./);
+});
+
 test("account deletion endpoints pass only verified Telegram identity to repository", async () => {
   const source = await readFile(new URL("../src/server.js", import.meta.url), "utf8");
 
