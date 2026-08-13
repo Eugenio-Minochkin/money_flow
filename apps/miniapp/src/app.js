@@ -70,6 +70,10 @@ import {
   weekdayOptions as plannedWeekdayOptions
 } from "./planned.js";
 import { COMMON_TIMEZONES, detectBrowserTimeZone, normalizeSettingsTimeZone, shouldShowCurrentMonthBudgetOverride } from "./settings.js";
+import { createHistoryLoader } from "./historyLoad.js";
+import { finishStartup, markStartup } from "./startupTiming.js";
+
+markStartup("app_evaluated");
 
 const params = new URLSearchParams(window.location.search);
 const telegramUserId = params.get("telegramUserId") || window.Telegram?.WebApp?.initDataUnsafe?.user?.id;
@@ -86,7 +90,6 @@ let draftReturnTab = "dashboard";
 let historyState = [];
 let inboxState = [];
 let historyFilterState = historyFilterFromLaunchParams(params);
-let skipNextHistoryTabLoad = false;
 let historyCalendarDraft = null;
 let currentLanguage = "en";
 let translate = createTranslator(currentLanguage);
@@ -96,6 +99,7 @@ let settingsBaseline = "";
 let accountDeleted = false;
 let cancelTabPager = () => {};
 const plannedArchiveState = createPlannedArchiveState();
+const historyLoader = createHistoryLoader(performHistoryLoad);
 
 const deleteAccountStartButton = document.getElementById("deleteAccountStartButton");
 const deleteAccountAdvanceButton = document.getElementById("deleteAccountAdvanceButton");
@@ -140,8 +144,6 @@ function syncMiniAppThemeBackground() {
 
 if (window.Telegram?.WebApp) {
   const webApp = window.Telegram.WebApp;
-  webApp.ready();
-  webApp.expand();
   disableTelegramVerticalSwipes();
   syncFullscreenControlSafeArea();
   webApp.onEvent?.("fullscreenChanged", syncFullscreenControlSafeArea);
@@ -544,10 +546,17 @@ async function load() {
   renderPlannedForm();
   const dashboard = await loadDashboard();
   if (isOnboardingDashboardResponse(dashboard)) return;
-  await loadHistory();
+  markStartup("dashboard_usable");
+  finishStartup();
   if (params.get("view") === "history") {
-    skipNextHistoryTabLoad = true;
+    await ensureHistoryLoaded();
     switchTab("history");
+  } else {
+    requestAnimationFrame(() => {
+      void loadDashboardInbox().catch(() => {
+        // Dashboard remains usable; History will retry the inbox request when opened.
+      });
+    });
   }
   if (params.get("view") === "settings") switchTab("settings");
   if (draftId) await openDraftInline(draftId, {
@@ -559,7 +568,9 @@ async function load() {
 
 async function loadDashboard() {
   if (accountDeleted) return;
+  markStartup("dashboard_request_start");
   const data = await api(buildDashboardRequestPath(telegramUserId, window.location.search));
+  markStartup("dashboard_response_received");
   if (accountDeleted) return;
   if (isOnboardingDashboardResponse(data)) {
     renderOnboardingState(data.user);
@@ -579,6 +590,7 @@ async function loadDashboard() {
   renderLatest(data.latestExpenses ?? []);
   await renderClosedReserveEvents(data.closedReserveEvents ?? []);
   if (data.recurringReserveBlocked) showToast(t("reserve.blocked"));
+  markStartup("dashboard_rendered");
   return data;
 }
 
@@ -743,8 +755,25 @@ function renderMonthlyForecast(snapshot, analytics) {
   document.querySelector("#forecastDiffRow").classList.toggle("hidden", !isOverBudget);
 }
 
-async function loadHistory() {
+function ensureHistoryLoaded() {
+  return historyLoader.ensure();
+}
+
+function loadHistory() {
+  return historyLoader.refresh();
+}
+
+async function loadDashboardInbox() {
   if (accountDeleted) return;
+  const inbox = await api(`/api/drafts?telegramUserId=${encodeURIComponent(telegramUserId)}&status=inbox`);
+  if (accountDeleted) return;
+  inboxState = inbox.drafts ?? [];
+  renderDashboardInboxDrafts(inboxState);
+}
+
+async function performHistoryLoad() {
+  if (accountDeleted) return;
+  markStartup("history_request_start");
   const search = document.querySelector("#historySearch").value.trim();
   const params = buildHistoryRequestParams(telegramUserId, search, historyFilterState);
   const [data, inbox] = await Promise.all([
@@ -760,6 +789,7 @@ async function loadHistory() {
   renderHistoryPeriodSummary(historyState);
   renderHistoryAnalytics(historyState);
   updateHistorySearchClear();
+  markStartup("history_request_finish");
 }
 
 function selectHistoryPeriod(period) {
@@ -1006,13 +1036,7 @@ function switchTab(tab, { fromPager = false } = {}) {
   document.querySelectorAll("[data-tab]").forEach((button) => {
     button.classList.toggle("active", button.dataset.tab === tab);
   });
-  if (tab === "history") {
-    if (skipNextHistoryTabLoad) {
-      skipNextHistoryTabLoad = false;
-      return;
-    }
-    loadHistory().catch(showError);
-  }
+  if (tab === "history") void ensureHistoryLoaded().catch(showError);
 }
 
 function isTabSwipeBlocked() {

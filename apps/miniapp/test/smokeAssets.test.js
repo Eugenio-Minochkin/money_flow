@@ -23,8 +23,45 @@ test("Mini App keeps app.js and styles.css cache-busters in sync", async () => {
   assert.ok(appVersion, "index.html should version app.js with a ?v= query");
   assert.ok(cssVersion, "index.html should version styles.css with a ?v= query");
   assert.equal(appVersion, cssVersion, "app.js and styles.css cache-busters must stay in sync");
-  assert.equal(appVersion, "20260813-unified-rows-v2");
+  assert.equal(appVersion, "20260813-startup-v1");
   assert.notEqual(appVersion, "20260626-dashboard-v12", "app.js must not keep the stale dashboard-v12 cache-buster");
+});
+
+test("Mini App acknowledges Telegram before evaluating the module and measures usable Dashboard", async () => {
+  const html = await readFile(join(miniAppRoot, "index.html"), "utf8");
+  const app = await readFile(join(miniAppRoot, "app.js"), "utf8");
+  const startupTiming = await readFile(join(miniAppRoot, "startupTiming.js"), "utf8");
+  const telegramSdk = html.indexOf("telegram-web-app.js");
+  const ready = html.indexOf("WebApp.ready");
+  const appModule = html.indexOf("app.js?v=");
+
+  assert.ok(telegramSdk >= 0 && ready > telegramSdk && appModule > ready);
+  assert.match(html, /performance\.mark\("mf:html_start"\)/);
+  assert.match(html, /performance\.mark\("mf:telegram_sdk_available"\)/);
+  assert.match(app, /markStartup\("app_evaluated"\)/);
+  assert.match(app, /markStartup\("dashboard_request_start"\)/);
+  assert.match(app, /markStartup\("dashboard_response_received"\)/);
+  assert.match(app, /markStartup\("dashboard_rendered"\)/);
+  assert.match(app, /markStartup\("dashboard_usable"\)/);
+  assert.doesNotMatch(app, /webApp\.ready\(\)/);
+  assert.doesNotMatch(app, /webApp\.expand\(\)/);
+  for (const measure of ["telegram_sdk", "app_bootstrap", "dashboard_request", "dashboard_render", "dashboard_total", "history_request"]) {
+    assert.match(startupTiming, new RegExp(`mf:${measure}`));
+  }
+});
+
+test("ordinary Mini App startup leaves History out of the Dashboard critical path", async () => {
+  const app = await readFile(join(miniAppRoot, "app.js"), "utf8");
+  const loadBlock = app.slice(app.indexOf("async function load()"), app.indexOf("async function loadDashboard()"));
+  const switchBlock = app.slice(app.indexOf("function switchTab("), app.indexOf("function setupTabPager"));
+
+  assert.doesNotMatch(loadBlock, /await loadHistory\(\)/);
+  assert.match(loadBlock, /await ensureHistoryLoaded\(\)/);
+  assert.doesNotMatch(loadBlock, /requestAnimationFrame\([^]*?ensureHistoryLoaded\(\)/);
+  assert.match(loadBlock, /requestAnimationFrame\([^]*?loadDashboardInbox\(\)/);
+  assert.match(switchBlock, /if \(tab === "history"\) void ensureHistoryLoaded\(\)\.catch\(showError\)/);
+  assert.match(app, /markStartup\("history_request_start"\)/);
+  assert.match(app, /markStartup\("history_request_finish"\)/);
 });
 
 test("fullscreen keeps the hero content below Telegram controls and disables vertical swipes", async () => {
@@ -292,7 +329,7 @@ test("app guards data access and disables actions after account deletion", async
 
   assert.match(app, /let accountDeleted = false;/);
   assert.match(app, /async function loadDashboard\(\)\s*{\s*if \(accountDeleted\) return;/);
-  assert.match(app, /async function loadHistory\(\)\s*{\s*if \(accountDeleted\) return;/);
+  assert.match(app, /async function performHistoryLoad\(\)\s*{\s*if \(accountDeleted\) return;/);
   assert.match(app, /async function saveSettings\(event\)\s*{[^]*?if \(accountDeleted\) return;[^]*?await api\("\/api\/settings"/);
   assert.match(app, /async function requestExpenseExport\(period\)\s*{\s*if \(accountDeleted\) return;/);
   assert.match(app, /function switchTab\(tab, \{ fromPager = false \} = \{\}\)\s*{\s*if \(accountDeleted\) return;/);

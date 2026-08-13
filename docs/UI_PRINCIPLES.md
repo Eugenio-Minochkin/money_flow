@@ -12,6 +12,7 @@ Money Flow UI should feel light and direct. Favor quick comprehension over dense
 - On narrow screens, keep the Budget and plan metrics in the reference 2-by-2 grid with equal card widths and equal heights within each row. The weekly metric keeps its weekly remainder even when the month has no free money, with a separate warning for the monthly constraint.
 - Avoid visual noise that makes the user hunt for the current money state.
 - Empty, loading, and error states should be consistent across dashboard sections.
+- Make the Dashboard usable before fetching History. History loads on first entry to its tab (or for an explicit History deep link) and must not delay the initial budget view.
 
 ## Settings
 
@@ -53,3 +54,4 @@ Money Flow UI should feel light and direct. Favor quick comprehension over dense
 - Tab swipes are interactive: the current and adjacent pages follow a confirmed horizontal drag and snap only after release. Preserve vertical scrolling, form/editor/modal guards, edge resistance, and the existing tab loading/state lifecycle.
 - Check that cards, buttons, labels, and amounts do not overlap on narrow screens.
 - Russian and English interface text should sound natural, simple, and human. Check dashboard changes at 375, 390, and 430 CSS pixels, including long English labels.
+- Acknowledge the Telegram shell before the main module graph evaluates; keep the early bootstrap visual-free and let the main app own safe-area, theme, fullscreen, and interaction listeners exactly once.

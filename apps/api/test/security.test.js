@@ -204,6 +204,8 @@ test("dashboard route delegates verified launches to the Mini App launch service
   assert.match(block, /reportType: url\.searchParams\.get\("reportType"\)/);
   assert.match(block, /reportKey: url\.searchParams\.get\("reportKey"\)/);
   assert.match(block, /timeZone/);
+  assert.match(block, /res\.once\("finish", runDeferred\)/);
+  assert.match(block, /catch \(error\)[^]*?timing\.finish\(\{ route: "\/api\/dashboard", status: error\.statusCode \?\? 500 \}\)/);
 });
 
 test("account deletion endpoints pass only verified Telegram identity to repository", async () => {

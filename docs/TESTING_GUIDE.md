@@ -102,6 +102,15 @@ npm.cmd test
 
 For UI work, also use the local acceptance sandbox described in `README.md` and check the affected dashboard/settings/planned-payment flows on narrow mobile widths. Archive/recreate changes require RU and EN screenshots of the expanded archive and recreate form at iPhone 11 and iPhone 14 Pro widths, including long synthetic text, a large synthetic amount, multiple saved payments, and a legacy null disable date. Verify no horizontal scroll, clipped text, overflowing buttons, or active controls on archived rows.
 
+## Mini App Startup Performance
+
+- Keep ordinary Dashboard startup independent from History. The first History request belongs to the first History tab activation; deep-linked History waits for that one request and concurrent activations reuse the same in-flight promise.
+- `index.html` must acknowledge Telegram with `WebApp.ready()` and `expand()` before the main ES module graph evaluates. The module owns the remaining safe-area, theme, fullscreen, swipe, and event-listener setup and must not repeat those bootstrap calls.
+- `/api/dashboard` exposes privacy-safe phase durations through `Server-Timing`. A request over the startup threshold emits one structured warning containing only the route, status, and aggregate timings; never add init data, Telegram IDs, tokens, or user/financial payloads.
+- Preserve reserve reconciliation and financial-month locks while profiling. Any later lock-strategy change requires a real PostgreSQL concurrency regression in addition to unit coverage.
+- Static HTML and unversioned ES module imports must revalidate. Only assets with an explicit deployment version query may receive immutable one-year caching, and the root JS/CSS versions must advance together.
+- For browser diagnostics, append `debugStartup=1` and inspect `window.__moneyFlowStartupTimings`. Record the environment with before/after numbers; local browser timings are not a substitute for a real Telegram mobile launch.
+
 ## Product Analytics Contracts
 
 - Test new-user funnels with `users.created_at` as the cohort anchor and require entry events at or after account creation.

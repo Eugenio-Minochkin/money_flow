@@ -859,14 +859,33 @@ test("recreates an invalidated daily snapshot from the updated monthly budget", 
     return { rows: [] };
   }));
   const now = new Date("2026-06-23T10:00:00+07:00");
+  const measuredPhases = [];
+  const timing = {
+    measure(name, operation) {
+      measuredPhases.push(name);
+      return operation();
+    }
+  };
 
   await repo.updateMonthlyBudget(100, 48000, now);
-  const dashboard = await repo.dashboard(100, now);
+  const dashboard = await repo.dashboard(100, now, timing);
 
   assert.equal(storedDayBudget, 449.38);
   assert.equal(dashboard.snapshot.dayPlanLimit, 449.38);
   assert.equal(dashboard.snapshot.dayRemaining, 66.38);
   assert.equal(dashboard.snapshot.safeToSpendPerDay, 401.5);
+  assert.deepEqual(measuredPhases, [
+    "reserve_reads",
+    "budget",
+    "totals",
+    "baseline",
+    "planned",
+    "paid_planned",
+    "snapshot",
+    "latest",
+    "top_categories",
+    "dashboard_analytics"
+  ]);
 });
 
 test("updateMonthlyBudget deletes daily_budget_snapshots for current day after user update", async () => {
