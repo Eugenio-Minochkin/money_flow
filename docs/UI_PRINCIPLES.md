@@ -23,7 +23,8 @@ Money Flow UI should feel light and direct. Favor quick comprehension over dense
 
 - Edit saved expenses and active planned payments in the shared modal shell over the screen where editing started. Closing, saving, or deleting must not switch tabs, reset History filters, or discard the user's scroll position.
 - Keep expense Save and confirmed Delete actions inside the modal. Use the modal header close control for cancel without saving instead of a redundant footer Close action.
-- On narrow screens, keep the page behind the modal inert and fixed. Let long forms scroll inside the modal while its header and actions remain inside Telegram content-safe-area, fullscreen-control, and device-safe-area bounds.
+- On narrow screens, keep the page behind the modal inert and fixed. Size the modal to its content and center it within the Telegram-safe usable area; when a form reaches the safe maximum height, let its body scroll while the header and actions remain inside the content-safe-area, fullscreen-control, and device-safe-area bounds.
+- In planned-payment edit mode, keep only Save and confirmed Disable inside the modal; Reset and footer Close belong only to create/recreate flows, while the header close control cancels editing.
 
 ## Planned Payments
 

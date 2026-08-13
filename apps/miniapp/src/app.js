@@ -1812,6 +1812,14 @@ function renderPlannedForm(item = {}, { mode = "create", sourcePlannedExpenseId 
       <div class="edit-modal__advanced-fields">${plannedTagsField}</div>
     </details>
   ` : plannedTagsField;
+  const plannedActions = mode === "edit" ? `
+    <button type="submit">${submitLabel}</button>
+    <button type="button" class="danger-button" data-disable-planned-edit>${t("plan.disableExisting")}</button>
+  ` : `
+    <button type="submit">${submitLabel}</button>
+    <button type="button" class="ghost-button" id="resetPlannedForm">${t("plan.reset")}</button>
+    <button type="button" class="ghost-button" id="cancelPlannedForm">${t("actions.close")}</button>
+  `;
   form.innerHTML = `
     ${mode === "edit" ? "" : `<h3>${title}</h3>`}
     ${mode === "recreate" ? `
@@ -1868,10 +1876,8 @@ function renderPlannedForm(item = {}, { mode = "create", sourcePlannedExpenseId 
       </label>
     </div>
     ${plannedTags}
-    <div class="button-row">
-      <button type="submit">${submitLabel}</button>
-      <button type="button" class="ghost-button" id="resetPlannedForm">${t("plan.reset")}</button>
-      <button type="button" class="ghost-button" id="cancelPlannedForm">${t("actions.close")}</button>
+    <div class="button-row edit-modal__actions">
+      ${plannedActions}
     </div>
   `;
   form.onsubmit = (event) => savePlanned(event, {
@@ -1880,11 +1886,11 @@ function renderPlannedForm(item = {}, { mode = "create", sourcePlannedExpenseId 
     sourcePlannedExpenseId,
     recreateSession
   });
-  form.querySelector("#resetPlannedForm").addEventListener("click", () => {
-    if (mode === "edit") renderPlannedForm(item, { mode: "edit" });
-    else renderPlannedForm();
+  form.querySelector("[data-disable-planned-edit]")?.addEventListener("click", (event) => {
+    disablePlanned(item, event.currentTarget, { closeModal: true });
   });
-  form.querySelector("#cancelPlannedForm").addEventListener("click", closeAndResetPlannedForm);
+  form.querySelector("#resetPlannedForm")?.addEventListener("click", () => renderPlannedForm());
+  form.querySelector("#cancelPlannedForm")?.addEventListener("click", closeAndResetPlannedForm);
   form.querySelector('[name="planned-recurrence"]').addEventListener("change", syncPlannedRecurrenceFields);
   syncPlannedRecurrenceFields();
 }
@@ -2059,6 +2065,34 @@ function plannedPaymentProgressLabel(item, status = plannedPaymentStatus(item), 
   return status === "paid" ? progress : `${progress} · ${statusLabel}`;
 }
 
+async function disablePlanned(item, button, { closeModal = false } = {}) {
+  if (!item) return;
+  try {
+    await runPlannedDisable({
+      button,
+      item,
+      confirm: window.confirm.bind(window),
+      disableRequest: (id) => api(`/api/planned-expenses/${id}`, {
+        method: "DELETE",
+        body: { telegramUserId }
+      }),
+      loadDashboard: async () => {
+        if (closeModal) closeEditModal();
+        await loadDashboard();
+        if (closeModal) editModal.restore();
+      },
+      afterDashboard: refreshArchiveAfterDisable,
+      showResult: showToast,
+      language: currentLanguage,
+      createTranslator,
+      translate: t,
+      formatMoney
+    });
+  } catch (error) {
+    showError(error);
+  }
+}
+
 function bindPlannedActions(container, items) {
   container.querySelectorAll("[data-edit-planned]").forEach((button) => {
     button.addEventListener("click", () => {
@@ -2069,27 +2103,7 @@ function bindPlannedActions(container, items) {
   container.querySelectorAll("[data-delete-planned]").forEach((button) => {
     button.addEventListener("click", async () => {
       const item = items.find((planned) => String(planned.id) === button.dataset.deletePlanned);
-      if (!item) return;
-      try {
-        await runPlannedDisable({
-          button,
-          item,
-          confirm: window.confirm.bind(window),
-          disableRequest: (id) => api(`/api/planned-expenses/${id}`, {
-            method: "DELETE",
-            body: { telegramUserId }
-          }),
-          loadDashboard,
-          afterDashboard: refreshArchiveAfterDisable,
-          showResult: showToast,
-          language: currentLanguage,
-          createTranslator,
-          translate: t,
-          formatMoney
-        });
-      } catch (error) {
-        showError(error);
-      }
+      await disablePlanned(item, button);
     });
   });
   container.querySelectorAll("[data-pay-planned]").forEach((button) => {
@@ -2216,7 +2230,7 @@ function renderExpenseEditor(expense, options = {}) {
         tags: expense.tags ?? [],
         spent_at: expense.spent_at
       }, "expense", 0)}
-      <div class="button-row">
+      <div class="button-row edit-modal__actions">
         <button type="submit">${t("actions.saveExpense")}</button>
         <button type="button" class="danger-button" data-delete-expense="${escapeAttribute(expense.id)}">${t("actions.delete")}</button>
       </div>
