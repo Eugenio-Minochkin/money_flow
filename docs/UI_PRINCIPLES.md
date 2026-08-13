@@ -8,7 +8,7 @@ Money Flow UI should feel light and direct. Favor quick comprehension over dense
 - Show budget state clearly before adding secondary analytics.
 - Keep the hero state, amount, progress, and decorative ribbon synchronized. Distinguish a daily overrun, a monthly budget overrun, and a shortfall after scheduled payments.
 - Keep the three recent-expense rows directly editable, with the section action opening full History.
-- Keep History primarily a compact searchable transaction list: quick periods fit without horizontal scrolling, custom dates stay a separate action, and period analytics is collapsed by default and follows the currently displayed results.
+- Keep History primarily a compact searchable transaction list: quick periods fit without horizontal scrolling, custom dates stay a separate action, and period analytics is collapsed by default and follows the currently displayed results. Expense rows are one tappable surface with the shared category avatar and no permanent edit/delete button row.
 - On narrow screens, keep the Budget and plan metrics in the reference 2-by-2 grid with equal card widths and equal heights within each row. The weekly metric keeps its weekly remainder even when the month has no free money, with a separate warning for the monthly constraint.
 - Avoid visual noise that makes the user hunt for the current money state.
 - Empty, loading, and error states should be consistent across dashboard sections.
@@ -21,8 +21,15 @@ Money Flow UI should feel light and direct. Favor quick comprehension over dense
 
 ## Editing
 
-- Edit saved expenses and active planned payments in the shared modal shell over the screen where editing started. Closing or saving must not switch tabs, reset History filters, or discard the user's scroll position.
-- On narrow screens, keep the page behind the modal inert and fixed. Let long forms scroll inside the modal while Save and Close remain clearly available.
+- Edit saved expenses and active planned payments in the shared modal shell over the screen where editing started. Closing, saving, or deleting must not switch tabs, reset History filters, or discard the user's scroll position.
+- Keep expense Save and confirmed Delete actions inside the modal. Use the modal header close control for cancel without saving instead of a redundant footer Close action.
+- On narrow screens, keep the page behind the modal inert and fixed. Let long forms scroll inside the modal while its header and actions remain inside Telegram content-safe-area, fullscreen-control, and device-safe-area bounds.
+
+## Planned Payments
+
+- Use the same category avatar, amount hierarchy, radius, and compact density as expense rows. The information surface opens the shared editor; Pay remains a separate direct primary action.
+- Always show a text status in addition to color. Paid is positive, future unpaid is a softer warning, and overdue unpaid gets the strongest danger treatment; recurring progress remains explicit.
+- Fully paid plans must not expose an active Pay action. Keep existing undo and disable actions in their established overflow flow.
 
 ## Planned Payment Archive
 

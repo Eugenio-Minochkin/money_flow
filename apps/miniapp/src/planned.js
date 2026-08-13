@@ -120,6 +120,18 @@ export function isPlannedPaid(item, now = new Date()) {
   return occurrences.length > 0 && paidOccurrenceCount(item, occurrences) >= occurrences.length;
 }
 
+export function plannedPaymentStatus(item, now = new Date()) {
+  const occurrences = buildPlannedOccurrences(item, now);
+  const paid = occurrences.length
+    ? occurrences.every((occurrence) => occurrence.paid)
+    : Number(item.paid_count ?? (item.paid_month ? 1 : 0)) > 0;
+  if (paid) return "paid";
+  const todayKey = dateKey(now);
+  return occurrences.some((occurrence) => !occurrence.paid && occurrence.occurrence_date < todayKey)
+    ? "overdue"
+    : "unpaid";
+}
+
 export function plannedOccurrencesThisMonth(item, now = new Date()) {
   return buildPlannedOccurrences(item, now).length;
 }

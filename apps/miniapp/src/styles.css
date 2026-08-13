@@ -117,14 +117,20 @@ body.edit-modal-open {
 }
 
 .edit-modal {
+  --edit-modal-edge: 12px;
+  --edit-modal-safe-top: max(var(--edit-modal-edge), calc(var(--tg-content-safe-area-inset-top, var(--tg-safe-area-inset-top, 0px)) + var(--tg-fullscreen-control-extra-top, 0px)));
+  --edit-modal-safe-bottom: max(var(--edit-modal-edge), var(--tg-content-safe-area-inset-bottom, var(--tg-safe-area-inset-bottom, env(safe-area-inset-bottom, 0px))));
   position: fixed;
-  inset: max(12px, var(--tg-content-safe-area-inset-top, var(--tg-safe-area-inset-top, env(safe-area-inset-top)))) 12px max(12px, var(--tg-content-safe-area-inset-bottom, var(--tg-safe-area-inset-bottom, env(safe-area-inset-bottom))));
+  top: var(--edit-modal-safe-top);
+  right: var(--edit-modal-edge);
+  bottom: var(--edit-modal-safe-bottom);
+  left: var(--edit-modal-edge);
   z-index: 50;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   width: min(calc(100% - 24px), 520px);
   height: fit-content;
-  max-height: calc(100dvh - 24px);
+  max-height: calc(100dvh - var(--edit-modal-safe-top) - var(--edit-modal-safe-bottom));
   margin: auto;
   overflow: hidden;
   border: 1px solid var(--line);
@@ -222,9 +228,8 @@ body.edit-modal-open {
 
 @media (max-width: 430px) {
   .edit-modal {
-    inset: max(8px, var(--tg-content-safe-area-inset-top, var(--tg-safe-area-inset-top, env(safe-area-inset-top)))) 8px max(8px, var(--tg-content-safe-area-inset-bottom, var(--tg-safe-area-inset-bottom, env(safe-area-inset-bottom))));
+    --edit-modal-edge: 8px;
     width: calc(100% - 16px);
-    max-height: calc(100dvh - 16px);
     border-radius: 20px;
   }
 
@@ -1731,35 +1736,51 @@ body[data-theme="dark"] .monthly-forecast {
 }
 
 .planned-expense-card {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px 10px;
+  display: block;
   border: 1px solid var(--line);
-  border-left: 4px solid var(--category-color, var(--accent));
-  border-radius: 14px;
+  border-radius: 16px;
   background: var(--panel);
-  padding: 11px 12px;
 }
 
 .planned-expense-card__main,
-.planned-expense-card__heading {
+.planned-expense-card__content {
   min-width: 0;
 }
 
 .planned-expense-card__main {
-  grid-column: 1 / -1;
+  width: 100%;
   display: grid;
-  gap: 3px;
-}
-
-.planned-expense-card__heading {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
+  grid-template-columns: 38px minmax(0, 1fr) auto;
+  align-items: center;
   gap: 10px;
+  min-height: 64px;
+  border: 0;
+  border-radius: 15px 15px 10px 10px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  padding: 10px 12px 8px;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 120ms ease, transform 120ms ease;
 }
 
-.planned-expense-card__heading strong {
+.planned-expense-card__main:active {
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+  transform: scale(.995);
+}
+
+.planned-expense-card__main:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.planned-expense-card__content {
+  display: grid;
+  gap: 2px;
+}
+
+.planned-expense-card__content strong {
   overflow-wrap: anywhere;
 }
 
@@ -1786,16 +1807,33 @@ body[data-theme="dark"] .monthly-forecast {
 }
 
 .planned-expense-card__status {
-  color: var(--ink);
+  width: fit-content;
+  margin-top: 2px;
+  border-radius: 999px;
+  padding: 3px 7px;
+}
+
+.planned-expense-card__status--paid {
+  background: color-mix(in srgb, var(--green) 13%, transparent);
+  color: var(--green);
+}
+
+.planned-expense-card__status--unpaid {
+  background: color-mix(in srgb, var(--amber) 13%, transparent);
+  color: var(--amber);
+}
+
+.planned-expense-card__status--overdue {
+  background: color-mix(in srgb, var(--red) 12%, transparent);
+  color: var(--red);
 }
 
 .planned-expense-card__actions {
   position: relative;
-  grid-column: 1 / -1;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 40px;
+  grid-template-columns: minmax(0, 1fr) 40px;
   gap: 7px;
-  margin-top: 2px;
+  padding: 0 12px 12px 60px;
 }
 
 .planned-expense-card__actions > button,
@@ -2003,6 +2041,11 @@ body[data-theme="dark"] .monthly-forecast {
 .history-day-heading {
   padding: 12px 14px;
   background: #fff8ef;
+}
+
+body[data-theme="dark"] .history-day-heading {
+  background: color-mix(in srgb, var(--panel) 84%, var(--accent));
+  color: var(--ink);
 }
 
 .history-day-heading h3 {
@@ -2758,10 +2801,6 @@ button:disabled {
     font-size: 22px;
   }
 
-  .planned-expense-card {
-    grid-template-columns: minmax(0, 1fr) auto;
-  }
-
   .settings-row,
   .timezone-control {
     grid-template-columns: 1fr;
@@ -3013,7 +3052,36 @@ button:disabled {
 .history-expense-row {
   grid-template-columns: 38px minmax(0, 1fr) auto;
   align-items: center;
+  width: 100%;
+  min-height: 64px;
+  gap: 10px;
+  padding: 10px 14px;
+  border-top: 0;
+  border-right: 0;
   border-left: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 120ms ease, transform 120ms ease;
+}
+
+.history-expense-row:active {
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+  transform: scale(.995);
+}
+
+.history-expense-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.history-expense-row .expense-main {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
 }
 
 .history-expense-row .expense-meta {
@@ -3027,9 +3095,8 @@ button:disabled {
   .history-donut-layout { grid-template-columns: 112px minmax(0, 1fr); gap: 10px; }
   .history-donut { width: 112px; }
   .history-donut > div { width: 68px; }
-  .history-expense-row { grid-template-columns: 34px minmax(0, 1fr); }
+  .history-expense-row { grid-template-columns: 34px minmax(0, 1fr) auto; gap: 8px; }
   .history-expense-row .dashboard-expense-icon { width: 34px; height: 34px; }
-  .history-expense-row .expense-actions { grid-column: 2; width: 100%; align-items: start; }
 }
 
 .history-inbox-compact {
