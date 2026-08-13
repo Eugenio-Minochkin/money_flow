@@ -23,7 +23,7 @@ test("Mini App keeps app.js and styles.css cache-busters in sync", async () => {
   assert.ok(appVersion, "index.html should version app.js with a ?v= query");
   assert.ok(cssVersion, "index.html should version styles.css with a ?v= query");
   assert.equal(appVersion, cssVersion, "app.js and styles.css cache-busters must stay in sync");
-  assert.equal(appVersion, "20260813-unified-rows-v1");
+  assert.equal(appVersion, "20260813-unified-rows-v2");
   assert.notEqual(appVersion, "20260626-dashboard-v12", "app.js must not keep the stale dashboard-v12 cache-buster");
 });
 
@@ -658,7 +658,7 @@ test("expense and planned edits share one modal without inline scrolling or tab 
 
   assert.match(css, /body\.edit-modal-open\s*{[^}]*overflow:\s*hidden/s);
   assert.match(css, /\.edit-modal-backdrop\s*{[^}]*position:\s*fixed[^}]*inset:\s*0/s);
-  assert.match(css, /\.edit-modal\s*{[^}]*--edit-modal-safe-top:[^;]*--tg-fullscreen-control-extra-top[^;]*;[^}]*top:\s*var\(--edit-modal-safe-top\)[^}]*max-height:\s*calc\(100dvh - var\(--edit-modal-safe-top\) - var\(--edit-modal-safe-bottom\)\)[^}]*overflow:\s*hidden/s);
+  assert.match(css, /\.edit-modal\s*{[^}]*--edit-modal-safe-top:[^;]*--tg-fullscreen-control-extra-top[^;]*;[^}]*top:\s*calc\(var\(--edit-modal-safe-top\) \+ \(\(100dvh - var\(--edit-modal-safe-top\) - var\(--edit-modal-safe-bottom\)\) \/ 2\)\)[^}]*bottom:\s*auto[^}]*height:\s*auto[^}]*max-height:\s*calc\(100dvh - var\(--edit-modal-safe-top\) - var\(--edit-modal-safe-bottom\)\)[^}]*transform:\s*translateY\(-50%\)[^}]*overflow:\s*hidden/s);
   assert.match(css, /\.edit-modal__body\s*{[^}]*overflow-y:\s*auto[^}]*overscroll-behavior:\s*contain/s);
   assert.match(css, /\.edit-modal \.form-stack\s*{[^}]*gap:\s*8px[^}]*padding:\s*0/s);
   assert.match(css, /\.edit-modal__advanced\s*{/);
@@ -766,6 +766,20 @@ test("active planned cards share expense visuals while Pay stays direct and dest
   assert.match(css, /\.planned-expense-card__status--paid\s*{[^}]*color:\s*var\(--green\)/s);
   assert.match(css, /\.planned-expense-card__status--overdue\s*{[^}]*color:\s*var\(--red\)/s);
   assert.match(css, /\.planned-expense-card__main\s*{[^}]*grid-template-columns:\s*38px minmax\(0,\s*1fr\) auto/s);
+});
+
+test("planned edit modal keeps only save and existing disable actions while create can still reset", async () => {
+  const app = await readFile(new URL("../src/app.js", import.meta.url), "utf8");
+  const css = await readFile(new URL("../src/styles.css", import.meta.url), "utf8");
+  const renderForm = app.slice(app.indexOf("function renderPlannedForm"), app.indexOf("function syncPlannedRecurrenceFields"));
+
+  assert.match(renderForm, /mode === "edit"[\s\S]*?data-disable-planned-edit/);
+  assert.match(renderForm, /t\("plan\.disableExisting"\)/);
+  assert.match(renderForm, /mode === "edit"\s*\?[^:]+:\s*`[\s\S]*?id="resetPlannedForm"[\s\S]*?id="cancelPlannedForm"/);
+  assert.doesNotMatch(renderForm, /if \(mode === "edit"\) renderPlannedForm\(item, \{ mode: "edit" \}\)/);
+  assert.match(app, /disablePlanned\(item,\s*event\.currentTarget,\s*\{ closeModal: true \}\)/);
+  assert.match(app, /closeModal[\s\S]*?closeEditModal\(\)[\s\S]*?await loadDashboard\(\)[\s\S]*?editModal\.restore\(\)/);
+  assert.match(css, /\.edit-modal \.edit-modal__actions\s*{[^}]*display:\s*grid[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/s);
 });
 
 test("planned disable uses the focused helper and prefers the server-owned month summary", async () => {

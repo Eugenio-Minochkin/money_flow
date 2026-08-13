@@ -121,17 +121,18 @@ body.edit-modal-open {
   --edit-modal-safe-top: max(var(--edit-modal-edge), calc(var(--tg-content-safe-area-inset-top, var(--tg-safe-area-inset-top, 0px)) + var(--tg-fullscreen-control-extra-top, 0px)));
   --edit-modal-safe-bottom: max(var(--edit-modal-edge), var(--tg-content-safe-area-inset-bottom, var(--tg-safe-area-inset-bottom, env(safe-area-inset-bottom, 0px))));
   position: fixed;
-  top: var(--edit-modal-safe-top);
+  top: calc(var(--edit-modal-safe-top) + ((100dvh - var(--edit-modal-safe-top) - var(--edit-modal-safe-bottom)) / 2));
   right: var(--edit-modal-edge);
-  bottom: var(--edit-modal-safe-bottom);
+  bottom: auto;
   left: var(--edit-modal-edge);
   z-index: 50;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   width: min(calc(100% - 24px), 520px);
-  height: fit-content;
+  height: auto;
   max-height: calc(100dvh - var(--edit-modal-safe-top) - var(--edit-modal-safe-bottom));
-  margin: auto;
+  margin: 0 auto;
+  transform: translateY(-50%);
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 22px;
@@ -224,6 +225,16 @@ body.edit-modal-open {
   padding: 10px 14px calc(12px + max(0px, env(safe-area-inset-bottom)));
   border-top: 1px solid var(--line);
   background: var(--panel);
+}
+
+.edit-modal .edit-modal__actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.edit-modal__actions > button {
+  width: 100%;
+  min-width: 0;
 }
 
 @media (max-width: 430px) {
