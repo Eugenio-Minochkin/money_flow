@@ -23,7 +23,7 @@ test("Mini App keeps app.js and styles.css cache-busters in sync", async () => {
   assert.ok(appVersion, "index.html should version app.js with a ?v= query");
   assert.ok(cssVersion, "index.html should version styles.css with a ?v= query");
   assert.equal(appVersion, cssVersion, "app.js and styles.css cache-busters must stay in sync");
-  assert.equal(appVersion, "20260813-settings-v1");
+  assert.equal(appVersion, "20260813-settings-v2");
   assert.notEqual(appVersion, "20260626-dashboard-v12", "app.js must not keep the stale dashboard-v12 cache-buster");
 });
 
@@ -274,11 +274,14 @@ test("regular monthly budget is confirmed separately from autosave", async () =>
 test("account deletion is collapsed by default and resets when closed", async () => {
   const html = await readFile(join(miniAppRoot, "index.html"), "utf8");
   const app = await readFile(join(miniAppRoot, "app.js"), "utf8");
+  const css = await readFile(join(miniAppRoot, "styles.css"), "utf8");
 
   assert.match(html, /<details[^>]+id="deleteAccountSection"[^>]*>/);
   assert.match(html, /<summary[^>]+class="danger-zone__summary"[^]*data-i18n="settings\.deleteDataTitle"/);
   assert.doesNotMatch(html, /<details[^>]+id="deleteAccountSection"[^>]+open/);
   assert.match(app, /deleteAccountSection\?\.addEventListener\("toggle"[^]*setDeleteAccountStage\("start"\)/);
+  assert.match(css, /\.danger-zone\s*{[^}]*margin:\s*18px 16px 0/s);
+  assert.doesNotMatch(css, /\.danger-zone\s*{[^}]*margin[^;]*118px/s);
 });
 
 test("account deletion markup and app wire every required control", async () => {
