@@ -1,3 +1,15 @@
+FROM node:24-alpine AS miniapp-build
+
+WORKDIR /app
+
+COPY package.json package-lock.json ./
+COPY apps/api/package.json apps/api/package.json
+RUN npm ci
+
+COPY apps apps
+COPY packages packages
+RUN npm run build:miniapp
+
 FROM node:24-alpine
 
 ARG APP_REVISION=unknown
@@ -10,6 +22,7 @@ RUN npm ci --omit=dev
 
 COPY apps apps
 COPY packages packages
+COPY --from=miniapp-build /app/apps/miniapp/dist apps/miniapp/dist
 
 LABEL org.opencontainers.image.revision="$APP_REVISION"
 
