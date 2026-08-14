@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createExpenseDraftFromText, createMiniAppQuickCaptureDraft, createShortcutExpenseDraft, ExpenseTextNotRecognizedError } from "../src/expenseDraftService.js";
+import { createExpenseDraftFromText, createMiniAppQuickCaptureDraft, createShortcutExpenseDraft, createTelegramExpenseDraft, ExpenseTextNotRecognizedError } from "../src/expenseDraftService.js";
 
 test("shared expense draft service creates the parser draft and records only safe source metadata", async () => {
   const calls = [];
@@ -180,4 +180,52 @@ test("concurrent Mini App Quick Capture retries share one parser call and draft"
   assert.equal(parserCalls, 1);
   assert.equal(firstResult.draft.id, 44);
   assert.equal(secondResult.draft.id, 44);
+});
+
+test("Telegram completed message replay returns its original draft without parsing", async () => {
+  let parserCalls = 0;
+  const result = await createTelegramExpenseDraft({
+    user: { id: 7 }, chatId: 10, messageId: 55, text: "coffee 120",
+    expenseParser: { parse: async () => { parserCalls += 1; return { expenses: [] }; } },
+    repository: {
+      claimTelegramExpenseCapture: async () => ({
+        state: "completed",
+        draft: { id: 42, items: [{ description: "coffee", amount: 120 }] }
+      })
+    }
+  });
+
+  assert.equal(parserCalls, 0);
+  assert.equal(result.replayed, true);
+  assert.equal(result.draft.id, 42);
+});
+
+test("concurrent Telegram delivery shares one parser call and one draft", async () => {
+  let parserCalls = 0;
+  let resolveParser;
+  const parserDone = new Promise((resolve) => { resolveParser = resolve; });
+  const input = {
+    user: { id: 7 }, chatId: 10, messageId: 56, text: "coffee 120",
+    expenseParser: { parse: async () => {
+      parserCalls += 1;
+      await parserDone;
+      return { expenses: [{ description: "coffee", amount: 120 }] };
+    } },
+    repository: {
+      claimTelegramExpenseCapture: async () => ({ state: "claimed", claimVersion: 1 }),
+      completeTelegramExpenseCapture: async ({ items }) => ({ draft: { id: 44, items } }),
+      releaseTelegramExpenseCapture: async () => {}
+    }
+  };
+
+  const first = createTelegramExpenseDraft(input);
+  const second = createTelegramExpenseDraft(input);
+  resolveParser();
+  const [firstResult, secondResult] = await Promise.all([first, second]);
+
+  assert.equal(parserCalls, 1);
+  assert.equal(firstResult.draft.id, 44);
+  assert.equal(secondResult.draft.id, 44);
+  assert.equal(firstResult.replayed, false);
+  assert.equal(secondResult.replayed, true);
 });

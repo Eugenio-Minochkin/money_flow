@@ -17,7 +17,7 @@ import { renderAdminRichMessage } from "./adminRichMessage.js";
 import { formatProductStatsSections } from "./productStatsService.js";
 import { formatTechnicalStatsSections } from "./technicalStatsService.js";
 import { createExpenseExportService } from "./expenseExportService.js";
-import { createExpenseDraftFromText, ExpenseTextNotRecognizedError } from "./expenseDraftService.js";
+import { createTelegramExpenseDraft, ExpenseTextNotRecognizedError } from "./expenseDraftService.js";
 import { createTelegramJobQueue } from "./telegramJobQueue.js";
 import { syncTelegramUserCommandMenu } from "./telegramCommands.js";
 import { renderDraftPreview } from "./draftPreview.js";
@@ -40,6 +40,7 @@ import {
   savedExpenseKeyboard
 } from "./telegramKeyboards.js";
 import { DraftCanceledError, CategoryRequiredError } from "./repository.js";
+import { classifySmartSaveDraft } from "./smartSave.js";
 import { normalizeAcquisitionSource } from "./productAnalytics.js";
 import { parseEditorText } from "./telegramExpenseInput.js";
 import {
@@ -610,8 +611,8 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
       trace.start("llm_parse", llmMetadata);
       let created;
       try {
-        created = await createExpenseDraftFromText({
-          user, text, source: "telegram", expenseParser, repository,
+        created = await createTelegramExpenseDraft({
+          user, chatId, messageId: message.message_id, text, expenseParser, repository,
           parserOptions: {
           userId: from.id,
           onLlmTrace(metadata) {
@@ -640,10 +641,60 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
         throw error;
       }
       trace.end("llm_parse", llmMetadata);
-      const draft = created;
-      await safeRecordAppEvent(repository, user.id, "expense_draft_created", { inputType, draftType: "regular" });
+      if (!created) throw new Error("telegram_expense_capture_in_progress");
+      let draft = created.draft;
+      if (created.replayed) {
+        draft = await repository.getDraftForTelegramUser(draft.id, from.id) ?? draft;
+        if (draft.tg_chat_id && draft.tg_message_id) {
+          processingResult = draft.status === "confirmed" ? "expense_saved" : "draft_created";
+          return sendTelegramResponse(trace, () => deleteMessage(token, chatId, loader.messageId, telegramClient)
+            .catch((error) => {
+              console.error("[telegram] replay loader cleanup failed", error.message);
+              return null;
+            }));
+        }
+      }
+      if (!created.replayed) {
+        await safeRecordAppEvent(repository, user.id, "expense_draft_created", { inputType, draftType: "regular" });
+      }
       processingResult = "draft_created";
       processingDraftType = "regular";
+      const closedMonthKeys = typeof repository.listClosedReserveMonthsForTelegramUser === "function"
+        ? await repository.listClosedReserveMonthsForTelegramUser(from.id)
+        : [];
+      const smartSave = classifySmartSaveDraft(draft, {
+        now: now(),
+        timeZone: user.timezone,
+        closedMonthKeys
+      });
+      if (smartSave.eligible) {
+        trace.start("db_save");
+        const saved = await repository.saveDraftAsExpense(draft.id, from.id);
+        trace.end("db_save");
+        const expenses = saved.expenses ?? [];
+        const total = expenses.reduce((sum, expense) => sum + Number(expense.amount_base ?? 0), 0);
+        if (!saved.alreadySaved) {
+          await Promise.all(expenses.map(() => safeRecordAppEvent(repository, user.id, "expense_saved", { draftType: "regular" })));
+        }
+        processingResult = "expense_saved";
+        const delivered = await deliverResultMessage({
+          token,
+          chatId,
+          loaderMessageId: loader.messageId,
+          text: formatSavedSummary(total, saved.dashboardSnapshot, { language, expenses }),
+          replyMarkup: expenses.length === 1
+            ? savedExpenseKeyboard(expenses[0].id, miniAppUrl, from.id, language)
+            : appKeyboard(miniAppUrl, from.id, language),
+          telegramClient,
+          trace
+        });
+        const refMessageId = extractMessageId(delivered);
+        if (refMessageId) {
+          await repository.setDraftMessageRef(draft.id, from.id, chatId, refMessageId)
+            .catch((error) => console.error("[telegram] failed to store saved message reference", error.message));
+        }
+        return delivered;
+      }
       const delivered = await deliverResultMessage({
         token,
         chatId,
@@ -3261,7 +3312,7 @@ function onboardingText(language, key, values = {}) {
       introBudgetSetup: [
         "Money Flow помогает заносить расходы текстом или голосом.",
         "Например: <b>кофе 70 бат и обед 180</b>.",
-        "Сначала я покажу черновик, а сохраню только после подтверждения.",
+        "Понятный одиночный расход сохраню сразу. Если нужно что-то уточнить, покажу черновик.",
         "",
         "Теперь отправь валюту и месячный бюджет одним сообщением: <b>THB 42000</b> или <b>USD 2000</b>."
       ].join("\n"),
@@ -3302,7 +3353,7 @@ function onboardingText(language, key, values = {}) {
       introBudgetSetup: [
         "Money Flow helps you save expenses from text or voice.",
         "Write or dictate expenses like: <b>coffee 70 baht and lunch 180</b>.",
-        "I will show a draft first and save only after confirmation.",
+        "I will save a clear single expense right away. If anything needs review, I will show a draft.",
         "",
         "Now send your currency and monthly budget in one message, for example: <b>THB 42000</b> or <b>USD 2000</b>."
       ].join("\n"),
@@ -3422,7 +3473,7 @@ function botText(language, key, values = {}) {
         "Напиши или надиктуй, например:",
         "<b>кофе 70 бат и обед 180</b>",
         "",
-        "Сначала покажу черновик, сохраню только после подтверждения."
+        "Понятный одиночный расход сохраню сразу. Если нужно что-то уточнить, покажу черновик."
       ].join("\n"),
       technicalError: "⚠️ Что-то пошло не так. Попробуйте ещё раз.",
       unsupported: "Пока умею принимать только текстовые и голосовые расходы."
@@ -3474,7 +3525,7 @@ function botText(language, key, values = {}) {
         "Write or dictate, for example:",
         "<b>coffee 70 baht and lunch 180</b>",
         "",
-        "I will show a draft first and save only after confirmation."
+        "I will save a clear single expense right away. If anything needs review, I will show a draft."
       ].join("\n"),
       technicalError: "⚠️ Something went wrong. Please try again.",
       unsupported: "For now I can accept only text and voice expenses."

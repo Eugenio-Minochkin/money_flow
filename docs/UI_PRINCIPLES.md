@@ -13,6 +13,7 @@ Money Flow UI should feel light and direct. Favor quick comprehension over dense
 - Avoid visual noise that makes the user hunt for the current money state.
 - Empty, loading, and error states should be consistent across dashboard sections.
 - Make the Dashboard usable before fetching History. History loads on first entry to its tab (or for an explicit History deep link) and must not delay the initial budget view.
+- Keep unresolved expense recovery in one compact Dashboard disclosure: show the total tail, split it into immediately safe and review-required counts, make the safe batch action primary, and keep ambiguous drafts reachable through the existing History review flow. Hide actions whose count is zero.
 
 ## Settings
 

@@ -10,14 +10,18 @@ test("History ensure reuses one in-flight request and caches a successful load",
     calls += 1;
     await pending.promise;
   });
+  assert.equal(loader.isLoaded(), false);
+  assert.equal(loader.hasStarted(), false);
 
   const first = loader.ensure();
+  assert.equal(loader.hasStarted(), true);
   const second = loader.ensure();
   assert.equal(first, second);
   assert.equal(calls, 1);
 
   pending.resolve();
   await first;
+  assert.equal(loader.isLoaded(), true);
   await loader.ensure();
   assert.equal(calls, 1);
 });

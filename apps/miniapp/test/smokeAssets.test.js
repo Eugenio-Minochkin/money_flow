@@ -1042,12 +1042,24 @@ test("Settings omits weekly budget from the form, dirty state and PATCH payload"
   assert.doesNotMatch(app, /weeklyBudgetInput|weeklyBudgetAmount|settings\.weeklyBudget/);
 });
 
-test("Dashboard inbox uses an open-by-default disclosure with summary preview", async () => {
+test("Dashboard inbox uses an open-by-default disclosure with recovery summary", async () => {
   const html = await readFile(join(miniAppRoot, "index.html"), "utf8");
   const app = await readFile(join(miniAppRoot, "app.js"), "utf8");
 
   assert.match(html, /<details class="dashboard-disclosure dashboard-inbox hidden" id="dashboardInboxBlock">/);
   assert.match(html, /id="dashboardInboxPreview"/);
   assert.match(app, /if \(wasHidden\) block\.open = true/);
-  assert.match(app, /inboxSummaryPreview\(drafts, currentLanguage/);
+  assert.match(app, /smartSaveRecoverySummary\(previewState, currentLanguage/);
+});
+
+test("Dashboard recovery disclosure previews and saves only Smart Save-safe drafts", async () => {
+  const html = await readFile(join(miniAppRoot, "index.html"), "utf8");
+  const app = await readFile(join(miniAppRoot, "app.js"), "utf8");
+
+  assert.match(html, /id="saveSafeDraftsButton"/);
+  assert.match(html, /id="reviewRecoveryDraftsButton"/);
+  assert.match(app, /\/api\/drafts\/recovery-preview/);
+  assert.match(app, /\/api\/drafts\/recovery-save/);
+  assert.match(app, /draftIds:\s*recoveryState\.safeDraftIds/);
+  assert.match(app, /if \(historyLoader\.hasStarted\(\)\) await loadHistory\(\)/);
 });

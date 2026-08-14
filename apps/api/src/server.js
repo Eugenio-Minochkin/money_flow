@@ -17,6 +17,7 @@ import { createExpenseParser } from "./expenseParser.js";
 import { createExpenseDraftFromText, createShortcutExpenseDraft, ExpenseTextNotRecognizedError, ShortcutRequestInProgressError } from "./expenseDraftService.js";
 import { createQuickAccessToken, hashQuickAccessToken } from "./quickAccessService.js";
 import { processMiniAppQuickCapture } from "./quickCapture.js";
+import { previewSmartSaveRecovery, saveSmartSaveRecovery } from "./smartSaveRecovery.js";
 import { handleHealth } from "./health.js";
 import { createJsonReader, createStaticHandler, sendJson } from "./http.js";
 import { handleDevRoute } from "./devRoutes.js";
@@ -491,6 +492,27 @@ async function route(req, res) {
       status: url.searchParams.get("status") ?? "inbox"
     });
     return sendJson(res, 200, { drafts });
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/drafts/recovery-preview") {
+    const auth = apiSecurity.resolveTelegramUserId(req, url);
+    if (auth.error) return sendJson(res, 400, { error: auth.error });
+    const preview = await previewSmartSaveRecovery({ telegramUserId: auth.telegramUserId, repository });
+    if (!preview) return sendJson(res, 404, { error: "user_not_found" });
+    return sendJson(res, 200, preview);
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/drafts/recovery-save") {
+    const body = await readJson(req);
+    const auth = apiSecurity.resolveTelegramUserId(req, url, body);
+    if (auth.error) return sendJson(res, 400, { error: auth.error });
+    const result = await saveSmartSaveRecovery({
+      telegramUserId: auth.telegramUserId,
+      draftIds: body.draftIds,
+      repository
+    });
+    if (!result) return sendJson(res, 404, { error: "user_not_found" });
+    return sendJson(res, 200, result);
   }
 
   if (req.method === "POST" && url.pathname === "/api/quick-entry") {
