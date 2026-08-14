@@ -192,9 +192,9 @@ Expected: PASS; manually inspect RU/EN, light/dark at 375/390/430 CSS px with no
 
 Create mixed `pending`/`inbox` drafts with historical `spent_at`, preview them, concurrently confirm one member, run batch recovery twice, and assert one expense per safe draft, unchanged historical dates, and ambiguous drafts still unresolved.
 
-- [ ] **Step 2: Run focused and full verification**
+- [x] **Step 2: Run focused and full verification**
 
-Local unit coverage is green. The PostgreSQL smoke is implemented but could not be executed locally because Docker Desktop and a local PostgreSQL service/client were unavailable; CI remains the required execution evidence.
+Local unit coverage is green. The PostgreSQL smoke could not be executed locally because Docker Desktop and a local PostgreSQL service/client were unavailable; the draft PR CI ran it successfully against the disposable PostgreSQL service.
 
 Final local evidence: `npm.cmd run build:miniapp` passed; `npm.cmd test` reported 1495 passed, 6 skipped, 0 failed; `git diff --check` passed.
 
@@ -209,6 +209,6 @@ git diff --check
 
 Expected: all tests pass; the integration runner targets only its disposable local test database; no whitespace errors.
 
-- [ ] **Step 3: Update durable rules and publish a draft PR**
+- [x] **Step 3: Update durable rules and publish a draft PR**
 
 Document `Записано / Нужно уточнить`, all-status backlog visibility, historical date preservation, canonical per-draft save, and compact recovery UI. Commit the narrow diff, push `codex/issue-175-smart-save`, open a draft PR with `Closes #175` and the required `## User Release Notes`, then verify the exact PR head and CI. Do not merge or deploy.
