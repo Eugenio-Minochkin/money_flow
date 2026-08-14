@@ -315,6 +315,90 @@ export function createRepository(pool, options = {}) {
       } finally { client.release(); }
     },
 
+    async claimTelegramExpenseCapture(userId, chatId, messageId) {
+      const claimed = await pool.query(
+        `INSERT INTO telegram_expense_captures AS captures (user_id, chat_id, message_id, status, claim_version, lease_expires_at)
+         VALUES ($1, $2, $3, 'processing', 1, now() + interval '60 seconds')
+         ON CONFLICT (user_id, chat_id, message_id) DO UPDATE
+           SET claim_version = captures.claim_version + 1,
+               lease_expires_at = now() + interval '60 seconds'
+         WHERE captures.status = 'processing' AND captures.lease_expires_at <= now()
+         RETURNING claim_version`,
+        [userId, chatId, messageId]
+      );
+      if (claimed.rows[0]) return { state: "claimed", claimVersion: claimed.rows[0].claim_version };
+      return this.readTelegramExpenseCapture(userId, chatId, messageId);
+    },
+
+    async readTelegramExpenseCapture(userId, chatId, messageId) {
+      const result = await pool.query(
+        `SELECT captures.status AS request_status, drafts.*
+         FROM telegram_expense_captures captures
+         LEFT JOIN drafts ON drafts.id = captures.draft_id
+         WHERE captures.user_id = $1 AND captures.chat_id = $2 AND captures.message_id = $3`,
+        [userId, chatId, messageId]
+      );
+      const row = result.rows[0] ?? null;
+      if (!row) return null;
+      return row.request_status === "completed"
+        ? { state: "completed", draft: normalizeDraft(row) }
+        : { state: "processing" };
+    },
+
+    async waitForTelegramExpenseCapture(userId, chatId, messageId) {
+      for (let attempt = 0; attempt < 1200; attempt += 1) {
+        const result = await this.readTelegramExpenseCapture(userId, chatId, messageId);
+        if (!result || result.state === "completed") return result;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      return null;
+    },
+
+    async releaseTelegramExpenseCapture(userId, chatId, messageId, claimVersion) {
+      await pool.query(
+        `DELETE FROM telegram_expense_captures
+         WHERE user_id = $1 AND chat_id = $2 AND message_id = $3
+           AND status = 'processing' AND claim_version = $4`,
+        [userId, chatId, messageId, claimVersion]
+      );
+    },
+
+    async completeTelegramExpenseCapture({ userId, chatId, messageId, claimVersion, sourceText, items }) {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        const prior = await client.query(
+          `SELECT id, status, claim_version, lease_expires_at > now() AS lease_active
+           FROM telegram_expense_captures
+           WHERE user_id = $1 AND chat_id = $2 AND message_id = $3 FOR UPDATE`,
+          [userId, chatId, messageId]
+        );
+        if (!prior.rows[0] || prior.rows[0].status !== "processing" || String(prior.rows[0].claim_version) !== String(claimVersion) || !prior.rows[0].lease_active) {
+          await client.query("ROLLBACK");
+          return null;
+        }
+        const status = items.some((item) => item.needs_review) ? "inbox" : "pending";
+        const created = await client.query(
+          "INSERT INTO drafts (user_id, status, source_text, items) VALUES ($1, $2, $3, $4) RETURNING *",
+          [userId, status, sourceText, JSON.stringify(items)]
+        );
+        const completed = await client.query(
+          `UPDATE telegram_expense_captures
+           SET draft_id = $4, status = 'completed', completed_at = now(), lease_expires_at = NULL
+           WHERE user_id = $1 AND chat_id = $2 AND message_id = $3 AND status = 'processing'
+             AND claim_version = $5 AND lease_expires_at > now()
+           RETURNING id`,
+          [userId, chatId, messageId, created.rows[0].id, claimVersion]
+        );
+        if (completed.rowCount !== 1) throw new Error("telegram_expense_capture_claim_lost");
+        await client.query("COMMIT");
+        return { draft: normalizeDraft(created.rows[0]) };
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally { client.release(); }
+    },
+
     async claimShortcutRequest(tokenId, userId, clientRequestId) {
       const token = await pool.query("SELECT id FROM quick_access_tokens WHERE id = $1 AND user_id = $2 AND activated_at IS NOT NULL AND revoked_at IS NULL", [tokenId, userId]);
       if (!token.rows[0]) return null;
@@ -2881,6 +2965,32 @@ export function createRepository(pool, options = {}) {
       return result.rows.map(normalizeDraft);
     },
 
+    async listUnresolvedDraftsForTelegramUser(telegramUserId) {
+      const result = await pool.query(
+        `SELECT drafts.*
+         FROM drafts
+         JOIN users ON users.id = drafts.user_id
+         WHERE users.telegram_user_id = $1
+           AND drafts.status IN ('pending', 'inbox')
+         ORDER BY drafts.created_at DESC, drafts.id DESC`,
+        [telegramUserId]
+      );
+      return result.rows.map(normalizeDraft);
+    },
+
+    async listClosedReserveMonthsForTelegramUser(telegramUserId) {
+      const result = await pool.query(
+        `SELECT monthly_reserve_instances.period
+         FROM monthly_reserve_instances
+         JOIN users ON users.id = monthly_reserve_instances.user_id
+         WHERE users.telegram_user_id = $1
+           AND monthly_reserve_instances.status = 'closed'
+         ORDER BY monthly_reserve_instances.period`,
+        [telegramUserId]
+      );
+      return result.rows.map((row) => String(row.period));
+    },
+
     async confirmDraft(draftId, telegramUserId) {
       const result = await this.saveDraftAsExpense(draftId, telegramUserId);
       return result.expenses;
@@ -2922,7 +3032,7 @@ export function createRepository(pool, options = {}) {
       try {
         await client.query("BEGIN");
         const draftResult = await client.query(
-          `SELECT drafts.*, users.base_currency, users.usd_thb_rate
+          `SELECT drafts.*, users.base_currency, users.usd_thb_rate, users.timezone
            FROM drafts
            JOIN users ON users.id = drafts.user_id
            WHERE drafts.id = $1 AND users.telegram_user_id = $2
@@ -2951,6 +3061,13 @@ export function createRepository(pool, options = {}) {
         if (!draftHasValidCategories(items)) {
           console.warn("[repository] confirm blocked: missing valid category", { draftId });
           throw new CategoryRequiredError();
+        }
+
+        const timeZone = userTimezone(draft);
+        const monthKeys = items.map((item) => timeZoneMonthKey(new Date(item.spent_at), timeZone));
+        await lockFinancialMonths(client, draft.user_id, monthKeys);
+        if ((await closedReserveMonths(client, draft.user_id, monthKeys)).size > 0) {
+          throw codedError("Source month closed", "expense_source_month_closed");
         }
 
         const inserted = [];
@@ -4283,7 +4400,9 @@ async function closedReserveMonths(client, userId, monthKeys) {
      FOR UPDATE`,
     [userId, keys]
   );
-  return new Set(result.rows.map((row) => row.period));
+  return new Set(result.rows
+    .map((row) => row.period == null ? null : String(row.period))
+    .filter((period) => period && keys.includes(period)));
 }
 
 export function shouldInvalidateExpenseSnapshot(before, after, { now = new Date(), timeZone = "Asia/Bangkok" } = {}) {

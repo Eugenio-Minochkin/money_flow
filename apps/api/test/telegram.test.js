@@ -302,32 +302,105 @@ test("chat member updates ignore groups and repeated availability states", async
   assert.deepEqual(calls, []);
 });
 
-test("text message creates a pending draft response", async () => {
+test("safe text message is saved immediately with edit and delete actions", async () => {
   const calls = [];
-  const originalLog = console.log;
-  console.log = (...args) => calls.push(args);
-  try {
-    const bot = createTelegramBot({
-      token: "",
-      miniAppUrl: "http://localhost:3000",
-      repository: fakeRepository()
-    });
+  const repo = fakeRepository();
+  repo.listClosedReserveMonthsForTelegramUser = async () => [];
+  repo.saveDraftAsExpense = async (draftId) => ({
+    expenses: [{ id: 91, draft_id: draftId, amount_base: 70, amount_original: 70, currency_original: "THB", description: "кофе", category_slug: "food_cafe" }],
+    dashboardSnapshot: (await repo.dashboard()).snapshot,
+    alreadySaved: false
+  });
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: repo,
+    expenseParser: { async parse() { return { expenses: [{ amount: 70, currency: "THB", description: "кофе", category_slug: "food_cafe", category_source: "parser", needs_review: false, spent_at: "2026-08-14T08:00:00.000Z", budget_impact: "regular" }] }; } },
+    telegramClient: capturingClient(calls)
+  });
 
-    await bot.handleUpdate({
-      message: {
-        chat: { id: 10 },
-        from: { id: 100, first_name: "M" },
-        text: "кофе 70 бат"
-      }
-    });
+  await bot.handleUpdate({ message: { message_id: 55, chat: { id: 10 }, from: { id: 100, first_name: "M" }, text: "кофе 70 бат" } });
 
-    assert.match(calls[0][1].text, /Заношу расход/);
-    assert.match(calls[1][1].text, /Я понял так/);
-    assert.match(calls[1][1].text, /кофе/);
-    assert.equal(calls[1][1].replyMarkup.inline_keyboard[0][0].callback_data, "d:42:confirm");
-  } finally {
-    console.log = originalLog;
-  }
+  const saved = calls.find((call) => ["sendMessage", "editMessageText"].includes(call.method) && /Записал/.test(call.text));
+  assert.ok(saved);
+  assert.match(saved.text, /кофе/);
+  assert.equal(saved.replyMarkup.inline_keyboard[0][0].callback_data, "ee:x:91:o");
+  assert.equal(saved.replyMarkup.inline_keyboard[0][1].callback_data, "ee:x:91:del");
+  assert.equal(repo.events.filter((event) => event.eventName === "expense_saved").length, 1);
+});
+
+test("safe voice message is saved immediately", async () => {
+  const calls = [];
+  const repo = fakeRepository();
+  repo.listClosedReserveMonthsForTelegramUser = async () => [];
+  repo.saveDraftAsExpense = async (draftId) => ({
+    expenses: [{ id: 92, draft_id: draftId, amount_base: 460, amount_original: 460, currency_original: "THB", description: "такси", category_slug: "transport" }],
+    dashboardSnapshot: (await repo.dashboard()).snapshot,
+    alreadySaved: false
+  });
+  const bot = createTelegramBot({
+    token: "test-token", miniAppUrl: "http://localhost:3000", repository: repo,
+    voiceTranscriber: { isConfigured: () => true, async transcribeTelegramVoice() { return "такси 460 бат"; } },
+    expenseParser: { async parse() { return { expenses: [{ amount: 460, currency: "THB", description: "такси", category_slug: "transport", category_source: "parser", needs_review: false, spent_at: "2026-08-14T08:00:00.000Z", budget_impact: "regular" }] }; } },
+    telegramClient: capturingClient(calls)
+  });
+
+  await bot.handleUpdate({ message: { message_id: 56, chat: { id: 10 }, from: { id: 100, first_name: "M" }, voice: { file_id: "voice-1", mime_type: "audio/ogg" } } });
+
+  assert.ok(calls.some((call) => ["sendMessage", "editMessageText"].includes(call.method) && /Записал/.test(call.text)));
+  assert.equal(repo.events.filter((event) => event.eventName === "expense_saved").length, 1);
+});
+
+test("completed Telegram webhook replay removes only its new loader and keeps the original result reference", async () => {
+  const calls = [];
+  const repo = fakeRepository();
+  const storedDraft = {
+    id: 42,
+    status: "confirmed",
+    tg_chat_id: 10,
+    tg_message_id: 900,
+    items: [{ amount: 70, currency: "THB", description: "кофе", category_slug: "food_cafe", category_source: "parser", needs_review: false, spent_at: "2026-08-14T08:00:00.000Z", budget_impact: "regular" }]
+  };
+  repo.claimTelegramExpenseCapture = async () => ({ state: "completed", draft: storedDraft });
+  repo.getDraftForTelegramUser = async () => storedDraft;
+  repo.saveDraftAsExpense = async () => { throw new Error("replay must not save again"); };
+  const telegramClient = {
+    ...capturingClient(calls),
+    async sendMessage(message) {
+      calls.push({ method: "sendMessage", ...message });
+      return { result: { message_id: 301 } };
+    }
+  };
+  const bot = createTelegramBot({
+    token: "test-token", miniAppUrl: "http://localhost:3000", repository: repo,
+    expenseParser: { async parse() { throw new Error("replay must not parse again"); } },
+    telegramClient
+  });
+
+  await bot.handleUpdate({ message: { message_id: 58, chat: { id: 10 }, from: { id: 100, first_name: "M" }, text: "кофе 70 бат" } });
+
+  assert.deepEqual(calls.map((call) => call.method), ["sendMessage", "deleteMessage"]);
+  assert.equal(calls[1].messageId, 301);
+  assert.equal(repo.events.some((event) => ["expense_draft_created", "expense_saved"].includes(event.eventName)), false);
+});
+
+test("ambiguous Telegram expense remains in review and explains category choice", async () => {
+  const calls = [];
+  const repo = fakeRepository();
+  let saves = 0;
+  repo.listClosedReserveMonthsForTelegramUser = async () => [];
+  repo.saveDraftAsExpense = async () => { saves += 1; throw new Error("must not save"); };
+  const bot = createTelegramBot({
+    token: "test-token", miniAppUrl: "http://localhost:3000", repository: repo,
+    expenseParser: { async parse() { return { expenses: [{ amount: 800, currency: "THB", description: "непонятно", category_slug: "other", category_source: "parser", needs_review: false, spent_at: "2026-08-14T08:00:00.000Z", budget_impact: "regular" }] }; } },
+    telegramClient: capturingClient(calls)
+  });
+
+  await bot.handleUpdate({ message: { message_id: 57, chat: { id: 10 }, from: { id: 100, first_name: "M" }, text: "непонятно 800 бат" } });
+
+  assert.equal(saves, 0);
+  const review = calls.find((call) => ["sendMessage", "editMessageText"].includes(call.method) && /категори/i.test(call.text));
+  assert.ok(review);
 });
 
 test("initial mixed text and voice drafts use the prepared converted preview", async (t) => {
@@ -424,9 +497,10 @@ test("normal text message records received draft and processing events", async (
     { userId: 1, eventName: "message_received", metadata: { inputType: "text" } },
     { userId: 1, eventName: "expense_draft_created", metadata: { inputType: "text", draftType: "regular" } }
   ]);
-  assert.equal(repo.events[2].eventName, "message_processing_completed");
-  assert.equal(repo.events[2].metadata.inputType, "text");
-  assert.equal(Number.isFinite(repo.events[2].metadata.processingTotalMs), true);
+  assert.equal(repo.events[2].eventName, "expense_saved");
+  assert.equal(repo.events[3].eventName, "message_processing_completed");
+  assert.equal(repo.events[3].metadata.inputType, "text");
+  assert.equal(Number.isFinite(repo.events[3].metadata.processingTotalMs), true);
 });
 
 test("message processing completed event includes stage performance metadata", async () => {
@@ -524,8 +598,8 @@ test("successful draft processing records a completed result", async () => {
   }
 
   const completed = repo.events.find((event) => event.eventName === "message_processing_completed");
-  assert.equal(completed.metadata.result, "draft_created");
-  assert.equal(completed.metadata.status, "draft_created");
+  assert.equal(completed.metadata.result, "expense_saved");
+  assert.equal(completed.metadata.status, "expense_saved");
   assert.equal(completed.metadata.draftType, "regular");
   assert.equal(completed.metadata.inputType, "text");
 });
@@ -1891,7 +1965,7 @@ test("confirm callback edits the original draft message into saved summary with 
   assert.equal(calls.some((call) => call.method === "sendMessage" && /Записал|Saved/.test(call.text)), false);
 });
 
-test("voice message is transcribed and creates a draft response", async () => {
+test("voice message is transcribed and saves a confident expense", async () => {
   const calls = [];
   const originalLog = console.log;
   console.log = (...args) => calls.push(args);
@@ -1915,9 +1989,9 @@ test("voice message is transcribed and creates a draft response", async () => {
     });
 
     assert.match(calls[0][1].text, /Заношу расход|Adding expense/);
-    assert.match(calls[1][1].text, /кофе/);
+    assert.match(calls[1][1].text, /Записал/);
     assert.match(calls[1][1].text, /70 THB/);
-    assert.equal(calls[1][1].replyMarkup.inline_keyboard[0][0].callback_data, "d:42:confirm");
+    assert.match(calls[1][1].replyMarkup.inline_keyboard[0][0].callback_data, /^ee:x:/);
   } finally {
     console.log = originalLog;
   }
@@ -2199,7 +2273,7 @@ test("admin stats shows non-zero metrics after message draft and confirm flow", 
   const statsMessage = messages.at(-1).html;
   assert.match(statsMessage, /Active users: <\/td><td><b>1<\/b>/);
   assert.match(statsMessage, /Expenses saved: <\/td><td><b>1<\/b>/);
-  assert.match(statsMessage, /Drafts: <\/td><td><b>1 created \/ 1 confirmed/);
+  assert.match(statsMessage, /Drafts: <\/td><td><b>1 created \/ 0 confirmed/);
 });
 
 test("empty parse records a parse failure event", async () => {
@@ -4554,6 +4628,8 @@ function fakeRepository() {
     accountDeletionConfirms: [],
     accountDeletionPendingLookups: [],
     pendingAccountDeletion: null,
+    savedDraftIds: new Set(),
+    draftItems: [],
     async upsertTelegramUser() {
       return this.user;
     },
@@ -4633,7 +4709,8 @@ function fakeRepository() {
     async cancelDraft() {
       return { canceled: true };
     },
-    async createDraft() {
+    async createDraft(_userId, _sourceText, items) {
+      this.draftItems = items;
       return { id: 42 };
     },
     async setDraftMessageRef() {
@@ -4665,7 +4742,22 @@ function fakeRepository() {
     },
     async saveDraftAsExpense(draftId) {
       this.confirmedDraftId = draftId;
-      return { expenses: [{ amount_base: 75 }], dashboardSnapshot: (await this.dashboard()).snapshot, alreadySaved: false };
+      const alreadySaved = this.savedDraftIds.has(String(draftId));
+      this.savedDraftIds.add(String(draftId));
+      const item = this.draftItems[0] ?? {};
+      return {
+        expenses: [{
+          id: 1,
+          draft_id: draftId,
+          amount_base: Number(item.amount ?? 75),
+          amount_original: Number(item.amount ?? 75),
+          currency_original: item.currency ?? "THB",
+          description: item.description ?? "expense",
+          category_slug: item.category_slug ?? "other"
+        }],
+        dashboardSnapshot: (await this.dashboard()).snapshot,
+        alreadySaved
+      };
     },
     async moveDraftToInbox() {
       return null;
@@ -4949,7 +5041,7 @@ test("regular draft delivery stores the originating telegram chat and message id
           description: "coffee",
           category_slug: "food_cafe",
           budget_impact: "regular",
-          needs_review: false,
+          needs_review: true,
           category_source: "parser",
           tags: [],
           spent_at: "2026-06-25T10:00:00Z"

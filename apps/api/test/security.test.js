@@ -208,6 +208,15 @@ test("dashboard route delegates verified launches to the Mini App launch service
   assert.match(block, /catch \(error\)[^]*?timing\.finish\(\{ route: "\/api\/dashboard", status: error\.statusCode \?\? 500 \}\)/);
 });
 
+test("Smart Save recovery routes use Telegram-scoped authentication", async () => {
+  const source = await readFile(new URL("../src/server.js", import.meta.url), "utf8");
+  for (const path of ["/api/drafts/recovery-preview", "/api/drafts/recovery-save"]) {
+    const block = endpointBlock(source, path);
+    assert.match(block, /apiSecurity\.resolveTelegramUserId\(req, url/);
+  }
+  assert.match(endpointBlock(source, "/api/drafts/recovery-save"), /saveSmartSaveRecovery/);
+});
+
 test("client startup timing route requires verified Mini App auth and logs only sanitized timings", async () => {
   const source = await readFile(new URL("../src/server.js", import.meta.url), "utf8");
   const block = endpointBlock(source, "/api/startup-timing");

@@ -19,8 +19,9 @@ test("fake Telegram message is processed through bot logic and captures reply ma
   assert.equal(telegramClient.messages[0].method, "sendMessage");
   assert.match(telegramClient.messages[0].text, /Adding expense/i);
   assert.equal(telegramClient.messages[1].method, "editMessageText");
-  assert.match(telegramClient.messages[1].text, /coffee/i);
-  assert.equal(telegramClient.messages[1].replyMarkup.inline_keyboard[0][0].callback_data, "d:42:confirm");
+  assert.match(telegramClient.messages[1].text, /Saved/i);
+  assert.match(telegramClient.messages[1].text, /70 THB/i);
+  assert.equal(telegramClient.messages[1].replyMarkup.inline_keyboard[0][0].callback_data, "ee:x:91:o");
 });
 
 test("fake callback update is processed through bot logic and captures callback answers", async () => {
@@ -101,7 +102,7 @@ function fakeRepository() {
     },
     async saveDraftAsExpense(draftId) {
       this.confirmedDraftId = draftId;
-      return { expenses: [{ amount_base: 70 }], dashboardSnapshot: (await this.dashboard()).snapshot, alreadySaved: false };
+      return { expenses: [{ id: 91, amount_base: 70, category_slug: "food_cafe", description: "coffee" }], dashboardSnapshot: (await this.dashboard()).snapshot, alreadySaved: false };
     },
     async dashboard() {
       return {

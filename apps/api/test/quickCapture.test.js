@@ -3,12 +3,13 @@ import test from "node:test";
 import { isQuickCaptureAutoSaveEligible, processMiniAppQuickCapture } from "../src/quickCapture.js";
 
 test("only a confident single-item Quick Capture may save immediately", () => {
-  assert.equal(isQuickCaptureAutoSaveEligible([{ category_slug: "food_cafe", needs_review: false }]), true);
-  assert.equal(isQuickCaptureAutoSaveEligible([{ category_slug: "other", needs_review: false }]), false);
-  assert.equal(isQuickCaptureAutoSaveEligible([{ category_slug: "food_cafe", needs_review: true }]), false);
+  const safe = { amount: 70, currency: "THB", spent_at: "2026-08-14T08:00:00.000Z", category_slug: "food_cafe", needs_review: false };
+  assert.equal(isQuickCaptureAutoSaveEligible([safe], { now: new Date("2026-08-14T09:00:00.000Z") }), true);
+  assert.equal(isQuickCaptureAutoSaveEligible([{ ...safe, category_slug: "other", category_source: "parser" }]), false);
+  assert.equal(isQuickCaptureAutoSaveEligible([{ ...safe, needs_review: true }]), false);
   assert.equal(isQuickCaptureAutoSaveEligible([
-    { category_slug: "food_cafe", needs_review: false },
-    { category_slug: "transport", needs_review: false }
+    safe,
+    { ...safe, category_slug: "transport" }
   ]), false);
 });
 
@@ -35,7 +36,7 @@ test("safe Quick Capture replay returns the one already-saved expense", async ()
   };
   const input = {
     user: { id: 7, telegram_user_id: 100, base_currency: "THB" }, clientRequestId: "miniapp-save-replay", text: "coffee 120",
-    expenseParser: { parse: async () => { parserCalls += 1; return { expenses: [{ category_slug: "food_cafe", category_source: "parser", needs_review: false }] }; } },
+    expenseParser: { parse: async () => { parserCalls += 1; return { expenses: [{ amount: 120, currency: "THB", spent_at: "2026-08-14T08:00:00.000Z", category_slug: "food_cafe", category_source: "parser", needs_review: false }] }; } },
     repository
   };
 

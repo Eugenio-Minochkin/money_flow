@@ -2914,6 +2914,61 @@ test("lists inbox drafts for a Telegram user", async () => {
   assert.equal(queries[1].params[1], "inbox");
 });
 
+test("claims Telegram expense capture by owned chat and message identity", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql: String(sql), params });
+    return { rows: [{ claim_version: 1 }] };
+  }));
+
+  const claim = await repo.claimTelegramExpenseCapture(7, 10, 55);
+
+  assert.deepEqual(claim, { state: "claimed", claimVersion: 1 });
+  assert.match(queries[0].sql, /INSERT INTO telegram_expense_captures/);
+  assert.deepEqual(queries[0].params, [7, 10, 55]);
+});
+
+test("reads a completed Telegram capture from request status rather than confirmed draft status", async () => {
+  const repo = createRepository(fakePool((sql) => {
+    assert.match(String(sql), /telegram_expense_captures/);
+    return { rows: [{ request_status: "completed", id: 42, status: "confirmed", items: "[]" }] };
+  }));
+
+  const result = await repo.readTelegramExpenseCapture(7, 10, 55);
+
+  assert.equal(result.state, "completed");
+  assert.equal(result.draft.id, 42);
+  assert.equal(result.draft.status, "confirmed");
+});
+
+test("lists every unresolved pending and inbox draft without a recovery limit", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql: String(sql), params });
+    return { rows: [
+      { id: 1, status: "pending", items: "[]" },
+      { id: 2, status: "inbox", items: "[]" }
+    ] };
+  }));
+
+  const drafts = await repo.listUnresolvedDraftsForTelegramUser(100);
+
+  assert.deepEqual(drafts.map((draft) => draft.status), ["pending", "inbox"]);
+  assert.match(queries[0].sql, /drafts\.status IN \('pending', 'inbox'\)/);
+  assert.doesNotMatch(queries[0].sql, /LIMIT/);
+  assert.deepEqual(queries[0].params, [100]);
+});
+
+test("lists closed reserve month keys for the owned Telegram user", async () => {
+  const repo = createRepository(fakePool((sql, params) => {
+    assert.match(String(sql), /monthly_reserve_instances\.status = 'closed'/);
+    assert.deepEqual(params, [100]);
+    return { rows: [{ period: "2026-06" }, { period: "2026-07" }] };
+  }));
+
+  assert.deepEqual(await repo.listClosedReserveMonthsForTelegramUser(100), ["2026-06", "2026-07"]);
+});
+
 test("moves stale pending drafts into inbox before listing drafts", async () => {
   const queries = [];
   const repo = createRepository(fakePool((sql, params) => {
@@ -6684,6 +6739,7 @@ test("prepareDraftPreview matches amount_base saved by saveDraftAsExpense at pre
     async query(sql, params = []) {
       const query = String(sql);
       if (query === "BEGIN" || query === "COMMIT" || query === "ROLLBACK") return { rows: [] };
+      if (query.includes("pg_advisory_xact_lock")) return { rows: [] };
       if (query.includes("FOR UPDATE")) return { rows: [{ id: 7, user_id: 1, status: "pending", base_currency: "THB", items }] };
       if (query.includes("INSERT INTO expenses")) {
         insertedAmountBases.push(params[4]);
@@ -6827,6 +6883,32 @@ test("saveDraftAsExpense blocks parser-provided other even if needs_review is ac
 
   await assert.rejects(() => repo.saveDraftAsExpense(7, 100), (err) => err instanceof CategoryRequiredError);
   assert.ok(!queries.some((q) => q.includes("INSERT INTO expenses")));
+});
+
+test("saveDraftAsExpense refuses to write an expense into a closed reserve month", async () => {
+  const { createRepository } = await import("../src/repository.js");
+  const queries = [];
+  const draftRow = { id: 7, user_id: 1, status: "pending", base_currency: "THB", timezone: "Asia/Bangkok",
+    items: [{ amount: 80, currency: "THB", description: "coffee", category_slug: "food_cafe", needs_review: false, category_source: "parser", budget_impact: "regular", tags: [], spent_at: "2026-06-25T10:00:00Z" }] };
+  const client = {
+    async query(sql) {
+      const query = String(sql);
+      queries.push(query);
+      if (["BEGIN", "ROLLBACK"].includes(query)) return { rows: [] };
+      if (query.includes("FROM drafts") && query.includes("FOR UPDATE")) return { rows: [draftRow] };
+      if (query.includes("FROM monthly_reserve_instances")) return { rows: [{ period: "2026-06" }] };
+      return { rows: [] };
+    },
+    release() {}
+  };
+  const repo = createRepository({ ...fakePool(() => ({ rows: [] })), async connect() { return client; } });
+
+  await assert.rejects(
+    () => repo.saveDraftAsExpense(7, 100),
+    (error) => error.code === "expense_source_month_closed"
+  );
+  assert.ok(queries.includes("ROLLBACK"));
+  assert.ok(!queries.some((query) => query.includes("INSERT INTO expenses")));
 });
 
 test("cancelDraft cancels an open draft and returns canceled true", async () => {

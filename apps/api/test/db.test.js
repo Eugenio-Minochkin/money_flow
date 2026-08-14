@@ -32,8 +32,19 @@ test("migration files are listed in lexical order and include the Telegram edito
   assert.ok(files.includes("014_quick_access_tokens.sql"));
   assert.ok(files.includes("015_quick_capture_safety.sql"));
   assert.ok(files.includes("016_quick_access_token_single_active.sql"));
+  assert.ok(files.includes("017_telegram_expense_capture_safety.sql"));
   assert.ok(files.includes("010_telegram_editor_prompt_message.sql"));
   assert.deepEqual(files, [...files].sort());
+});
+
+test("Telegram capture safety migration adds durable chat and message claims", async () => {
+  const dir = resolve(dirname(fileURLToPath(import.meta.url)), "..", "migrations");
+  const sql = await readFile(resolve(dir, "017_telegram_expense_capture_safety.sql"), "utf8");
+
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS telegram_expense_captures/i);
+  assert.match(sql, /UNIQUE\(user_id, chat_id, message_id\)/i);
+  assert.match(sql, /status TEXT NOT NULL CHECK \(status IN \('processing', 'completed'\)\)/i);
+  assert.match(sql, /draft_id BIGINT REFERENCES drafts\(id\)/i);
 });
 
 test("Quick Capture safety migration adds durable claims and inactive prepared keys", async () => {

@@ -28,6 +28,8 @@ export function createHistoryLoader(load) {
 
   return {
     ensure: () => request(false),
-    refresh: () => request(true)
+    refresh: () => request(true),
+    isLoaded: () => loaded,
+    hasStarted: () => loaded || Boolean(inFlight)
   };
 }

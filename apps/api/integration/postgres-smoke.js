@@ -7,8 +7,9 @@ import pg from "pg";
 import { migrate } from "../src/db.js";
 import { normalizePlannedDateKey } from "../src/plannedOccurrenceDates.js";
 import { createRepository } from "../src/repository.js";
-import { createMiniAppQuickCaptureDraft, createShortcutExpenseDraft } from "../src/expenseDraftService.js";
+import { createMiniAppQuickCaptureDraft, createShortcutExpenseDraft, createTelegramExpenseDraft } from "../src/expenseDraftService.js";
 import { processMiniAppQuickCapture } from "../src/quickCapture.js";
+import { previewSmartSaveRecovery, saveSmartSaveRecovery } from "../src/smartSaveRecovery.js";
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -28,7 +29,7 @@ test.before(async () => {
   const applied = await pool.query("SELECT filename FROM schema_migrations ORDER BY filename");
   assert.deepEqual(
     applied.rows.map((row) => row.filename),
-    ["001_initial.sql", "002_draft_confirm_flow.sql", "003_budget_topups.sql", "004_report_deliveries.sql", "005_exchange_rates.sql", "006_feedback.sql", "007_account_deletion.sql", "008_product_analytics.sql", "009_telegram_expense_editor.sql", "010_telegram_editor_prompt_message.sql", "011_planned_expense_disabled_at.sql", "012_planned_expense_starts_on.sql", "013_planned_payment_reminders.sql", "014_quick_access_tokens.sql", "015_quick_capture_safety.sql", "016_quick_access_token_single_active.sql"]
+    ["001_initial.sql", "002_draft_confirm_flow.sql", "003_budget_topups.sql", "004_report_deliveries.sql", "005_exchange_rates.sql", "006_feedback.sql", "007_account_deletion.sql", "008_product_analytics.sql", "009_telegram_expense_editor.sql", "010_telegram_editor_prompt_message.sql", "011_planned_expense_disabled_at.sql", "012_planned_expense_starts_on.sql", "013_planned_payment_reminders.sql", "014_quick_access_tokens.sql", "015_quick_capture_safety.sql", "016_quick_access_token_single_active.sql", "017_telegram_expense_capture_safety.sql"]
   );
 
   const sessions = await pool.query(`
@@ -269,6 +270,61 @@ test("Mini App Quick Capture keeps one durable draft and expense across concurre
   assert.equal(review.draft.id, reviewReplay.draft.id);
   assert.equal(reviewReplay.replayed, true);
   assert.equal(reviewReplay.draft.items[0].category_source, "parser");
+});
+
+test("Smart Save replays Telegram delivery and safely recovers every unresolved draft", async () => {
+  const telegramUserId = 990018;
+  const user = await createSmokeUser(telegramUserId);
+  let parserCalls = 0;
+  const expenseParser = { parse: async () => {
+    parserCalls += 1;
+    return { expenses: [expenseItem({ description: "telegram coffee", amount: 125, category_source: "parser", spent_at: "2026-08-14T05:00:00.000Z" })] };
+  } };
+  const capture = { user, chatId: 880018, messageId: 77, text: "coffee 125", expenseParser, repository: repo };
+  const [first, second] = await Promise.all([
+    createTelegramExpenseDraft(capture),
+    createTelegramExpenseDraft(capture)
+  ]);
+  assert.equal(parserCalls, 1);
+  assert.equal(first.draft.id, second.draft.id);
+  assert.deepEqual([first.replayed, second.replayed], [false, true]);
+
+  const ambiguous = await repo.createDraft(user.id, "unclear 80", [
+    expenseItem({ description: "unclear", amount: 80, category_slug: "other", category_source: "parser", needs_review: true, spent_at: "2026-08-14T06:00:00.000Z" })
+  ]);
+  const closed = await repo.createDraft(user.id, "old coffee 90", [
+    expenseItem({ description: "old coffee", amount: 90, category_source: "parser", spent_at: "2026-07-10T05:00:00.000Z" })
+  ]);
+  await pool.query(
+    `INSERT INTO monthly_reserve_instances
+       (user_id, period, timezone, currency, budget_amount, reserve_amount, status, closed_at)
+     VALUES ($1, '2026-07', 'Asia/Bangkok', 'THB', 45000, 1000, 'closed', now())`,
+    [user.id]
+  );
+
+  const now = new Date("2026-08-14T12:00:00.000Z");
+  const preview = await previewSmartSaveRecovery({ telegramUserId, repository: repo, now });
+  assert.deepEqual(
+    { total: preview.totalUnresolved, safe: preview.safeCount, review: preview.reviewCount },
+    { total: 3, safe: 1, review: 2 }
+  );
+  const [direct, saved] = await Promise.all([
+    repo.saveDraftAsExpense(first.draft.id, telegramUserId),
+    saveSmartSaveRecovery({
+      telegramUserId,
+      draftIds: [first.draft.id, ambiguous.id, closed.id],
+      repository: repo,
+      now
+    })
+  ]);
+  assert.ok([true, false].includes(direct.alreadySaved));
+  assert.ok(["saved", "already_saved"].includes(saved.results[0].state));
+  assert.deepEqual(saved.results.slice(1).map((item) => item.state), ["review", "review"]);
+  const retry = await saveSmartSaveRecovery({ telegramUserId, draftIds: [first.draft.id], repository: repo, now });
+  assert.equal(retry.results[0].state, "already_saved");
+  const stored = await pool.query("SELECT spent_at FROM expenses WHERE user_id = $1", [user.id]);
+  assert.equal(stored.rowCount, 1);
+  assert.equal(stored.rows[0].spent_at.toISOString(), "2026-08-14T05:00:00.000Z");
 });
 
 test("saves feedback with source metadata", async () => {

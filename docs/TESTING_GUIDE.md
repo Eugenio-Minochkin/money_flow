@@ -19,6 +19,7 @@ Use this guide when changing business logic or UI around the main Money Flow sur
 - Daily empty-day reminder guardrails: kill switch, rollout, 48-hour cap, idempotency, no-spending marks, and Telegram blocked/forbidden errors.
 - Planned-payment reminder guardrails: production-default kill switch, configured local send hour, exact-occurrence idempotency, snooze-only notification changes, stale callbacks, RU/EN copy and styles, shared saved summary, Mini App best-effort card sync, and same-evening empty-day suppression.
 - Quick Capture: durable `user_id + clientRequestId` replay for safe auto-save and review drafts, concurrent claims, parser-outside-transaction behavior, retained parser category provenance, and the final `saveDraftAsExpense()` idempotency boundary.
+- Smart Save: shared eligibility across Mini App Quick Capture, Telegram text/voice, preview, and recovery mutation; durable Telegram `user_id + chat_id + message_id` replay; complete `pending`/`inbox` visibility; per-draft reclassification; preserved historical `spent_at`; closed-month skips; and retry/concurrency idempotency through `saveDraftAsExpense()`.
 - Shortcut setup: prepare/copy/activate ordering, activation retry, failed copy/network preserving an existing active key, no raw key rendering or database persistence, and UI copy that describes a key as prepared rather than assuming iOS installation.
 - Disabled planned payments.
 - Weekly recurrence deduplication.
@@ -78,6 +79,7 @@ The suite refuses to run unless `DATABASE_URL` points at localhost/127.0.0.1 and
 
 - new Telegram user persistence and defaults;
 - confirmed draft expense save/read;
+- Telegram capture replay plus mixed Smart Save recovery, including ambiguous and closed-month drafts, repeat mutation, and preserved historical dates;
 - dashboard budget summary over real rows;
 - planned payment create/list/pay/undo/deactivate/archive/recreate/reminder state, including migrations `011`–`013`, `disabled_at`, nullable `starts_on`, durable exact-occurrence delivery and snooze, exact payment-link undo with closed-month rollback and idempotent retry, transactional and idempotent disable, archive aggregates, independent recreate with transaction-client reserve validation, preserved paid history, PostgreSQL calendar-date semantics, same-day snapshot stability, immediate live month recalculation, and next-local-day snapshot creation;
 - reserve create/read through dashboard state;

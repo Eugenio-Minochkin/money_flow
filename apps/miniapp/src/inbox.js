@@ -45,3 +45,36 @@ export function inboxCountLabel(count, language = "en") {
   }
   return `Review ${total} ${total === 1 ? "expense" : "expenses"}`;
 }
+
+export function smartSaveRecoveryTitle(count, language = "en") {
+  const total = Math.max(0, Number(count) || 0);
+  if (language === "ru") {
+    const lastTwo = total % 100;
+    const lastOne = total % 10;
+    const word = lastOne === 1 && lastTwo !== 11
+      ? "расход"
+      : lastOne >= 2 && lastOne <= 4 && (lastTwo < 12 || lastTwo > 14)
+        ? "расхода"
+        : "расходов";
+    return `Нужно разобрать ${total} ${word}`;
+  }
+  return `Review ${total} ${total === 1 ? "expense" : "expenses"}`;
+}
+
+export function smartSaveRecoverySummary(preview, language = "en") {
+  const safe = Math.max(0, Number(preview?.safeCount) || 0);
+  const review = Math.max(0, Number(preview?.reviewCount) || 0);
+  return language === "ru"
+    ? `${safe} можно сохранить сразу · ${review} нужно уточнить`
+    : `${safe} can be saved now · ${review} need review`;
+}
+
+export function smartSaveRecoveryPrimaryAction(count, language = "en") {
+  const total = Math.max(0, Number(count) || 0);
+  return language === "ru" ? `Сохранить ${total} понятных` : `Save ${total} clear`;
+}
+
+export function smartSaveRecoveryReviewAction(count, language = "en") {
+  const total = Math.max(0, Number(count) || 0);
+  return language === "ru" ? `Разобрать ${total}` : `Review ${total}`;
+}

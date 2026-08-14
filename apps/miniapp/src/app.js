@@ -37,7 +37,17 @@ import {
 } from "./history.js";
 import { createTranslator } from "./i18n.js";
 import { createEditModalController, runEditModalSave } from "./editModal.js";
-import { inboxCountLabel, inboxDraftDescription, inboxDraftTotal, inboxSummaryPreview, shouldShowInboxOnDashboard, updateFirstInboxItemCategory } from "./inbox.js";
+import {
+  inboxCountLabel,
+  inboxDraftDescription,
+  inboxDraftTotal,
+  smartSaveRecoveryPrimaryAction,
+  smartSaveRecoveryReviewAction,
+  smartSaveRecoverySummary,
+  smartSaveRecoveryTitle,
+  shouldShowInboxOnDashboard,
+  updateFirstInboxItemCategory
+} from "./inbox.js";
 import {
   TAB_ORDER,
   canStartTabPager,
@@ -96,6 +106,7 @@ let draftDirty = false;
 let draftReturnTab = "dashboard";
 let historyState = [];
 let inboxState = [];
+let recoveryState = { totalUnresolved: 0, safeCount: 0, reviewCount: 0, safeDraftIds: [], reviewDraftIds: [], drafts: [] };
 let historyFilterState = historyFilterFromLaunchParams(params);
 let historyCalendarDraft = null;
 let currentLanguage = "en";
@@ -538,6 +549,8 @@ initializeTelegramQuickAccess();
 installTabSwipeNavigation();
 void loadQuickAccessConfig().catch(() => {});
 document.querySelector("#openAllHistoryButton")?.addEventListener("click", () => switchTab("history"));
+document.querySelector("#saveSafeDraftsButton")?.addEventListener("click", () => void saveSafeRecoveryDrafts().catch(showError));
+document.querySelector("#reviewRecoveryDraftsButton")?.addEventListener("click", () => switchTab("history"));
 document.querySelectorAll("[data-export-period]").forEach((button) => {
   button.addEventListener("click", () => requestExpenseExport(button.dataset.exportPeriod));
 });
@@ -824,10 +837,31 @@ function loadHistory() {
 
 async function loadDashboardInbox() {
   if (accountDeleted) return;
-  const inbox = await api(`/api/drafts?telegramUserId=${encodeURIComponent(telegramUserId)}&status=inbox`);
+  const inbox = await api(`/api/drafts/recovery-preview?telegramUserId=${encodeURIComponent(telegramUserId)}`);
   if (accountDeleted) return;
+  recoveryState = inbox;
   inboxState = inbox.drafts ?? [];
-  renderDashboardInboxDrafts(inboxState);
+  renderDashboardInboxDrafts(recoveryState);
+}
+
+async function saveSafeRecoveryDrafts() {
+  const button = document.querySelector("#saveSafeDraftsButton");
+  const draftIds = [...(recoveryState.safeDraftIds ?? [])];
+  if (!draftIds.length || button?.disabled) return;
+  button.disabled = true;
+  try {
+    const result = await api("/api/drafts/recovery-save", {
+      method: "POST",
+      body: { telegramUserId, draftIds: recoveryState.safeDraftIds }
+    });
+    const savedCount = (result.results ?? []).filter((item) => ["saved", "already_saved"].includes(item.state)).length;
+    await loadDashboard();
+    await loadDashboardInbox();
+    if (historyLoader.hasStarted()) await loadHistory();
+    showToast(currentLanguage === "ru" ? `Сохранено: ${savedCount}` : `Saved: ${savedCount}`);
+  } finally {
+    button.disabled = false;
+  }
 }
 
 async function performHistoryLoad() {
@@ -837,12 +871,13 @@ async function performHistoryLoad() {
   const params = buildHistoryRequestParams(telegramUserId, search, historyFilterState);
   const [data, inbox] = await Promise.all([
     api(`/api/expenses?${params.toString()}`),
-    api(`/api/drafts?telegramUserId=${encodeURIComponent(telegramUserId)}&status=inbox`)
+    api(`/api/drafts/recovery-preview?telegramUserId=${encodeURIComponent(telegramUserId)}`)
   ]);
   if (accountDeleted) return;
   historyState = data.expenses ?? [];
+  recoveryState = inbox;
   inboxState = inbox.drafts ?? [];
-  renderDashboardInboxDrafts(inboxState);
+  renderDashboardInboxDrafts(recoveryState);
   renderInboxDrafts(inboxState);
   renderHistory(historyState);
   renderHistoryPeriodSummary(historyState);
@@ -1736,11 +1771,14 @@ function renderInboxDrafts(drafts) {
   bindInboxActions(list);
 }
 
-function renderDashboardInboxDrafts(drafts) {
+function renderDashboardInboxDrafts(previewState) {
+  const drafts = previewState?.drafts ?? [];
   const block = document.querySelector("#dashboardInboxBlock");
   const list = document.querySelector("#dashboardInboxDrafts");
   const title = document.querySelector("#dashboardInboxTitle");
   const preview = document.querySelector("#dashboardInboxPreview");
+  const saveButton = document.querySelector("#saveSafeDraftsButton");
+  const reviewButton = document.querySelector("#reviewRecoveryDraftsButton");
   const wasHidden = block.classList.contains("hidden");
   if (!shouldShowInboxOnDashboard(drafts)) {
     block.classList.add("hidden");
@@ -1751,9 +1789,15 @@ function renderDashboardInboxDrafts(drafts) {
   }
   block.classList.remove("hidden");
   if (wasHidden) block.open = true;
-  title.textContent = inboxCountLabel(drafts.length, currentLanguage);
-  preview.textContent = inboxSummaryPreview(drafts, currentLanguage, formatMoney);
-  list.innerHTML = drafts.slice(0, 2).map((draft) => {
+  title.textContent = smartSaveRecoveryTitle(previewState.totalUnresolved, currentLanguage);
+  preview.textContent = smartSaveRecoverySummary(previewState, currentLanguage);
+  saveButton.textContent = smartSaveRecoveryPrimaryAction(previewState.safeCount, currentLanguage);
+  saveButton.classList.toggle("hidden", !previewState.safeCount);
+  reviewButton.textContent = smartSaveRecoveryReviewAction(previewState.reviewCount, currentLanguage);
+  reviewButton.classList.toggle("hidden", !previewState.reviewCount);
+  const reviewIds = new Set((previewState.reviewDraftIds ?? []).map(String));
+  const reviewDrafts = drafts.filter((draft) => reviewIds.has(String(draft.id)));
+  list.innerHTML = reviewDrafts.slice(0, 2).map((draft) => {
     const total = inboxDraftTotal(draft);
     const description = inboxDraftDescription(draft);
     return `
@@ -2920,7 +2964,7 @@ function rerenderDashboardLanguageState() {
   renderPlannedMonthSummary(plannedExpenses);
   renderPlannedExpenses(plannedExpenses);
   renderLatest(dashboardState.latestExpenses ?? []);
-  renderDashboardInboxDrafts(inboxState);
+  renderDashboardInboxDrafts(recoveryState);
   renderInboxDrafts(inboxState);
 }
 

@@ -37,7 +37,7 @@ export function formatDraft(expenses, options = {}) {
 }
 
 function formatDraftReviewWarning(expenses, language) {
-  if (!expenses.some((expense) => expense.needs_review)) return "";
+  if (!expenses.some((expense) => expense.needs_review || draftNeedsCategoryChoice(expense))) return "";
   const key = expenses.length === 1 && draftNeedsCategoryChoice(expenses[0])
     ? "draftReviewCategoryChoice"
     : "draftReviewEdit";

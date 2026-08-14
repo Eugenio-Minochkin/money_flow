@@ -11,6 +11,7 @@ export class ShortcutRequestInProgressError extends Error {
 
 const shortcutInFlight = new Map();
 const miniAppQuickCaptureInFlight = new Map();
+const telegramExpenseInFlight = new Map();
 
 export async function createExpenseDraftFromText({ user, text, source, expenseParser, repository, parserOptions = {}, onBeforePersist, onAfterPersist }) {
   const items = await parseExpenseItems({ user, text, expenseParser, parserOptions });
@@ -36,6 +37,49 @@ export async function createMiniAppQuickCaptureDraft({ user, clientRequestId, te
   const operation = createMiniAppQuickCaptureDraftOnce({ user, clientRequestId, text, expenseParser, repository });
   miniAppQuickCaptureInFlight.set(key, operation);
   try { return await operation; } finally { miniAppQuickCaptureInFlight.delete(key); }
+}
+
+export async function createTelegramExpenseDraft({ user, chatId, messageId, text, expenseParser, repository, parserOptions = {}, onBeforePersist, onAfterPersist }) {
+  if (!Number.isSafeInteger(Number(messageId)) || typeof repository.claimTelegramExpenseCapture !== "function") {
+    const draft = await createExpenseDraftFromText({ user, text, source: "telegram", expenseParser, repository, parserOptions, onBeforePersist, onAfterPersist });
+    return { draft, replayed: false };
+  }
+  const key = `${user.id}:${chatId}:${messageId}`;
+  if (telegramExpenseInFlight.has(key)) {
+    const shared = await telegramExpenseInFlight.get(key);
+    return shared ? { ...shared, replayed: true } : shared;
+  }
+  const operation = createTelegramExpenseDraftOnce({ user, chatId, messageId, text, expenseParser, repository, parserOptions, onBeforePersist, onAfterPersist });
+  telegramExpenseInFlight.set(key, operation);
+  try { return await operation; } finally { telegramExpenseInFlight.delete(key); }
+}
+
+async function createTelegramExpenseDraftOnce({ user, chatId, messageId, text, expenseParser, repository, parserOptions, onBeforePersist, onAfterPersist }) {
+  const claim = await repository.claimTelegramExpenseCapture(user.id, chatId, messageId);
+  if (!claim) return null;
+  if (claim.state === "completed") return { draft: claim.draft, replayed: true };
+  if (claim.state === "processing") {
+    const completed = await repository.waitForTelegramExpenseCapture(user.id, chatId, messageId);
+    if (!completed) throw new ShortcutRequestInProgressError();
+    return { draft: completed.draft, replayed: true };
+  }
+  try {
+    const items = await parseExpenseItems({ user, text, expenseParser, parserOptions });
+    onBeforePersist?.();
+    const result = await repository.completeTelegramExpenseCapture({
+      userId: user.id,
+      chatId,
+      messageId,
+      claimVersion: claim.claimVersion,
+      sourceText: text,
+      items
+    });
+    onAfterPersist?.();
+    return result ? { draft: result.draft, replayed: false } : null;
+  } catch (error) {
+    await repository.releaseTelegramExpenseCapture(user.id, chatId, messageId, claim.claimVersion);
+    throw error;
+  }
 }
 
 async function createMiniAppQuickCaptureDraftOnce({ user, clientRequestId, text, expenseParser, repository }) {

@@ -6,9 +6,24 @@ import {
   inboxDraftDescription,
   inboxSummaryPreview,
   inboxDraftTotal,
+  smartSaveRecoveryPrimaryAction,
+  smartSaveRecoveryReviewAction,
+  smartSaveRecoverySummary,
+  smartSaveRecoveryTitle,
   shouldShowInboxOnDashboard,
   updateFirstInboxItemCategory
 } from "../src/inbox.js";
+
+test("formats Smart Save recovery counts and actions", () => {
+  const preview = { totalUnresolved: 18, safeCount: 14, reviewCount: 4 };
+
+  assert.equal(smartSaveRecoveryTitle(preview.totalUnresolved, "ru"), "Нужно разобрать 18 расходов");
+  assert.equal(smartSaveRecoverySummary(preview, "ru"), "14 можно сохранить сразу · 4 нужно уточнить");
+  assert.equal(smartSaveRecoveryPrimaryAction(preview.safeCount, "ru"), "Сохранить 14 понятных");
+  assert.equal(smartSaveRecoveryReviewAction(preview.reviewCount, "ru"), "Разобрать 4");
+  assert.equal(smartSaveRecoveryTitle(1, "en"), "Review 1 expense");
+  assert.equal(smartSaveRecoverySummary({ safeCount: 1, reviewCount: 2 }, "en"), "1 can be saved now · 2 need review");
+});
 
 test("formats inbox draft description and total", () => {
   const draft = {
