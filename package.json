@@ -12,6 +12,7 @@
     "dev:api": "node --env-file=.env apps/api/src/server.js",
     "dev:reset": "node --env-file=.env apps/api/scripts/dev-reset.js",
     "dev:sandbox": "node -e \"console.log('Open http://localhost:3000/dev after running npm run dev:api')\"",
+    "build:miniapp": "node apps/miniapp/build.mjs",
     "test": "node --test",
     "test:integration:postgres": "node --test apps/api/integration/postgres-smoke.js",
     "dev:miniapp": "node apps/miniapp/dev-server.cjs",
@@ -27,5 +28,7 @@
   "dependencies": {
     "pg": "^8.13.1"
   },
-  "devDependencies": {}
+  "devDependencies": {
+    "esbuild": "^0.28.2"
+  }
 }

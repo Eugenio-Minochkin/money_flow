@@ -47,7 +47,7 @@ import { syncTelegramCommandMenu, syncTelegramUserCommandMenu } from "./telegram
 import { createVoiceTranscriber } from "./voiceTranscriber.js";
 
 const root = resolve(fileURLToPath(new URL("../../..", import.meta.url)));
-const webRoot = join(root, "apps", "miniapp", "src");
+const webRoot = join(root, "apps", "miniapp", process.env.NODE_ENV === "production" ? "dist" : "src");
 const appRevision = readAppRevision();
 const readJson = createJsonReader({ maxJsonBytes: config.maxJsonBytes });
 const serveStatic = createStaticHandler({ webRoot });
