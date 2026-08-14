@@ -9,6 +9,7 @@ import { normalizePlannedDateKey } from "../src/plannedOccurrenceDates.js";
 import { createRepository } from "../src/repository.js";
 import { createMiniAppQuickCaptureDraft, createShortcutExpenseDraft, createTelegramExpenseDraft } from "../src/expenseDraftService.js";
 import { processMiniAppQuickCapture } from "../src/quickCapture.js";
+import { processShortcutCapture } from "../src/shortcutCapture.js";
 import { previewSmartSaveRecovery, saveSmartSaveRecovery } from "../src/smartSaveRecovery.js";
 
 const { Pool } = pg;
@@ -200,6 +201,39 @@ test("Quick Access token status and concurrent request idempotency are durable",
   assert.equal(await repo.revokeQuickAccessTokens(user.id), true);
   assert.equal(await repo.findQuickAccessToken("smoke-token-hash"), null);
   assert.deepEqual(await repo.getQuickAccessStatus(user.id), { configured: false, lastUsedAt: null });
+});
+
+test("Shortcut Smart Save survives concurrent and lost-response replay with one financial fact", async () => {
+  const user = await createSmokeUser(990019);
+  const token = await repo.prepareQuickAccessToken(user.id, "smart-save-shortcut-token-hash");
+  assert.deepEqual(await repo.activatePreparedQuickAccessToken(user.id, token.id), { state: "activated" });
+  let parserCalls = 0;
+  const input = {
+    user,
+    tokenId: token.id,
+    clientRequestId: "shortcut-smart-save-replay",
+    text: "coffee 180",
+    expenseParser: { parse: async () => {
+      parserCalls += 1;
+      return { expenses: [expenseItem({ description: "shortcut coffee", amount: 180 })] };
+    } },
+    repository: repo,
+    now: new Date("2026-06-24T12:00:00.000Z")
+  };
+
+  const concurrent = await Promise.all([
+    processShortcutCapture(input),
+    processShortcutCapture(input)
+  ]);
+  const replay = await processShortcutCapture(input);
+
+  assert.equal(parserCalls, 1);
+  assert.deepEqual([...concurrent, replay].map((result) => result.state), ["saved", "saved", "saved"]);
+  assert.equal(new Set([...concurrent, replay].map((result) => String(result.expense.id))).size, 1);
+  assert.equal(replay.replayed, true);
+  assert.equal(replay.alreadySaved, true);
+  assert.equal((await pool.query("SELECT COUNT(*)::int AS count FROM drafts WHERE user_id = $1", [user.id])).rows[0].count, 1);
+  assert.equal((await pool.query("SELECT COUNT(*)::int AS count FROM expenses WHERE user_id = $1", [user.id])).rows[0].count, 1);
 });
 
 test("concurrent Quick Access activations leave only the final key active", async () => {

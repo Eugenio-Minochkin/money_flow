@@ -543,6 +543,25 @@ test("non-production runtime config keeps local direct telegram user sandbox ava
   assert.doesNotThrow(() => requireRuntimeConfig(localConfig));
 });
 
+test("Shortcut expense route keeps bearer auth and returns explicit Smart Save states", async () => {
+  const source = await readFile(new URL("../src/server.js", import.meta.url), "utf8");
+  const docs = await readFile(new URL("../../../docs/ios-shortcut.md", import.meta.url), "utf8");
+  const block = endpointBlock(source, "/api/shortcut/expenses");
+
+  assert.match(source, /import \{ processShortcutCapture \} from "\.\/shortcutCapture\.js"/);
+  assert.match(block, /bearerToken\(req\)/);
+  assert.match(block, /findQuickAccessToken\(hashQuickAccessToken\(rawToken\)\)/);
+  assert.match(block, /processShortcutCapture\(\{/);
+  assert.match(block, /result\.state === "saved" && !result\.alreadySaved/);
+  assert.match(block, /return sendJson\(res, result\.replayed \? 200 : 201, result\)/);
+  assert.match(block, /ShortcutRequestInProgressError/);
+
+  assert.match(docs, /state=saved/);
+  assert.match(docs, /state=review/);
+  assert.match(docs, /same `clientRequestId`/);
+  assert.doesNotMatch(docs, /Display the returned draft preview and ask the user to confirm or cancel/);
+});
+
 function signInitData(params, botToken) {
   const data = new URLSearchParams(params);
   const checkString = [...data.entries()]
