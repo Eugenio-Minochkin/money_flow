@@ -14,9 +14,10 @@ import { confirmDraftForApi } from "./draftConfirmation.js";
 import { createExchangeRateProvider } from "./exchangeRates.js";
 import { createExpenseExportService } from "./expenseExportService.js";
 import { createExpenseParser } from "./expenseParser.js";
-import { createExpenseDraftFromText, createShortcutExpenseDraft, ExpenseTextNotRecognizedError, ShortcutRequestInProgressError } from "./expenseDraftService.js";
+import { createExpenseDraftFromText, ExpenseTextNotRecognizedError, ShortcutRequestInProgressError } from "./expenseDraftService.js";
 import { createQuickAccessToken, hashQuickAccessToken } from "./quickAccessService.js";
 import { processMiniAppQuickCapture } from "./quickCapture.js";
+import { processShortcutCapture } from "./shortcutCapture.js";
 import { previewSmartSaveRecovery, saveSmartSaveRecovery } from "./smartSaveRecovery.js";
 import { handleHealth } from "./health.js";
 import { createJsonReader, createStaticHandler, sendJson } from "./http.js";
@@ -611,12 +612,16 @@ async function route(req, res) {
     if (!user) return sendJson(res, 401, { error: "quick_access_unauthorized" });
     if (!isClientRequestId(body.clientRequestId)) return sendJson(res, 400, { error: "invalid_client_request_id" });
     try {
-      const result = await createShortcutExpenseDraft({ user, tokenId: user.token_id, clientRequestId: body.clientRequestId, text: body.text, expenseParser, repository });
+      const result = await processShortcutCapture({ user, tokenId: user.token_id, clientRequestId: body.clientRequestId, text: body.text, expenseParser, repository });
       if (!result) return sendJson(res, 401, { error: "quick_access_unauthorized" });
-      await repository.recordAppEvent?.(user.id, "quick_entry_submitted", { source: "ios_shortcut" });
-      return sendJson(res, result.replayed ? 200 : 201, { draft: result.draft, replayed: result.replayed });
+      if (!result.replayed) await repository.recordAppEvent?.(user.id, "quick_entry_submitted", { source: "ios_shortcut" });
+      if (result.state === "saved" && !result.alreadySaved) {
+        await repository.recordAppEvent?.(user.id, "quick_entry_confirmed", { source: "ios_shortcut" });
+      }
+      return sendJson(res, result.replayed ? 200 : 201, result);
     } catch (error) {
       if (error instanceof ExpenseTextNotRecognizedError) return sendJson(res, 422, { error: error.code });
+      if (error instanceof ShortcutRequestInProgressError) return sendJson(res, 409, { error: error.code });
       throw error;
     }
   }
