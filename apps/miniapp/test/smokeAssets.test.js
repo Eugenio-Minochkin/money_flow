@@ -1063,3 +1063,19 @@ test("Dashboard recovery disclosure previews and saves only Smart Save-safe draf
   assert.match(app, /draftIds:\s*recoveryState\.safeDraftIds/);
   assert.match(app, /if \(historyLoader\.hasStarted\(\)\) await loadHistory\(\)/);
 });
+
+test("History recovery renders one explicit batch block and one-at-a-time queue", async () => {
+  const html = await readFile(join(miniAppRoot, "index.html"), "utf8");
+  const app = await readFile(join(miniAppRoot, "app.js"), "utf8");
+
+  assert.match(html, /id="inboxSummary"/);
+  assert.match(html, /id="acceptReviewDraftsButton"/);
+  assert.match(html, /id="reviewDraftsOneByOneButton"/);
+  assert.match(app, /\/api\/drafts\/recovery-accept/);
+  assert.match(app, /reviewAcceptanceConfirmMessage/);
+  assert.match(app, /window\.confirm/);
+  assert.match(app, /historyReviewQueueIds/);
+  assert.match(app, /slice\(0, 1\)/);
+  assert.match(app, /button\.disabled = true/);
+  assert.match(app, /reviewAcceptanceErrorMessage/);
+});

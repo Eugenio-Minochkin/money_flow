@@ -38,9 +38,14 @@ import {
 import { createTranslator } from "./i18n.js";
 import { createEditModalController, runEditModalSave } from "./editModal.js";
 import {
-  inboxCountLabel,
   inboxDraftDescription,
   inboxDraftTotal,
+  reviewAcceptanceConfirmMessage,
+  reviewAcceptanceErrorMessage,
+  reviewAcceptancePrimaryAction,
+  reviewAcceptanceReviewAction,
+  reviewAcceptanceSummary,
+  reviewAcceptanceTitle,
   smartSaveRecoveryPrimaryAction,
   smartSaveRecoveryReviewAction,
   smartSaveRecoverySummary,
@@ -107,6 +112,8 @@ let draftReturnTab = "dashboard";
 let historyState = [];
 let inboxState = [];
 let recoveryState = { totalUnresolved: 0, safeCount: 0, reviewCount: 0, safeDraftIds: [], reviewDraftIds: [], drafts: [] };
+let historyReviewQueueIds = [];
+let historyReviewQueueTotal = 0;
 let historyFilterState = historyFilterFromLaunchParams(params);
 let historyCalendarDraft = null;
 let currentLanguage = "en";
@@ -551,6 +558,8 @@ void loadQuickAccessConfig().catch(() => {});
 document.querySelector("#openAllHistoryButton")?.addEventListener("click", () => switchTab("history"));
 document.querySelector("#saveSafeDraftsButton")?.addEventListener("click", () => void saveSafeRecoveryDrafts().catch(showError));
 document.querySelector("#reviewRecoveryDraftsButton")?.addEventListener("click", () => switchTab("history"));
+document.querySelector("#acceptReviewDraftsButton")?.addEventListener("click", () => void acceptReviewDraftsAsIs());
+document.querySelector("#reviewDraftsOneByOneButton")?.addEventListener("click", startHistoryReviewQueue);
 document.querySelectorAll("[data-export-period]").forEach((button) => {
   button.addEventListener("click", () => requestExpenseExport(button.dataset.exportPeriod));
 });
@@ -864,6 +873,45 @@ async function saveSafeRecoveryDrafts() {
   }
 }
 
+async function acceptReviewDraftsAsIs() {
+  const button = document.querySelector("#acceptReviewDraftsButton");
+  const draftIds = [...(recoveryState.acceptDraftIds ?? [])];
+  const itemCount = Number(recoveryState.acceptItemCount ?? 0);
+  if (!draftIds.length || button?.disabled) return;
+  if (!window.confirm(reviewAcceptanceConfirmMessage(itemCount, currentLanguage))) return;
+  button.disabled = true;
+  button.setAttribute("aria-busy", "true");
+  try {
+    const result = await api("/api/drafts/recovery-accept", {
+      method: "POST",
+      body: { telegramUserId, draftIds }
+    });
+    const savedItems = (result.results ?? [])
+      .filter((item) => ["saved", "already_saved"].includes(item.state))
+      .reduce((sum, item) => sum + (item.expenses?.length ?? 0), 0);
+    const unresolved = (result.results ?? []).filter((item) => ["review", "error"].includes(item.state)).length;
+    await loadDashboard();
+    await loadHistory();
+    const message = currentLanguage === "ru"
+      ? `Сохранено ${savedItems}${unresolved ? ` · ${unresolved} требует исправления` : ""}`
+      : `Saved ${savedItems}${unresolved ? ` · ${unresolved} need changes` : ""}`;
+    showToast(message);
+  } catch (error) {
+    console.error("[miniapp] review batch acceptance failed", error);
+    showToast(reviewAcceptanceErrorMessage(error, currentLanguage));
+  } finally {
+    button.disabled = false;
+    button.removeAttribute("aria-busy");
+  }
+}
+
+function startHistoryReviewQueue() {
+  const requiresInput = recoveryState.requiresInputDraftIds ?? [];
+  historyReviewQueueIds = [...(requiresInput.length ? requiresInput : (recoveryState.drafts ?? []).map((draft) => draft.id))].map(String);
+  historyReviewQueueTotal = historyReviewQueueIds.length;
+  renderInboxDrafts(recoveryState);
+}
+
 async function performHistoryLoad() {
   if (accountDeleted) return;
   markStartup("history_request_start");
@@ -878,7 +926,7 @@ async function performHistoryLoad() {
   recoveryState = inbox;
   inboxState = inbox.drafts ?? [];
   renderDashboardInboxDrafts(recoveryState);
-  renderInboxDrafts(inboxState);
+  renderInboxDrafts(recoveryState);
   renderHistory(historyState);
   renderHistoryPeriodSummary(historyState);
   renderHistoryAnalytics(historyState);
@@ -1735,22 +1783,46 @@ function renderHistory(expenses) {
   bindExpenseActions(list, expenses);
 }
 
-function renderInboxDrafts(drafts) {
+function renderInboxDrafts(previewState) {
+  const drafts = previewState?.drafts ?? [];
   const block = document.querySelector("#inboxBlock");
   const list = document.querySelector("#inboxDrafts");
   const title = document.querySelector("#inboxTitle");
+  const summary = document.querySelector("#inboxSummary");
+  const acceptButton = document.querySelector("#acceptReviewDraftsButton");
+  const reviewButton = document.querySelector("#reviewDraftsOneByOneButton");
   if (!drafts.length) {
     block.classList.add("hidden");
     list.innerHTML = "";
+    historyReviewQueueIds = [];
+    historyReviewQueueTotal = 0;
     return;
   }
   block.classList.remove("hidden");
-  title.textContent = inboxCountLabel(drafts.length, currentLanguage);
-  list.innerHTML = drafts.map((draft) => {
+  title.textContent = reviewAcceptanceTitle(previewState, currentLanguage);
+  summary.textContent = reviewAcceptanceSummary(previewState, currentLanguage);
+  acceptButton.textContent = reviewAcceptancePrimaryAction(previewState.acceptItemCount, currentLanguage);
+  acceptButton.classList.toggle("hidden", !previewState.acceptItemCount);
+  reviewButton.textContent = reviewAcceptanceReviewAction(previewState, currentLanguage);
+
+  const currentIds = new Set(drafts.map((draft) => String(draft.id)));
+  historyReviewQueueIds = historyReviewQueueIds.filter((id) => currentIds.has(String(id)));
+  const queueDrafts = historyReviewQueueIds
+    .map((id) => drafts.find((draft) => String(draft.id) === String(id)))
+    .filter(Boolean);
+  if (!queueDrafts.length) {
+    list.classList.add("hidden");
+    list.innerHTML = "";
+    return;
+  }
+  const progress = Math.max(1, historyReviewQueueTotal - queueDrafts.length + 1);
+  list.classList.remove("hidden");
+  list.innerHTML = queueDrafts.slice(0, 1).map((draft) => {
     const total = inboxDraftTotal(draft);
     const description = inboxDraftDescription(draft);
     return `
-      <article class="expense-row" style="--category-color: #b84d7a">
+      <div class="history-review-progress">${currentLanguage === "ru" ? `${progress} из ${historyReviewQueueTotal}` : `${progress} of ${historyReviewQueueTotal}`}</div>
+      <article class="expense-row inbox-draft-row" data-inbox-location="history" data-draft-row="${draft.id}" style="--category-color: #b84d7a">
         <div class="expense-main">
           <div class="expense-title">${escapeHtml(description)}</div>
           <div class="expense-meta">${formatDate(draft.created_at, currentLanguage, userTimeZone())} · ${draft.items.length} ${t("history.rows")} · ${moneyBase(total)}</div>
@@ -1842,37 +1914,75 @@ function inboxCategoryButtons(draft) {
 function bindInboxActions(container) {
   container.querySelectorAll("[data-open-draft]").forEach((button) => {
     button.addEventListener("click", async () => {
-      const row = button.closest(".expense-row");
-      await openDraftInline(button.dataset.openDraft, {
-        returnTab: row?.dataset.inboxLocation ?? "history",
-        row
-      });
+      if (button.disabled) return;
+      button.disabled = true;
+      try {
+        const row = button.closest(".expense-row");
+        await openDraftInline(button.dataset.openDraft, {
+          returnTab: row?.dataset.inboxLocation ?? "history",
+          row
+        });
+      } catch (error) {
+        console.error("[miniapp] opening review draft failed", error);
+        showToast(reviewAcceptanceErrorMessage(error, currentLanguage));
+      } finally {
+        button.disabled = false;
+      }
     });
   });
   container.querySelectorAll("[data-confirm-draft]").forEach((button) => {
     button.addEventListener("click", async () => {
-      await api(`/api/drafts/${button.dataset.confirmDraft}/confirm`, { method: "POST", body: { telegramUserId } });
-      await loadDashboard();
-      await loadHistory();
-      showToast(t("toast.draftConfirmed"));
+      if (button.disabled) return;
+      button.disabled = true;
+      button.setAttribute("aria-busy", "true");
+      try {
+        await api(`/api/drafts/${button.dataset.confirmDraft}/confirm`, { method: "POST", body: { telegramUserId } });
+        await loadDashboard();
+        await loadHistory();
+        showToast(t("toast.draftConfirmed"));
+      } catch (error) {
+        console.error("[miniapp] confirming review draft failed", error);
+        showToast(reviewAcceptanceErrorMessage(error, currentLanguage));
+      } finally {
+        button.disabled = false;
+        button.removeAttribute("aria-busy");
+      }
     });
   });
   container.querySelectorAll("[data-inbox-category]").forEach((button) => {
     button.addEventListener("click", async () => {
-      const draft = inboxState.find((item) => String(item.id) === button.dataset.inboxDraft);
-      if (!draft) return;
-      const items = updateFirstInboxItemCategory(draft, button.dataset.inboxCategory);
-      await api(`/api/drafts/${draft.id}`, { method: "PATCH", body: { telegramUserId, items } });
-      await loadHistory();
-      showToast(t("toast.categoryUpdated"));
+      if (button.disabled) return;
+      button.disabled = true;
+      try {
+        const draft = inboxState.find((item) => String(item.id) === button.dataset.inboxDraft);
+        if (!draft) return;
+        const items = updateFirstInboxItemCategory(draft, button.dataset.inboxCategory);
+        await api(`/api/drafts/${draft.id}`, { method: "PATCH", body: { telegramUserId, items } });
+        await loadHistory();
+        showToast(t("toast.categoryUpdated"));
+      } catch (error) {
+        console.error("[miniapp] updating review category failed", error);
+        showToast(reviewAcceptanceErrorMessage(error, currentLanguage));
+      } finally {
+        button.disabled = false;
+      }
     });
   });
   container.querySelectorAll("[data-cancel-draft]").forEach((button) => {
     button.addEventListener("click", async () => {
-      if (!window.confirm(t("confirmations.closeWithoutSaving"))) return;
-      await api(`/api/drafts/${button.dataset.cancelDraft}`, { method: "DELETE", body: { telegramUserId } });
-      await loadHistory();
-      showToast(t("toast.draftCanceled"));
+      if (button.disabled || !window.confirm(t("confirmations.closeWithoutSaving"))) return;
+      button.disabled = true;
+      try {
+        await api(`/api/drafts/${button.dataset.cancelDraft}`, { method: "DELETE", body: { telegramUserId } });
+        await loadDashboard();
+        await loadHistory();
+        showToast(t("toast.draftCanceled"));
+      } catch (error) {
+        console.error("[miniapp] cancelling review draft failed", error);
+        showToast(reviewAcceptanceErrorMessage(error, currentLanguage));
+      } finally {
+        button.disabled = false;
+      }
     });
   });
 }
@@ -2965,7 +3075,7 @@ function rerenderDashboardLanguageState() {
   renderPlannedExpenses(plannedExpenses);
   renderLatest(dashboardState.latestExpenses ?? []);
   renderDashboardInboxDrafts(recoveryState);
-  renderInboxDrafts(inboxState);
+  renderInboxDrafts(recoveryState);
 }
 
 function applyTheme(theme) {

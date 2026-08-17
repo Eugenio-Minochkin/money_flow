@@ -12,7 +12,7 @@ export async function confirmDraftForApi({
   telegramClient,
   logger = console
 }) {
-  const result = await repository.saveDraftAsExpense(draftId, telegramUserId);
+  const result = await repository.confirmDraftWithExplicitAcceptance(draftId, telegramUserId);
   const draft = await repository.getDraftForTelegramUser(draftId, telegramUserId);
   if (draft?.tg_chat_id && draft?.tg_message_id) {
     const total = result.expenses.reduce((sum, expense) => sum + Number(expense.amount_base), 0);

@@ -18,7 +18,7 @@ import { createExpenseDraftFromText, ExpenseTextNotRecognizedError, ShortcutRequ
 import { createQuickAccessToken, hashQuickAccessToken } from "./quickAccessService.js";
 import { processMiniAppQuickCapture } from "./quickCapture.js";
 import { processShortcutCapture } from "./shortcutCapture.js";
-import { previewSmartSaveRecovery, saveSmartSaveRecovery } from "./smartSaveRecovery.js";
+import { acceptReviewRecovery, previewSmartSaveRecovery, saveSmartSaveRecovery } from "./smartSaveRecovery.js";
 import { handleHealth } from "./health.js";
 import { createJsonReader, createStaticHandler, sendJson } from "./http.js";
 import { handleDevRoute } from "./devRoutes.js";
@@ -30,7 +30,7 @@ import { createReleaseNotesService } from "./releaseNotesService.js";
 import { createReportScheduler } from "./reportScheduler.js";
 import { createReportService } from "./reportService.js";
 import { readAppRevision } from "./revision.js";
-import { DraftCanceledError, CategoryRequiredError, createRepository } from "./repository.js";
+import { DraftCanceledError, CategoryRequiredError, DraftNotFoundError, createRepository } from "./repository.js";
 import { shouldRateLimitRequest } from "./routing.js";
 import { createStartupTiming } from "./startupTiming.js";
 import {
@@ -351,6 +351,21 @@ function accountDeletionErrorStatus(error) {
   return null;
 }
 
+function draftConfirmErrorResponse(error) {
+  if (error instanceof DraftCanceledError) return { statusCode: 409, error: "draft_canceled" };
+  if (error instanceof DraftNotFoundError) return { statusCode: 404, error: "draft_not_found" };
+  if (error instanceof CategoryRequiredError) return { statusCode: 422, error: "category_required" };
+  if (error?.code === "expense_source_month_closed") return { statusCode: 409, error: error.code };
+  if ([
+    "expense_invalid_amount",
+    "expense_invalid_currency",
+    "expense_invalid_date",
+    "expense_future_date",
+    "expense_operation_not_supported"
+  ].includes(error?.code)) return { statusCode: 422, error: error.code };
+  return null;
+}
+
 async function route(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);
   if (await handleDevRoute({ req, res, url, readJson, repository, createBot, serveStatic })) {
@@ -516,6 +531,19 @@ async function route(req, res) {
     return sendJson(res, 200, result);
   }
 
+  if (req.method === "POST" && url.pathname === "/api/drafts/recovery-accept") {
+    const body = await readJson(req);
+    const auth = apiSecurity.resolveTelegramUserId(req, url, body);
+    if (auth.error) return sendJson(res, 400, { error: auth.error });
+    const result = await acceptReviewRecovery({
+      telegramUserId: auth.telegramUserId,
+      draftIds: body.draftIds,
+      repository
+    });
+    if (!result) return sendJson(res, 404, { error: "user_not_found" });
+    return sendJson(res, 200, result);
+  }
+
   if (req.method === "POST" && url.pathname === "/api/quick-entry") {
     const body = await readJson(req);
     const auth = apiSecurity.resolveTelegramUserId(req, url, body);
@@ -636,12 +664,12 @@ async function route(req, res) {
     const draft = await repository.getDraftForTelegramUser(draftId, user.telegram_user_id);
     if (!draft) return sendJson(res, 404, { error: "draft_not_found" });
     try {
-      const result = await repository.saveDraftAsExpense(draftId, user.telegram_user_id);
+      const result = await repository.confirmDraftWithExplicitAcceptance(draftId, user.telegram_user_id);
       await repository.recordAppEvent?.(user.id, "quick_entry_confirmed", { source: "ios_shortcut" });
       return sendJson(res, 200, result);
     } catch (error) {
-      if (error instanceof DraftCanceledError) return sendJson(res, 409, { error: "draft_canceled" });
-      if (error instanceof CategoryRequiredError) return sendJson(res, 422, { error: "category_required" });
+      const response = draftConfirmErrorResponse(error);
+      if (response) return sendJson(res, response.statusCode, { error: response.error });
       throw error;
     }
   }
@@ -1036,8 +1064,8 @@ async function route(req, res) {
         });
         return sendJson(res, response.statusCode, response.body);
       } catch (error) {
-        if (error instanceof DraftCanceledError) return sendJson(res, 409, { error: "draft_canceled" });
-        if (error instanceof CategoryRequiredError) return sendJson(res, 422, { error: "category_required" });
+        const response = draftConfirmErrorResponse(error);
+        if (response) return sendJson(res, response.statusCode, { error: response.error });
         throw error;
       }
     }

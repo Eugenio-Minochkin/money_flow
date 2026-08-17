@@ -2107,7 +2107,7 @@ async function handleConfirmDraft(trace, token, telegramClient, callback, draftI
   const dbSaveStartedAt = performance.now();
   let dbSaveMs = null;
   try {
-    result = await repository.saveDraftAsExpense(draftId, telegramUserId);
+    result = await repository.confirmDraftWithExplicitAcceptance(draftId, telegramUserId);
     dbSaveMs = elapsedSince(dbSaveStartedAt);
     outcome = result.alreadySaved ? "already_saved" : "success";
     trace.end("db_save");
@@ -2116,6 +2116,12 @@ async function handleConfirmDraft(trace, token, telegramClient, callback, draftI
     trace.end("db_save", {}, false, error);
     if (error instanceof DraftCanceledError) outcome = "cancelled";
     else if (error instanceof CategoryRequiredError) outcome = "category_required";
+    else if (error?.code === "expense_source_month_closed") outcome = "closed_month";
+    else if (error?.code === "expense_invalid_amount") outcome = "invalid_amount";
+    else if (error?.code === "expense_invalid_currency") outcome = "invalid_currency";
+    else if (error?.code === "expense_invalid_date") outcome = "invalid_date";
+    else if (error?.code === "expense_future_date") outcome = "future_date";
+    else if (error?.code === "expense_operation_not_supported") outcome = "unsupported_operation";
     else {
       outcome = "failed";
       persistenceError = error;
@@ -2140,7 +2146,16 @@ async function handleConfirmDraft(trace, token, telegramClient, callback, draftI
     text = botText(language, "draftCanceledMessage");
     replyMarkup = { inline_keyboard: [] };
   } else {
-    text = botText(language, outcome === "category_required" ? "chooseCategoryAlert" : "draftSaveFailed");
+    const errorTextKeys = {
+      category_required: "chooseCategoryAlert",
+      closed_month: "draftClosedMonth",
+      invalid_amount: "draftInvalidAmount",
+      invalid_currency: "draftInvalidCurrency",
+      invalid_date: "draftInvalidDate",
+      future_date: "draftFutureDate",
+      unsupported_operation: "draftUnsupportedOperation"
+    };
+    text = botText(language, errorTextKeys[outcome] ?? "draftSaveFailed");
   }
 
   const terminal = await sendConfirmDraftTerminalResponse({
@@ -2199,12 +2214,13 @@ async function handleConfirmDraft(trace, token, telegramClient, callback, draftI
 
 async function sendConfirmDraftTerminalResponse({ trace, outcome, token, telegramClient, chatId, messageId, text, replyMarkup }) {
   const startedAt = performance.now();
-  let telegramUpdateMode = outcome === "category_required" || outcome === "failed" ? "send" : "edit";
+  const keepDraftActive = !["success", "already_saved", "cancelled"].includes(outcome);
+  let telegramUpdateMode = keepDraftActive ? "send" : "edit";
   let telegramUpdateSucceeded = false;
   let terminalError = null;
   try {
     await sendTelegramResponse(trace, async () => {
-      if (outcome === "category_required" || outcome === "failed") {
+      if (keepDraftActive) {
         await sendMessage(token, chatId, text, null, telegramClient);
         return;
       }
@@ -3460,6 +3476,12 @@ function botText(language, key, values = {}) {
       expenseProcessing: `<tg-emoji emoji-id="${EXPENSE_PROCESSING_CUSTOM_EMOJI_ID}">🎲</tg-emoji> Заношу расход…`,
       draftSavingCallback: "Сохраняю…",
       draftSaveFailed: "⚠️ Не удалось сохранить расход. Попробуйте ещё раз.",
+      draftClosedMonth: "⚠️ Этот месяц уже закрыт. Расход не сохранён.",
+      draftInvalidAmount: "⚠️ Проверьте сумму расхода и попробуйте снова.",
+      draftInvalidCurrency: "⚠️ Выберите поддерживаемую валюту и попробуйте снова.",
+      draftInvalidDate: "⚠️ Проверьте дату расхода и попробуйте снова.",
+      draftFutureDate: "⚠️ Нельзя сохранить расход с будущей датой.",
+      draftUnsupportedOperation: "⚠️ Эту операцию нельзя сохранить как обычный расход.",
       movedCallback: "Перенесено",
       movedToInbox: "Перенес в Inbox. Можно разобрать позже в Mini App.",
       openMiniApp: "Открыть Mini App:",
@@ -3512,6 +3534,12 @@ function botText(language, key, values = {}) {
       expenseProcessing: `<tg-emoji emoji-id="${EXPENSE_PROCESSING_CUSTOM_EMOJI_ID}">🎲</tg-emoji> Adding expense…`,
       draftSavingCallback: "Saving…",
       draftSaveFailed: "⚠️ Could not save this expense. Please try again.",
+      draftClosedMonth: "⚠️ This month is already closed. The expense was not saved.",
+      draftInvalidAmount: "⚠️ Check the expense amount and try again.",
+      draftInvalidCurrency: "⚠️ Choose a supported currency and try again.",
+      draftInvalidDate: "⚠️ Check the expense date and try again.",
+      draftFutureDate: "⚠️ An expense with a future date cannot be saved.",
+      draftUnsupportedOperation: "⚠️ This operation cannot be saved as a regular expense.",
       movedCallback: "Moved",
       movedToInbox: "Moved to Inbox. You can review it later in Mini App.",
       openMiniApp: "Open Mini App:",

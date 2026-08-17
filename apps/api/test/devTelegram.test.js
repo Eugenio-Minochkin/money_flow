@@ -104,6 +104,9 @@ function fakeRepository() {
       this.confirmedDraftId = draftId;
       return { expenses: [{ id: 91, amount_base: 70, category_slug: "food_cafe", description: "coffee" }], dashboardSnapshot: (await this.dashboard()).snapshot, alreadySaved: false };
     },
+    async confirmDraftWithExplicitAcceptance(draftId) {
+      return this.saveDraftAsExpense(draftId);
+    },
     async dashboard() {
       return {
         snapshot: {

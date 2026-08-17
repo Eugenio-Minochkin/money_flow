@@ -6586,7 +6586,7 @@ function fakeConfirmClient({ draftRow, onQuery = () => {} }) {
   return {
     async query(sql, params = []) {
       const query = String(sql);
-      onQuery(query);
+      onQuery(query, params);
       if (query === "BEGIN" || query === "COMMIT" || query === "ROLLBACK") return { rows: [] };
       if (query.includes("FOR UPDATE")) return { rows: [draftRow] };
       if (query.includes("INSERT INTO expenses")) return { rows: [{ id: 100, draft_id: draftRow.id, amount_base: params[3] ?? 80 }] };
@@ -6883,6 +6883,68 @@ test("saveDraftAsExpense blocks parser-provided other even if needs_review is ac
 
   await assert.rejects(() => repo.saveDraftAsExpense(7, 100), (err) => err instanceof CategoryRequiredError);
   assert.ok(!queries.some((q) => q.includes("INSERT INTO expenses")));
+});
+
+test("confirmDraftWithExplicitAcceptance accepts current parser categories atomically and preserves historical dates", async () => {
+  const { createRepository } = await import("../src/repository.js");
+  const queries = [];
+  const draftRow = {
+    id: 7, user_id: 1, status: "inbox", base_currency: "THB", timezone: "Asia/Bangkok",
+    items: [
+      { amount: 170000, currency: "IDR", description: "breakfast", category_slug: "food_cafe", category_source: "parser", needs_review: true, budget_impact: "regular", tags: [], spent_at: "2026-08-03T04:00:00.000Z" },
+      { amount: 220000, currency: "IDR", description: "shop", category_slug: "other", category_source: "parser", needs_review: true, budget_impact: "regular", tags: [], spent_at: "2026-07-20T04:00:00.000Z" }
+    ]
+  };
+  const client = fakeConfirmClient({ draftRow, onQuery: (sql, params) => queries.push({ sql, params }) });
+  const repo = createRepository({ ...fakePool(() => ({ rows: [] })), async connect() { return client; } });
+  repo.dashboard = async () => ({ snapshot: { baseCurrency: "THB" } });
+
+  const result = await repo.confirmDraftWithExplicitAcceptance(7, 100, { now: new Date("2026-08-17T00:00:00.000Z") });
+
+  assert.equal(result.alreadySaved, false);
+  assert.equal(result.expenses.length, 2);
+  const acceptedUpdate = queries.find(({ sql }) => sql.includes("UPDATE drafts") && sql.includes("items ="));
+  const acceptedItems = JSON.parse(acceptedUpdate.params[0]);
+  assert.deepEqual(acceptedItems.map((item) => [item.category_slug, item.category_source, item.needs_review]), [
+    ["food_cafe", "user", false],
+    ["other", "user", false]
+  ]);
+  const inserts = queries.filter(({ sql }) => sql.includes("INSERT INTO expenses"));
+  assert.deepEqual(inserts.map(({ params }) => new Date(params[12]).toISOString()), [
+    "2026-08-03T04:00:00.000Z",
+    "2026-07-20T04:00:00.000Z"
+  ]);
+  assert.ok(queries.findIndex(({ sql }) => sql.includes("items =")) < queries.findIndex(({ sql }) => sql.includes("INSERT INTO expenses")));
+});
+
+test("confirmDraftWithExplicitAcceptance rejects invalid category and financial inputs", async (t) => {
+  const { createRepository, CategoryRequiredError } = await import("../src/repository.js");
+  const validItem = { amount: 80, currency: "THB", description: "coffee", category_slug: "food_cafe", category_source: "parser", needs_review: true, budget_impact: "regular", tags: [], spent_at: "2026-08-03T04:00:00.000Z" };
+  const cases = [
+    ["missing category", { category_slug: null }, (error) => error instanceof CategoryRequiredError],
+    ["unknown category", { category_slug: "not_real" }, (error) => error instanceof CategoryRequiredError],
+    ["zero amount", { amount: 0 }, (error) => error.code === "expense_invalid_amount"],
+    ["negative amount", { amount: -1 }, (error) => error.code === "expense_invalid_amount"],
+    ["unsupported currency", { currency: "XXX" }, (error) => error.code === "expense_invalid_currency"],
+    ["invalid date", { spent_at: "not-a-date" }, (error) => error.code === "expense_invalid_date"],
+    ["future date", { spent_at: "2026-08-18T04:00:00.000Z" }, (error) => error.code === "expense_future_date"]
+  ];
+
+  for (const [name, patch, expected] of cases) {
+    await t.test(name, async () => {
+      const queries = [];
+      const client = fakeConfirmClient({
+        draftRow: { id: 7, user_id: 1, status: "pending", base_currency: "THB", timezone: "Asia/Bangkok", items: [{ ...validItem, ...patch }] },
+        onQuery: (sql) => queries.push(sql)
+      });
+      const repo = createRepository({ ...fakePool(() => ({ rows: [] })), async connect() { return client; } });
+      await assert.rejects(
+        () => repo.confirmDraftWithExplicitAcceptance(7, 100, { now: new Date("2026-08-17T00:00:00.000Z") }),
+        expected
+      );
+      assert.ok(!queries.some((sql) => sql.includes("INSERT INTO expenses")));
+    });
+  }
 });
 
 test("saveDraftAsExpense refuses to write an expense into a closed reserve month", async () => {

@@ -5,9 +5,11 @@ import { confirmDraftForApi } from "../src/draftConfirmation.js";
 
 test("API draft confirmation returns saved expenses when the dashboard snapshot is unavailable", async () => {
   const messageUpdates = [];
+  let explicitConfirmCalls = 0;
   const result = await confirmDraftForApi({
     repository: {
-      async saveDraftAsExpense() {
+      async confirmDraftWithExplicitAcceptance() {
+        explicitConfirmCalls += 1;
         return { expenses: [{ id: 1, amount_original: 80, currency_original: "THB", amount_base: 80, category_slug: "food_cafe", description: "coffee" }], dashboardSnapshot: null, alreadySaved: false };
       },
       async getDraftForTelegramUser() {
@@ -25,6 +27,7 @@ test("API draft confirmation returns saved expenses when the dashboard snapshot 
   });
 
   assert.equal(result.statusCode, 200);
+  assert.equal(explicitConfirmCalls, 1);
   assert.deepEqual(result.body, {
     expenses: [{ id: 1, amount_original: 80, currency_original: "THB", amount_base: 80, category_slug: "food_cafe", description: "coffee" }],
     dashboardSnapshot: null,

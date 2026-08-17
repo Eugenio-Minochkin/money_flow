@@ -81,6 +81,7 @@ The suite refuses to run unless `DATABASE_URL` points at localhost/127.0.0.1 and
 - new Telegram user persistence and defaults;
 - confirmed draft expense save/read;
 - Telegram capture replay plus mixed Smart Save recovery, including ambiguous and closed-month drafts, repeat mutation, and preserved historical dates;
+- explicit review acceptance for parser `needs_review`, parser `other`, historical multi-currency dates, batch retry/concurrency, and draft/item recovery counts without weakening strict Smart Save;
 - dashboard budget summary over real rows;
 - planned payment create/list/pay/undo/deactivate/archive/recreate/reminder state, including migrations `011`–`013`, `disabled_at`, nullable `starts_on`, durable exact-occurrence delivery and snooze, exact payment-link undo with closed-month rollback and idempotent retry, transactional and idempotent disable, archive aggregates, independent recreate with transaction-client reserve validation, preserved paid history, PostgreSQL calendar-date semantics, same-day snapshot stability, immediate live month recalculation, and next-local-day snapshot creation;
 - reserve create/read through dashboard state;

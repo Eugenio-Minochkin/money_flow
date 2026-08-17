@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { previewSmartSaveRecovery, saveSmartSaveRecovery } from "../src/smartSaveRecovery.js";
+import { acceptReviewRecovery, previewSmartSaveRecovery, saveSmartSaveRecovery } from "../src/smartSaveRecovery.js";
+import { CategoryRequiredError } from "../src/repository.js";
 
 const safeItem = (description, spentAt = "2026-08-10T08:00:00.000Z") => ({
   amount: 100,
@@ -39,7 +40,50 @@ test("recovery preview counts every pending and inbox draft and separates safe f
   assert.equal(preview.reviewCount, 4);
   assert.deepEqual(preview.safeDraftIds, [1, 2, 3, 4, 5, 6, 7, 8]);
   assert.deepEqual(preview.reviewDraftIds, [9, 10, 11, 12]);
+  assert.equal(preview.draftCount, 12);
+  assert.equal(preview.itemCount, 13);
+  assert.deepEqual(preview.acceptDraftIds, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+  assert.equal(preview.acceptDraftCount, 11);
+  assert.equal(preview.acceptItemCount, 12);
+  assert.equal(preview.requiresInputDraftCount, 1);
+  assert.equal(preview.requiresInputItemCount, 1);
   assert.equal(preview.drafts.length, 12);
+});
+
+test("explicit recovery acceptance returns partial per-draft outcomes without weakening strict recovery", async () => {
+  const calls = [];
+  const errors = new Map([
+    [3, Object.assign(new Error("closed"), { code: "expense_source_month_closed" })],
+    [4, new CategoryRequiredError()],
+    [5, new Error("database unavailable")]
+  ]);
+  const repository = {
+    async getUserByTelegramId() { return { id: 1, telegram_user_id: 100 }; },
+    async confirmDraftWithExplicitAcceptance(id) {
+      calls.push(id);
+      if (errors.has(id)) throw errors.get(id);
+      return { alreadySaved: id === 2, expenses: [{ id: id * 10, draft_id: id }] };
+    }
+  };
+
+  const result = await acceptReviewRecovery({
+    telegramUserId: 100,
+    draftIds: [1, 2, 3, 4, 5, 1, "bad"],
+    repository
+  });
+
+  assert.deepEqual(calls, [1, 2, 3, 4, 5]);
+  assert.equal(result.savedCount, 1);
+  assert.equal(result.alreadySavedCount, 1);
+  assert.equal(result.reviewCount, 2);
+  assert.equal(result.errorCount, 1);
+  assert.deepEqual(result.results.map(({ draftId, state, reason }) => ({ draftId, state, reason })), [
+    { draftId: 1, state: "saved", reason: undefined },
+    { draftId: 2, state: "already_saved", reason: undefined },
+    { draftId: 3, state: "review", reason: "closed_month" },
+    { draftId: 4, state: "review", reason: "category_required" },
+    { draftId: 5, state: "error", reason: "save_failed" }
+  ]);
 });
 
 test("recovery mutation re-reads and reclassifies every member before canonical save", async () => {
