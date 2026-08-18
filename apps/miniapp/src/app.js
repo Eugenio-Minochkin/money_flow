@@ -204,8 +204,8 @@ if (window.Telegram?.WebApp) {
   webApp.onEvent?.("fullscreenChanged", disableTelegramVerticalSwipes);
   webApp.onEvent?.("themeChanged", syncMiniAppThemeBackground);
   if (shouldRequestTelegramFullscreen(webApp.platform)) {
-  try { webApp.requestFullscreen?.(); } catch { /* expand remains the fallback */ }
-}
+    try { webApp.requestFullscreen?.(); } catch { /* expand remains the fallback */ }
+  }
 }
 syncMiniAppThemeBackground();
 
