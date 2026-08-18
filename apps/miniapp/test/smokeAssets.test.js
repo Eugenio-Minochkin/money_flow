@@ -23,7 +23,7 @@ test("Mini App keeps app.js and styles.css cache-busters in sync", async () => {
   assert.ok(appVersion, "index.html should version app.js with a ?v= query");
   assert.ok(cssVersion, "index.html should version styles.css with a ?v= query");
   assert.equal(appVersion, cssVersion, "app.js and styles.css cache-busters must stay in sync");
-  assert.equal(appVersion, "20260814-bundle-v5");
+  assert.equal(appVersion, "20260818-desktop-window-v1");
   assert.notEqual(appVersion, "20260626-dashboard-v12", "app.js must not keep the stale dashboard-v12 cache-buster");
 });
 
@@ -54,9 +54,9 @@ test("Mini App starts CSS and module fetches before the blocking Telegram SDK", 
   const html = await readFile(join(miniAppRoot, "index.html"), "utf8");
   const telegramSdk = html.indexOf('<script src="https://telegram.org/js/telegram-web-app.js"');
   const preconnect = html.indexOf('<link rel="preconnect" href="https://telegram.org"');
-  const stylesheet = html.indexOf('<link rel="stylesheet" href="/styles.css?v=20260814-bundle-v5"');
-  const modulePreload = html.indexOf('<link rel="modulepreload" href="/app.js?v=20260814-bundle-v5"');
-  const appExecution = html.indexOf('<script src="/app.js?v=20260814-bundle-v5" type="module">');
+  const stylesheet = html.indexOf('<link rel="stylesheet" href="/styles.css?v=20260818-desktop-window-v1"');
+  const modulePreload = html.indexOf('<link rel="modulepreload" href="/app.js?v=20260818-desktop-window-v1"');
+  const appExecution = html.indexOf('<script src="/app.js?v=20260818-desktop-window-v1" type="module">');
 
   assert.ok(preconnect >= 0 && preconnect < telegramSdk);
   assert.ok(stylesheet >= 0 && stylesheet < telegramSdk);
@@ -97,6 +97,11 @@ test("fullscreen keeps the hero content below Telegram controls and disables ver
   const app = await readFile(join(miniAppRoot, "app.js"), "utf8");
   const css = await readFile(join(miniAppRoot, "styles.css"), "utf8");
 
+  assert.match(app, /from "\.\/telegramPlatform\.js"/);
+const fullscreenGuard = app.indexOf("if (shouldRequestTelegramFullscreen(webApp.platform))");
+const fullscreenRequest = app.indexOf("webApp.requestFullscreen?.()");
+assert.ok(fullscreenGuard >= 0 && fullscreenRequest > fullscreenGuard, "fullscreen request must be guarded by Telegram mobile platform");
+assert.equal((app.match(/webApp\.requestFullscreen\?\.\(\)/g) ?? []).length, 1);
   assert.match(app, /function syncFullscreenControlSafeArea\(\)/);
   assert.match(app, /webApp\.onEvent\?\.\("fullscreenChanged",\s*syncFullscreenControlSafeArea\)/);
   assert.match(app, /webApp\.onEvent\?\.\("contentSafeAreaChanged",\s*syncFullscreenControlSafeArea\)/);
