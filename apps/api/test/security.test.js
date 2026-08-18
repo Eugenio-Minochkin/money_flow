@@ -208,13 +208,14 @@ test("dashboard route delegates verified launches to the Mini App launch service
   assert.match(block, /catch \(error\)[^]*?timing\.finish\(\{ route: "\/api\/dashboard", status: error\.statusCode \?\? 500 \}\)/);
 });
 
-test("Smart Save recovery routes use Telegram-scoped authentication", async () => {
+test("Smart Save and explicit acceptance recovery routes use Telegram-scoped authentication", async () => {
   const source = await readFile(new URL("../src/server.js", import.meta.url), "utf8");
-  for (const path of ["/api/drafts/recovery-preview", "/api/drafts/recovery-save"]) {
+  for (const path of ["/api/drafts/recovery-preview", "/api/drafts/recovery-save", "/api/drafts/recovery-accept"]) {
     const block = endpointBlock(source, path);
     assert.match(block, /apiSecurity\.resolveTelegramUserId\(req, url/);
   }
   assert.match(endpointBlock(source, "/api/drafts/recovery-save"), /saveSmartSaveRecovery/);
+  assert.match(endpointBlock(source, "/api/drafts/recovery-accept"), /acceptReviewRecovery/);
 });
 
 test("client startup timing route requires verified Mini App auth and logs only sanitized timings", async () => {
@@ -560,6 +561,21 @@ test("Shortcut expense route keeps bearer auth and returns explicit Smart Save s
   assert.match(docs, /state=review/);
   assert.match(docs, /same `clientRequestId`/);
   assert.doesNotMatch(docs, /Display the returned draft preview and ask the user to confirm or cancel/);
+});
+
+test("human confirmation routes share explicit acceptance and stable financial error codes", async () => {
+  const source = await readFile(new URL("../src/server.js", import.meta.url), "utf8");
+
+  assert.match(source, /shortcutConfirmMatch[\s\S]*confirmDraftWithExplicitAcceptance\(draftId, user\.telegram_user_id\)/);
+  assert.match(source, /confirmDraftForApi\(\{/);
+  for (const code of [
+    "expense_invalid_amount",
+    "expense_invalid_currency",
+    "expense_invalid_date",
+    "expense_future_date",
+    "expense_operation_not_supported",
+    "expense_source_month_closed"
+  ]) assert.match(source, new RegExp(code));
 });
 
 function signInitData(params, botToken) {

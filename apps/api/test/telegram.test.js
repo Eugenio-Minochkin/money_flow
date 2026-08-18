@@ -1561,6 +1561,48 @@ test("confirm callback saves draft and returns an informative summary", async ()
   }
 });
 
+test("legacy Telegram confirmation uses explicit acceptance for review and multi-item drafts", async () => {
+  const repo = fakeRepository();
+  let explicitDraftId = null;
+  repo.confirmDraftWithExplicitAcceptance = async (draftId) => {
+    explicitDraftId = draftId;
+    return {
+      expenses: [
+        { id: 71, amount_base: 75, amount_original: 75, currency_original: "THB", category_slug: "food_cafe", description: "breakfast" },
+        { id: 72, amount_base: 125, amount_original: 125, currency_original: "THB", category_slug: "other", description: "shop" }
+      ],
+      dashboardSnapshot: null,
+      alreadySaved: false
+    };
+  };
+  const calls = [];
+  const bot = createTelegramBot({ token: "test-token", miniAppUrl: "http://localhost:3000", repository: repo, telegramClient: capturingClient(calls) });
+
+  await bot.handleUpdate({ callback_query: {
+    id: "callback-explicit-review", data: "confirm:42", from: { id: 100 }, message: { chat: { id: 10 }, message_id: 55 }
+  } });
+
+  assert.equal(explicitDraftId, "42");
+  assert.ok(calls.some((call) => call.method === "editMessageText"));
+  assert.equal(repo.events.filter((event) => event.eventName === "expense_saved").length, 2);
+});
+
+test("closed-month Telegram confirmation explains the block and leaves the old keyboard active", async () => {
+  const repo = fakeRepository();
+  repo.confirmDraftWithExplicitAcceptance = async () => {
+    throw Object.assign(new Error("closed"), { code: "expense_source_month_closed" });
+  };
+  const calls = [];
+  const bot = createTelegramBot({ token: "test-token", miniAppUrl: "http://localhost:3000", repository: repo, telegramClient: capturingClient(calls) });
+
+  await assert.doesNotReject(() => bot.handleUpdate({ callback_query: {
+    id: "callback-closed-month", data: "confirm:42", from: { id: 100 }, message: { chat: { id: 10 }, message_id: 55 }
+  } }));
+
+  assert.equal(calls.some((call) => call.method === "editMessageText"), false);
+  assert.ok(calls.some((call) => call.method === "sendMessage" && /месяц уже закрыт/i.test(call.text)));
+});
+
 test("regular draft confirmation acknowledges before saving, delivers before background work, and records safe diagnostics", async () => {
   const order = [];
   const repo = fakeRepository();
@@ -4758,6 +4800,9 @@ function fakeRepository() {
         dashboardSnapshot: (await this.dashboard()).snapshot,
         alreadySaved
       };
+    },
+    async confirmDraftWithExplicitAcceptance(draftId) {
+      return this.saveDraftAsExpense(draftId);
     },
     async moveDraftToInbox() {
       return null;

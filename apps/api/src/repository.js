@@ -25,6 +25,7 @@ import { buildReportMetrics } from "./reportService.js";
 import { formatReportMoney } from "./reportFormat.js";
 import { priorMonthlyBounds, priorWeeklyBounds } from "./reportPeriods.js";
 import { categoryLabel } from "../../../packages/shared/src/categories.js";
+import { classifyExplicitAcceptanceDraft } from "./smartSave.js";
 import {
   MONTHLY_CHANGE_ABSOLUTE_TOTAL_SHARE,
   MONTHLY_CHANGE_RELATIVE_MIN,
@@ -3019,7 +3020,14 @@ export function createRepository(pool, options = {}) {
       }
     },
 
-    async saveDraftAsExpense(draftId, telegramUserId) {
+    async confirmDraftWithExplicitAcceptance(draftId, telegramUserId, options = {}) {
+      return this.saveDraftAsExpense(draftId, telegramUserId, {
+        ...options,
+        explicitCategoryAcceptance: true
+      });
+    },
+
+    async saveDraftAsExpense(draftId, telegramUserId, options = {}) {
       const client = await pool.connect();
       const readDashboardSnapshot = async () => {
         try {
@@ -3057,8 +3065,19 @@ export function createRepository(pool, options = {}) {
           return { expenses: existing.rows, dashboardSnapshot: snapshot, alreadySaved: true };
         }
 
-        const items = Array.isArray(draft.items) ? draft.items : JSON.parse(draft.items);
-        if (!draftHasValidCategories(items)) {
+        let items = Array.isArray(draft.items) ? draft.items : JSON.parse(draft.items);
+        if (options.explicitCategoryAcceptance) {
+          const classification = classifyExplicitAcceptanceDraft({ items }, {
+            now: options.now,
+            timeZone: userTimezone(draft)
+          });
+          if (!classification.eligible) throw explicitAcceptanceError(classification.reason);
+          items = items.map((item) => ({ ...item, category_source: "user", needs_review: false }));
+          await client.query(
+            `UPDATE drafts SET items = $1, version = version + 1 WHERE id = $2`,
+            [JSON.stringify(items), draft.id]
+          );
+        } else if (!draftHasValidCategories(items)) {
           console.warn("[repository] confirm blocked: missing valid category", { draftId });
           throw new CategoryRequiredError();
         }
@@ -4330,6 +4349,19 @@ export function isCategoryValid(item) {
 
 export function draftHasValidCategories(items) {
   return Array.isArray(items) && items.length > 0 && items.every(isCategoryValid);
+}
+
+function explicitAcceptanceError(reason) {
+  if (["no_items", "category_required"].includes(reason)) return new CategoryRequiredError();
+  const codes = {
+    invalid_amount: "expense_invalid_amount",
+    invalid_currency: "expense_invalid_currency",
+    invalid_date: "expense_invalid_date",
+    future_date: "expense_future_date",
+    non_expense_operation: "expense_operation_not_supported",
+    closed_month: "expense_source_month_closed"
+  };
+  return codedError("Draft cannot be accepted as an expense", codes[reason] ?? "expense_invalid_draft");
 }
 
 async function updateExpenseWithoutTransaction(pool, exchangeRates, expenseId, telegramUserId, patch) {

@@ -3157,6 +3157,42 @@ button:disabled {
   padding-bottom: 0;
 }
 
+.history-inbox-summary {
+  margin: 2px 12px 10px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.history-inbox-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+  padding: 0 12px 12px;
+}
+
+.history-inbox-actions button {
+  width: 100%;
+  min-width: 0;
+  white-space: normal;
+  line-height: 1.2;
+}
+
+.history-review-progress {
+  padding: 10px 12px 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.history-inbox-compact #inboxDrafts {
+  border-top: 1px solid var(--line);
+}
+
+@media (max-width: 390px) {
+  .history-inbox-actions { grid-template-columns: 1fr; }
+}
+
 .history-saved-heading {
   padding: 10px 14px 8px;
   border-bottom: 1px solid var(--line);

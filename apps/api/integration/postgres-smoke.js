@@ -10,7 +10,7 @@ import { createRepository } from "../src/repository.js";
 import { createMiniAppQuickCaptureDraft, createShortcutExpenseDraft, createTelegramExpenseDraft } from "../src/expenseDraftService.js";
 import { processMiniAppQuickCapture } from "../src/quickCapture.js";
 import { processShortcutCapture } from "../src/shortcutCapture.js";
-import { previewSmartSaveRecovery, saveSmartSaveRecovery } from "../src/smartSaveRecovery.js";
+import { acceptReviewRecovery, previewSmartSaveRecovery, saveSmartSaveRecovery } from "../src/smartSaveRecovery.js";
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -359,6 +359,60 @@ test("Smart Save replays Telegram delivery and safely recovers every unresolved 
   const stored = await pool.query("SELECT spent_at FROM expenses WHERE user_id = $1", [user.id]);
   assert.equal(stored.rowCount, 1);
   assert.equal(stored.rows[0].spent_at.toISOString(), "2026-08-14T05:00:00.000Z");
+});
+
+test("explicit review acceptance saves the historical IDR backlog atomically and idempotently", async () => {
+  const telegramUserId = 990019;
+  const user = await createSmokeUser(telegramUserId);
+  await repo.updateUserSettings(telegramUserId, {
+    monthlyBudgetAmount: 45000000,
+    baseCurrency: "IDR",
+    displayCurrency: "USD"
+  });
+  const fixtures = [
+    { description: "breakfast, fairyteller print", amount: 170000, spent_at: "2026-08-03T05:00:00.000Z", category_slug: "food_cafe", needs_review: true },
+    { description: "shop", amount: 220000, spent_at: "2026-07-20T05:00:00.000Z", category_slug: "groceries", needs_review: true },
+    { description: "shop", amount: 60000, spent_at: "2026-06-29T05:00:00.000Z", category_slug: "other", needs_review: true }
+  ];
+  const drafts = [];
+  for (const item of fixtures) {
+    drafts.push(await repo.createDraft(user.id, item.description, [expenseItem({
+      ...item,
+      currency: "IDR",
+      category_source: "parser"
+    })]));
+  }
+
+  const preview = await previewSmartSaveRecovery({ telegramUserId, repository: repo, now: new Date("2026-08-17T00:00:00.000Z") });
+  assert.deepEqual(
+    { draftCount: preview.draftCount, itemCount: preview.itemCount, acceptItemCount: preview.acceptItemCount, requiresInputItemCount: preview.requiresInputItemCount },
+    { draftCount: 3, itemCount: 3, acceptItemCount: 3, requiresInputItemCount: 0 }
+  );
+  const accepted = await acceptReviewRecovery({
+    telegramUserId,
+    draftIds: drafts.map((draft) => draft.id),
+    repository: repo,
+    now: new Date("2026-08-17T00:00:00.000Z")
+  });
+  assert.equal(accepted.savedCount, 3);
+
+  const retry = await Promise.all([
+    repo.confirmDraftWithExplicitAcceptance(drafts[0].id, telegramUserId),
+    repo.confirmDraftWithExplicitAcceptance(drafts[0].id, telegramUserId)
+  ]);
+  assert.deepEqual(retry.map((result) => result.alreadySaved), [true, true]);
+  const expenses = await pool.query(
+    "SELECT amount_original, currency_original, category_slug, spent_at FROM expenses WHERE user_id = $1 ORDER BY spent_at DESC",
+    [user.id]
+  );
+  assert.equal(expenses.rowCount, 3);
+  assert.deepEqual(expenses.rows.map((row) => [Number(row.amount_original), row.currency_original, row.category_slug, row.spent_at.toISOString()]), [
+    [170000, "IDR", "food_cafe", "2026-08-03T05:00:00.000Z"],
+    [220000, "IDR", "groceries", "2026-07-20T05:00:00.000Z"],
+    [60000, "IDR", "other", "2026-06-29T05:00:00.000Z"]
+  ]);
+  const acceptedDrafts = await pool.query("SELECT items FROM drafts WHERE user_id = $1 ORDER BY id", [user.id]);
+  assert.ok(acceptedDrafts.rows.every((row) => row.items.every((item) => item.category_source === "user" && item.needs_review === false)));
 });
 
 test("saves feedback with source metadata", async () => {

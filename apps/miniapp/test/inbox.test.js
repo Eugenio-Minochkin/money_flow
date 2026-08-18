@@ -6,6 +6,12 @@ import {
   inboxDraftDescription,
   inboxSummaryPreview,
   inboxDraftTotal,
+  reviewAcceptanceConfirmMessage,
+  reviewAcceptanceErrorMessage,
+  reviewAcceptancePrimaryAction,
+  reviewAcceptanceReviewAction,
+  reviewAcceptanceSummary,
+  reviewAcceptanceTitle,
   smartSaveRecoveryPrimaryAction,
   smartSaveRecoveryReviewAction,
   smartSaveRecoverySummary,
@@ -13,6 +19,28 @@ import {
   shouldShowInboxOnDashboard,
   updateFirstInboxItemCategory
 } from "../src/inbox.js";
+
+test("formats item-aware explicit acceptance backlog copy", () => {
+  const preview = { itemCount: 5, acceptItemCount: 3, requiresInputItemCount: 2 };
+
+  assert.equal(reviewAcceptanceTitle(preview, "ru"), "Нужно разобрать 5 трат");
+  assert.equal(reviewAcceptanceSummary(preview, "ru"), "3 можно сохранить как есть · 2 требуют исправления");
+  assert.equal(reviewAcceptancePrimaryAction(preview.acceptItemCount, "ru"), "Сохранить 3 как есть");
+  assert.equal(reviewAcceptanceReviewAction(preview, "ru"), "Разобрать 2");
+  assert.equal(reviewAcceptanceTitle({ itemCount: 1 }, "en"), "Review 1 expense");
+  assert.equal(reviewAcceptanceSummary({ acceptItemCount: 1, requiresInputItemCount: 0 }, "en"), "1 can be saved as is");
+});
+
+test("explicit acceptance confirmation and errors are actionable in RU and EN", () => {
+  assert.equal(
+    reviewAcceptanceConfirmMessage(3, "ru"),
+    "Сохранить эти расходы как есть?\n\nСуммы, даты и текущие категории будут приняты.\nКатегории, в которых бот сомневался, можно будет исправить позже в Истории.\n\nСохранить 3"
+  );
+  assert.equal(reviewAcceptanceErrorMessage({ body: { error: "category_required" } }, "ru"), "Нужно выбрать категорию");
+  assert.equal(reviewAcceptanceErrorMessage({ body: { error: "expense_source_month_closed" } }, "ru"), "Этот месяц уже закрыт");
+  assert.equal(reviewAcceptanceErrorMessage({ body: { error: "expense_invalid_amount" } }, "en"), "Check the expense amount");
+  assert.equal(reviewAcceptanceErrorMessage(new TypeError("Failed to fetch"), "en"), "Could not save. Please try again");
+});
 
 test("formats Smart Save recovery counts and actions", () => {
   const preview = { totalUnresolved: 18, safeCount: 14, reviewCount: 4 };

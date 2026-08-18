@@ -296,7 +296,12 @@
             <div class="section-heading compact-heading">
               <h3 id="inboxTitle">Needs review</h3>
             </div>
-            <div class="expense-list" id="inboxDrafts"></div>
+            <p class="history-inbox-summary" id="inboxSummary"></p>
+            <div class="button-row history-inbox-actions">
+              <button type="button" class="primary-button" id="acceptReviewDraftsButton">Save as is</button>
+              <button type="button" class="ghost-button" id="reviewDraftsOneByOneButton">Review one by one</button>
+            </div>
+            <div class="expense-list hidden" id="inboxDrafts"></div>
           </section>
           <form class="history-search" id="historySearchForm" role="search">
             <label class="history-search__field">

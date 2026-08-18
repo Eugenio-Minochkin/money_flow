@@ -5,11 +5,13 @@ This file records stable product and business rules. Read it before changing bud
 ## Quick Capture
 
 - A Mini App Quick Capture submission is durably identified by `user_id + clientRequestId`; a retry must return its original draft or saved expense and must never create a second financial operation.
-- Parser-provided category provenance remains `parser` until the user explicitly chooses a category. A parser-provided `other` remains unconfirmable until that explicit choice.
+- Parser-provided category provenance remains `parser` until the user explicitly chooses a category or explicitly accepts the current draft with `Confirm` / `Save as is`. Parser-provided `other` is never auto-confirmed, but an explicit human acceptance may promote that existing valid slug to user-confirmed `other`.
 - `saveDraftAsExpense()` remains the final atomic/idempotent boundary for an individual draft.
 - Smart Save may automatically confirm only one ordinary expense with a valid positive amount, supported currency, valid non-future `spent_at`, valid category that does not require user choice, and an open reserve month. Multi-item, ambiguous, invalid, planned, and closed-month drafts stay in review.
+- Explicit human confirmation is narrower than a validation bypass: it may accept current valid category slugs and clear `needs_review` inside the same locked save transaction, but invalid/missing categories, invalid financial data, future dates, non-expense operations, and closed months remain blocked.
 - Telegram text and voice captures are durably identified by the owned `user_id + chat_id + message_id`; webhook retries reuse the original draft and cannot create a second expense.
 - Recovery includes every unresolved `pending` and `inbox` draft. Preview is advisory: the mutation must re-read and reclassify each selected draft, preserve its original `spent_at`, and call `saveDraftAsExpense()` separately so retries and concurrent confirmation remain idempotent.
+- Recovery preview exposes both draft counts and expense-item counts. Strict recovery-save remains Smart Save-only; the separate explicit acceptance batch re-reads each selected draft and returns per-draft partial outcomes so one blocked draft cannot roll back successfully saved drafts.
 
 ## Monthly Budget
 
