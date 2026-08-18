@@ -98,10 +98,10 @@ test("fullscreen keeps the hero content below Telegram controls and disables ver
   const css = await readFile(join(miniAppRoot, "styles.css"), "utf8");
 
   assert.match(app, /from "\.\/telegramPlatform\.js"/);
-const fullscreenGuard = app.indexOf("if (shouldRequestTelegramFullscreen(webApp.platform))");
-const fullscreenRequest = app.indexOf("webApp.requestFullscreen?.()");
-assert.ok(fullscreenGuard >= 0 && fullscreenRequest > fullscreenGuard, "fullscreen request must be guarded by Telegram mobile platform");
-assert.equal((app.match(/webApp\.requestFullscreen\?\.\(\)/g) ?? []).length, 1);
+  const fullscreenGuard = app.indexOf("if (shouldRequestTelegramFullscreen(webApp.platform))");
+  const fullscreenRequest = app.indexOf("webApp.requestFullscreen?.()");
+  assert.ok(fullscreenGuard >= 0 && fullscreenRequest > fullscreenGuard, "fullscreen request must be guarded by Telegram mobile platform");
+  assert.equal((app.match(/webApp\.requestFullscreen\?\.\(\)/g) ?? []).length, 1);
   assert.match(app, /function syncFullscreenControlSafeArea\(\)/);
   assert.match(app, /webApp\.onEvent\?\.\("fullscreenChanged",\s*syncFullscreenControlSafeArea\)/);
   assert.match(app, /webApp\.onEvent\?\.\("contentSafeAreaChanged",\s*syncFullscreenControlSafeArea\)/);
