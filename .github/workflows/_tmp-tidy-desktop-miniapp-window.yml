@@ -1,0 +1,77 @@
+name: Temporary tidy desktop Mini App fix
+
+on:
+  push:
+    branches:
+      - fix/desktop-miniapp-window
+
+permissions:
+  contents: write
+
+jobs:
+  tidy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/desktop-miniapp-window
+          fetch-depth: 0
+
+      - name: Tidy focused source and test blocks
+        shell: python
+        run: |
+          from pathlib import Path
+
+          app_path = Path("apps/miniapp/src/app.js")
+          app = app_path.read_text(encoding="utf-8")
+          old_app = '''  if (shouldRequestTelegramFullscreen(webApp.platform)) {
+          try { webApp.requestFullscreen?.(); } catch { /* expand remains the fallback */ }
+        }
+        }'''
+          old_app = old_app.replace("          try", "  try").replace("        }\n        }", "}\n}")
+          expected_app = '''  if (shouldRequestTelegramFullscreen(webApp.platform)) {
+          try { webApp.requestFullscreen?.(); } catch { /* expand remains the fallback */ }
+        }
+        }'''
+          expected_app = expected_app.replace("          try", "  try").replace("        }\n        }", "}\n}")
+          # Exact current block, written explicitly to avoid touching neighboring logic.
+          current_app = "  if (shouldRequestTelegramFullscreen(webApp.platform)) {\n  try { webApp.requestFullscreen?.(); } catch { /* expand remains the fallback */ }\n}\n}"
+          tidy_app = "  if (shouldRequestTelegramFullscreen(webApp.platform)) {\n    try { webApp.requestFullscreen?.(); } catch { /* expand remains the fallback */ }\n  }\n}"
+          assert current_app in app
+          app_path.write_text(app.replace(current_app, tidy_app, 1), encoding="utf-8")
+
+          smoke_path = Path("apps/miniapp/test/smokeAssets.test.js")
+          smoke = smoke_path.read_text(encoding="utf-8")
+          current_smoke = '''  assert.match(app, /from "\\.\\/telegramPlatform\\.js"/);
+          const fullscreenGuard = app.indexOf("if (shouldRequestTelegramFullscreen(webApp.platform))");
+          const fullscreenRequest = app.indexOf("webApp.requestFullscreen?.()");
+          assert.ok(fullscreenGuard >= 0 && fullscreenRequest > fullscreenGuard, "fullscreen request must be guarded by Telegram mobile platform");
+          assert.equal((app.match(/webApp\\.requestFullscreen\\?\\.\\(\\)/g) ?? []).length, 1);
+          '''
+          # Dedent the current generated block, then re-indent it consistently inside the test.
+          start = smoke.index('  assert.match(app, /from "\\.\\/telegramPlatform\\.js"/);')
+          end = smoke.index('  assert.match(app, /function syncFullscreenControlSafeArea\\(\\)/);', start)
+          tidy_smoke = '''  assert.match(app, /from "\\.\\/telegramPlatform\\.js"/);
+          const fullscreenGuard = app.indexOf("if (shouldRequestTelegramFullscreen(webApp.platform))");
+          const fullscreenRequest = app.indexOf("webApp.requestFullscreen?.()");
+          assert.ok(fullscreenGuard >= 0 && fullscreenRequest > fullscreenGuard, "fullscreen request must be guarded by Telegram mobile platform");
+          assert.equal((app.match(/webApp\\.requestFullscreen\\?\\.\\(\\)/g) ?? []).length, 1);
+          '''
+          tidy_smoke = "\n".join("  " + line.lstrip() if line.strip() else line for line in tidy_smoke.splitlines()) + "\n"
+          smoke_path.write_text(smoke[:start] + tidy_smoke + smoke[end:], encoding="utf-8")
+
+          Path(".github/workflows/_tmp-tidy-desktop-miniapp-window.yml").unlink()
+
+      - name: Verify
+        run: |
+          node --check apps/miniapp/src/app.js
+          node --test apps/miniapp/test/telegramPlatform.test.js apps/miniapp/test/smokeAssets.test.js
+          git diff --check
+
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add apps/miniapp/src/app.js apps/miniapp/test/smokeAssets.test.js .github/workflows/_tmp-tidy-desktop-miniapp-window.yml
+          git commit -m "Tidy desktop fullscreen guard"
+          git push origin HEAD:fix/desktop-miniapp-window
