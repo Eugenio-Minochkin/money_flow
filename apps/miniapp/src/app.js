@@ -61,6 +61,7 @@ import {
   moveTabPagerGesture
 } from "./tabPager.js";
 import { applyMiniAppTheme } from "./themeBackground.js";
+import { shouldRequestTelegramFullscreen } from "./telegramPlatform.js";
 import { buildReserveSettingsView } from "./reserveSettings.js";
 import { runPlannedDisable } from "./plannedDisable.js";
 import { paidPlannedPaymentUndoOccurrences, runPlannedPaymentUndo } from "./plannedPaymentUndo.js";
@@ -202,7 +203,9 @@ if (window.Telegram?.WebApp) {
   webApp.onEvent?.("contentSafeAreaChanged", syncFullscreenControlSafeArea);
   webApp.onEvent?.("fullscreenChanged", disableTelegramVerticalSwipes);
   webApp.onEvent?.("themeChanged", syncMiniAppThemeBackground);
+  if (shouldRequestTelegramFullscreen(webApp.platform)) {
   try { webApp.requestFullscreen?.(); } catch { /* expand remains the fallback */ }
+}
 }
 syncMiniAppThemeBackground();
 

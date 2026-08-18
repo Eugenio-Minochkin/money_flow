@@ -54,6 +54,7 @@ Money Flow UI should feel light and direct. Favor quick comprehension over dense
 ## Responsive Behavior
 
 - Support both small and large iPhone screens, including iPhone 11 and iPhone 14 Pro.
+- Request Telegram fullscreen only on mobile client platforms; desktop and web clients should stay in their native compact Mini App shell.
 - Keep `html`, `body`, the scrolling surface, and Telegram WebView background synchronized with the selected theme so iOS rubber-band areas continue the app surface.
 - Tab swipes are interactive: the current and adjacent pages follow a confirmed horizontal drag and snap only after release. Preserve vertical scrolling, form/editor/modal guards, edge resistance, and the existing tab loading/state lifecycle.
 - Check that cards, buttons, labels, and amounts do not overlap on narrow screens.
