@@ -2439,6 +2439,33 @@ test("photo input returns a friendly unsupported-photo response without creating
   assert.equal(completed.metadata.status, "unsupported_photo");
 });
 
+test("enabled evidence import routes a photo to the import service and keeps its caption out of Telegram output", async () => {
+  const repo = fakeRepository();
+  const messages = [];
+  const calls = [];
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: repo,
+    telegramClient: captureTelegramClient(messages),
+    expenseEvidenceImportService: {
+      async importImage(input) {
+        calls.push(input);
+        return { state: "ready", evidenceType: "receipt", candidates: [{ ordinal: 0 }] };
+      }
+    }
+  });
+
+  await bot.handleUpdate({ message: { chat: { id: 10 }, from: { id: 100, first_name: "M" }, message_id: 9, caption: "private supermarket receipt", photo: [{ file_id: "small", file_unique_id: "u1" }, { file_id: "large", file_unique_id: "u2" }] } });
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].fileId, "large");
+  assert.equal(calls[0].fileUniqueId, "u2");
+  assert.equal(calls[0].caption, "private supermarket receipt");
+  assert.doesNotMatch(messages.at(-1).text, /private supermarket receipt/);
+  assert.match(messages.at(-1).text, /1 расходов/);
+});
+
 test("throwing event logger does not break expense processing", async () => {
   const repo = fakeRepository();
   repo.recordAppEvent = async () => {
