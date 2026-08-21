@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { processShortcutCapture, shortcutTerminalSummary } from "../src/shortcutCapture.js";
+import { parseExpenseText } from "../../../packages/shared/src/parser.js";
+import { classifySmartSaveDraft } from "../src/smartSave.js";
 
 const user = {
   id: 7,
@@ -87,6 +89,32 @@ test("Shortcut replies use concise terminal RU/EN Siri wording", async () => {
   assert.equal(review.summary, "Нужно проверить расход в Telegram — откройте Money Flow.");
   assert.equal(shortcutTerminalSummary("failed", "ru"), "Не удалось занести расход. Добавьте его вручную в Telegram через Money Flow.");
   assert.equal(shortcutTerminalSummary("failed", "en"), "Could not save the expense. Add it manually in Money Flow on Telegram.");
+});
+
+test("clear kefir Shortcut captures auto-save after the prior needs_review category regression", async () => {
+  for (const text of ["Кефир 11 рублей", "Kefir 11 rubles"]) {
+    const now = new Date("2026-08-22T09:00:00.000Z");
+    const parsed = parseExpenseText(text, { now, defaultCurrency: "RUB", timeZone: "Europe/Moscow" });
+    const classification = classifySmartSaveDraft({ items: parsed.expenses }, { now, timeZone: "Europe/Moscow" });
+    const repository = createRepository(parsed.expenses);
+    const result = await processShortcutCapture({
+      user: { ...user, base_currency: "RUB", timezone: "Europe/Moscow" },
+      tokenId: 9,
+      clientRequestId: `kefir-${text}`,
+      text,
+      expenseParser: { parse: async () => ({ expenses: parsed.expenses }) },
+      repository,
+      now
+    });
+
+    assert.equal(classification.eligible, true, text);
+    assert.equal(result.state, "saved", text);
+    assert.equal(repository.financialFacts(), 1, text);
+  }
+});
+
+test("the prior exact needs_review rejection remains unsafe when the parser signals it", () => {
+  assert.deepEqual(classifySmartSaveDraft({ items: [item({ needs_review: true })] }), { eligible: false, reason: "needs_review" });
 });
 
 for (const scenario of [
