@@ -63,6 +63,20 @@ test("parses a simple Russian text expense into a draft item", () => {
   assert.deepEqual(result.notes, []);
 });
 
+test("parses kefir as groceries in Russian and English instead of the prior needs_review path", () => {
+  for (const text of ["Кефир 11 рублей", "Kefir 11 rubles"]) {
+    const result = parseExpenseText(text, {
+      defaultCurrency: "RUB",
+      now: new Date("2026-08-22T09:00:00.000Z"),
+      timeZone: "Europe/Moscow"
+    });
+
+    assert.equal(result.expenses.length, 1, text);
+    assert.equal(result.expenses[0].category_slug, "groceries", text);
+    assert.equal(result.expenses[0].needs_review, false, text);
+  }
+});
+
 test("uses THB when currency is omitted", () => {
   const result = parseExpenseText("обед 180", {
     now: new Date("2026-06-01T12:30:00+07:00")

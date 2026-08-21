@@ -16,7 +16,7 @@ export const CATEGORIES = [
       "продукты", "grocery", "groceries", "grocery store", "supermarket", "супермаркет",
       "convenience store", "minimart", "мини-маркет", "7eleven", "7-eleven", "7/11", "seven eleven",
       "lotus", "big c", "tops", "makro", "макро", "молоко", "milk", "eggs", "яйца", "fruits",
-      "фрукты", "vegetables", "овощи", "bread", "хлеб", "cheese", "сыр", "yogurt", "yoghurt", "йогурт"
+      "фрукты", "vegetables", "овощи", "bread", "хлеб", "cheese", "сыр", "yogurt", "yoghurt", "йогурт", "кефир", "kefir"
     ]
   },
   {
