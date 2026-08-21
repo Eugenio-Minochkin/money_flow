@@ -6,8 +6,8 @@
     <title>Money Flow</title>
     <script>performance.mark("mf:html_start")</script>
     <link rel="preconnect" href="https://telegram.org" />
-    <link rel="stylesheet" href="/styles.css?v=20260821-siri-shortcut-v1" />
-    <link rel="modulepreload" href="/app.js?v=20260821-siri-shortcut-v1" />
+    <link rel="stylesheet" href="/styles.css?v=20260821-shortcut-key-handoff-v1" />
+    <link rel="modulepreload" href="/app.js?v=20260821-shortcut-key-handoff-v1" />
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script>
       performance.mark("mf:telegram_sdk_available");
@@ -588,6 +588,14 @@
           <p class="shortcut-setup-phrase" data-i18n="quickAccess.siriPhrase">Siri, record an expense</p>
           <button type="button" class="ghost-button" id="installShortcutLink" data-i18n="quickAccess.install">Open Shortcut</button>
         </section>
+        <section class="shortcut-setup-ready hidden" id="shortcutSetupPreparedState">
+          <strong data-i18n="quickAccess.preparedTitle">Key is ready</strong>
+          <p data-i18n="quickAccess.preparedDescription">One step left: copy the key and open Shortcut.</p>
+          <button type="button" id="copyShortcutKeyButton" data-i18n="quickAccess.copyAndOpen">Copy key and open Shortcut</button>
+          <p class="quick-entry-status hidden" id="shortcutKeyCopyFailedState" data-i18n="quickAccess.copyFailed">Could not copy automatically</p>
+          <button type="button" class="ghost-button hidden" id="showShortcutKeyButton" data-i18n="quickAccess.showKey">Show key</button>
+          <div class="shortcut-key-fallback hidden" id="shortcutKeyManualFallback"><textarea id="shortcutKeyFallbackValue" readonly aria-label="Shortcut access key" data-i18n-aria-label="quickAccess.keyLabel"></textarea><button type="button" class="ghost-button" id="openShortcutAfterManualCopyButton" data-i18n="quickAccess.openShortcut">Open Shortcut</button></div>
+        </section>
         <section class="shortcut-setup-unavailable hidden" id="shortcutSetupUnavailableState">
           <p data-i18n="quickAccess.unavailable">Siri setup is temporarily unavailable. Try again later or contact support.</p>
           <button type="button" class="ghost-button" id="retryShortcutSetupButton" data-i18n="quickAccess.retry">Retry</button>
@@ -619,6 +627,6 @@
     </nav>
 
     <div class="toast hidden" id="toast" role="status" aria-live="polite"></div>
-    <script src="/app.js?v=20260821-siri-shortcut-v1" type="module"></script>
+    <script src="/app.js?v=20260821-shortcut-key-handoff-v1" type="module"></script>
   </body>
 </html>
