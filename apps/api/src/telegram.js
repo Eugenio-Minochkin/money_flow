@@ -133,6 +133,42 @@ export function createTelegramBot({
   };
 }
 
+export async function deliverShortcutCaptureToTelegram({ result, user, repository, token, miniAppUrl, telegramClient, sendMessage: sendMessageOverride }) {
+  if (result.replayed) return null;
+  const language = user.interface_language ?? "en";
+  const chatId = user.telegram_user_id;
+  const draft = result.draft;
+  const send = sendMessageOverride ?? ((message) => sendTelegramMessage({ token, telegramClient, ...message }));
+  let text;
+  let replyMarkup;
+
+  if (result.state === "saved") {
+    const expense = result.expense;
+    text = formatSavedSummary(Number(expense.amount_base ?? 0), result.dashboardSnapshot, { language, expenses: [expense] });
+    replyMarkup = savedExpenseKeyboard(expense.id, miniAppUrl, user.telegram_user_id, language);
+  } else {
+    text = await renderDraftPreview({ repository, user, items: draft.items, language });
+    replyMarkup = draftKeyboard(draft.id, draft.items, miniAppUrl, user.telegram_user_id, language);
+  }
+
+  const delivered = await send({ chatId, text, replyMarkup });
+  const messageId = extractMessageId(delivered);
+  if (messageId && draft?.id) {
+    await repository.setDraftMessageRef(draft.id, user.telegram_user_id, chatId, messageId)
+      .catch((error) => console.error("[telegram] failed to store Shortcut message reference", error.message));
+  }
+  return delivered;
+}
+
+export async function deliverShortcutCaptureToTelegramBestEffort({ onError = () => {}, ...input }) {
+  try {
+    return await deliverShortcutCaptureToTelegram(input);
+  } catch (error) {
+    onError(error);
+    return null;
+  }
+}
+
 async function handleMessage({ update, repository, token, miniAppUrl, expenseParser, voiceTranscriber, telegramClient, adminTelegramIds, adminStatsService, releaseNotesService, adminAlertService, expenseExportService, now, trace, telegramJobQueue, awaitQueuedJobs }) {
   const message = update.message;
   const from = message.from;

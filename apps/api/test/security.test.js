@@ -550,9 +550,12 @@ test("Shortcut expense route keeps bearer auth and returns explicit Smart Save s
   const block = endpointBlock(source, "/api/shortcut/expenses");
 
   assert.match(source, /import \{ processShortcutCapture \} from "\.\/shortcutCapture\.js"/);
+  assert.match(source, /deliverShortcutCaptureToTelegram/);
   assert.match(block, /bearerToken\(req\)/);
   assert.match(block, /findQuickAccessToken\(hashQuickAccessToken\(rawToken\)\)/);
   assert.match(block, /processShortcutCapture\(\{/);
+  assert.match(block, /if \(!result\.replayed\) \{[\s\S]*?await deliverShortcutCaptureToTelegramBestEffort\(\{/);
+  assert.match(block, /Telegram delivery failed/);
   assert.match(block, /result\.state === "saved" && !result\.alreadySaved/);
   assert.match(block, /return sendJson\(res, result\.replayed \? 200 : 201, result\)/);
   assert.match(block, /ShortcutRequestInProgressError/);

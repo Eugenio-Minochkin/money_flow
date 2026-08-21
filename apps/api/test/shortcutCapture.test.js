@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { processShortcutCapture } from "../src/shortcutCapture.js";
+import { processShortcutCapture, shortcutTerminalSummary } from "../src/shortcutCapture.js";
 
 const user = {
   id: 7,
@@ -72,10 +72,21 @@ test("safe Shortcut capture saves immediately with a compact result", async () =
 
   assert.equal(result.state, "saved");
   assert.equal(result.expense.id, 91);
-  assert.equal(result.summary, "✓ Coffee · 180 THB");
+  assert.equal(result.summary, "Saved.");
   assert.equal(result.replayed, false);
   assert.equal(result.alreadySaved, false);
   assert.equal(repository.financialFacts(), 1);
+});
+
+test("Shortcut replies use concise terminal RU/EN Siri wording", async () => {
+  const items = [item()];
+  const russian = await processShortcutCapture({ user: { ...user, interface_language: "ru" }, tokenId: 9, clientRequestId: "russian-wording", text: "coffee 180", expenseParser: { parse: async () => ({ expenses: items }) }, repository: createRepository(items) });
+  const review = await processShortcutCapture({ user: { ...user, interface_language: "ru" }, tokenId: 9, clientRequestId: "russian-review-wording", text: "coffee 180", expenseParser: { parse: async () => ({ expenses: [item({ needs_review: true })] }) }, repository: createRepository([item({ needs_review: true })]) });
+
+  assert.equal(russian.summary, "Занесено.");
+  assert.equal(review.summary, "Нужно проверить расход в Telegram — откройте Money Flow.");
+  assert.equal(shortcutTerminalSummary("failed", "ru"), "Не удалось занести расход. Добавьте его вручную в Telegram через Money Flow.");
+  assert.equal(shortcutTerminalSummary("failed", "en"), "Could not save the expense. Add it manually in Money Flow on Telegram.");
 });
 
 for (const scenario of [

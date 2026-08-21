@@ -35,6 +35,7 @@ import { shouldRateLimitRequest } from "./routing.js";
 import { createStartupTiming } from "./startupTiming.js";
 import {
   createTelegramBot,
+  deliverShortcutCaptureToTelegramBestEffort,
   draftCanceledMessageText,
   savedSummaryKeyboard,
   sendTelegramDocument,
@@ -642,6 +643,19 @@ async function route(req, res) {
     try {
       const result = await processShortcutCapture({ user, tokenId: user.token_id, clientRequestId: body.clientRequestId, text: body.text, expenseParser, repository });
       if (!result) return sendJson(res, 401, { error: "quick_access_unauthorized" });
+      if (!result.replayed) {
+        await deliverShortcutCaptureToTelegramBestEffort({
+          result,
+          user,
+          repository,
+          token: config.telegramBotToken,
+          miniAppUrl: config.miniAppUrl,
+          onError(error) {
+          console.error("[shortcut] Telegram delivery failed", error.message);
+          void safeNotifyAdminError(adminAlertService, error, { source: "shortcut", operation: "telegram_delivery", userId: user.id });
+          }
+        });
+      }
       if (!result.replayed) await repository.recordAppEvent?.(user.id, "quick_entry_submitted", { source: "ios_shortcut" });
       if (result.state === "saved" && !result.alreadySaved) {
         await repository.recordAppEvent?.(user.id, "quick_entry_confirmed", { source: "ios_shortcut" });
