@@ -216,6 +216,7 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
   const feedbackCommand = parseFeedbackCommand(rawText);
   const hasVoice = Boolean(message.voice || message.audio);
   const hasPhoto = Boolean(message.photo?.length);
+  const hasImageDocument = ["image/jpeg", "image/jpg", "image/png"].includes(String(message.document?.mime_type ?? "").toLowerCase());
   const restartsAccountDeletion = commandText === "/delete_me" && !hasVoice && !hasPhoto;
 
   if (!restartsAccountDeletion) {
@@ -381,7 +382,7 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
     }
   }
 
-  const inputType = hasPhoto ? "photo" : (hasVoice ? "voice" : "text");
+  const inputType = (hasPhoto || hasImageDocument) ? "photo" : (hasVoice ? "voice" : "text");
   const trackExpenseMessage = !isOnboardingActive(user);
   if (trackExpenseMessage) {
     await safeRecordAppEvent(repository, user.id, "message_received", { inputType });
@@ -561,8 +562,8 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
       }
       if (!text && inputType === "photo") {
         if (expenseEvidenceImportService) {
-          const photo = message.photo?.at(-1);
-          const imported = await expenseEvidenceImportService.importImage({ user, chatId, messageId: message.message_id, fileId: photo?.file_id, fileUniqueId: photo?.file_unique_id, declaredMimeType: "image/jpeg", caption: message.caption ?? "" });
+          const photo = message.photo?.at(-1) ?? message.document;
+          const imported = await expenseEvidenceImportService.importImage({ user, chatId, messageId: message.message_id, fileId: photo?.file_id, fileUniqueId: photo?.file_unique_id, declaredMimeType: message.document?.mime_type ?? "image/jpeg", caption: message.caption ?? "" });
           processingResult = imported.state === "ready" ? "evidence_ready" : "evidence_processing";
           return deliverQueuedResult({ token, chatId, loaderMessageId: loader.messageId, text: imported.evidenceType === "unsupported" ? botText(language, "unsupportedPhoto") : `Нашёл ${imported.candidates?.length ?? 0} расходов. Откройте черновики для проверки.`, replyMarkup: null, telegramClient, trace });
         }
