@@ -171,11 +171,12 @@ test("Shortcut setup copies its key without rendering the raw credential", async
   assert.match(html, /id="shortcutKeyManualFallback"/);
   assert.match(html, /id="shortcutKeyFallbackValue" readonly/);
   assert.match(app, /prepareShortcutSetup\(/);
-  assert.match(copyHandler, /try \{ await navigator\.clipboard\.writeText\(quickAccessPreparedToken\); \} catch/);
-  assert.ok(copyHandler.indexOf("navigator.clipboard.writeText") < copyHandler.indexOf("activatePreparedShortcutAndOpen"));
+  assert.match(copyHandler, /handoffPreparedShortcut\(\{/);
+  assert.match(copyHandler, /writeText: navigator\.clipboard\?\.writeText\?\.bind\(navigator\.clipboard\)/);
+  assert.ok(copyHandler.indexOf("handoffPreparedShortcut") < copyHandler.indexOf("activatePreparedShortcutAndOpen"));
   assert.match(html, /id="showShortcutKeyButton"/);
   assert.match(html, /id="shortcutKeyFallbackValue"/);
-  assert.match(app, /quickAccessClipboardFailed = true; renderShortcutSetupState\(\); return;/);
+  assert.match(copyHandler, /quickAccessClipboardFailed = true; return;/);
   assert.doesNotMatch(app, /api\("\/api\/quick-access-tokens", \{ method: "DELETE"/);
   assert.match(app, /let quickAccessTokenBusy = false/);
   assert.match(app, /if \(quickAccessTokenBusy\) return/);

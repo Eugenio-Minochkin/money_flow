@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { activatePreparedShortcut, prepareShortcutSetup } from "../src/quickAccessSetup.js";
+import { activatePreparedShortcut, handoffPreparedShortcut, prepareShortcutSetup } from "../src/quickAccessSetup.js";
 
 test("preparation returns a memory-only key without activating a credential", async () => {
   const calls = [];
@@ -15,6 +15,26 @@ test("preparation failure exposes no key or activation id", async () => {
   assert.equal(result.status, "preparation_failed");
   assert.equal(result.preparationId, null);
   assert.equal(result.token, null);
+});
+
+test("missing or rejected clipboard keeps the prepared key inactive and does not open iCloud", async () => {
+  for (const writeText of [null, async () => { throw new Error("clipboard denied"); }]) {
+    const calls = [];
+    const result = await handoffPreparedShortcut({ token: "raw-key", writeText, activate: async () => calls.push("activate") });
+    assert.equal(result.status, "copy_failed");
+    assert.deepEqual(calls, []);
+  }
+});
+
+test("key handoff writes before activation and keeps reconfiguration activation explicit", async () => {
+  const calls = [];
+  const result = await handoffPreparedShortcut({
+    token: "raw-key",
+    writeText: async (token) => calls.push(`clipboard:${token}`),
+    activate: async () => { calls.push("activate"); return { status: "activated" }; }
+  });
+  assert.deepEqual(result, { status: "activated" });
+  assert.deepEqual(calls, ["clipboard:raw-key", "activate"]);
 });
 
 test("activation opens only after the explicit key handoff path", async () => {

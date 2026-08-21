@@ -7,6 +7,16 @@ export async function prepareShortcutSetup({ api, telegramUserId }) {
   }
 }
 
+export async function handoffPreparedShortcut({ token, writeText, activate }) {
+  if (!writeText) return { status: "copy_failed" };
+  try {
+    await writeText(token);
+  } catch (error) {
+    return { status: "copy_failed", error };
+  }
+  return activate();
+}
+
 export async function activatePreparedShortcut({ api, telegramUserId, preparationId, shortcutUrl, openShortcut }) {
   try {
     await api(`/api/quick-access-token-preparations/${preparationId}/activate`, { method: "POST", body: { telegramUserId } });

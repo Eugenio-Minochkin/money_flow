@@ -3,7 +3,7 @@ import { categories, categoryColor, categoryLabel } from "./categories.js";
 import { categoryIconSvg } from "./categoryIcons.js";
 import { currencyOptions } from "./currencies.js";
 import { resolveDraftSaveResponse, classifyConfirmOutcome } from "./draftSave.js";
-import { activatePreparedShortcut, prepareShortcutSetup } from "./quickAccessSetup.js";
+import { activatePreparedShortcut, handoffPreparedShortcut, prepareShortcutSetup } from "./quickAccessSetup.js";
 import { collectQuickCaptureReviewItems, quickCaptureItemNeedsReview } from "./quickCaptureReview.js";
 import { describeQuickCaptureSavedResult } from "./quickCaptureSavedResult.js";
 import { buildDashboardCards, buildHeroMetric, renderBudgetTopupBreakdown, renderDashboardCards, shouldShowForecastDifference } from "./dashboardCards.js";
@@ -460,17 +460,27 @@ function setQuickAccessTokenBusy(busy) {
 
 async function activatePreparedShortcutAndOpen() {
   const outcome = await activatePreparedShortcut({ api, telegramUserId, preparationId: quickAccessPreparationId, shortcutUrl: quickAccessShortcutUrl, openShortcut: openSharedShortcut });
-  if (outcome.status !== "activated") { quickAccessSetupError = true; return; }
+  if (outcome.status !== "activated") { quickAccessSetupError = true; return outcome; }
   quickAccessConfigured = true;
   clearPreparedShortcutSetup();
+  return outcome;
 }
 
 async function copyShortcutKeyAndOpen() {
   if (!quickAccessPreparedToken || quickAccessTokenBusy) return;
   quickAccessClipboardFailed = false;
-  try { await navigator.clipboard.writeText(quickAccessPreparedToken); } catch { quickAccessClipboardFailed = true; renderShortcutSetupState(); return; }
   quickAccessTokenBusy = true; setQuickAccessTokenBusy(true);
-  try { await activatePreparedShortcutAndOpen(); } finally { quickAccessTokenBusy = false; setQuickAccessTokenBusy(false); renderShortcutSetupState(); }
+  try {
+    const outcome = await handoffPreparedShortcut({
+      token: quickAccessPreparedToken,
+      writeText: navigator.clipboard?.writeText?.bind(navigator.clipboard),
+      activate: activatePreparedShortcutAndOpen
+    });
+    if (outcome.status === "copy_failed") { quickAccessClipboardFailed = true; return; }
+    return outcome;
+  } finally {
+    quickAccessTokenBusy = false; setQuickAccessTokenBusy(false); renderShortcutSetupState();
+  }
 }
 
 function revealShortcutKey() {
