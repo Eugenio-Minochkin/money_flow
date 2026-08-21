@@ -15,10 +15,11 @@ The generic Shortcut performs these actions:
 1. Create a UUID once per run and retain it as `clientRequestId` for any retry in that run.
 2. Use **Dictate Text**.
 3. `POST /api/shortcut/expenses` with `Authorization: Bearer <key>` and JSON `{ "text": "…", "clientRequestId": "…" }`.
-4. If the response has `state=saved`, show its short `summary` and finish without a confirmation screen.
-5. If the response has `state=review`, say that the expense needs review and finish. The returned draft remains in Money Flow's shared Inbox; opening Money Flow may be offered but must not be required.
+4. If the response has `state=saved`, say its terminal `summary`: **«Занесено.»** / **“Saved.”**. The same saved-expense receipt is mirrored to the normal Telegram bot chat; it is not a second expense.
+5. If the response has `state=review`, say its terminal `summary`: **«Нужно проверить расход в Telegram — откройте Money Flow.»** / **“Review this expense in Telegram — open Money Flow.”**. The same existing Telegram draft preview and confirmation controls are mirrored to the bot chat; do not create a Shortcut-specific review UI.
+6. For a server-returned failure, say **«Не удалось занести расход. Добавьте его вручную в Telegram через Money Flow.»** / **“Could not save the expense. Add it manually in Money Flow on Telegram.”**.
 
-The same `clientRequestId` must be retained after an unknown or lost HTTP response. A replay returns the original saved expense or review draft and does not run the parser or create a new financial fact.
+The same `clientRequestId` must be retained after an unknown or lost HTTP response. A replay returns the original saved expense or review draft and does not run the parser, create a new financial fact, or send another Telegram output.
 
 ## Final publication and production handoff
 
