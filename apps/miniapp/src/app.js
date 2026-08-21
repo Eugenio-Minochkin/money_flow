@@ -3,7 +3,7 @@ import { categories, categoryColor, categoryLabel } from "./categories.js";
 import { categoryIconSvg } from "./categoryIcons.js";
 import { currencyOptions } from "./currencies.js";
 import { resolveDraftSaveResponse, classifyConfirmOutcome } from "./draftSave.js";
-import { advanceShortcutSetup } from "./quickAccessSetup.js";
+import { activatePreparedShortcut, prepareShortcutSetup } from "./quickAccessSetup.js";
 import { collectQuickCaptureReviewItems, quickCaptureItemNeedsReview } from "./quickCaptureReview.js";
 import { describeQuickCaptureSavedResult } from "./quickCaptureSavedResult.js";
 import { buildDashboardCards, buildHeroMetric, renderBudgetTopupBreakdown, renderDashboardCards, shouldShowForecastDifference } from "./dashboardCards.js";
@@ -223,6 +223,9 @@ let quickCaptureCategorySelections = new Set();
 let quickAccessShortcutUrl = null;
 let quickAccessTokenBusy = false;
 let quickAccessPreparationId = null;
+let quickAccessPreparedToken = null;
+let quickAccessClipboardFailed = false;
+let quickAccessKeyRevealed = false;
 let quickAccessConfigured = false;
 let quickAccessSetupError = false;
 let quickEntryRequestId = null;
@@ -423,7 +426,7 @@ function initializeTelegramQuickAccess() {
 
 async function createQuickAccessToken() {
   if (quickAccessTokenBusy) return;
-  if (!quickAccessShortcutUrl || !navigator.clipboard?.writeText) {
+  if (!quickAccessShortcutUrl) {
     quickAccessSetupError = true;
     renderShortcutSetupState();
     return;
@@ -432,20 +435,13 @@ async function createQuickAccessToken() {
   quickAccessSetupError = false;
   setQuickAccessTokenBusy(true);
   try {
-    const outcome = await advanceShortcutSetup({
-      api,
-      telegramUserId,
-      writeText: (token) => navigator.clipboard.writeText(token),
-      preparationId: quickAccessPreparationId,
-      shortcutUrl: quickAccessShortcutUrl,
-      openShortcut: openSharedShortcut
-    });
+    const outcome = await prepareShortcutSetup({ api, telegramUserId });
     quickAccessPreparationId = outcome.preparationId;
-    if (outcome.status !== "activated") {
+    quickAccessPreparedToken = outcome.token;
+    if (outcome.status !== "prepared") {
       quickAccessSetupError = true;
       return;
     }
-    quickAccessConfigured = true;
   } catch {
     quickAccessSetupError = true;
   } finally {
@@ -458,6 +454,44 @@ async function createQuickAccessToken() {
 function setQuickAccessTokenBusy(busy) {
   document.querySelector("#shortcutSetupPrimaryButton").disabled = busy;
   document.querySelector("#reconfigureQuickAccessButton").disabled = busy;
+  document.querySelector("#copyShortcutKeyButton").disabled = busy;
+  document.querySelector("#openShortcutAfterManualCopyButton").disabled = busy;
+}
+
+async function activatePreparedShortcutAndOpen() {
+  const outcome = await activatePreparedShortcut({ api, telegramUserId, preparationId: quickAccessPreparationId, shortcutUrl: quickAccessShortcutUrl, openShortcut: openSharedShortcut });
+  if (outcome.status !== "activated") { quickAccessSetupError = true; return; }
+  quickAccessConfigured = true;
+  clearPreparedShortcutSetup();
+}
+
+async function copyShortcutKeyAndOpen() {
+  if (!quickAccessPreparedToken || quickAccessTokenBusy) return;
+  quickAccessClipboardFailed = false;
+  try { await navigator.clipboard.writeText(quickAccessPreparedToken); } catch { quickAccessClipboardFailed = true; renderShortcutSetupState(); return; }
+  quickAccessTokenBusy = true; setQuickAccessTokenBusy(true);
+  try { await activatePreparedShortcutAndOpen(); } finally { quickAccessTokenBusy = false; setQuickAccessTokenBusy(false); renderShortcutSetupState(); }
+}
+
+function revealShortcutKey() {
+  if (!quickAccessPreparedToken) return;
+  quickAccessKeyRevealed = true;
+  const field = document.querySelector("#shortcutKeyFallbackValue");
+  if (field) field.value = quickAccessPreparedToken;
+  renderShortcutSetupState();
+}
+
+async function openShortcutAfterManualCopy() {
+  if (!quickAccessPreparedToken || quickAccessTokenBusy) return;
+  quickAccessTokenBusy = true; setQuickAccessTokenBusy(true);
+  try { await activatePreparedShortcutAndOpen(); } finally { quickAccessTokenBusy = false; setQuickAccessTokenBusy(false); renderShortcutSetupState(); }
+}
+
+function clearPreparedShortcutSetup() {
+  quickAccessPreparationId = null; quickAccessPreparedToken = null; quickAccessClipboardFailed = false; quickAccessKeyRevealed = false;
+  quickAccessSetupError = false;
+  const field = document.querySelector("#shortcutKeyFallbackValue");
+  if (field) field.value = "";
 }
 
 function openSharedShortcut(url) {
@@ -477,17 +511,24 @@ function closeShortcutSetup() {
   document.querySelector("#shortcutSetupSheet")?.classList.add("hidden");
   document.querySelector("#shortcutSetupBackdrop")?.classList.add("hidden");
   document.body.classList.remove("shortcut-setup-open");
+  clearPreparedShortcutSetup();
 }
 
 function renderShortcutSetupState() {
   const unavailable = !quickAccessShortcutUrl;
+  const prepared = Boolean(quickAccessPreparationId && quickAccessPreparedToken);
   document.querySelector("#quickAccessConfiguredBadge")?.classList.toggle("hidden", !quickAccessConfigured);
   document.querySelector("#quickAccessUnavailableState")?.classList.toggle("hidden", !unavailable);
   document.querySelector("#retryShortcutSetupConfigButton")?.classList.toggle("hidden", !unavailable);
   document.querySelector("#shortcutSetupUnavailableState")?.classList.toggle("hidden", !unavailable);
-  document.querySelector("#shortcutSetupReadyState")?.classList.toggle("hidden", !quickAccessConfigured || unavailable);
-  document.querySelector("#shortcutSetupPrimaryButton")?.classList.toggle("hidden", quickAccessConfigured || unavailable);
-  document.querySelector("#reconfigureQuickAccessButton")?.classList.toggle("hidden", !quickAccessConfigured || unavailable);
+  document.querySelector("#shortcutSetupReadyState")?.classList.toggle("hidden", !quickAccessConfigured || unavailable || prepared);
+  document.querySelector("#shortcutSetupPreparedState")?.classList.toggle("hidden", !prepared || unavailable);
+  document.querySelector("#shortcutSetupPrimaryButton")?.classList.toggle("hidden", quickAccessConfigured || unavailable || prepared);
+  document.querySelector("#reconfigureQuickAccessButton")?.classList.toggle("hidden", !quickAccessConfigured || unavailable || prepared);
+  document.querySelector("#copyShortcutKeyButton")?.classList.toggle("hidden", quickAccessClipboardFailed);
+  document.querySelector("#shortcutKeyCopyFailedState")?.classList.toggle("hidden", !quickAccessClipboardFailed);
+  document.querySelector("#showShortcutKeyButton")?.classList.toggle("hidden", !quickAccessClipboardFailed || quickAccessKeyRevealed);
+  document.querySelector("#shortcutKeyManualFallback")?.classList.toggle("hidden", !quickAccessKeyRevealed);
   const error = document.querySelector("#shortcutSetupErrorState");
   if (error) {
     error.textContent = quickAccessSetupError ? t("quickAccess.setupFailed") : "";
@@ -496,7 +537,7 @@ function renderShortcutSetupState() {
 }
 
 async function reconfigureQuickAccessToken() {
-  if (quickAccessTokenBusy || !navigator.clipboard?.writeText) {
+  if (quickAccessTokenBusy) {
     quickAccessSetupError = true;
     renderShortcutSetupState();
     return;
@@ -585,6 +626,9 @@ document.querySelector("#closeShortcutSetupButton")?.addEventListener("click", c
 document.querySelector("#shortcutSetupBackdrop")?.addEventListener("click", closeShortcutSetup);
 document.querySelector("#shortcutSetupPrimaryButton")?.addEventListener("click", createQuickAccessToken);
 document.querySelector("#reconfigureQuickAccessButton")?.addEventListener("click", reconfigureQuickAccessToken);
+document.querySelector("#copyShortcutKeyButton")?.addEventListener("click", copyShortcutKeyAndOpen);
+document.querySelector("#showShortcutKeyButton")?.addEventListener("click", revealShortcutKey);
+document.querySelector("#openShortcutAfterManualCopyButton")?.addEventListener("click", openShortcutAfterManualCopy);
 document.querySelector("#installShortcutLink")?.addEventListener("click", () => {
   if (quickAccessShortcutUrl) openSharedShortcut(quickAccessShortcutUrl);
 });

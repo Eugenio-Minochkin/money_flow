@@ -2,9 +2,9 @@
 
 ## User flow
 
-In the Mini App the user opens **Settings → Quick access → Siri & Shortcut** and taps **Set up on iPhone**. The app prepares a new Quick Access key, copies it only to the local clipboard, activates it, and opens the shared iCloud Shortcut. During Apple import the user pastes the key once and adds the Shortcut.
+In the Mini App the user opens **Settings → Quick access → Siri & Shortcut** and taps **Set up on iPhone**. The app first prepares a new Quick Access key without replacing an active key. A second explicit tap copies the key from that fresh user gesture, then activates it and opens the shared iCloud Shortcut. During Apple import the user pastes the key once and adds the Shortcut.
 
-The Mini App never renders the raw key. A failed copy or activation leaves the prior active key valid. `shortcutConfigured` means an active key exists; it does not prove that iOS installed the Shortcut, so the UI says that the key is ready and keeps an explicit **Open Shortcut** action. Missing or failed configuration receives a concise retry/support state instead of an unfinished-feature placeholder.
+The Mini App never renders the raw key by default. If iOS rejects automatic clipboard access, it does not open the iCloud Shortcut; only the explicit **Show key** recovery action reveals the in-memory key in a selectable read-only field. Closing or completing setup clears that value. A failed copy or activation leaves the prior active key valid. `shortcutConfigured` means an active key exists; it does not prove that iOS installed the Shortcut, so the UI says that the key is ready and keeps an explicit **Open Shortcut** action. Missing or failed configuration receives a concise retry/support state instead of an unfinished-feature placeholder.
 
 ## Canonical shared Shortcut
 

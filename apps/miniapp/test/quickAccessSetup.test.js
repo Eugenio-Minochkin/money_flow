@@ -1,89 +1,35 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { advanceShortcutSetup } from "../src/quickAccessSetup.js";
+import { activatePreparedShortcut, prepareShortcutSetup } from "../src/quickAccessSetup.js";
 
-test("Shortcut setup never activates a prepared key when clipboard copy fails", async () => {
+test("preparation returns a memory-only key without activating a credential", async () => {
   const calls = [];
-  const result = await advanceShortcutSetup({
-    telegramUserId: 100,
-    api: async (path) => {
-      calls.push(path);
-      return { preparationId: "prep-1", token: "raw-key" };
-    },
-    writeText: async () => { throw new Error("clipboard denied"); }
-  });
-
-  assert.equal(result.status, "preparation_failed");
-  assert.equal(result.preparationId, null);
+  const result = await prepareShortcutSetup({ telegramUserId: 100, api: async (path) => { calls.push(path); return { preparationId: "prep-1", token: "raw-key" }; } });
+  assert.deepEqual(result, { status: "prepared", preparationId: "prep-1", token: "raw-key" });
   assert.deepEqual(calls, ["/api/quick-access-token-preparations"]);
 });
 
-test("Shortcut activation failure retains the copied preparation for a retry", async () => {
-  const calls = [];
-  const result = await advanceShortcutSetup({
-    telegramUserId: 100,
-    api: async (path) => {
-      calls.push(path);
-      if (path.endsWith("/activate")) throw new Error("network down");
-      return { preparationId: "prep-1", token: "raw-key" };
-    },
-    writeText: async () => {}
-  });
-
-  assert.equal(result.status, "activation_failed");
-  assert.equal(result.preparationId, "prep-1");
-  assert.deepEqual(calls, [
-    "/api/quick-access-token-preparations",
-    "/api/quick-access-token-preparations/prep-1/activate"
-  ]);
-});
-
-test("Shortcut activation retry reuses the copied preparation without issuing another key", async () => {
-  const calls = [];
-  const result = await advanceShortcutSetup({
-    telegramUserId: 100,
-    preparationId: "prep-1",
-    api: async (path) => { calls.push(path); return { ok: true }; },
-    writeText: async () => { throw new Error("must not copy again"); }
-  });
-
-  assert.equal(result.status, "activated");
+test("preparation failure exposes no key or activation id", async () => {
+  const result = await prepareShortcutSetup({ telegramUserId: 100, api: async () => { throw new Error("network down"); } });
+  assert.equal(result.status, "preparation_failed");
   assert.equal(result.preparationId, null);
-  assert.deepEqual(calls, ["/api/quick-access-token-preparations/prep-1/activate"]);
+  assert.equal(result.token, null);
 });
 
-test("Shortcut setup opens the shared Shortcut only after its key is copied and activated", async () => {
+test("activation opens only after the explicit key handoff path", async () => {
   const calls = [];
-  const result = await advanceShortcutSetup({
-    telegramUserId: 100,
-    shortcutUrl: "https://www.icloud.com/shortcuts/shared-money-flow",
-    api: async (path) => {
-      calls.push(`api:${path}`);
-      if (path.endsWith("/activate")) return { ok: true };
-      return { preparationId: "prep-1", token: "raw-key" };
-    },
-    writeText: async () => { calls.push("clipboard"); },
-    openShortcut: (url) => { calls.push(`open:${url}`); }
-  });
-
-  assert.equal(result.status, "activated");
-  assert.deepEqual(calls, [
-    "api:/api/quick-access-token-preparations",
-    "clipboard",
-    "api:/api/quick-access-token-preparations/prep-1/activate",
-    "open:https://www.icloud.com/shortcuts/shared-money-flow"
-  ]);
+  const result = await activatePreparedShortcut({ telegramUserId: 100, preparationId: "prep-1", shortcutUrl: "https://www.icloud.com/shortcuts/shared", api: async (path) => { calls.push(`api:${path}`); }, openShortcut: (url) => calls.push(`open:${url}`) });
+  assert.deepEqual(result, { status: "activated" });
+  assert.deepEqual(calls, ["api:/api/quick-access-token-preparations/prep-1/activate", "open:https://www.icloud.com/shortcuts/shared"]);
 });
 
-test("Shortcut setup stays activated when opening the shared Shortcut is unavailable", async () => {
-  const result = await advanceShortcutSetup({
-    telegramUserId: 100,
-    shortcutUrl: "https://www.icloud.com/shortcuts/shared-money-flow",
-    api: async (path) => path.endsWith("/activate") ? { ok: true } : { preparationId: "prep-1", token: "raw-key" },
-    writeText: async () => {},
-    openShortcut: () => { throw new Error("external links unavailable"); }
-  });
+test("activation failure retains the prepared key for a manual retry", async () => {
+  const result = await activatePreparedShortcut({ telegramUserId: 100, preparationId: "prep-1", shortcutUrl: "https://www.icloud.com/shortcuts/shared", api: async () => { throw new Error("network down"); }, openShortcut: () => assert.fail("must not open") });
+  assert.equal(result.status, "activation_failed");
+});
 
-  assert.deepEqual(result, { status: "activated", preparationId: null });
+test("activation succeeds even if opening the shared Shortcut is unavailable", async () => {
+  const result = await activatePreparedShortcut({ telegramUserId: 100, preparationId: "prep-1", shortcutUrl: "https://www.icloud.com/shortcuts/shared", api: async () => {}, openShortcut: () => { throw new Error("external links unavailable"); } });
+  assert.deepEqual(result, { status: "activated" });
 });

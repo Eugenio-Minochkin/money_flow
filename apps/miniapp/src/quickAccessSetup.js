@@ -1,19 +1,18 @@
-export async function advanceShortcutSetup({ api, telegramUserId, writeText, preparationId = null, shortcutUrl = null, openShortcut = null }) {
-  let nextPreparationId = preparationId;
-  if (!nextPreparationId) {
-    try {
-      const prepared = await api("/api/quick-access-token-preparations", { method: "POST", body: { telegramUserId } });
-      await writeText(prepared.token);
-      nextPreparationId = prepared.preparationId;
-    } catch (error) {
-      return { status: "preparation_failed", preparationId: null, error };
-    }
-  }
+export async function prepareShortcutSetup({ api, telegramUserId }) {
   try {
-    await api(`/api/quick-access-token-preparations/${nextPreparationId}/activate`, { method: "POST", body: { telegramUserId } });
+    const prepared = await api("/api/quick-access-token-preparations", { method: "POST", body: { telegramUserId } });
+    return { status: "prepared", preparationId: prepared.preparationId, token: prepared.token };
   } catch (error) {
-    return { status: "activation_failed", preparationId: nextPreparationId, error };
+    return { status: "preparation_failed", preparationId: null, token: null, error };
   }
-  try { if (shortcutUrl && openShortcut) openShortcut(shortcutUrl); } catch { /* the ready state retains a manual Open Shortcut action */ }
-  return { status: "activated", preparationId: null };
+}
+
+export async function activatePreparedShortcut({ api, telegramUserId, preparationId, shortcutUrl, openShortcut }) {
+  try {
+    await api(`/api/quick-access-token-preparations/${preparationId}/activate`, { method: "POST", body: { telegramUserId } });
+  } catch (error) {
+    return { status: "activation_failed", error };
+  }
+  try { openShortcut?.(shortcutUrl); } catch { /* retain the ready state with a manual Open Shortcut action */ }
+  return { status: "activated" };
 }

@@ -23,7 +23,7 @@ test("Mini App keeps app.js and styles.css cache-busters in sync", async () => {
   assert.ok(appVersion, "index.html should version app.js with a ?v= query");
   assert.ok(cssVersion, "index.html should version styles.css with a ?v= query");
   assert.equal(appVersion, cssVersion, "app.js and styles.css cache-busters must stay in sync");
-  assert.equal(appVersion, "20260821-siri-shortcut-v1");
+  assert.equal(appVersion, "20260821-shortcut-key-handoff-v1");
   assert.notEqual(appVersion, "20260626-dashboard-v12", "app.js must not keep the stale dashboard-v12 cache-buster");
 });
 
@@ -54,9 +54,9 @@ test("Mini App starts CSS and module fetches before the blocking Telegram SDK", 
   const html = await readFile(join(miniAppRoot, "index.html"), "utf8");
   const telegramSdk = html.indexOf('<script src="https://telegram.org/js/telegram-web-app.js"');
   const preconnect = html.indexOf('<link rel="preconnect" href="https://telegram.org"');
-  const stylesheet = html.indexOf('<link rel="stylesheet" href="/styles.css?v=20260821-siri-shortcut-v1"');
-  const modulePreload = html.indexOf('<link rel="modulepreload" href="/app.js?v=20260821-siri-shortcut-v1"');
-  const appExecution = html.indexOf('<script src="/app.js?v=20260821-siri-shortcut-v1" type="module">');
+  const stylesheet = html.indexOf('<link rel="stylesheet" href="/styles.css?v=20260821-shortcut-key-handoff-v1"');
+  const modulePreload = html.indexOf('<link rel="modulepreload" href="/app.js?v=20260821-shortcut-key-handoff-v1"');
+  const appExecution = html.indexOf('<script src="/app.js?v=20260821-shortcut-key-handoff-v1" type="module">');
 
   assert.ok(preconnect >= 0 && preconnect < telegramSdk);
   assert.ok(stylesheet >= 0 && stylesheet < telegramSdk);
@@ -163,22 +163,35 @@ test("Quick Capture saves safe entries with undo and keeps review in the sheet",
 test("Shortcut setup copies its key without rendering the raw credential", async () => {
   const html = await readFile(join(miniAppRoot, "index.html"), "utf8");
   const app = await readFile(join(miniAppRoot, "app.js"), "utf8");
+  const copyHandler = app.slice(app.indexOf("async function copyShortcutKeyAndOpen()"), app.indexOf("function revealShortcutKey()"));
 
   assert.match(html, /id="shortcutSetupPrimaryButton"/);
   assert.match(html, /id="shortcutSetupReadyState"/);
   assert.doesNotMatch(html, /quickAccessTokenValue|quickAccessTokenReveal|copyQuickAccessTokenButton/);
-  assert.match(app, /advanceShortcutSetup\(/);
-  assert.match(app, /preparationId: quickAccessPreparationId/);
+  assert.match(html, /id="shortcutKeyManualFallback"/);
+  assert.match(html, /id="shortcutKeyFallbackValue" readonly/);
+  assert.match(app, /prepareShortcutSetup\(/);
+  assert.match(copyHandler, /try \{ await navigator\.clipboard\.writeText\(quickAccessPreparedToken\); \} catch/);
+  assert.ok(copyHandler.indexOf("navigator.clipboard.writeText") < copyHandler.indexOf("activatePreparedShortcutAndOpen"));
+  assert.match(html, /id="showShortcutKeyButton"/);
+  assert.match(html, /id="shortcutKeyFallbackValue"/);
+  assert.match(app, /quickAccessClipboardFailed = true; renderShortcutSetupState\(\); return;/);
   assert.doesNotMatch(app, /api\("\/api\/quick-access-tokens", \{ method: "DELETE"/);
   assert.match(app, /let quickAccessTokenBusy = false/);
   assert.match(app, /if \(quickAccessTokenBusy\) return/);
   assert.match(app, /setQuickAccessTokenBusy\(true\)/);
-  assert.match(app, /if \(quickAccessTokenBusy \|\| !navigator\.clipboard\?\.writeText\)/);
+  assert.match(app, /async function copyShortcutKeyAndOpen\(\)/);
+  assert.match(app, /function revealShortcutKey\(\)/);
+  assert.match(app, /field\.value = quickAccessPreparedToken/);
+  assert.match(app, /if \(field\) field\.value = "";/);
   assert.match(app, /function renderShortcutSetupState\(\)/);
   for (const language of ["en", "ru"]) {
     assert.equal(typeof translations[language]["quickAccess.setup"], "string");
     assert.equal(typeof translations[language]["quickAccess.readyTitle"], "string");
     assert.equal(typeof translations[language]["quickAccess.siriPhrase"], "string");
+    assert.equal(typeof translations[language]["quickAccess.preparedTitle"], "string");
+    assert.equal(typeof translations[language]["quickAccess.copyFailed"], "string");
+    assert.equal(typeof translations[language]["quickAccess.showKey"], "string");
   }
 });
 
