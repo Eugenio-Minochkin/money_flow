@@ -6,8 +6,8 @@
     <title>Money Flow</title>
     <script>performance.mark("mf:html_start")</script>
     <link rel="preconnect" href="https://telegram.org" />
-    <link rel="stylesheet" href="/styles.css?v=20260818-desktop-window-v1" />
-    <link rel="modulepreload" href="/app.js?v=20260818-desktop-window-v1" />
+    <link rel="stylesheet" href="/styles.css?v=20260821-siri-shortcut-v1" />
+    <link rel="modulepreload" href="/app.js?v=20260821-siri-shortcut-v1" />
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script>
       performance.mark("mf:telegram_sdk_available");
@@ -365,13 +365,13 @@
                   <p class="settings-hint hidden" id="homeScreenAddedState" data-i18n="quickAccess.homeAdded">✓ Added to Home Screen</p>
                 </div>
                 <div class="settings-row settings-row--stacked">
-                  <strong data-i18n="quickAccess.shortcutTitle">Quick entry with Siri</strong>
-                  <p class="settings-hint" data-i18n="quickAccess.shortcutHint">Add expenses by voice without opening Telegram.</p>
-                  <div class="button-row hidden" id="quickAccessSetupActions"><button type="button" id="setupQuickAccessButton" data-i18n="quickAccess.setup" disabled>Set up on iPhone</button><button type="button" class="ghost-button hidden" id="reconfigureQuickAccessButton" data-i18n="quickAccess.reconfigure">Set up again</button></div>
-                  <p class="settings-hint" id="quickAccessUnavailableState" data-i18n="quickAccess.installUnavailable">Shortcut is not available yet — we’re preparing installation.</p>
-                  <p class="settings-hint hidden" id="quickAccessSetupState" data-i18n="quickAccess.keyCopied">✓ Key copied. Paste it into Shortcut.</p>
-                  <p class="settings-hint hidden" id="quickAccessConfiguredState" data-i18n="quickAccess.keyPrepared">Key is ready. Install Shortcut.</p>
-                  <a class="ghost-button hidden" id="installShortcutLink" target="_blank" rel="noopener" data-i18n="quickAccess.install">Install Shortcut</a>
+                  <button type="button" class="quick-access-entry" id="openShortcutSetupButton">
+                    <span class="quick-access-entry__copy"><strong data-i18n="quickAccess.shortcutTitle">Quick entry with Siri</strong><span data-i18n="quickAccess.shortcutHint">Add expenses by voice without opening Telegram.</span></span>
+                    <span class="quick-access-entry__chevron" aria-hidden="true">›</span>
+                  </button>
+                  <p class="settings-hint hidden" id="quickAccessConfiguredBadge" data-i18n="quickAccess.entryReady">✓ Shortcut is ready</p>
+                  <p class="settings-hint hidden" id="quickAccessUnavailableState" data-i18n="quickAccess.unavailable">Siri setup is temporarily unavailable. Try again later or contact support.</p>
+                  <button type="button" class="ghost-button hidden" id="retryShortcutSetupConfigButton" data-i18n="quickAccess.retry">Retry</button>
                 </div>
               </div>
             </section>
@@ -568,6 +568,36 @@
         </form>
       </section>
     </section>
+    <div class="shortcut-setup-backdrop hidden" id="shortcutSetupBackdrop"></div>
+    <section class="shortcut-setup-sheet hidden" id="shortcutSetupSheet" role="dialog" aria-modal="true" aria-labelledby="shortcutSetupTitle">
+      <div class="shortcut-setup-sheet__handle" aria-hidden="true"></div>
+      <header class="shortcut-setup-sheet__header">
+        <div><h2 id="shortcutSetupTitle" data-i18n="quickAccess.setupTitle">Quick entry with Siri</h2><p data-i18n="quickAccess.setupDescription">Add an expense by voice without opening Telegram.</p></div>
+        <button type="button" class="shortcut-setup-sheet__close" id="closeShortcutSetupButton" aria-label="Close" data-i18n-aria-label="actions.close">×</button>
+      </header>
+      <div class="shortcut-setup-sheet__body">
+        <ul class="shortcut-setup-benefits">
+          <li data-i18n="quickAccess.benefitChat">No need to open the bot chat</li>
+          <li data-i18n="quickAccess.benefitExample">Say: “Coffee 250 rubles”</li>
+          <li data-i18n="quickAccess.benefitReview">Unclear entries stay in Needs review</li>
+        </ul>
+        <p class="quick-entry-status hidden" id="shortcutSetupErrorState" aria-live="polite"></p>
+        <section class="shortcut-setup-ready hidden" id="shortcutSetupReadyState">
+          <strong data-i18n="quickAccess.readyTitle">Key is ready to install</strong>
+          <p data-i18n="quickAccess.readyDescription">Add the Shortcut, then use this phrase.</p>
+          <p class="shortcut-setup-phrase" data-i18n="quickAccess.siriPhrase">Siri, record an expense</p>
+          <button type="button" class="ghost-button" id="installShortcutLink" data-i18n="quickAccess.install">Open Shortcut</button>
+        </section>
+        <section class="shortcut-setup-unavailable hidden" id="shortcutSetupUnavailableState">
+          <p data-i18n="quickAccess.unavailable">Siri setup is temporarily unavailable. Try again later or contact support.</p>
+          <button type="button" class="ghost-button" id="retryShortcutSetupButton" data-i18n="quickAccess.retry">Retry</button>
+        </section>
+      </div>
+      <div class="shortcut-setup-sheet__actions">
+        <button type="button" id="shortcutSetupPrimaryButton" data-i18n="quickAccess.setup">Set up on iPhone</button>
+        <button type="button" class="ghost-button hidden" id="reconfigureQuickAccessButton" data-i18n="quickAccess.reconfigure">Set up again</button>
+      </div>
+    </section>
     <nav class="bottom-tabs" aria-label="Sections" data-i18n-aria-label="navigation.sections">
       <button class="tab-button active" type="button" data-tab="dashboard">
         <span class="tab-button__icon" data-nav-icon="dashboard" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m4 11 8-7 8 7v9h-5v-6H9v6H4z"/></svg></span>
@@ -589,6 +619,6 @@
     </nav>
 
     <div class="toast hidden" id="toast" role="status" aria-live="polite"></div>
-    <script src="/app.js?v=20260818-desktop-window-v1" type="module"></script>
+    <script src="/app.js?v=20260821-siri-shortcut-v1" type="module"></script>
   </body>
 </html>

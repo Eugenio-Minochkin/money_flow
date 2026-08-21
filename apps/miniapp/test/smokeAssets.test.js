@@ -23,7 +23,7 @@ test("Mini App keeps app.js and styles.css cache-busters in sync", async () => {
   assert.ok(appVersion, "index.html should version app.js with a ?v= query");
   assert.ok(cssVersion, "index.html should version styles.css with a ?v= query");
   assert.equal(appVersion, cssVersion, "app.js and styles.css cache-busters must stay in sync");
-  assert.equal(appVersion, "20260818-desktop-window-v1");
+  assert.equal(appVersion, "20260821-siri-shortcut-v1");
   assert.notEqual(appVersion, "20260626-dashboard-v12", "app.js must not keep the stale dashboard-v12 cache-buster");
 });
 
@@ -54,9 +54,9 @@ test("Mini App starts CSS and module fetches before the blocking Telegram SDK", 
   const html = await readFile(join(miniAppRoot, "index.html"), "utf8");
   const telegramSdk = html.indexOf('<script src="https://telegram.org/js/telegram-web-app.js"');
   const preconnect = html.indexOf('<link rel="preconnect" href="https://telegram.org"');
-  const stylesheet = html.indexOf('<link rel="stylesheet" href="/styles.css?v=20260818-desktop-window-v1"');
-  const modulePreload = html.indexOf('<link rel="modulepreload" href="/app.js?v=20260818-desktop-window-v1"');
-  const appExecution = html.indexOf('<script src="/app.js?v=20260818-desktop-window-v1" type="module">');
+  const stylesheet = html.indexOf('<link rel="stylesheet" href="/styles.css?v=20260821-siri-shortcut-v1"');
+  const modulePreload = html.indexOf('<link rel="modulepreload" href="/app.js?v=20260821-siri-shortcut-v1"');
+  const appExecution = html.indexOf('<script src="/app.js?v=20260821-siri-shortcut-v1" type="module">');
 
   assert.ok(preconnect >= 0 && preconnect < telegramSdk);
   assert.ok(stylesheet >= 0 && stylesheet < telegramSdk);
@@ -164,8 +164,8 @@ test("Shortcut setup copies its key without rendering the raw credential", async
   const html = await readFile(join(miniAppRoot, "index.html"), "utf8");
   const app = await readFile(join(miniAppRoot, "app.js"), "utf8");
 
-  assert.match(html, /id="setupQuickAccessButton"/);
-  assert.match(html, /id="quickAccessSetupState"/);
+  assert.match(html, /id="shortcutSetupPrimaryButton"/);
+  assert.match(html, /id="shortcutSetupReadyState"/);
   assert.doesNotMatch(html, /quickAccessTokenValue|quickAccessTokenReveal|copyQuickAccessTokenButton/);
   assert.match(app, /advanceShortcutSetup\(/);
   assert.match(app, /preparationId: quickAccessPreparationId/);
@@ -174,11 +174,11 @@ test("Shortcut setup copies its key without rendering the raw credential", async
   assert.match(app, /if \(quickAccessTokenBusy\) return/);
   assert.match(app, /setQuickAccessTokenBusy\(true\)/);
   assert.match(app, /if \(quickAccessTokenBusy \|\| !navigator\.clipboard\?\.writeText\)/);
-  assert.match(app, /function showQuickAccessSetupState\(\)/);
+  assert.match(app, /function renderShortcutSetupState\(\)/);
   for (const language of ["en", "ru"]) {
     assert.equal(typeof translations[language]["quickAccess.setup"], "string");
-    assert.equal(typeof translations[language]["quickAccess.keyCopied"], "string");
-    assert.equal(typeof translations[language]["quickAccess.keyPrepared"], "string");
+    assert.equal(typeof translations[language]["quickAccess.readyTitle"], "string");
+    assert.equal(typeof translations[language]["quickAccess.siriPhrase"], "string");
   }
 });
 
@@ -233,16 +233,22 @@ test("future planned row has no orphan top divider", async () => {
   assert.match(css, /#plannedNotice\s*>\s*\.planned-due-row:first-child\s*{[^}]*border-top:\s*0/s);
 });
 
-test("Shortcut unavailable state hides the setup CTA until an install URL exists", async () => {
+test("Shortcut setup has a dedicated sheet with ready, retry, and unavailable states", async () => {
   const html = await readFile(join(miniAppRoot, "index.html"), "utf8");
   const app = await readFile(join(miniAppRoot, "app.js"), "utf8");
 
-  assert.match(html, /class="button-row hidden" id="quickAccessSetupActions"/);
-  assert.match(html, /class="settings-hint" id="quickAccessUnavailableState"/);
-  assert.match(app, /quickAccessSetupActions/);
-  assert.match(app, /classList\.toggle\("hidden",\s*!quickAccessShortcutUrl\)/);
-  assert.equal(translations.ru["quickAccess.installUnavailable"], "Shortcut пока недоступен — готовим установку.");
-  assert.equal(translations.en["quickAccess.installUnavailable"], "Shortcut is not available yet — we’re preparing installation.");
+  assert.match(html, /id="openShortcutSetupButton"/);
+  assert.match(html, /id="shortcutSetupSheet"[^>]+role="dialog"[^>]+aria-modal="true"/);
+  assert.match(html, /id="shortcutSetupPrimaryButton"/);
+  assert.match(html, /id="shortcutSetupReadyState"/);
+  assert.match(html, /id="shortcutSetupUnavailableState"/);
+  assert.match(html, /id="retryShortcutSetupConfigButton"/);
+  assert.match(app, /function renderShortcutSetupState\(\)/);
+  assert.match(app, /openShortcut:/);
+  assert.equal(typeof translations.ru["quickAccess.unavailable"], "string");
+  assert.equal(typeof translations.en["quickAccess.unavailable"], "string");
+  assert.equal(typeof translations.ru["quickAccess.siriPhrase"], "string");
+  assert.equal(typeof translations.en["quickAccess.siriPhrase"], "string");
 });
 
 test("Mini App renders onboarding state before dashboard and history", async () => {
@@ -964,7 +970,7 @@ test("settings are grouped into focused sections with quick access and evening r
 
   assert.equal((settingsHtml.match(/class="settings-section"/g) ?? []).length, 5);
   assert.match(settingsHtml, /id="quickAccessBlock"/);
-  assert.match(settingsHtml, /id="setupQuickAccessButton"/);
+  assert.match(settingsHtml, /id="openShortcutSetupButton"/);
   assert.match(settingsHtml, /data-i18n="settings.sectionBudget"/);
   assert.match(settingsHtml, /data-i18n="settings.sectionCurrencies"/);
   assert.match(settingsHtml, /data-i18n="settings.sectionNotifications"/);
@@ -1033,8 +1039,8 @@ test("Quick Entry is a five-slot navigation action and is unavailable during onb
   const onboarding = app.match(/function renderOnboardingState\(user\)\s*{[^]*?\n}/)?.[0] ?? "";
   assert.match(onboarding, /#openQuickEntryButton/);
   assert.match(app, /status === "unsupported"\) return/);
-  assert.match(app, /if \(data\.shortcutConfigured\)/);
-  assert.match(app, /#quickAccessConfiguredState/);
+  assert.match(app, /quickAccessConfigured = Boolean\(data\.shortcutConfigured\)/);
+  assert.match(app, /#quickAccessConfiguredBadge/);
   assert.equal(translations.ru["quickEntry.addExpense"], "Добавить расход");
   assert.equal(translations.en["quickEntry.addExpense"], "Add expense");
 });
