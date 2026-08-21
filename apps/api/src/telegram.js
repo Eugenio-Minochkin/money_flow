@@ -73,6 +73,7 @@ export function createTelegramBot({
   miniAppUrl,
   expenseParser = createExpenseParser(),
   voiceTranscriber,
+  expenseEvidenceImportService,
   telegramClient,
   perfLogger = console.info,
   adminTelegramIds = new Set(),
@@ -102,7 +103,7 @@ export function createTelegramBot({
       }
       if (update.message) {
         try {
-          const result = await handleMessage({ update, repository, token, miniAppUrl, expenseParser, voiceTranscriber, telegramClient, adminTelegramIds, adminStatsService, releaseNotesService, adminAlertService, expenseExportService: sharedExpenseExportService, now, trace, telegramJobQueue, awaitQueuedJobs });
+          const result = await handleMessage({ update, repository, token, miniAppUrl, expenseParser, voiceTranscriber, expenseEvidenceImportService, telegramClient, adminTelegramIds, adminStatsService, releaseNotesService, adminAlertService, expenseExportService: sharedExpenseExportService, now, trace, telegramJobQueue, awaitQueuedJobs });
           success = !result?.queued;
           return result;
         } catch (error) {
@@ -168,7 +169,7 @@ export async function deliverShortcutCaptureToTelegramBestEffort({ onError = () 
   }
 }
 
-async function handleMessage({ update, repository, token, miniAppUrl, expenseParser, voiceTranscriber, telegramClient, adminTelegramIds, adminStatsService, releaseNotesService, adminAlertService, expenseExportService, now, trace, telegramJobQueue, awaitQueuedJobs }) {
+async function handleMessage({ update, repository, token, miniAppUrl, expenseParser, voiceTranscriber, expenseEvidenceImportService, telegramClient, adminTelegramIds, adminStatsService, releaseNotesService, adminAlertService, expenseExportService, now, trace, telegramJobQueue, awaitQueuedJobs }) {
   const message = update.message;
   const from = message.from;
   if (!from) return { ok: true };
@@ -389,7 +390,7 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
   const deliveryState = createTelegramJobDeliveryState();
   const queued = telegramJobQueue.enqueue({
     userId: from.id,
-    run: () => processQueuedMessage({ message, from, user, rawText, hasVoice, inputType: trackExpenseMessage ? inputType : null, repository, token, miniAppUrl, expenseParser, voiceTranscriber, telegramClient, adminTelegramIds, adminAlertService, now, trace, deliveryState }),
+    run: () => processQueuedMessage({ message, from, user, rawText, hasVoice, inputType: trackExpenseMessage ? inputType : null, repository, token, miniAppUrl, expenseParser, voiceTranscriber, expenseEvidenceImportService, telegramClient, adminTelegramIds, adminAlertService, now, trace, deliveryState }),
     onStart: (metadata) => trace.event("queue_job_start", metadata),
     onFinish: (metadata) => trace.event("queue_job_done", metadata)
   });
@@ -492,7 +493,7 @@ function pruneExpiredPendingFeedback(currentTime) {
   }
 }
 
-export async function processQueuedMessage({ message, from, user, rawText, hasVoice, inputType, repository, token, miniAppUrl, expenseParser, voiceTranscriber, telegramClient, adminTelegramIds = new Set(), adminAlertService, now = () => new Date(), trace, deliveryState = createTelegramJobDeliveryState() }) {
+export async function processQueuedMessage({ message, from, user, rawText, hasVoice, inputType, repository, token, miniAppUrl, expenseParser, voiceTranscriber, expenseEvidenceImportService, telegramClient, adminTelegramIds = new Set(), adminAlertService, now = () => new Date(), trace, deliveryState = createTelegramJobDeliveryState() }) {
   const processingStartedAt = performance.now();
   const language = user.interface_language ?? "en";
   const chatId = message.chat.id;
@@ -559,6 +560,12 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
         }
       }
       if (!text && inputType === "photo") {
+        if (expenseEvidenceImportService) {
+          const photo = message.photo?.at(-1);
+          const imported = await expenseEvidenceImportService.importImage({ user, chatId, messageId: message.message_id, fileId: photo?.file_id, fileUniqueId: photo?.file_unique_id, declaredMimeType: "image/jpeg", caption: message.caption ?? "" });
+          processingResult = imported.state === "ready" ? "evidence_ready" : "evidence_processing";
+          return deliverQueuedResult({ token, chatId, loaderMessageId: loader.messageId, text: imported.evidenceType === "unsupported" ? botText(language, "unsupportedPhoto") : `Нашёл ${imported.candidates?.length ?? 0} расходов. Откройте черновики для проверки.`, replyMarkup: null, telegramClient, trace });
+        }
         processingResult = "unsupported_photo";
         await safeRecordAppEvent(repository, user.id, "unsupported_photo_input", { inputType: "photo" });
         return deliverQueuedResult({

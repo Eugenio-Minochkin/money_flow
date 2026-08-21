@@ -1,4 +1,5 @@
 import { createServer } from "node:http";
+import crypto from "node:crypto";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -14,6 +15,9 @@ import { confirmDraftForApi } from "./draftConfirmation.js";
 import { createExchangeRateProvider } from "./exchangeRates.js";
 import { createExpenseExportService } from "./expenseExportService.js";
 import { createExpenseParser } from "./expenseParser.js";
+import { createExpenseEvidenceAnalyzer } from "./expenseEvidenceAnalyzer.js";
+import { createExpenseEvidenceImportService } from "./expenseEvidenceImportService.js";
+import { downloadAndSanitizeExpenseEvidenceImage } from "./expenseEvidenceImage.js";
 import { createExpenseDraftFromText, ExpenseTextNotRecognizedError, ShortcutRequestInProgressError } from "./expenseDraftService.js";
 import { createQuickAccessToken, hashQuickAccessToken } from "./quickAccessService.js";
 import { processMiniAppQuickCapture } from "./quickCapture.js";
@@ -121,6 +125,27 @@ const voiceTranscriber = createVoiceTranscriber({
     enabled: config.deepgramTranscriptionGlobalEnabled
   })
 });
+const expenseEvidenceAnalyzer = createExpenseEvidenceAnalyzer({
+  apiKey: config.openAiApiKey,
+  model: config.expenseEvidenceModel,
+  hmacSecret: config.expenseEvidenceHmacSecret,
+  timeoutMs: config.expenseEvidenceTimeoutMs
+});
+const expenseEvidenceImportService = config.expenseEvidenceImportEnabled
+  ? createExpenseEvidenceImportService({
+      repository,
+      analyzer: expenseEvidenceAnalyzer,
+      imageDownloader: {
+        download: ({ fileId, declaredMimeType }) => downloadAndSanitizeExpenseEvidenceImage({
+          telegramBotToken: config.telegramBotToken,
+          fileId,
+          declaredMimeType,
+          maxBytes: config.expenseEvidenceMaxBytes
+        })
+      },
+      hmac: (value) => crypto.createHmac("sha256", config.expenseEvidenceHmacSecret).update(value).digest("hex")
+    })
+  : null;
 const expenseExportService = createExpenseExportService({
   repository,
   sendDocument: (document) => sendTelegramDocument({
@@ -194,6 +219,7 @@ function createBot(telegramClient) {
     repository,
     expenseParser,
     voiceTranscriber,
+    expenseEvidenceImportService,
     token: config.telegramBotToken,
     miniAppUrl: config.miniAppUrl,
     adminTelegramIds,

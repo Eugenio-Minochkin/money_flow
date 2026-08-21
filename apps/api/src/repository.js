@@ -223,6 +223,66 @@ export function createRepository(pool, options = {}) {
       return result.rows[0] ?? null;
     },
 
+    async claimExpenseEvidenceImport(userId, chatId, messageId) {
+      const result = await pool.query(
+        `INSERT INTO expense_evidence_imports AS imports (user_id, source_chat_id, source_message_id, image_bytes_hmac, status, claim_version, lease_expires_at)
+         VALUES ($1, $2, $3, 'pending', 'processing', 1, now() + interval '60 seconds')
+         ON CONFLICT (user_id, source_chat_id, source_message_id) DO UPDATE
+           SET claim_version = imports.claim_version + 1, lease_expires_at = now() + interval '60 seconds'
+         WHERE imports.status = 'processing' AND imports.lease_expires_at <= now()
+         RETURNING claim_version`,
+        [userId, chatId, messageId]
+      );
+      if (result.rows[0]) return { state: 'claimed', claimVersion: result.rows[0].claim_version };
+      const prior = await pool.query(
+        `SELECT id, status FROM expense_evidence_imports WHERE user_id = $1 AND source_chat_id = $2 AND source_message_id = $3`,
+        [userId, chatId, messageId]
+      );
+      return prior.rows[0] ? { state: prior.rows[0].status, id: prior.rows[0].id } : null;
+    },
+
+    async releaseExpenseEvidenceImport(userId, chatId, messageId, claimVersion) {
+      await pool.query(
+        `UPDATE expense_evidence_imports SET status = 'failed', lease_expires_at = NULL, failure_code = 'analysis_failed', updated_at = now()
+         WHERE user_id = $1 AND source_chat_id = $2 AND source_message_id = $3 AND status = 'processing' AND claim_version = $4`,
+        [userId, chatId, messageId, claimVersion]
+      );
+    },
+
+    async completeExpenseEvidenceImport({ userId, chatId, messageId, claimVersion, imageBytesHmac, telegramFileHmac, candidateSetHmac, candidates }) {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        const claimed = await client.query(
+          `SELECT id FROM expense_evidence_imports WHERE user_id = $1 AND source_chat_id = $2 AND source_message_id = $3
+           AND status = 'processing' AND claim_version = $4 AND lease_expires_at > now() FOR UPDATE`,
+          [userId, chatId, messageId, claimVersion]
+        );
+        const importRow = claimed.rows[0];
+        if (!importRow) { await client.query('ROLLBACK'); return null; }
+        for (const candidate of candidates) {
+          const draftStatus = candidate.items.some((item) => item.needs_review) ? 'inbox' : 'pending';
+          const draft = await client.query(
+            `INSERT INTO drafts (user_id, status, source_text, items) VALUES ($1, $2, 'Image evidence import', $3) RETURNING id`,
+            [userId, draftStatus, JSON.stringify(candidate.items)]
+          );
+          await client.query(
+            `INSERT INTO expense_evidence_candidates (import_id, ordinal, evidence_type, draft_id, status, dedupe_classification, dedupe_reason_code)
+             VALUES ($1, $2, $3, $4, 'ready', $5, $6)`,
+            [importRow.id, candidate.ordinal, candidate.evidenceType, draft.rows[0].id, candidate.dedupeClassification, candidate.dedupeReasonCode]
+          );
+        }
+        const completed = await client.query(
+          `UPDATE expense_evidence_imports SET image_bytes_hmac = $5, telegram_file_hmac = $6, candidate_set_hmac = $7,
+             status = 'ready', lease_expires_at = NULL, completed_at = now(), updated_at = now()
+           WHERE id = $1 RETURNING id`,
+          [importRow.id, userId, chatId, messageId, imageBytesHmac, telegramFileHmac, candidateSetHmac]
+        );
+        await client.query('COMMIT');
+        return completed.rows[0];
+      } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
+    },
+
     async prepareQuickAccessToken(userId, tokenHash) {
       const result = await pool.query(
         `INSERT INTO quick_access_tokens (user_id, token_hash, prepared_expires_at)
