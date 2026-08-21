@@ -5,7 +5,8 @@ import test from "node:test";
 import {
   buildConfig,
   parseReleaseDigestCheckIntervalMinutes,
-  parseReleaseDigestSendHour
+  parseReleaseDigestSendHour,
+  requireRuntimeConfig
 } from "../src/config.js";
 
 test("release digest send hour accepts only integers from 0 through 23", () => {
@@ -142,6 +143,55 @@ test("paid AI guard defaults are generous and each provider has an independent k
   const disabled = buildConfig({ OPENAI_PARSER_GLOBAL_ENABLED: "false", DEEPGRAM_TRANSCRIPTION_GLOBAL_ENABLED: "false" });
   assert.equal(disabled.openAiParserGlobalEnabled, false);
   assert.equal(disabled.deepgramTranscriptionGlobalEnabled, false);
+});
+
+test("expense evidence import is disabled by default and validates bounded runtime settings", () => {
+  const defaults = buildConfig({});
+  assert.equal(defaults.expenseEvidenceImportEnabled, false);
+  assert.equal(defaults.expenseEvidenceMaxBytes, 10_485_760);
+  assert.equal(defaults.expenseEvidenceTimeoutMs, 30_000);
+  assert.equal(defaults.expenseEvidenceModel, "gpt-5-mini");
+
+  const configured = buildConfig({
+    OPENAI_MODEL: "gpt-5.4-mini",
+    EXPENSE_EVIDENCE_IMPORT_ENABLED: "true",
+    EXPENSE_EVIDENCE_MAX_BYTES: "5242880",
+    EXPENSE_EVIDENCE_TIMEOUT_MS: "15000",
+    EXPENSE_EVIDENCE_MODEL: "gpt-5.4",
+    EXPENSE_EVIDENCE_HMAC_SECRET: "test-evidence-secret"
+  });
+  assert.equal(configured.expenseEvidenceImportEnabled, true);
+  assert.equal(configured.expenseEvidenceMaxBytes, 5_242_880);
+  assert.equal(configured.expenseEvidenceTimeoutMs, 15_000);
+  assert.equal(configured.expenseEvidenceModel, "gpt-5.4");
+  assert.equal(configured.expenseEvidenceHmacSecret, "test-evidence-secret");
+
+  for (const name of ["EXPENSE_EVIDENCE_MAX_BYTES", "EXPENSE_EVIDENCE_TIMEOUT_MS"]) {
+    assert.throws(
+      () => buildConfig({ [name]: "0" }),
+      new RegExp(`Invalid configuration: ${name}`)
+    );
+  }
+});
+
+test("production evidence import requires its dedicated HMAC secret only when enabled", () => {
+  const common = {
+    NODE_ENV: "production",
+    DATABASE_URL: "postgres://localhost/money_flow",
+    TELEGRAM_WEBHOOK_SECRET: "webhook-secret",
+    REQUIRE_TELEGRAM_INIT_DATA: "true"
+  };
+
+  assert.doesNotThrow(() => requireRuntimeConfig(buildConfig(common)));
+  assert.throws(
+    () => requireRuntimeConfig(buildConfig({ ...common, EXPENSE_EVIDENCE_IMPORT_ENABLED: "true" })),
+    /EXPENSE_EVIDENCE_HMAC_SECRET is required in production when expense evidence import is enabled/
+  );
+  assert.doesNotThrow(() => requireRuntimeConfig(buildConfig({
+    ...common,
+    EXPENSE_EVIDENCE_IMPORT_ENABLED: "true",
+    EXPENSE_EVIDENCE_HMAC_SECRET: "evidence-secret"
+  })));
 });
 
 test("server wires expense parser LLM timeout", async () => {
