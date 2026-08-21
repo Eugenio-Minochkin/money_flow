@@ -25,7 +25,7 @@ The product should feel simple, fast, and light: a user records expenses in the 
 
 - The main emotional goal is calm clarity: the user should understand money movement without overload.
 - Dashboard screens should show budget state clearly and avoid visual noise.
-- Settings should stay compact even as they cover budget, currencies, planned payments, reserve, language, theme, and backup.
+- Settings should stay compact even as they cover budget, currencies, planned payments, reserve, language, theme, backup, and a single Siri/Shortcut entry that opens its own setup sheet.
 - New work should usually improve the current MVP flows before adding a new major surface.
 - Evening empty-day reminders should feel gentle and easy to dismiss, with a clear opt-out.
 - Planned-payment reminders should use explicit payment terminology, avoid competing with the empty-day reminder, and become inactive when Mini App already changed the underlying plan.

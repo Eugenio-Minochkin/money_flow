@@ -223,6 +223,8 @@ let quickCaptureCategorySelections = new Set();
 let quickAccessShortcutUrl = null;
 let quickAccessTokenBusy = false;
 let quickAccessPreparationId = null;
+let quickAccessConfigured = false;
+let quickAccessSetupError = false;
 let quickEntryRequestId = null;
 quickEntryText?.addEventListener("input", () => { quickEntryRequestId = null; });
 document.querySelector("#openQuickEntryButton")?.addEventListener("click", () => {
@@ -422,47 +424,81 @@ function initializeTelegramQuickAccess() {
 async function createQuickAccessToken() {
   if (quickAccessTokenBusy) return;
   if (!quickAccessShortcutUrl || !navigator.clipboard?.writeText) {
-    showToast(t("quickAccess.installUnavailable"));
+    quickAccessSetupError = true;
+    renderShortcutSetupState();
     return;
   }
   quickAccessTokenBusy = true;
+  quickAccessSetupError = false;
   setQuickAccessTokenBusy(true);
   try {
     const outcome = await advanceShortcutSetup({
       api,
       telegramUserId,
       writeText: (token) => navigator.clipboard.writeText(token),
-      preparationId: quickAccessPreparationId
+      preparationId: quickAccessPreparationId,
+      shortcutUrl: quickAccessShortcutUrl,
+      openShortcut: openSharedShortcut
     });
     quickAccessPreparationId = outcome.preparationId;
     if (outcome.status !== "activated") {
-      showToast(t("quickAccess.setupFailed"));
+      quickAccessSetupError = true;
       return;
     }
-    showQuickAccessSetupState();
+    quickAccessConfigured = true;
   } catch {
-    showToast(t("quickAccess.setupFailed"));
+    quickAccessSetupError = true;
   } finally {
     quickAccessTokenBusy = false;
     setQuickAccessTokenBusy(false);
+    renderShortcutSetupState();
   }
 }
 
 function setQuickAccessTokenBusy(busy) {
-  document.querySelector("#setupQuickAccessButton").disabled = busy;
+  document.querySelector("#shortcutSetupPrimaryButton").disabled = busy;
   document.querySelector("#reconfigureQuickAccessButton").disabled = busy;
 }
 
-function showQuickAccessSetupState() {
-  document.querySelector("#quickAccessSetupState")?.classList.remove("hidden");
-  document.querySelector("#setupQuickAccessButton")?.classList.add("hidden");
-  document.querySelector("#reconfigureQuickAccessButton")?.classList.remove("hidden");
-  document.querySelector("#installShortcutLink")?.classList.remove("hidden");
+function openSharedShortcut(url) {
+  const telegram = window.Telegram?.WebApp;
+  if (telegram?.openLink) return telegram.openLink(url);
+  window.open(url, "_blank", "noopener");
+}
+
+function openShortcutSetup() {
+  document.querySelector("#shortcutSetupSheet")?.classList.remove("hidden");
+  document.querySelector("#shortcutSetupBackdrop")?.classList.remove("hidden");
+  document.body.classList.add("shortcut-setup-open");
+  renderShortcutSetupState();
+}
+
+function closeShortcutSetup() {
+  document.querySelector("#shortcutSetupSheet")?.classList.add("hidden");
+  document.querySelector("#shortcutSetupBackdrop")?.classList.add("hidden");
+  document.body.classList.remove("shortcut-setup-open");
+}
+
+function renderShortcutSetupState() {
+  const unavailable = !quickAccessShortcutUrl;
+  document.querySelector("#quickAccessConfiguredBadge")?.classList.toggle("hidden", !quickAccessConfigured);
+  document.querySelector("#quickAccessUnavailableState")?.classList.toggle("hidden", !unavailable);
+  document.querySelector("#retryShortcutSetupConfigButton")?.classList.toggle("hidden", !unavailable);
+  document.querySelector("#shortcutSetupUnavailableState")?.classList.toggle("hidden", !unavailable);
+  document.querySelector("#shortcutSetupReadyState")?.classList.toggle("hidden", !quickAccessConfigured || unavailable);
+  document.querySelector("#shortcutSetupPrimaryButton")?.classList.toggle("hidden", quickAccessConfigured || unavailable);
+  document.querySelector("#reconfigureQuickAccessButton")?.classList.toggle("hidden", !quickAccessConfigured || unavailable);
+  const error = document.querySelector("#shortcutSetupErrorState");
+  if (error) {
+    error.textContent = quickAccessSetupError ? t("quickAccess.setupFailed") : "";
+    error.classList.toggle("hidden", !quickAccessSetupError);
+  }
 }
 
 async function reconfigureQuickAccessToken() {
   if (quickAccessTokenBusy || !navigator.clipboard?.writeText) {
-    showToast(t("quickAccess.installUnavailable"));
+    quickAccessSetupError = true;
+    renderShortcutSetupState();
     return;
   }
   if (!window.confirm(t("quickAccess.reconfigureConfirm"))) return;
@@ -471,25 +507,16 @@ async function reconfigureQuickAccessToken() {
 
 async function loadQuickAccessConfig() {
   if (!telegramUserId) return;
-  const data = await api(`/api/quick-access?telegramUserId=${encodeURIComponent(telegramUserId)}`);
-  quickAccessShortcutUrl = data.iosShortcutUrl;
-  const setup = document.querySelector("#setupQuickAccessButton");
-  const quickAccessSetupActions = document.querySelector("#quickAccessSetupActions");
-  quickAccessSetupActions?.classList.toggle("hidden", !quickAccessShortcutUrl);
-  document.querySelector("#quickAccessUnavailableState")?.classList.toggle("hidden", Boolean(quickAccessShortcutUrl));
-  if (!quickAccessShortcutUrl) {
-    return;
-  }
-  if (setup) setup.disabled = false;
-  if (data.shortcutConfigured) {
-    document.querySelector("#quickAccessConfiguredState").classList.remove("hidden");
-    document.querySelector("#setupQuickAccessButton").classList.add("hidden");
-    document.querySelector("#reconfigureQuickAccessButton").classList.remove("hidden");
-  }
-  if (data.iosShortcutUrl) {
-    const link = document.querySelector("#installShortcutLink");
-    link.href = data.iosShortcutUrl;
-    if (data.shortcutConfigured) link.classList.remove("hidden");
+  try {
+    const data = await api(`/api/quick-access?telegramUserId=${encodeURIComponent(telegramUserId)}`);
+    quickAccessShortcutUrl = data.iosShortcutUrl || null;
+    quickAccessConfigured = Boolean(data.shortcutConfigured);
+    quickAccessSetupError = false;
+  } catch {
+    quickAccessShortcutUrl = null;
+    quickAccessSetupError = true;
+  } finally {
+    renderShortcutSetupState();
   }
 }
 
@@ -553,8 +580,17 @@ document.querySelector("#budgetInput")?.addEventListener("keydown", (event) => {
   event.currentTarget.blur();
 });
 document.querySelector("#detectTimezoneButton")?.addEventListener("click", detectTimezone);
-document.querySelector("#setupQuickAccessButton")?.addEventListener("click", createQuickAccessToken);
+document.querySelector("#openShortcutSetupButton")?.addEventListener("click", openShortcutSetup);
+document.querySelector("#closeShortcutSetupButton")?.addEventListener("click", closeShortcutSetup);
+document.querySelector("#shortcutSetupBackdrop")?.addEventListener("click", closeShortcutSetup);
+document.querySelector("#shortcutSetupPrimaryButton")?.addEventListener("click", createQuickAccessToken);
 document.querySelector("#reconfigureQuickAccessButton")?.addEventListener("click", reconfigureQuickAccessToken);
+document.querySelector("#installShortcutLink")?.addEventListener("click", () => {
+  if (quickAccessShortcutUrl) openSharedShortcut(quickAccessShortcutUrl);
+});
+for (const selector of ["#retryShortcutSetupButton", "#retryShortcutSetupConfigButton"]) {
+  document.querySelector(selector)?.addEventListener("click", () => void loadQuickAccessConfig());
+}
 initializeTelegramQuickAccess();
 installTabSwipeNavigation();
 void loadQuickAccessConfig().catch(() => {});

@@ -1,4 +1,4 @@
-export async function advanceShortcutSetup({ api, telegramUserId, writeText, preparationId = null }) {
+export async function advanceShortcutSetup({ api, telegramUserId, writeText, preparationId = null, shortcutUrl = null, openShortcut = null }) {
   let nextPreparationId = preparationId;
   if (!nextPreparationId) {
     try {
@@ -11,8 +11,9 @@ export async function advanceShortcutSetup({ api, telegramUserId, writeText, pre
   }
   try {
     await api(`/api/quick-access-token-preparations/${nextPreparationId}/activate`, { method: "POST", body: { telegramUserId } });
-    return { status: "activated", preparationId: null };
   } catch (error) {
     return { status: "activation_failed", preparationId: nextPreparationId, error };
   }
+  try { if (shortcutUrl && openShortcut) openShortcut(shortcutUrl); } catch { /* the ready state retains a manual Open Shortcut action */ }
+  return { status: "activated", preparationId: null };
 }
