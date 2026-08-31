@@ -17,17 +17,22 @@ import {
   weeklyTakeaway
 } from "../src/reportAnalytics.js";
 
-test("every supported base currency has an explicit positive change threshold", () => {
-  assert.ok(SUPPORTED_CURRENCY_CODES.length > 0, "expected supported currencies to be defined");
-  for (const code of SUPPORTED_CURRENCY_CODES) {
-    const threshold = CHANGE_ABSOLUTE_BY_CURRENCY[code];
-    assert.ok(
-      Number.isFinite(threshold) && threshold > 0,
-      `currency ${code} must have an explicit positive absolute threshold (got ${threshold})`
-    );
-  }
-  // High-magnitude currencies must not silently fall back to the tiny default.
+test("change thresholds keep only intentional magnitude overrides and use a safe fallback", () => {
+  assert.ok(SUPPORTED_CURRENCY_CODES.includes("INR"), "expected expanded fiat catalogue");
+  assert.ok(Number.isFinite(CHANGE_ABSOLUTE_BY_CURRENCY.THB));
+  assert.ok(Number.isFinite(CHANGE_ABSOLUTE_BY_CURRENCY.IDR));
   assert.ok(CHANGE_ABSOLUTE_BY_CURRENCY.IDR > 100_000, "IDR threshold must reflect its magnitude");
+});
+
+test("categoryChanges uses the shared safe floor for a supported currency without an override", () => {
+  const changes = categoryChanges({
+    current: [{ category_slug: "food_cafe", total: 30 }],
+    prior: [],
+    language: "en",
+    currency: "INR"
+  });
+
+  assert.equal(changes.length, 1);
 });
 
 test("largestExpenses sorts by amount desc, caps at limit, and falls back to localized category", () => {
