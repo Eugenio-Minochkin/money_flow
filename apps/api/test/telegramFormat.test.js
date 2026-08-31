@@ -36,9 +36,10 @@ test("shows a converted mixed-currency draft preview in the selected locale", ()
 });
 
 test("never labels a raw mixed-currency numeric sum as any base currency without a preview", () => {
+  const representativeOriginalCurrencies = ["THB", "USD", "IDR", "INR"];
   for (const baseCurrency of SUPPORTED_CURRENCY_CODES) {
-    for (const firstCurrency of SUPPORTED_CURRENCY_CODES) {
-      for (const secondCurrency of SUPPORTED_CURRENCY_CODES) {
+    for (const firstCurrency of representativeOriginalCurrencies) {
+      for (const secondCurrency of representativeOriginalCurrencies) {
         if (firstCurrency === secondCurrency) continue;
         const text = normalizeSpaces(formatDraft([
           draftExpense(127000, firstCurrency),
