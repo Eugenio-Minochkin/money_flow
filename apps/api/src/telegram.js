@@ -19,6 +19,7 @@ import { formatTechnicalStatsSections } from "./technicalStatsService.js";
 import { createExpenseExportService } from "./expenseExportService.js";
 import { createTelegramExpenseDraft, ExpenseTextNotRecognizedError } from "./expenseDraftService.js";
 import { createTelegramJobQueue } from "./telegramJobQueue.js";
+import { createTelegramJobDeliveryState, markTelegramJobTerminalResponse, shouldNotifyTelegramJobFailure } from "./telegramJobOutcome.js";
 import { syncTelegramUserCommandMenu } from "./telegramCommands.js";
 import { renderDraftPreview } from "./draftPreview.js";
 import { formatPlannedPaymentReminder } from "./plannedPaymentReminderService.js";
@@ -384,9 +385,10 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
     await safeRecordAppEvent(repository, user.id, "message_received", { inputType });
   }
 
+  const deliveryState = createTelegramJobDeliveryState();
   const queued = telegramJobQueue.enqueue({
     userId: from.id,
-    run: () => processQueuedMessage({ message, from, user, rawText, hasVoice, inputType: trackExpenseMessage ? inputType : null, repository, token, miniAppUrl, expenseParser, voiceTranscriber, telegramClient, adminTelegramIds, adminAlertService, now, trace }),
+    run: () => processQueuedMessage({ message, from, user, rawText, hasVoice, inputType: trackExpenseMessage ? inputType : null, repository, token, miniAppUrl, expenseParser, voiceTranscriber, telegramClient, adminTelegramIds, adminAlertService, now, trace, deliveryState }),
     onStart: (metadata) => trace.event("queue_job_start", metadata),
     onFinish: (metadata) => trace.event("queue_job_done", metadata)
   });
@@ -413,7 +415,7 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
     try {
       await queued.promise;
     } catch (error) {
-      await sendQueuedJobFailure({ error, token, chatId, language, telegramClient, adminAlertService, telegramUserId: from.id, userId: user.id, trace });
+      await sendQueuedJobFailure({ error, token, chatId, language, telegramClient, adminAlertService, telegramUserId: from.id, userId: user.id, trace, deliveryState });
     }
     return { ok: true };
   }
@@ -421,13 +423,13 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
   queued.promise
     .then(() => trace.finish(true))
     .catch(async (error) => {
-      await sendQueuedJobFailure({ error, token, chatId, language, telegramClient, adminAlertService, telegramUserId: from.id, userId: user.id, trace });
+      await sendQueuedJobFailure({ error, token, chatId, language, telegramClient, adminAlertService, telegramUserId: from.id, userId: user.id, trace, deliveryState });
       trace.finish(false, error);
     });
   return { ok: true, queued: true };
 }
 
-async function sendQueuedJobFailure({ error, token, chatId, language, telegramClient, adminAlertService, telegramUserId, userId, trace }) {
+async function sendQueuedJobFailure({ error, token, chatId, language, telegramClient, adminAlertService, telegramUserId, userId, trace, deliveryState }) {
   trace.failActive(["telegram_file_download", "transcription", "llm_parse", "db_save"], error);
   console.error("[telegram] queued job failed", error.message);
   if (!error?.adminAlertSent) {
@@ -437,6 +439,14 @@ async function sendQueuedJobFailure({ error, token, chatId, language, telegramCl
       telegramUserId,
       userId
     });
+  }
+  if (!shouldNotifyTelegramJobFailure(deliveryState)) {
+    console.warn("[telegram] suppressing queued job failure after terminal response", {
+      telegramUserId,
+      userId,
+      message: error?.message ?? "unknown"
+    });
+    return;
   }
   try {
     await sendTelegramResponse(trace, () => sendMessage(token, chatId, botText(language, "jobProcessingFailed"), null, telegramClient));
@@ -481,7 +491,7 @@ function pruneExpiredPendingFeedback(currentTime) {
   }
 }
 
-export async function processQueuedMessage({ message, from, user, rawText, hasVoice, inputType, repository, token, miniAppUrl, expenseParser, voiceTranscriber, telegramClient, adminTelegramIds = new Set(), adminAlertService, now = () => new Date(), trace }) {
+export async function processQueuedMessage({ message, from, user, rawText, hasVoice, inputType, repository, token, miniAppUrl, expenseParser, voiceTranscriber, telegramClient, adminTelegramIds = new Set(), adminAlertService, now = () => new Date(), trace, deliveryState = createTelegramJobDeliveryState() }) {
   const processingStartedAt = performance.now();
   const language = user.interface_language ?? "en";
   const chatId = message.chat.id;
@@ -490,10 +500,16 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
   let processingParserRoute;
   let transcriptChars = null;
 
+  const deliverQueuedResult = async (input) => {
+    const delivered = await deliverResultMessage(input);
+    markTelegramJobTerminalResponse(deliveryState);
+    return delivered;
+  };
+
   try {
     if (rawText && isFeedbackPending(from.id, now())) {
       const feedbackText = rawText.trim();
-      const result = await saveFeedbackMessage({ feedbackText, repository, user, telegramUserId: from.id, chatId, token, telegramClient, adminTelegramIds, trace, language });
+      const result = await saveFeedbackMessage({ feedbackText, repository, user, telegramUserId: from.id, chatId, token, telegramClient, adminTelegramIds, trace, language, deliveryState });
       processingResult = result.processingResult;
       if (result.saved) clearPendingFeedback(from.id);
       return result.response;
@@ -532,7 +548,7 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
       if (!text && inputType === "photo") {
         processingResult = "unsupported_photo";
         await safeRecordAppEvent(repository, user.id, "unsupported_photo_input", { inputType: "photo" });
-        return deliverResultMessage({
+        return deliverQueuedResult({
           token,
           chatId,
           loaderMessageId: loader.messageId,
@@ -554,7 +570,7 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
       if (topupParsed.state === "failed") {
         processingResult = "budget_topup_parse_failed";
         await safeRecordAppEvent(repository, user.id, "budget_topup_parse_failed", { inputType });
-        return deliverResultMessage({
+        return deliverQueuedResult({
           token,
           chatId,
           loaderMessageId: loader.messageId,
@@ -580,7 +596,7 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
         });
         processingResult = "budget_topup_draft_created";
         processingDraftType = "budget_topup";
-        return deliverResultMessage({
+        return deliverQueuedResult({
           token,
           chatId,
           loaderMessageId: loader.messageId,
@@ -615,7 +631,7 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
         await safeRecordAppEvent(repository, user.id, "expense_draft_created", { inputType, draftType: "planned" });
         processingResult = "planned_draft_created";
         processingDraftType = "planned";
-        return deliverResultMessage({
+        return deliverQueuedResult({
           token,
           chatId,
           loaderMessageId: loader.messageId,
@@ -629,7 +645,7 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
       if (looksLikeNonExpenseIntent(text)) {
         processingResult = "unsupported_intent_message";
         processingParserRoute = "non_expense_guard";
-        return deliverResultMessage({
+        return deliverQueuedResult({
           token,
           chatId,
           loaderMessageId: loader.messageId,
@@ -662,7 +678,7 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
         if (error instanceof ExpenseTextNotRecognizedError) {
           processingResult = "amount_not_found";
           await safeRecordAppEvent(repository, user.id, "expense_parse_failed", { inputType });
-          return deliverResultMessage({ token, chatId, loaderMessageId: loader.messageId,
+          return deliverQueuedResult({ token, chatId, loaderMessageId: loader.messageId,
             text: inputType === "voice" && text ? botText(language, "amountNotFoundWithTranscript", { transcript: text }) : botText(language, "amountNotFound"),
             replyMarkup: null, telegramClient, trace });
         }
@@ -683,6 +699,7 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
         draft = await repository.getDraftForTelegramUser(draft.id, from.id) ?? draft;
         if (draft.tg_chat_id && draft.tg_message_id) {
           processingResult = draft.status === "confirmed" ? "expense_saved" : "draft_created";
+          markTelegramJobTerminalResponse(deliveryState);
           return sendTelegramResponse(trace, () => deleteMessage(token, chatId, loader.messageId, telegramClient)
             .catch((error) => {
               console.error("[telegram] replay loader cleanup failed", error.message);
@@ -713,7 +730,7 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
           await Promise.all(expenses.map(() => safeRecordAppEvent(repository, user.id, "expense_saved", { draftType: "regular" })));
         }
         processingResult = "expense_saved";
-        const delivered = await deliverResultMessage({
+        const delivered = await deliverQueuedResult({
           token,
           chatId,
           loaderMessageId: loader.messageId,
@@ -726,12 +743,12 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
         });
         const refMessageId = extractMessageId(delivered);
         if (refMessageId) {
-          await repository.setDraftMessageRef(draft.id, from.id, chatId, refMessageId)
+          void repository.setDraftMessageRef(draft.id, from.id, chatId, refMessageId)
             .catch((error) => console.error("[telegram] failed to store saved message reference", error.message));
         }
         return delivered;
       }
-      const delivered = await deliverResultMessage({
+      const delivered = await deliverQueuedResult({
         token,
         chatId,
         loaderMessageId: loader.messageId,
@@ -742,14 +759,14 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
       });
       const refMessageId = extractMessageId(delivered);
       if (refMessageId) {
-        await repository.setDraftMessageRef(draft.id, from.id, chatId, refMessageId)
+        void repository.setDraftMessageRef(draft.id, from.id, chatId, refMessageId)
           .catch((error) => console.error("[telegram] failed to store draft message reference", error.message));
       }
       return delivered;
     } catch (error) {
       trace.failActive(["telegram_file_download", "transcription", "llm_parse", "db_save"], error);
       console.error("[telegram] expense processing failed", error.message);
-      return deliverResultMessage({
+      return deliverQueuedResult({
         token,
         chatId,
         loaderMessageId: loader.messageId,
@@ -765,7 +782,7 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
     if (inputType) {
       const stageDurations = trace.getDurations();
       const traceMetadata = trace.getMetadata();
-      await safeRecordAppEvent(repository, user.id, "message_processing_completed", {
+      const recordProcessingCompleted = safeRecordAppEvent(repository, user.id, "message_processing_completed", {
         inputType,
         result: processingResult,
         status: processingResult,
@@ -803,11 +820,16 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
         transcriptChars,
         audioDurationSec: inputType === "voice" ? traceMetadata.audioDurationSec : undefined
       });
+      if (deliveryState.terminalResponseDelivered) {
+        void recordProcessingCompleted;
+      } else {
+        await recordProcessingCompleted;
+      }
     }
   }
 }
 
-async function saveFeedbackMessage({ feedbackText, repository, user, telegramUserId, chatId, token, telegramClient, adminTelegramIds, trace, language }) {
+async function saveFeedbackMessage({ feedbackText, repository, user, telegramUserId, chatId, token, telegramClient, adminTelegramIds, trace, language, deliveryState }) {
   if (feedbackText.length < MIN_FEEDBACK_MESSAGE_LENGTH) {
     return {
       saved: false,
@@ -826,6 +848,7 @@ async function saveFeedbackMessage({ feedbackText, repository, user, telegramUse
   });
   trace.end("db_save");
   await sendTelegramResponse(trace, () => sendMessage(token, chatId, feedbackAcceptedText(language), null, telegramClient));
+  markTelegramJobTerminalResponse(deliveryState);
   await notifyAdminFeedback({
     token,
     adminTelegramIds,
