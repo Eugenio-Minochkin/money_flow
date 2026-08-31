@@ -6782,6 +6782,27 @@ test("normalizeDraftItem preserves category_source parser/user and defaults to n
   assert.equal(captured[1].category_source, null);
 });
 
+test("normalizeDraftItem retains only the explicit unresolved-currency review shape", async () => {
+  let captured;
+  const repo = createRepository(fakePool((sql, params) => {
+    captured = JSON.parse(params[0]);
+    return { rows: [{ id: 1, status: "pending", items: params[0], version: 2 }] };
+  }));
+  await repo.updateDraftItems(1, 100, [{
+    amount: 1000,
+    currency: null,
+    currency_candidates: ["INR", "IDR", "DOGE"],
+    review_reason: "currency_ambiguous",
+    description: "taxi",
+    category_slug: "transport"
+  }]);
+
+  assert.equal(captured[0].currency, null);
+  assert.deepEqual(captured[0].currency_candidates, ["INR", "IDR"]);
+  assert.equal(captured[0].review_reason, "currency_ambiguous");
+  assert.equal(captured[0].needs_review, true);
+});
+
 test("isCategoryValid distinguishes parser-other, user-other and confident categories", async () => {
   const { isCategoryValid } = await import("../src/repository.js");
   assert.equal(isCategoryValid({ category_slug: "food_cafe", needs_review: false, category_source: "parser" }), true);

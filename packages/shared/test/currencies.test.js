@@ -5,6 +5,7 @@ import {
   currencyFlag,
   currencyLabel,
   currencySearchText,
+  fallbackThbRate,
   isSupportedCurrency,
   normalizeCurrency,
   SUPPORTED_CURRENCIES
@@ -38,4 +39,6 @@ test("preserves permissive normalization and exposes strict membership", () => {
   assert.equal(normalizeCurrency("inr", "THB"), "INR");
   assert.equal(normalizeCurrency("unknown", "THB"), "THB");
   assert.equal(isSupportedCurrency("unknown"), false);
+  assert.equal(fallbackThbRate("USD"), 32.65);
+  assert.equal(fallbackThbRate("INR"), null);
 });

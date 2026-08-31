@@ -131,5 +131,5 @@ export function currencyLabel(code) {
 
 // Retained temporarily for legacy callers; Task 4 moves this adapter concern out of the catalogue module.
 export function fallbackThbRate(code) {
-  return LEGACY_EMERGENCY_THB_RATES[String(code ?? "").toUpperCase()] ?? 1;
+  return LEGACY_EMERGENCY_THB_RATES[String(code ?? "").toUpperCase()] ?? null;
 }

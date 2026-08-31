@@ -4774,9 +4774,19 @@ function normalizeDraftItem(item) {
   if (!Number.isFinite(amount) || amount <= 0) {
     throw new Error("Expense amount must be positive");
   }
+  const unresolvedCurrency = item.currency == null && item.review_reason === "currency_ambiguous";
+  const candidates = unresolvedCurrency
+    ? [...new Set((Array.isArray(item.currency_candidates) ? item.currency_candidates : [])
+      .map((code) => String(code).toUpperCase())
+      .filter(isSupportedCurrency))]
+    : [];
   return {
     amount,
-    currency: item.currency || "THB",
+    currency: unresolvedCurrency ? null : (item.currency || "THB"),
+    ...(unresolvedCurrency ? {
+      currency_candidates: candidates,
+      review_reason: "currency_ambiguous"
+    } : {}),
     description: String(item.description || "расход").trim(),
     category_slug: item.category_slug || "other",
     category_source: item.category_source === "user" || item.category_source === "parser" ? item.category_source : null,
@@ -4784,7 +4794,7 @@ function normalizeDraftItem(item) {
     spent_at: item.spent_at || new Date().toISOString(),
     budget_impact: ["regular", "planned", "large_oneoff"].includes(item.budget_impact) ? item.budget_impact : "regular",
     confidence: Number.isFinite(Number(item.confidence)) ? Number(item.confidence) : 1,
-    needs_review: Boolean(item.needs_review)
+    needs_review: unresolvedCurrency || Boolean(item.needs_review)
   };
 }
 
