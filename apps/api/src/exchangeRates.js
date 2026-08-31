@@ -3,6 +3,7 @@ import { SUPPORTED_CURRENCIES, SUPPORTED_CURRENCY_CODES, fallbackThbRate } from 
 const FRANKFURTER_URL = "https://api.frankfurter.dev/v1";
 const OPEN_ER_API_URL = "https://open.er-api.com/v6/latest/USD";
 const USD_THB_FALLBACK = fallbackThbRate("USD");
+const MANUAL_FALLBACK_CODES = new Set(["THB", "USD", "RUB", "IDR", "EUR", "BYN", "GEL"]);
 const NON_THB_CODES = SUPPORTED_CURRENCIES.map((currency) => currency.code).filter((code) => code !== "THB" && code !== "USD");
 const RATE_CODES = ["THB", ...NON_THB_CODES];
 
@@ -12,6 +13,7 @@ export function createExchangeRateProvider(options = {}) {
   const pool = options.pool ?? null;
   const logger = options.logger ?? console;
   const manualFallbackEnabled = options.manualFallbackEnabled !== false;
+  const rateSnapshots = new Map();
 
   return {
     async getExchangeRate(input) {
@@ -56,7 +58,7 @@ export function createExchangeRateProvider(options = {}) {
           return fallback;
         }
 
-        if (manualFallbackEnabled) {
+        if (manualFallbackEnabled && isManualFallbackCoveredPair(baseCurrency, quoteCurrency)) {
           const manualRates = fallbackRates(rateDate);
           logger.warn?.("[rates] provider response missing requested pair; using manual fallback", {
             provider: providerRates.source,
@@ -97,7 +99,7 @@ export function createExchangeRateProvider(options = {}) {
           return fallback;
         }
 
-        if (manualFallbackEnabled) {
+        if (manualFallbackEnabled && isManualFallbackCoveredPair(baseCurrency, quoteCurrency)) {
           const manualRates = fallbackRates(rateDate);
           logger.warn?.("[rates] provider failed; using manual fallback", {
             provider: "manual-fallback",
@@ -130,23 +132,19 @@ export function createExchangeRateProvider(options = {}) {
 
     async ratesFor(date) {
       const rateDate = toDateString(date);
-      if (!pool) {
-        try {
-          return await fetchProviderRates({ fetchImpl, adminAlertService, rateDate });
-        } catch (error) {
-          if (!manualFallbackEnabled) throw new ExchangeRateUnavailableError({ rateDate, baseCurrency: "USD", quoteCurrency: "THB", cause: error });
-          return fallbackRates(rateDate);
-        }
+      if (!rateSnapshots.has(rateDate)) {
+        rateSnapshots.set(rateDate, (async () => {
+          try {
+            const rates = await fetchProviderRates({ fetchImpl, adminAlertService, rateDate });
+            if (pool) await safelySaveDerivedRates({ pool, logger, rateDate, rates, baseCurrency: "USD", quoteCurrency: "THB" });
+            return rates;
+          } catch (error) {
+            if (!manualFallbackEnabled) throw new ExchangeRateUnavailableError({ rateDate, baseCurrency: "USD", quoteCurrency: "THB", cause: error });
+            return fallbackRates(rateDate);
+          }
+        })());
       }
-
-      const rates = { source: null, THB: { THB: 1 } };
-      for (const code of SUPPORTED_CURRENCY_CODES.filter((currency) => currency !== "THB")) {
-        const resolved = await this.getExchangeRate({ date: rateDate, baseCurrency: code, quoteCurrency: "THB" });
-        rates[code] = { THB: resolved.rate };
-        rates.source ??= resolved.source;
-      }
-      rates.source ??= "same-currency";
-      return rates;
+      return rateSnapshots.get(rateDate);
     }
   };
 }
@@ -229,7 +227,8 @@ function ratesFromUsdMap(map) {
 
 function fallbackUsdRates() {
   const rates = { THB: USD_THB_FALLBACK, USD: 1 };
-  for (const code of NON_THB_CODES) {
+  for (const code of MANUAL_FALLBACK_CODES) {
+    if (code === "THB" || code === "USD") continue;
     rates[code] = USD_THB_FALLBACK / fallbackThbRate(code);
   }
   return rates;
@@ -348,8 +347,9 @@ async function safelySaveDerivedRates({ pool, logger, rateDate, rates, baseCurre
 }
 
 async function saveDerivedRates(pool, rateDate, rates) {
-  for (const baseCurrency of SUPPORTED_CURRENCY_CODES) {
-    for (const quoteCurrency of SUPPORTED_CURRENCY_CODES) {
+  const providerCurrencies = rates.providerCurrencies ?? new Set();
+  for (const baseCurrency of providerCurrencies) {
+    for (const quoteCurrency of providerCurrencies) {
       if (baseCurrency === quoteCurrency) continue;
       if (!isProviderCoveredPair(rates, baseCurrency, quoteCurrency)) continue;
       await pool.query(
@@ -371,6 +371,10 @@ async function saveDerivedRates(pool, rateDate, rates) {
 function isProviderCoveredPair(rates, baseCurrency, quoteCurrency) {
   const providerCurrencies = rates.providerCurrencies ?? new Set(SUPPORTED_CURRENCY_CODES);
   return providerCurrencies.has(baseCurrency) && providerCurrencies.has(quoteCurrency);
+}
+
+function isManualFallbackCoveredPair(baseCurrency, quoteCurrency) {
+  return MANUAL_FALLBACK_CODES.has(baseCurrency) && MANUAL_FALLBACK_CODES.has(quoteCurrency);
 }
 
 function normalizeRateRow(row, sourcePrefix) {

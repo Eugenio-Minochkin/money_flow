@@ -361,6 +361,33 @@ test("Smart Save replays Telegram delivery and safely recovers every unresolved 
   assert.equal(stored.rows[0].spent_at.toISOString(), "2026-08-14T05:00:00.000Z");
 });
 
+test("persists ambiguous currency review without a default and saves only after an allowed choice", async () => {
+  const telegramUserId = 990041;
+  const user = await createSmokeUser(telegramUserId);
+  const ambiguousItem = expenseItem({ amount: 1000, description: "taxi", needs_review: true });
+  ambiguousItem.currency = null;
+  ambiguousItem.currency_candidates = ["INR", "IDR"];
+  ambiguousItem.review_reason = "currency_ambiguous";
+  const draft = await repo.createDraft(user.id, "taxi 1000 rupees", [ambiguousItem]);
+
+  const persisted = await repo.getDraftForTelegramUser(draft.id, telegramUserId);
+  assert.equal(persisted.items[0].currency, null);
+  assert.deepEqual(persisted.items[0].currency_candidates, ["INR", "IDR"]);
+  await assert.rejects(
+    () => repo.saveDraftAsExpense(draft.id, telegramUserId),
+    { code: "currency_selection_required" }
+  );
+  const selected = await repo.updateDraftItemForTelegramUser(draft.id, 0, telegramUserId, {
+    currency: "INR",
+    currency_candidates: undefined,
+    review_reason: undefined,
+    needs_review: false
+  });
+  assert.equal(selected.items[0].currency, "INR");
+  const saved = await repo.saveDraftAsExpense(draft.id, telegramUserId);
+  assert.equal(saved.expenses[0].currency_original, "INR");
+});
+
 test("explicit review acceptance saves the historical IDR backlog atomically and idempotently", async () => {
   const telegramUserId = 990019;
   const user = await createSmokeUser(telegramUserId);

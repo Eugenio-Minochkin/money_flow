@@ -3,13 +3,13 @@ import { draftNeedsCategoryChoice } from "./draftCategory.js";
 
 export function formatDraft(expenses, options = {}) {
   const language = normalizeLanguage(options.language);
-  const currencies = [...new Set(expenses.map((expense) => expense.currency))];
+  const currencies = [...new Set(expenses.map((expense) => expense.currency ?? null))];
   const singleCurrency = currencies.length <= 1;
   const totalCurrency = singleCurrency
     ? (currencies[0] ?? options.baseCurrency ?? "THB")
     : (options.baseCurrency ?? "THB");
   let lines = expenses.map((expense, index) =>
-    `${index + 1}. <b>${escapeHtml(categoryName(expense.category_slug))}</b>\n   🗓 ${formatSpentAt(expense.spent_at, language)}\n   ${escapeHtml(expense.description)} · <b>${formatMoney(expense.amount, expense.currency, language)}</b>`
+    `${index + 1}. <b>${escapeHtml(categoryName(expense.category_slug))}</b>\n   🗓 ${formatSpentAt(expense.spent_at, language)}\n   ${escapeHtml(expense.description)} · <b>${formatDraftItemMoney(expense, language)}</b>`
   );
   lines = lines.map((line, index) => line.replace("</b>", `</b>${formatBudgetImpactMarker(expenses[index]?.budget_impact, language)}`));
   const convertedPreview = isConvertedDraftPreview(options.preview, totalCurrency);
@@ -54,10 +54,17 @@ function isConvertedDraftPreview(preview, baseCurrency) {
 function formatDraftCurrencySubtotals(expenses, language) {
   const subtotals = new Map();
   for (const expense of expenses) {
-    const currency = expense.currency;
+    const currency = expense.currency ?? (language === "en" ? "currency required" : "выберите валюту");
     subtotals.set(currency, (subtotals.get(currency) ?? 0) + safeMoneyNumber(expense.amount));
   }
   return [...subtotals].map(([currency, amount]) => formatDraftAggregateMoney(amount, currency, language)).join(" + ");
+}
+
+function formatDraftItemMoney(expense, language) {
+  if (expense.currency) return formatMoney(expense.amount, expense.currency, language);
+  return language === "en"
+    ? `${formatAmount(expense.amount, language)} — choose currency`
+    : `${formatAmount(expense.amount, language)} — выберите валюту`;
 }
 
 function formatDraftAggregateMoney(amount, currency, language) {

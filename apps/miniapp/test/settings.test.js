@@ -52,8 +52,10 @@ test("does not show non-partial overrides as first-month budget blocks", () => {
   }, new Date("2026-06-13T10:00:00+07:00")), false);
 });
 
-test("normalizes timezone settings to a short supported list", () => {
+test("accepts every runtime-valid IANA timezone and only falls back for invalid values", () => {
   assert.equal(normalizeSettingsTimeZone("Europe/Moscow"), "Europe/Moscow");
+  assert.equal(normalizeSettingsTimeZone("Asia/Kolkata"), "Asia/Kolkata");
+  assert.equal(normalizeSettingsTimeZone("America/Sao_Paulo"), "America/Sao_Paulo");
   assert.equal(normalizeSettingsTimeZone("Mars/Olympus"), "Asia/Bangkok");
   assert.equal(COMMON_TIMEZONES.includes("Asia/Bangkok"), true);
 });
@@ -66,6 +68,16 @@ test("detects browser timezone when it is in the supported list", () => {
   });
 
   assert.equal(detected, "Asia/Tbilisi");
+});
+
+test("keeps a valid browser timezone outside the common picker section", () => {
+  const detected = detectBrowserTimeZone({
+    DateTimeFormat() {
+      return { resolvedOptions: () => ({ timeZone: "Asia/Kolkata" }) };
+    }
+  });
+
+  assert.equal(detected, "Asia/Kolkata");
 });
 
 test("settings autosave queue skips initial and unchanged state", async () => {

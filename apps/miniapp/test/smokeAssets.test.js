@@ -1014,7 +1014,9 @@ test("currency selectors use native option labels without overlay markers", asyn
 
   assert.doesNotMatch(html, /id="baseCurrencyMark"/);
   assert.doesNotMatch(html, /id="displayCurrencyMark"/);
-  assert.match(html, /<option value="THB">🇹🇭 THB — Thai baht<\/option>/);
+  assert.match(html, /id="baseCurrencySearch" type="search"/);
+  assert.match(html, /id="baseCurrencyInput" name="baseCurrency"><\/select>/);
+  assert.match(app, /currencyOptions\(user\.base_currency/);
   assert.doesNotMatch(html, /interfaceLanguageFlag/);
   assert.doesNotMatch(html, /flag-icon/);
   assert.doesNotMatch(html, /data-currency/);

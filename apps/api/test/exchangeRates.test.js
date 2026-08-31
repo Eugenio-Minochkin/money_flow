@@ -389,6 +389,21 @@ test("unknown currency returns a controlled exchange-rate error", async () => {
   );
 });
 
+test("a provider omission for an expanded currency never becomes a manual rate", async () => {
+  const provider = createExchangeRateProvider({
+    pool: createRateStore().pool,
+    logger: { warn() {} },
+    async fetchImpl() {
+      return { ok: true, async json() { return { rates: { THB: 32.65 } }; } };
+    }
+  });
+
+  await assert.rejects(
+    () => provider.getExchangeRate({ date: "2026-06-02", baseCurrency: "INR", quoteCurrency: "THB" }),
+    (error) => error.name === "ExchangeRateUnavailableError" && error.code === "exchange_rate_unavailable"
+  );
+});
+
 function createRateStore(initialRows = [], options = {}) {
   const rows = initialRows.map(normalizeRow);
   return {

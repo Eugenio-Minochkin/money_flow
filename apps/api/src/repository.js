@@ -1,5 +1,5 @@
 import { calculateBudgetSnapshot } from "../../../packages/shared/src/budget.js";
-import { SUPPORTED_CURRENCY_CODES, fallbackThbRate, normalizeCurrency } from "../../../packages/shared/src/currencies.js";
+import { SUPPORTED_CURRENCY_CODES, fallbackThbRate, isSupportedCurrency, normalizeCurrency } from "../../../packages/shared/src/currencies.js";
 import {
   localDateKey as sharedLocalDateKey,
   localDateRangeBounds,
@@ -1442,6 +1442,9 @@ export function createRepository(pool, options = {}) {
       }
       if (!Number.isFinite(usdThbRate) || usdThbRate <= 0) {
         throw new Error("USD/THB rate must be positive");
+      }
+      if (!isSupportedCurrency(settings.baseCurrency) || !isSupportedCurrency(settings.displayCurrency)) {
+        throw codedError("Currency is not supported", "unsupported_currency");
       }
       const baseCurrency = normalizeCurrency(settings.baseCurrency, "THB");
       const displayCurrency = normalizeCurrency(settings.displayCurrency, "USD");
@@ -3066,6 +3069,9 @@ export function createRepository(pool, options = {}) {
         }
 
         let items = Array.isArray(draft.items) ? draft.items : JSON.parse(draft.items);
+        if (hasUnresolvedCurrencyAmbiguity(items)) {
+          throw codedError("Draft requires an explicit currency selection", "currency_selection_required");
+        }
         if (options.explicitCategoryAcceptance) {
           const classification = classifyExplicitAcceptanceDraft({ items }, {
             now: options.now,
@@ -4351,6 +4357,12 @@ export function draftHasValidCategories(items) {
   return Array.isArray(items) && items.length > 0 && items.every(isCategoryValid);
 }
 
+function hasUnresolvedCurrencyAmbiguity(items) {
+  return Array.isArray(items) && items.some((item) =>
+    item?.review_reason === "currency_ambiguous" && item?.currency == null
+  );
+}
+
 function explicitAcceptanceError(reason) {
   if (["no_items", "category_required"].includes(reason)) return new CategoryRequiredError();
   const codes = {
@@ -4762,9 +4774,19 @@ function normalizeDraftItem(item) {
   if (!Number.isFinite(amount) || amount <= 0) {
     throw new Error("Expense amount must be positive");
   }
+  const unresolvedCurrency = item.currency == null && item.review_reason === "currency_ambiguous";
+  const candidates = unresolvedCurrency
+    ? [...new Set((Array.isArray(item.currency_candidates) ? item.currency_candidates : [])
+      .map((code) => String(code).toUpperCase())
+      .filter(isSupportedCurrency))]
+    : [];
   return {
     amount,
-    currency: item.currency || "THB",
+    currency: unresolvedCurrency ? null : (item.currency || "THB"),
+    ...(unresolvedCurrency ? {
+      currency_candidates: candidates,
+      review_reason: "currency_ambiguous"
+    } : {}),
     description: String(item.description || "расход").trim(),
     category_slug: item.category_slug || "other",
     category_source: item.category_source === "user" || item.category_source === "parser" ? item.category_source : null,
@@ -4772,7 +4794,7 @@ function normalizeDraftItem(item) {
     spent_at: item.spent_at || new Date().toISOString(),
     budget_impact: ["regular", "planned", "large_oneoff"].includes(item.budget_impact) ? item.budget_impact : "regular",
     confidence: Number.isFinite(Number(item.confidence)) ? Number(item.confidence) : 1,
-    needs_review: Boolean(item.needs_review)
+    needs_review: unresolvedCurrency || Boolean(item.needs_review)
   };
 }
 
@@ -4837,7 +4859,7 @@ async function buildMoneyAmounts(exchangeRates, amount, currency, date, user = {
 
 function amountBase(amount, currency, rates = {}) {
   const numeric = Number(amount);
-  if (currency !== "THB") return roundMoney(numeric * currencyThbRate(currency, rates));
+  if (currency !== "THB") return roundMoney(numeric * requiredCurrencyThbRate(currency, rates));
   return roundMoney(numeric);
 }
 
@@ -4845,16 +4867,36 @@ function convertedAmounts(amount, currency, baseCurrency = "THB", rates = {}) {
   const base = amountBase(amount, currency, rates);
   const converted = {};
   for (const code of SUPPORTED_CURRENCY_CODES) {
+    if (code !== "THB" && !hasCurrencyThbRate(code, rates)) continue;
     converted[code] = code === "THB"
       ? roundMoney(base)
-      : roundMoney(currency === code ? Number(amount) : base / currencyThbRate(code, rates));
+      : roundMoney(currency === code ? Number(amount) : base / requiredCurrencyThbRate(code, rates));
   }
-  converted[baseCurrency] = converted[normalizeCurrency(baseCurrency, "THB")] ?? roundMoney(base);
+  if (converted[baseCurrency] == null) {
+    throw codedError("Exchange rate is unavailable", "exchange_rate_unavailable");
+  }
   return converted;
 }
 
 function currencyThbRate(currency, rates = {}) {
-  return Number(rates[currency]?.THB ?? fallbackThbRate(currency));
+  return Number(rates[currency]?.THB ?? (isLegacyManualCurrency(currency) ? fallbackThbRate(currency) : NaN));
+}
+
+function hasCurrencyThbRate(currency, rates = {}) {
+  const rate = currencyThbRate(currency, rates);
+  return Number.isFinite(rate) && rate > 0;
+}
+
+function requiredCurrencyThbRate(currency, rates = {}) {
+  const rate = currencyThbRate(currency, rates);
+  if (!Number.isFinite(rate) || rate <= 0) {
+    throw codedError("Exchange rate is unavailable", "exchange_rate_unavailable");
+  }
+  return rate;
+}
+
+function isLegacyManualCurrency(currency) {
+  return ["THB", "USD", "RUB", "IDR", "EUR", "BYN", "GEL"].includes(currency);
 }
 
 function withDisplay(row, user) {

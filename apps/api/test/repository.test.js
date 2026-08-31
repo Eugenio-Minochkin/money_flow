@@ -6782,6 +6782,27 @@ test("normalizeDraftItem preserves category_source parser/user and defaults to n
   assert.equal(captured[1].category_source, null);
 });
 
+test("normalizeDraftItem retains only the explicit unresolved-currency review shape", async () => {
+  let captured;
+  const repo = createRepository(fakePool((sql, params) => {
+    captured = JSON.parse(params[0]);
+    return { rows: [{ id: 1, status: "pending", items: params[0], version: 2 }] };
+  }));
+  await repo.updateDraftItems(1, 100, [{
+    amount: 1000,
+    currency: null,
+    currency_candidates: ["INR", "IDR", "DOGE"],
+    review_reason: "currency_ambiguous",
+    description: "taxi",
+    category_slug: "transport"
+  }]);
+
+  assert.equal(captured[0].currency, null);
+  assert.deepEqual(captured[0].currency_candidates, ["INR", "IDR"]);
+  assert.equal(captured[0].review_reason, "currency_ambiguous");
+  assert.equal(captured[0].needs_review, true);
+});
+
 test("isCategoryValid distinguishes parser-other, user-other and confident categories", async () => {
   const { isCategoryValid } = await import("../src/repository.js");
   assert.equal(isCategoryValid({ category_slug: "food_cafe", needs_review: false, category_source: "parser" }), true);
@@ -6882,6 +6903,37 @@ test("saveDraftAsExpense blocks parser-provided other even if needs_review is ac
   repo.dashboard = async () => ({ snapshot: {} });
 
   await assert.rejects(() => repo.saveDraftAsExpense(7, 100), (err) => err instanceof CategoryRequiredError);
+  assert.ok(!queries.some((q) => q.includes("INSERT INTO expenses")));
+});
+
+test("updateUserSettings rejects a currency outside the supported fiat catalogue", async () => {
+  const repo = createRepository(fakePool(() => ({ rows: [] })));
+
+  await assert.rejects(
+    () => repo.updateUserSettings(100, {
+      monthlyBudgetAmount: 60000,
+      baseCurrency: "DOGE",
+      displayCurrency: "USD",
+      usdThbRate: 36.5
+    }),
+    { code: "unsupported_currency" }
+  );
+});
+
+test("saveDraftAsExpense never defaults an unresolved ambiguous currency", async () => {
+  const { createRepository } = await import("../src/repository.js");
+  const queries = [];
+  const client = fakeConfirmClient({
+    draftRow: { id: 7, user_id: 1, status: "pending", base_currency: "THB", timezone: "Asia/Bangkok",
+      items: [{ amount: 1000, currency: null, currency_candidates: ["INR", "IDR"], review_reason: "currency_ambiguous", description: "еда", category_slug: "food_cafe", category_source: "user", needs_review: false, budget_impact: "regular", tags: [], spent_at: "2026-06-25T10:00:00Z" }] },
+    onQuery: (q) => queries.push(String(q))
+  });
+  const repo = createRepository({ ...fakePool(() => ({ rows: [] })), async connect() { return client; } });
+
+  await assert.rejects(
+    () => repo.saveDraftAsExpense(7, 100),
+    (error) => error.code === "currency_selection_required"
+  );
   assert.ok(!queries.some((q) => q.includes("INSERT INTO expenses")));
 });
 

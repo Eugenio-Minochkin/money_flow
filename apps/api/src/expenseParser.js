@@ -110,6 +110,22 @@ export function createExpenseParser(options = {}) {
         return localResult;
       }
 
+      if (hasCurrencyAmbiguity(localResult)) {
+        emitTrace({
+          parserEngine: "local-ambiguity-barrier",
+          parserRoute: "local_currency_ambiguous",
+          ...localEvaluationTraceMetadata({ localEvaluationCompleted, localFastPath, localResult }),
+          llmSkipped: true,
+          fastPathMode,
+          shadowDisagreement: null,
+          shadowDisagreementFields: [],
+          model: "local-parser",
+          promptChars: String(text ?? "").length,
+          responseChars: JSON.stringify(localResult).length
+        });
+        return localResult;
+      }
+
       if (fastPathMode === "enabled" && inRollout && isLocalPrimaryAcceptance(localFastPath.localAcceptanceLevel)) {
         emitTrace({
           parserEngine: "local-fast-path",
@@ -264,6 +280,11 @@ export function evaluateLocalFastPath({ text, localResult }) {
 
 function isLocalPrimaryAcceptance(level) {
   return level === "local_safe";
+}
+
+function hasCurrencyAmbiguity(result) {
+  return Array.isArray(result?.expenses)
+    && result.expenses.some((expense) => expense?.review_reason === "currency_ambiguous" && expense?.currency == null);
 }
 
 function isLocalFallbackAcceptance(level) {

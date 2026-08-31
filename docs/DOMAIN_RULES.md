@@ -8,6 +8,8 @@ This file records stable product and business rules. Read it before changing bud
 - Parser-provided category provenance remains `parser` until the user explicitly chooses a category or explicitly accepts the current draft with `Confirm` / `Save as is`. Parser-provided `other` is never auto-confirmed, but an explicit human acceptance may promote that existing valid slug to user-confirmed `other`.
 - `saveDraftAsExpense()` remains the final atomic/idempotent boundary for an individual draft.
 - Smart Save may automatically confirm only one ordinary expense with a valid positive amount, supported currency, valid non-future `spent_at`, valid category that does not require user choice, and an open reserve month. Multi-item, ambiguous, invalid, planned, and closed-month drafts stay in review.
+- Currency support is the shared active-fiat catalogue. A bare ambiguous currency family (for example, “rupee”, “dirham”, “peso”, “dinar”, “franc”, “krona”, or “shilling”) has no default: it remains a review draft until the user selects one of the offered ISO codes. It must not be sent to an LLM fallback or saved as the base currency.
+- Exchange conversion may use provider or cached historical rates. The legacy manual fallback covers only THB, USD, RUB, IDR, EUR, BYN, and GEL; a missing rate for any other supported currency is unavailable, never fabricated.
 - Explicit human confirmation is narrower than a validation bypass: it may accept current valid category slugs and clear `needs_review` inside the same locked save transaction, but invalid/missing categories, invalid financial data, future dates, non-expense operations, and closed months remain blocked.
 - Telegram text and voice captures are durably identified by the owned `user_id + chat_id + message_id`; webhook retries reuse the original draft and cannot create a second expense.
 - Recovery includes every unresolved `pending` and `inbox` draft. Preview is advisory: the mutation must re-read and reclassify each selected draft, preserve its original `spent_at`, and call `saveDraftAsExpense()` separately so retries and concurrent confirmation remain idempotent.
@@ -51,7 +53,7 @@ This file records stable product and business rules. Read it before changing bud
 
 - Store timestamps in UTC.
 - Interpret local days, weeks, months, daily budget snapshots, history filters, planned payments, and reminders through `users.timezone`.
-- `users.timezone` is an IANA timezone. Default and fallback is `Asia/Bangkok`.
+- `users.timezone` is any runtime-valid IANA timezone. Default and fallback is `Asia/Bangkok`; the Mini App offers common entries and the complete runtime list.
 - Missing or invalid timezone values must fall back to `Asia/Bangkok` and log `timezone_missing` or `timezone_invalid`.
 - Changing timezone must not rewrite historical transaction timestamps.
 
