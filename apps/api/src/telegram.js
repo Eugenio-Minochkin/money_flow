@@ -2087,7 +2087,7 @@ async function handleDraftCallback({ callback, parsed, repository, token, miniAp
       return sendMessage(token, callback.message.chat.id, botText(language, "movedToInbox"), inboxDraftKeyboard(miniAppUrl, telegramUserId, parsed.draftId, language), telegramClient);
     });
   }
-  if (parsed.action === "type" || parsed.action === "category") {
+  if (parsed.action === "type" || parsed.action === "category" || parsed.action === "currency") {
     const draft = await repository.getDraftForTelegramUser(parsed.draftId, telegramUserId);
     let items;
     let toast;
@@ -2100,11 +2100,23 @@ async function handleDraftCallback({ callback, parsed, repository, token, miniAp
       }
       items = updateDraftItem(draft, 0, { budget_impact: impact });
       toast = language === "ru" ? "Тип обновлен" : "Type updated";
-    } else {
+    } else if (parsed.action === "category") {
       const slug = categorySlugFromCode(parsed.value);
       if (!slug) return sendTelegramResponse(trace, () => answerCallback(token, callback.id, botText(language, "technicalError"), telegramClient));
       items = updateDraftItem(draft, 0, { category_slug: slug, category_source: "user", needs_review: false, confidence: 0.9 });
       toast = botText(language, "categoryUpdatedCallback");
+    } else {
+      const index = Number(parsed.itemIndex);
+      const item = draft?.items?.[index];
+      if (!item || item.review_reason !== "currency_ambiguous" || item.currency != null || !item.currency_candidates?.includes(parsed.value)) {
+        return sendTelegramResponse(trace, () => answerCallback(token, callback.id, botText(language, "technicalError"), telegramClient));
+      }
+      items = updateDraftItem(draft, index, {
+        currency: parsed.value,
+        currency_candidates: undefined,
+        review_reason: undefined
+      });
+      toast = language === "ru" ? "Валюта выбрана" : "Currency selected";
     }
     const updated = await repository.updateDraftItems(parsed.draftId, telegramUserId, items);
     return redrawDraft(trace, token, telegramClient, callback, updated, language, miniAppUrl, telegramUserId, repository, user, toast);

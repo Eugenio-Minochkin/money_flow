@@ -1,49 +1,10 @@
 import { inferCategory, inferTags } from "./categories.js";
-import { normalizeCurrency } from "./currencies.js";
+import { currencyRecognitionAliases, normalizeCurrency, recognizeCurrencyText } from "./currencies.js";
 import { toZonedIso } from "./time.js";
 
 const DEFAULT_MAX_LOCAL_AMOUNT = 1_000_000;
 
-const CURRENCY_ALIASES = new Map([
-  ["baht", "THB"],
-  ["бат", "THB"],
-  ["бата", "THB"],
-  ["батов", "THB"],
-  ["бахт", "THB"],
-  ["บาท", "THB"],
-  ["thb", "THB"],
-  ["฿", "THB"],
-  ["usd", "USD"],
-  ["$", "USD"],
-  ["dollar", "USD"],
-  ["dollars", "USD"],
-  ["доллар", "USD"],
-  ["доллара", "USD"],
-  ["долларов", "USD"],
-  ["бакс", "USD"],
-  ["rub", "RUB"],
-  ["руб", "RUB"],
-  ["рубль", "RUB"],
-  ["рубля", "RUB"],
-  ["рублей", "RUB"],
-  ["₽", "RUB"],
-  ["eur", "EUR"],
-  ["euro", "EUR"],
-  ["euros", "EUR"],
-  ["евро", "EUR"],
-  ["€", "EUR"],
-  ["idr", "IDR"],
-  ["rupiah", "IDR"],
-  ["рупия", "IDR"],
-  ["рупий", "IDR"],
-  ["byn", "BYN"],
-  ["бел.руб", "BYN"],
-  ["gel", "GEL"],
-  ["лари", "GEL"],
-  ["₾", "GEL"]
-]);
-
-const SYMBOL_CURRENCIES = new Set(["$", "฿", "₽", "€", "₾"]);
+const SYMBOL_CURRENCIES = new Set(["$", "฿", "₽", "€", "₾", "¥", "₹"]);
 const DATE_WORDS = [
   "сегодня",
   "вчера",
@@ -118,7 +79,7 @@ function diagnosePartRejectReason(originalPart, normalizedPart, maxLocalAmount, 
   if (!Number.isFinite(amount) || amount <= 0) return "unsupported_amount_shape";
   if (amount > maxLocalAmount) return "amount_over_limit";
   if (isSmallBareIntegerWithoutCurrency(normalizedPart, match)) return "small_bare_integer";
-  if (!resolveCurrency(normalizedPart, match, defaultCurrency)) return "unsafe_split_or_mapping";
+  if (resolveCurrency(normalizedPart, match, defaultCurrency).kind === "conflict") return "unsafe_split_or_mapping";
   return null;
 }
 
@@ -177,8 +138,8 @@ function parsePart(part, now, defaultCurrency, timeZone, maxLocalAmount, require
   const amount = normalizeAmount(amountMatch.rawAmount, amountMatch.multiplier);
   if (!Number.isFinite(amount) || amount <= 0 || amount > maxLocalAmount) return null;
 
-  const currency = resolveCurrency(part, amountMatch, defaultCurrency);
-  if (!currency) return null;
+  const currencyResolution = resolveCurrency(part, amountMatch, defaultCurrency);
+  if (currencyResolution.kind === "conflict") return null;
 
   if (isSmallBareIntegerWithoutCurrency(part, amountMatch)) return null;
 
@@ -194,15 +155,20 @@ function parsePart(part, now, defaultCurrency, timeZone, maxLocalAmount, require
 
   const expense = {
     amount,
-    currency,
+    currency: currencyResolution.kind === "ambiguous" ? null : currencyResolution.code,
     description,
     category_slug: category,
     category_source: "parser",
     tags: inferTags(description),
     spent_at: toZonedIso(spentAt, timeZone),
     confidence: needsReview ? 0.62 : 0.86,
-    needs_review: needsReview
+    needs_review: needsReview || currencyResolution.kind === "ambiguous"
   };
+  if (currencyResolution.kind === "ambiguous") {
+    expense.currency_candidates = currencyResolution.candidates;
+    expense.review_reason = "currency_ambiguous";
+    expense.confidence = 0.5;
+  }
   if (budgetImpact !== "regular") expense.budget_impact = budgetImpact;
   return expense;
 }
@@ -423,7 +389,7 @@ function russianNumberSpanLooksLikeAmount(tokens, start, end) {
 }
 
 export function isCurrencyAlias(token) {
-  return CURRENCY_ALIASES.has(normalizeCurrencyToken(token));
+  return recognizeCurrencyText(normalizeCurrencyToken(token)).kind !== "none";
 }
 
 function normalizeWordToken(token) {
@@ -440,19 +406,15 @@ function hasUnsafeAmountSyntax(part) {
 function resolveCurrency(part, amountMatch, defaultCurrency) {
   const candidates = [];
   for (const symbol of [amountMatch.leadingSymbol, amountMatch.trailingSymbol].filter(Boolean)) {
-    candidates.push(CURRENCY_ALIASES.get(symbol));
+    candidates.push(recognizeCurrencyText(symbol).code);
   }
-
-  for (const token of tokenizeWords(part)) {
-    const normalized = normalizeCurrencyToken(token);
-    if (CURRENCY_ALIASES.has(normalized)) {
-      candidates.push(CURRENCY_ALIASES.get(normalized));
-    }
-  }
-
+  const recognition = recognizeCurrencyText(part);
+  if (recognition.kind === "ambiguous") return recognition;
+  if (recognition.kind === "conflict") return recognition;
+  if (recognition.kind === "exact") candidates.push(recognition.code);
   const unique = [...new Set(candidates.filter(Boolean))];
-  if (unique.length > 1) return null;
-  return unique[0] ?? defaultCurrency;
+  if (unique.length > 1) return { kind: "conflict" };
+  return { kind: "exact", code: unique[0] ?? defaultCurrency };
 }
 
 function normalizeCurrencyToken(token) {
@@ -473,7 +435,7 @@ function cleanDescription(value) {
   for (const word of DATE_WORDS) {
     text = text.replace(new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(word)}(?![\\p{L}\\p{N}])`, "giu"), " ");
   }
-  for (const token of CURRENCY_ALIASES.keys()) {
+  for (const token of currencyRecognitionAliases()) {
     if (SYMBOL_CURRENCIES.has(token)) continue;
     text = text.replace(new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(token)}(?![\\p{L}\\p{N}])`, "giu"), " ");
   }

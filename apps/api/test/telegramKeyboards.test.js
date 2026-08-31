@@ -47,6 +47,19 @@ test("resolved confident category hides the category quick buttons", () => {
   assert.ok(buttons.some((b) => b.callback_data === "d:42:confirm"));
 });
 
+test("ambiguous currency draft offers only candidate currencies and cannot save", () => {
+  const keyboard = draftKeyboard(42, [{
+    amount: 1000, currency: null, currency_candidates: ["INR", "IDR"], review_reason: "currency_ambiguous",
+    category_slug: "food_cafe", category_source: "parser", needs_review: true, budget_impact: "regular"
+  }], "http://x", 100, "en");
+  const buttons = keyboard.inline_keyboard.flat();
+
+  assert.ok(buttons.every((button) => button.callback_data !== "d:42:confirm"));
+  assert.ok(buttons.some((button) => button.callback_data === "d:42:u:0:INR"));
+  assert.ok(buttons.some((button) => button.callback_data === "d:42:u:0:IDR"));
+  assert.ok(buttons.every((button) => !button.callback_data?.endsWith(":USD")));
+});
+
 test("user-selected category hides the category quick buttons", () => {
   const keyboard = draftKeyboard(42, [{ amount: 70, category_slug: "other", category_source: "user", needs_review: false, budget_impact: "regular" }], "http://x", 100, "en");
   const buttons = keyboard.inline_keyboard.flat();
@@ -115,6 +128,7 @@ test("parseDraftCallback decodes d: actions", async () => {
   assert.deepEqual(parseDraftCallback("d:42:confirm"), { scheme: "d", draftId: "42", action: "confirm" });
   assert.deepEqual(parseDraftCallback("d:42:t:r"), { scheme: "d", draftId: "42", action: "type", value: "r" });
   assert.deepEqual(parseDraftCallback("d:42:c:food"), { scheme: "d", draftId: "42", action: "category", value: "food" });
+  assert.deepEqual(parseDraftCallback("d:42:u:0:INR"), { scheme: "d", draftId: "42", action: "currency", itemIndex: 0, value: "INR" });
   assert.deepEqual(parseDraftCallback("d:42:review"), { scheme: "d", draftId: "42", action: "review" });
   assert.equal(parseDraftCallback("confirm:42"), null);
 });

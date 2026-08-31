@@ -6885,6 +6885,37 @@ test("saveDraftAsExpense blocks parser-provided other even if needs_review is ac
   assert.ok(!queries.some((q) => q.includes("INSERT INTO expenses")));
 });
 
+test("updateUserSettings rejects a currency outside the supported fiat catalogue", async () => {
+  const repo = createRepository(fakePool(() => ({ rows: [] })));
+
+  await assert.rejects(
+    () => repo.updateUserSettings(100, {
+      monthlyBudgetAmount: 60000,
+      baseCurrency: "DOGE",
+      displayCurrency: "USD",
+      usdThbRate: 36.5
+    }),
+    { code: "unsupported_currency" }
+  );
+});
+
+test("saveDraftAsExpense never defaults an unresolved ambiguous currency", async () => {
+  const { createRepository } = await import("../src/repository.js");
+  const queries = [];
+  const client = fakeConfirmClient({
+    draftRow: { id: 7, user_id: 1, status: "pending", base_currency: "THB", timezone: "Asia/Bangkok",
+      items: [{ amount: 1000, currency: null, currency_candidates: ["INR", "IDR"], review_reason: "currency_ambiguous", description: "еда", category_slug: "food_cafe", category_source: "user", needs_review: false, budget_impact: "regular", tags: [], spent_at: "2026-06-25T10:00:00Z" }] },
+    onQuery: (q) => queries.push(String(q))
+  });
+  const repo = createRepository({ ...fakePool(() => ({ rows: [] })), async connect() { return client; } });
+
+  await assert.rejects(
+    () => repo.saveDraftAsExpense(7, 100),
+    (error) => error.code === "currency_selection_required"
+  );
+  assert.ok(!queries.some((q) => q.includes("INSERT INTO expenses")));
+});
+
 test("confirmDraftWithExplicitAcceptance accepts current parser categories atomically and preserves historical dates", async () => {
   const { createRepository } = await import("../src/repository.js");
   const queries = [];

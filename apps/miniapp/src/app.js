@@ -86,6 +86,7 @@ import {
   weekdayOptions as plannedWeekdayOptions
 } from "./planned.js";
 import {
+  allTimeZones,
   COMMON_TIMEZONES,
   commitMonthlyBudgetChange,
   createSettingsSaveQueue,
@@ -615,6 +616,15 @@ document.querySelectorAll("[data-tab]").forEach((button) => {
 document.querySelector("#settingsForm")?.addEventListener("submit", (event) => event.preventDefault());
 for (const selector of ["#baseCurrencyInput", "#displayCurrencyInput", "#dailyReminderInput", "#timezoneInput"]) {
   document.querySelector(selector)?.addEventListener("change", scheduleSettingsAutosave);
+}
+for (const [searchSelector, selectSelector] of [["#baseCurrencySearch", "#baseCurrencyInput"], ["#displayCurrencySearch", "#displayCurrencyInput"]]) {
+  document.querySelector(searchSelector)?.addEventListener("input", (event) => {
+    const select = document.querySelector(selectSelector);
+    const selected = select?.value;
+    if (!select || !selected) return;
+    select.innerHTML = currencyOptions(selected, option, event.target.value);
+    select.value = selected;
+  });
 }
 document.querySelector("#interfaceLanguageInput").addEventListener("change", (event) => {
   applyLanguage(event.target.value);
@@ -1607,8 +1617,12 @@ function renderSettings(user) {
   if (showCurrentMonthBudgetOverride) {
     document.querySelector("#currentMonthBudgetInput").value = Math.round(Number(dashboardState.currentMonthBudget.amount));
   }
-  document.querySelector("#baseCurrencyInput").value = user.base_currency ?? "THB";
-  document.querySelector("#displayCurrencyInput").value = user.display_currency ?? "USD";
+  const baseCurrencyInput = document.querySelector("#baseCurrencyInput");
+  const displayCurrencyInput = document.querySelector("#displayCurrencyInput");
+  baseCurrencyInput.innerHTML = currencyOptions(user.base_currency ?? "THB", option, document.querySelector("#baseCurrencySearch")?.value);
+  displayCurrencyInput.innerHTML = currencyOptions(user.display_currency ?? "USD", option, document.querySelector("#displayCurrencySearch")?.value);
+  baseCurrencyInput.value = user.base_currency ?? "THB";
+  displayCurrencyInput.value = user.display_currency ?? "USD";
   document.querySelector("#interfaceLanguageInput").value = currentLanguage;
   document.querySelector("#interfaceThemeInput").value = currentTheme;
   renderTimezoneOptions(user.timezone);
@@ -2803,7 +2817,8 @@ function renderTimezoneOptions(value) {
   const input = document.querySelector("#timezoneInput");
   if (!input) return;
   const selected = normalizeSettingsTimeZone(value);
-  input.innerHTML = COMMON_TIMEZONES
+  const zones = [...new Set([...COMMON_TIMEZONES, ...allTimeZones(), selected])];
+  input.innerHTML = zones
     .map((timeZone) => option(timeZone, selected, timeZone))
     .join("");
   input.value = selected;

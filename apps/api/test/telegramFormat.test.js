@@ -103,6 +103,21 @@ test("guides a single unresolved draft expense to choose a category", () => {
   assert.doesNotMatch(text, /Есть сомнительные строки/);
 });
 
+test("never labels an unresolved currency as THB in a draft", () => {
+  const text = formatDraft([{
+    amount: 500,
+    currency: null,
+    currency_candidates: ["INR", "IDR"],
+    description: "taxi",
+    category_slug: "transport",
+    needs_review: true,
+    review_reason: "currency_ambiguous"
+  }], { language: "en", baseCurrency: "THB" });
+
+  assert.match(text, /500 — choose currency/);
+  assert.doesNotMatch(text, /500 THB/);
+});
+
 test("guides multiple reviewable draft expenses to edit before saving", () => {
   const text = formatDraft([
     { amount: 70, currency: "THB", description: "coffee", category_slug: "other", needs_review: true },

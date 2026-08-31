@@ -400,27 +400,13 @@
                 <p class="settings-hint" data-i18n="settings.currencyHint">Accounting is what expenses are calculated in. Display is what amounts are shown in.</p>
                 <label class="settings-row">
                   <span data-i18n="settings.baseCurrency">Base currency</span>
-                  <select id="baseCurrencyInput" name="baseCurrency">
-                    <option value="THB">🇹🇭 THB — Thai baht</option>
-                    <option value="USD">🇺🇸 USD — US dollar</option>
-                    <option value="RUB">🇷🇺 RUB — Russian ruble</option>
-                    <option value="IDR">🇮🇩 IDR — Indonesian rupiah</option>
-                    <option value="EUR">🇪🇺 EUR — Euro</option>
-                    <option value="BYN">🇧🇾 BYN — Belarusian ruble</option>
-                    <option value="GEL">🇬🇪 GEL — Georgian lari</option>
-                  </select>
+                  <input id="baseCurrencySearch" type="search" placeholder="Search currency" autocomplete="off" />
+                  <select id="baseCurrencyInput" name="baseCurrency"></select>
                 </label>
                 <label class="settings-row">
                   <span data-i18n="settings.displayCurrency">Display currency</span>
-                  <select id="displayCurrencyInput" name="displayCurrency">
-                    <option value="USD">🇺🇸 USD — US dollar</option>
-                    <option value="THB">🇹🇭 THB — Thai baht</option>
-                    <option value="RUB">🇷🇺 RUB — Russian ruble</option>
-                    <option value="IDR">🇮🇩 IDR — Indonesian rupiah</option>
-                    <option value="EUR">🇪🇺 EUR — Euro</option>
-                    <option value="BYN">🇧🇾 BYN — Belarusian ruble</option>
-                    <option value="GEL">🇬🇪 GEL — Georgian lari</option>
-                  </select>
+                  <input id="displayCurrencySearch" type="search" placeholder="Search currency" autocomplete="off" />
+                  <select id="displayCurrencyInput" name="displayCurrency"></select>
                 </label>
               </div>
             </section>

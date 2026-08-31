@@ -36,7 +36,7 @@ Use this guide when changing business logic or UI around the main Money Flow sur
 ## Practical Test Pointers
 
 - Budget and pace logic lives primarily in `packages/shared/src/budget.js` and `packages/shared/test/budget.test.js`.
-- Currency support lives in `packages/shared/src/currencies.js`, Mini App currency helpers, and their tests.
+- Currency support lives in `packages/shared/src/currencies.js`, Mini App currency helpers, and their tests. Cover mandatory ISO codes, exact aliases, unresolved ambiguous families, strict settings validation, and the no-fabricated-rate path for expanded currencies.
 - Planned payment behavior is spread across shared parsing, API repository logic, Telegram callbacks, Mini App planned UI, and related tests. Lifecycle changes need canonical occurrence tests, repository and budget/reserve coverage, server archive/recreate/DELETE/PATCH contract coverage, pure Mini App interaction tests in RU and EN, and narrow-width visual verification of archive and recreate states.
 - Timezone helpers live in `packages/shared/src/time.js` and are covered by `packages/shared/test/time.test.js`.
 - Daily reminder behavior is covered by `apps/api/test/dailyReminderService.test.js`, repository tests, and Telegram callback tests.

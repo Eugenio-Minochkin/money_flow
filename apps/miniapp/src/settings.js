@@ -20,7 +20,27 @@ export const COMMON_TIMEZONES = [
 ];
 
 export function normalizeSettingsTimeZone(value) {
-  return COMMON_TIMEZONES.includes(value) ? value : "Asia/Bangkok";
+  return isValidTimeZone(value) ? value : "Asia/Bangkok";
+}
+
+export function isValidTimeZone(value, intl = Intl) {
+  if (typeof value !== "string" || !value.trim()) return false;
+  try {
+    new intl.DateTimeFormat("en-US", { timeZone: value });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function allTimeZones(intl = Intl) {
+  try {
+    const zones = intl.supportedValuesOf?.("timeZone");
+    if (Array.isArray(zones) && zones.length > 0) return zones;
+  } catch {
+    // Use the stable common list when this runtime has no supportedValuesOf().
+  }
+  return COMMON_TIMEZONES;
 }
 
 export function detectBrowserTimeZone(intl = Intl) {

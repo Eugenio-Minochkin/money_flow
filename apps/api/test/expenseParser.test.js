@@ -19,6 +19,39 @@ test("synthetic corpus maps local rejects to diagnostic trace reasons", () => {
   }
 });
 
+test("explicit ambiguous currency bypasses OpenAI in every local-parser mode", async () => {
+  for (const options of [
+    { fastPathMode: "enabled", localFirstRolloutPercent: 100 },
+    { fastPathMode: "enabled", localFirstRolloutPercent: 0 },
+    { fastPathMode: "shadow" }
+  ]) {
+    let openAiCalls = 0;
+    let trace;
+    const parser = createExpenseParser({
+      apiKey: "test-key",
+      parserTextHashSecret: "test-secret",
+      now: () => new Date("2026-07-21T10:00:00+03:00"),
+      ...options,
+      fetchImpl: async () => {
+        openAiCalls += 1;
+        throw new Error("currency ambiguity must not reach OpenAI");
+      }
+    });
+
+    const result = await parser.parse("еда 1000 рупий", {
+      userId: 42,
+      defaultCurrency: "USD",
+      onLlmTrace(metadata) { trace = metadata; }
+    });
+
+    assert.equal(openAiCalls, 0, options.fastPathMode);
+    assert.equal(result.expenses[0].currency, null);
+    assert.equal(result.expenses[0].review_reason, "currency_ambiguous");
+    assert.equal(trace.parserRoute, "local_currency_ambiguous");
+    assert.equal(trace.llmSkipped, true);
+  }
+});
+
 test("synthetic corpus keeps only local_safe results on the local primary route inside rollout", async () => {
   for (const fixture of SYNTHETIC_EXPENSE_PARSER_CORPUS.filter((item) => item.route === "local_safe")) {
     let openAiCalls = 0;

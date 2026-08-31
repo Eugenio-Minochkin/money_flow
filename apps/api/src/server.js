@@ -873,6 +873,7 @@ async function route(req, res) {
       if (["reserve_conflicts_with_budget_change", "reserve_blocks_base_currency_change"].includes(error.code)) {
         return sendJson(res, 409, { error: error.code });
       }
+      if (error.code === "unsupported_currency") return sendJson(res, 400, { error: error.code });
       throw error;
     }
     if (!user) return sendJson(res, 404, { error: "user_not_found" });

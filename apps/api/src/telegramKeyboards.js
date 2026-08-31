@@ -44,6 +44,9 @@ export function parseDraftCallback(data) {
   }
   if (sub === "t") return { scheme: "d", draftId, action: "type", value: parts[3] };
   if (sub === "c") return { scheme: "d", draftId, action: "category", value: parts[3] };
+  if (sub === "u" && /^\d+$/u.test(parts[3] ?? "") && /^[A-Z]{3}$/u.test(parts[4] ?? "")) {
+    return { scheme: "d", draftId, action: "currency", itemIndex: Number(parts[3]), value: parts[4] };
+  }
   return null;
 }
 
@@ -92,9 +95,21 @@ export function budgetTopupMiniAppKeyboard(miniAppUrl, telegramUserId, language 
 
 export function draftKeyboard(draftId, items = [], miniAppUrl, telegramUserId, language = "ru") {
   const text = keyboardText(language);
-  const rows = [[{ text: `✅ ${text.draftSave ?? text.confirm}`, callback_data: `d:${draftId}:confirm` }]];
+  const unresolvedCurrency = items.some((item) => item?.review_reason === "currency_ambiguous" && item?.currency == null);
+  const rows = unresolvedCurrency ? [] : [[{ text: `✅ ${text.draftSave ?? text.confirm}`, callback_data: `d:${draftId}:confirm` }]];
 
-  rows[0][0].style = "success";
+  if (rows[0]) rows[0][0].style = "success";
+
+  if (unresolvedCurrency) {
+    for (const [index, item] of items.entries()) {
+      if (item?.review_reason !== "currency_ambiguous" || item?.currency != null) continue;
+      const candidates = [...new Set(item.currency_candidates ?? [])].filter((code) => /^[A-Z]{3}$/u.test(code));
+      rows.push(...candidates.map((code) => [{
+        text: `${language === "ru" ? "Выбрать" : "Use"} ${code}`,
+        callback_data: `d:${draftId}:u:${index}:${code}`
+      }]));
+    }
+  }
 
   if (Array.isArray(items) && items.length === 1) {
     const item = items[0];

@@ -96,6 +96,36 @@ test("uses provided default currency when currency is omitted", () => {
   assert.equal(result.expenses[0].amount, 14000);
 });
 
+test("recognizes exact international currency names, ISO codes and symbols", () => {
+  const cases = [
+    ["кофе 10 лари", "GEL"],
+    ["такси 120 эмиратских дирхамов", "AED"],
+    ["еда 500 индийских рупий", "INR"],
+    ["еда 200000 индонезийских рупий", "IDR"],
+    ["поезд 2500 японских иен", "JPY"],
+    ["coffee 12 SGD", "SGD"],
+    ["coffee $10", "USD"],
+    ["coffee 10 Australian dollars", "AUD"],
+    ["coffee 1000 rupiah", "IDR"]
+  ];
+
+  for (const [text, currency] of cases) {
+    const parsed = parseExpenseText(text, { defaultCurrency: "THB" });
+    assert.equal(parsed.expenses[0]?.currency, currency, text);
+  }
+});
+
+test("preserves ambiguous explicit currency as a reviewable item", () => {
+  for (const text of ["еда 1000 рупий", "food 1000 rupees", "такси 100 дирхам"]) {
+    const parsed = parseExpenseText(text, { defaultCurrency: "USD" });
+    assert.equal(parsed.expenses.length, 1, text);
+    assert.equal(parsed.expenses[0]?.currency, null, text);
+    assert.equal(parsed.expenses[0]?.needs_review, true, text);
+    assert.equal(parsed.expenses[0]?.review_reason, "currency_ambiguous", text);
+    assert.ok(parsed.expenses[0]?.currency_candidates.length > 1, text);
+  }
+});
+
 test("formats parsed timestamps in the supplied timezone", () => {
   const result = parseExpenseText("coffee 70", {
     now: new Date("2026-06-01T03:30:00Z"),
