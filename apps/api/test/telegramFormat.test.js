@@ -116,6 +116,9 @@ test("never labels an unresolved currency as THB in a draft", () => {
 
   assert.match(text, /500 — choose currency/);
   assert.doesNotMatch(text, /500 THB/);
+  assert.match(text, /<b>Total:<\/b> currency selection required\./);
+  assert.match(text, /Choose the currency before saving\./);
+  assert.doesNotMatch(text, /Not sure about the category/);
 });
 
 test("guides multiple reviewable draft expenses to edit before saving", () => {

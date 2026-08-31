@@ -5,6 +5,7 @@ export function formatDraft(expenses, options = {}) {
   const language = normalizeLanguage(options.language);
   const currencies = [...new Set(expenses.map((expense) => expense.currency ?? null))];
   const singleCurrency = currencies.length <= 1;
+  const unresolvedCurrency = expenses.some((expense) => expense?.review_reason === "currency_ambiguous" && expense?.currency == null);
   const totalCurrency = singleCurrency
     ? (currencies[0] ?? options.baseCurrency ?? "THB")
     : (options.baseCurrency ?? "THB");
@@ -13,7 +14,9 @@ export function formatDraft(expenses, options = {}) {
   );
   lines = lines.map((line, index) => line.replace("</b>", `</b>${formatBudgetImpactMarker(expenses[index]?.budget_impact, language)}`));
   const convertedPreview = isConvertedDraftPreview(options.preview, totalCurrency);
-  const totalText = singleCurrency
+  const totalText = unresolvedCurrency
+    ? t(language, "draftCurrencySelectionRequired")
+    : singleCurrency
     ? formatDraftAggregateMoney(expenses.reduce((sum, expense) => sum + safeMoneyNumber(expense.amount), 0), totalCurrency, language)
     : convertedPreview
       ? formatMoney(convertedPreview.total, totalCurrency, language)
@@ -38,7 +41,9 @@ export function formatDraft(expenses, options = {}) {
 
 function formatDraftReviewWarning(expenses, language) {
   if (!expenses.some((expense) => expense.needs_review || draftNeedsCategoryChoice(expense))) return "";
-  const key = expenses.length === 1 && draftNeedsCategoryChoice(expenses[0])
+  const key = expenses.some((expense) => expense?.review_reason === "currency_ambiguous" && expense?.currency == null)
+    ? "draftReviewCurrencyChoice"
+    : expenses.length === 1 && draftNeedsCategoryChoice(expenses[0])
     ? "draftReviewCategoryChoice"
     : "draftReviewEdit";
   return `\n\n⚠️ ${t(language, key)}`;
@@ -397,6 +402,8 @@ const messages = {
     day: "день",
     draftReviewCategoryChoice: "Не уверен в категории.\nВыбери подходящую ниже. Если неверны название или сумма — нажми «Исправить».",
     draftReviewEdit: "Не уверен, что правильно понял некоторые расходы.\nНажми «Исправить» и проверь их перед сохранением.",
+    draftCurrencySelectionRequired: "выберите валюту",
+    draftReviewCurrencyChoice: "Уточни валюту перед сохранением.",
     draftTitle: "Я понял так:",
     forecast: "Прогноз",
     forecastAboveBy: "Выше бюджета на",
@@ -443,6 +450,8 @@ const messages = {
     day: "day",
     draftReviewCategoryChoice: "Not sure about the category.\nChoose one below. If the name or amount is wrong, tap “Edit”.",
     draftReviewEdit: "I may have misunderstood some expenses.\nTap “Edit” and review them before saving.",
+    draftCurrencySelectionRequired: "currency selection required",
+    draftReviewCurrencyChoice: "Choose the currency before saving.",
     draftTitle: "I understood this:",
     forecast: "Forecast",
     forecastAboveBy: "Above budget by",
