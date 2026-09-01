@@ -10,8 +10,8 @@ const {
   detectBrowserTimeZone,
   filterTimeZones,
   normalizeSettingsTimeZone,
-  shouldShowCurrentMonthBudgetOverride
-  ,timeZoneOffsetLabel
+  shouldShowCurrentMonthBudgetOverride,
+  timeZoneOffsetLabel
 } = settingsModule;
 
 test("hides current month budget block when calculated budget has no override", () => {

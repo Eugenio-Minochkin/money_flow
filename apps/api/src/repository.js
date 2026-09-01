@@ -1431,12 +1431,13 @@ export function createRepository(pool, options = {}) {
     },
 
     async updateUserSettings(telegramUserId, settings, now = new Date()) {
-      const monthlyBudgetAmount = Number(settings.monthlyBudgetAmount);
+      const hasMonthlyBudgetAmount = Object.hasOwn(settings, "monthlyBudgetAmount");
+      const monthlyBudgetAmount = hasMonthlyBudgetAmount ? Number(settings.monthlyBudgetAmount) : null;
       const weeklyBudgetAmount = settings.weeklyBudgetAmount === "" || settings.weeklyBudgetAmount == null
         ? null
         : Number(settings.weeklyBudgetAmount);
       const usdThbRate = Number(settings.usdThbRate ?? 32.65);
-      if (!Number.isFinite(monthlyBudgetAmount) || monthlyBudgetAmount <= 0) {
+      if (hasMonthlyBudgetAmount && (!Number.isFinite(monthlyBudgetAmount) || monthlyBudgetAmount <= 0)) {
         throw new Error("Monthly budget must be positive");
       }
       if (weeklyBudgetAmount != null && (!Number.isFinite(weeklyBudgetAmount) || weeklyBudgetAmount <= 0)) {
@@ -1468,11 +1469,11 @@ export function createRepository(pool, options = {}) {
         if (baseCurrency !== currentUser.base_currency) {
           await assertReserveCurrencyChangeAllowed(pool, currentUser.id);
         }
-        await assertReserveBudgetCapacity(pool, currentUser, monthlyBudgetAmount, now);
+        if (hasMonthlyBudgetAmount) await assertReserveBudgetCapacity(pool, currentUser, monthlyBudgetAmount, now);
       }
       const result = await pool.query(
         `UPDATE users
-         SET monthly_budget_amount = $1,
+         SET monthly_budget_amount = COALESCE($1, monthly_budget_amount),
              base_currency = $2,
              display_currency = $3,
              display_currency_follows_base = $4,
@@ -1508,7 +1509,7 @@ export function createRepository(pool, options = {}) {
           source: "settings"
         });
       }
-      if (user && Number(monthlyBudgetAmount) !== Number(currentUser.monthly_budget_amount)) {
+      if (user && hasMonthlyBudgetAmount && Number(monthlyBudgetAmount) !== Number(currentUser.monthly_budget_amount)) {
         await this.recordAppEvent(user.id, "budget_changed", { source: "settings" });
       }
       return user;
@@ -2622,6 +2623,7 @@ export function createRepository(pool, options = {}) {
                   users.monthly_budget_amount,
                   users.base_currency,
                   users.display_currency,
+                  users.display_currency_follows_base,
                   users.usd_thb_rate,
                   users.timezone
            FROM budget_topup_drafts
@@ -2772,6 +2774,7 @@ export function createRepository(pool, options = {}) {
                   users.monthly_budget_amount,
                   users.base_currency,
                   users.display_currency,
+                  users.display_currency_follows_base,
                   users.usd_thb_rate,
                   users.timezone
            FROM budget_topups

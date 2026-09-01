@@ -137,9 +137,10 @@ const deleteAccountConfirmButton = document.getElementById("deleteAccountConfirm
 const deleteAccountSection = document.getElementById("deleteAccountSection");
 const settingsSaveQueue = createSettingsSaveQueue({
   save: async (settings) => {
+    const { monthlyBudgetAmount: _monthlyBudgetAmount, ...autosaveSettings } = settings;
     const result = await api("/api/settings", {
       method: "PATCH",
-      body: { telegramUserId, settings }
+      body: { telegramUserId, settings: autosaveSettings }
     });
     if (dashboardState?.user && result.user) dashboardState.user = result.user;
     return settingsStateFromUser(result.user);

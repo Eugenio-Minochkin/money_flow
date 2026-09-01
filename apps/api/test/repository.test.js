@@ -1050,6 +1050,30 @@ test("updateUserSettings preserves custom display currency while follow-base is 
   assert.equal(update.params[3], true);
 });
 
+test("updateUserSettings leaves the stored monthly budget untouched when omitted", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    const query = String(sql);
+    queries.push({ sql: query, params });
+    if (query.startsWith("SELECT * FROM users")) {
+      return { rows: [{ id: 7, telegram_user_id: "100", monthly_budget_amount: "70000", base_currency: "THB", display_currency: "USD" }] };
+    }
+    return { rows: [{ id: 7, monthly_budget_amount: "70000" }] };
+  }));
+
+  await repo.updateUserSettings(100, {
+    baseCurrency: "THB",
+    displayCurrency: "USD",
+    usdThbRate: 32.65,
+    interfaceLanguage: "en",
+    interfaceTheme: "light"
+  });
+
+  const update = queries.find((query) => query.sql.startsWith("UPDATE users"));
+  assert.match(update.sql, /monthly_budget_amount = COALESCE\(\$1, monthly_budget_amount\)/);
+  assert.equal(update.params[0], null);
+});
+
 test("updateUserSettings preserves disabled budget advice when omitted", async () => {
   const repo = createRepository(fakePool((sql, params) => {
     const query = String(sql);
