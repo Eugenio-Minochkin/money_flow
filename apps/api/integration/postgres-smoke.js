@@ -30,7 +30,7 @@ test.before(async () => {
   const applied = await pool.query("SELECT filename FROM schema_migrations ORDER BY filename");
   assert.deepEqual(
     applied.rows.map((row) => row.filename),
-    ["001_initial.sql", "002_draft_confirm_flow.sql", "003_budget_topups.sql", "004_report_deliveries.sql", "005_exchange_rates.sql", "006_feedback.sql", "007_account_deletion.sql", "008_product_analytics.sql", "009_telegram_expense_editor.sql", "010_telegram_editor_prompt_message.sql", "011_planned_expense_disabled_at.sql", "012_planned_expense_starts_on.sql", "013_planned_payment_reminders.sql", "014_quick_access_tokens.sql", "015_quick_capture_safety.sql", "016_quick_access_token_single_active.sql", "017_telegram_expense_capture_safety.sql", "018_display_currency_follows_base.sql"]
+    ["001_initial.sql", "002_draft_confirm_flow.sql", "003_budget_topups.sql", "004_report_deliveries.sql", "005_exchange_rates.sql", "006_feedback.sql", "007_account_deletion.sql", "008_product_analytics.sql", "009_telegram_expense_editor.sql", "010_telegram_editor_prompt_message.sql", "011_planned_expense_disabled_at.sql", "012_planned_expense_starts_on.sql", "013_planned_payment_reminders.sql", "014_quick_access_tokens.sql", "015_quick_capture_safety.sql", "016_quick_access_token_single_active.sql", "017_telegram_expense_capture_safety.sql", "018_display_currency_follows_base.sql", "019_paid_provider_usage.sql"]
   );
 
   const sessions = await pool.query(`
@@ -85,6 +85,28 @@ test("creates a Telegram user with persisted defaults", async () => {
   assert.equal(stored.rows[0].timezone, "Asia/Bangkok");
   assert.equal(stored.rows[0].interface_language, "en");
   assert.equal(stored.rows[0].budget_advice_enabled, true);
+});
+
+test("reserves paid-provider usage once for the same durable request key", async () => {
+  const user = await createSmokeUser(990201);
+  const input = {
+    userId: user.id,
+    provider: "deepgram_transcription",
+    windowMs: 86_400_000,
+    maxRequests: 50,
+    maxAudioSeconds: 900,
+    audioSeconds: 42,
+    requestKey: "telegram:990201:880201:77"
+  };
+
+  assert.deepEqual(await repo.reservePaidProviderUsage(input), { allowed: true });
+  assert.deepEqual(await repo.reservePaidProviderUsage(input), { allowed: true, replayed: true });
+
+  const stored = await pool.query(
+    "SELECT request_count, audio_seconds FROM paid_provider_usage_windows WHERE user_id = $1 AND provider = $2",
+    [user.id, input.provider]
+  );
+  assert.deepEqual(stored.rows, [{ request_count: 1, audio_seconds: 42 }]);
 });
 
 test("enforces singleton onboarding events without limiting repeatable events", async () => {
