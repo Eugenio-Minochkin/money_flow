@@ -129,6 +129,21 @@ test("expense parser LLM timeout defaults only when absent and fails fast on exp
   }
 });
 
+test("paid AI guard defaults are generous and each provider has an independent kill switch", () => {
+  const config = buildConfig({});
+  assert.equal(config.paidAiWindowMs, 86_400_000);
+  assert.equal(config.openAiParserUserLimit, 100);
+  assert.equal(config.deepgramTranscriptionUserLimit, 50);
+  assert.equal(config.deepgramMaxAudioDurationSec, 60);
+  assert.equal(config.deepgramMaxAudioWindowSec, 900);
+  assert.equal(config.openAiParserGlobalEnabled, true);
+  assert.equal(config.deepgramTranscriptionGlobalEnabled, true);
+
+  const disabled = buildConfig({ OPENAI_PARSER_GLOBAL_ENABLED: "false", DEEPGRAM_TRANSCRIPTION_GLOBAL_ENABLED: "false" });
+  assert.equal(disabled.openAiParserGlobalEnabled, false);
+  assert.equal(disabled.deepgramTranscriptionGlobalEnabled, false);
+});
+
 test("server wires expense parser LLM timeout", async () => {
   const source = await readFile(new URL("../src/server.js", import.meta.url), "utf8");
 

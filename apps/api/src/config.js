@@ -12,6 +12,11 @@ const DEFAULT_RATE_LIMIT_CLEANUP_INTERVAL_MS = 60_000;
 const DEFAULT_TRUSTED_PROXY_IPS = ["127.0.0.1", "::1", "172.18.0.1"];
 const DEFAULT_ADMIN_ALERT_THROTTLE_MS = 10 * 60_000;
 const DEFAULT_ADMIN_ALERT_MAX_MESSAGE_LENGTH = 900;
+const DEFAULT_PAID_AI_WINDOW_MS = 24 * 60 * 60_000;
+const DEFAULT_OPENAI_PARSER_USER_LIMIT = 100;
+const DEFAULT_DEEPGRAM_TRANSCRIPTION_USER_LIMIT = 50;
+const DEFAULT_DEEPGRAM_MAX_AUDIO_DURATION_SEC = 60;
+const DEFAULT_DEEPGRAM_MAX_AUDIO_WINDOW_SEC = 15 * 60;
 
 export function parseReleaseDigestSendHour(value) {
   const parsed = Number(value ?? DEFAULT_RELEASE_DIGEST_SEND_HOUR);
@@ -60,6 +65,13 @@ export function buildConfig(env) {
       DEFAULT_EXPENSE_PARSER_LLM_TIMEOUT_MS,
       "EXPENSE_PARSER_LLM_TIMEOUT_MS"
     ),
+    paidAiWindowMs: parsePositiveInteger(env.PAID_AI_USAGE_WINDOW_MS, DEFAULT_PAID_AI_WINDOW_MS),
+    openAiParserGlobalEnabled: env.OPENAI_PARSER_GLOBAL_ENABLED !== "false",
+    openAiParserUserLimit: parsePositiveInteger(env.OPENAI_PARSER_USER_LIMIT, DEFAULT_OPENAI_PARSER_USER_LIMIT),
+    deepgramTranscriptionGlobalEnabled: env.DEEPGRAM_TRANSCRIPTION_GLOBAL_ENABLED !== "false",
+    deepgramTranscriptionUserLimit: parsePositiveInteger(env.DEEPGRAM_TRANSCRIPTION_USER_LIMIT, DEFAULT_DEEPGRAM_TRANSCRIPTION_USER_LIMIT),
+    deepgramMaxAudioDurationSec: parsePositiveInteger(env.DEEPGRAM_MAX_AUDIO_DURATION_SEC, DEFAULT_DEEPGRAM_MAX_AUDIO_DURATION_SEC),
+    deepgramMaxAudioWindowSec: parsePositiveInteger(env.DEEPGRAM_MAX_AUDIO_WINDOW_SEC, DEFAULT_DEEPGRAM_MAX_AUDIO_WINDOW_SEC),
     parserTextHashSecret: env.PARSER_TEXT_HASH_SECRET ?? (nodeEnv === "test" ? "test-parser-text-hash-secret" : ""),
     deepgramApiKey: env.DEEPGRAM_API_KEY,
     telegramWebhookSecret: env.TELEGRAM_WEBHOOK_SECRET,

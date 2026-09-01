@@ -39,23 +39,29 @@ export async function createMiniAppQuickCaptureDraft({ user, clientRequestId, te
   try { return await operation; } finally { miniAppQuickCaptureInFlight.delete(key); }
 }
 
-export async function createTelegramExpenseDraft({ user, chatId, messageId, text, expenseParser, repository, parserOptions = {}, onBeforePersist, onAfterPersist }) {
+export async function createTelegramExpenseDraft({ user, chatId, messageId, text, expenseParser, repository, parserOptions = {}, onBeforePersist, onAfterPersist, claim: existingClaim = null }) {
   if (!Number.isSafeInteger(Number(messageId)) || typeof repository.claimTelegramExpenseCapture !== "function") {
     const draft = await createExpenseDraftFromText({ user, text, source: "telegram", expenseParser, repository, parserOptions, onBeforePersist, onAfterPersist });
     return { draft, replayed: false };
+  }
+  if (existingClaim?.state === "completed") return { draft: existingClaim.draft, replayed: true };
+  if (existingClaim?.state === "processing") {
+    const completed = await repository.waitForTelegramExpenseCapture(user.id, chatId, messageId);
+    if (!completed) throw new ShortcutRequestInProgressError();
+    return { draft: completed.draft, replayed: true };
   }
   const key = `${user.id}:${chatId}:${messageId}`;
   if (telegramExpenseInFlight.has(key)) {
     const shared = await telegramExpenseInFlight.get(key);
     return shared ? { ...shared, replayed: true } : shared;
   }
-  const operation = createTelegramExpenseDraftOnce({ user, chatId, messageId, text, expenseParser, repository, parserOptions, onBeforePersist, onAfterPersist });
+  const operation = createTelegramExpenseDraftOnce({ user, chatId, messageId, text, expenseParser, repository, parserOptions, onBeforePersist, onAfterPersist, existingClaim });
   telegramExpenseInFlight.set(key, operation);
   try { return await operation; } finally { telegramExpenseInFlight.delete(key); }
 }
 
-async function createTelegramExpenseDraftOnce({ user, chatId, messageId, text, expenseParser, repository, parserOptions, onBeforePersist, onAfterPersist }) {
-  const claim = await repository.claimTelegramExpenseCapture(user.id, chatId, messageId);
+async function createTelegramExpenseDraftOnce({ user, chatId, messageId, text, expenseParser, repository, parserOptions, onBeforePersist, onAfterPersist, existingClaim }) {
+  const claim = existingClaim ?? await repository.claimTelegramExpenseCapture(user.id, chatId, messageId);
   if (!claim) return null;
   if (claim.state === "completed") return { draft: claim.draft, replayed: true };
   if (claim.state === "processing") {
@@ -64,7 +70,10 @@ async function createTelegramExpenseDraftOnce({ user, chatId, messageId, text, e
     return { draft: completed.draft, replayed: true };
   }
   try {
-    const items = await parseExpenseItems({ user, text, expenseParser, parserOptions });
+    const items = await parseExpenseItems({ user, text, expenseParser, parserOptions: {
+      ...parserOptions,
+      requestKey: parserOptions.requestKey ?? `telegram:${user.id}:${chatId}:${messageId}`
+    } });
     onBeforePersist?.();
     const result = await repository.completeTelegramExpenseCapture({
       userId: user.id,
@@ -93,7 +102,9 @@ async function createMiniAppQuickCaptureDraftOnce({ user, clientRequestId, text,
   }
   let result;
   try {
-    const items = await parseExpenseItems({ user, text, expenseParser });
+    const items = await parseExpenseItems({ user, text, expenseParser, parserOptions: {
+      requestKey: `miniapp:${user.id}:${clientRequestId}`
+    } });
     result = await repository.completeMiniAppQuickCaptureRequest({ userId: user.id, clientRequestId, claimVersion: claim.claimVersion, sourceText: text, items });
   } catch (error) {
     await repository.releaseMiniAppQuickCaptureRequest(user.id, clientRequestId, claim.claimVersion);
@@ -115,7 +126,9 @@ async function createShortcutExpenseDraftOnce({ user, tokenId, clientRequestId, 
   }
   let result;
   try {
-    const items = await parseExpenseItems({ user, text, expenseParser });
+    const items = await parseExpenseItems({ user, text, expenseParser, parserOptions: {
+      requestKey: `shortcut:${tokenId}:${clientRequestId}`
+    } });
     result = await repository.completeShortcutRequest({ tokenId, userId: user.id, clientRequestId, claimVersion: claim.claimVersion, sourceText: text, items });
   } catch (error) {
     await repository.releaseShortcutRequest(tokenId, user.id, clientRequestId, claim.claimVersion);

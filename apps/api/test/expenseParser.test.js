@@ -240,6 +240,42 @@ test("uses OpenAI structured output when API key is configured", async () => {
   assert.equal(parsed.expenses[1].amount, 180);
 });
 
+test("reserves the LLM allowance only immediately before the paid OpenAI request", async () => {
+  const stages = [];
+  const parser = createExpenseParser({
+    apiKey: "test-key",
+    fastPathMode: "off",
+    consumeLlmUsage: async () => stages.push("allowance"),
+    fetchImpl: async () => {
+      stages.push("openai");
+      return jsonResponse({ output_text: JSON.stringify({ expenses: [{
+        amount: 70, currency: "THB", description: "coffee", category_slug: "food_cafe", tags: [],
+        spent_at: "2026-09-01T10:00:00.000Z", budget_impact: "regular", confidence: 0.9, needs_review: false
+      }], notes: [] }) });
+    }
+  });
+
+  await parser.parse("coffee 70", { userId: 42 });
+
+  assert.deepEqual(stages, ["allowance", "openai"]);
+});
+
+test("local-safe parsing does not reserve an LLM allowance", async () => {
+  let allowanceCalls = 0;
+  const parser = createExpenseParser({
+    apiKey: "test-key",
+    fastPathMode: "enabled",
+    localFirstRolloutPercent: 100,
+    parserTextHashSecret: "test-secret",
+    consumeLlmUsage: async () => { allowanceCalls += 1; },
+    fetchImpl: async () => { throw new Error("OpenAI must not be called"); }
+  });
+
+  await parser.parse("кофе 70 бат", { userId: 42 });
+
+  assert.equal(allowanceCalls, 0);
+});
+
 test("OpenAI parser accepts budget impact for large one-off expenses", async () => {
   const parser = createExpenseParser({
     apiKey: "test-key",

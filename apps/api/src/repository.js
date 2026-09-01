@@ -1,4 +1,5 @@
 import { calculateBudgetSnapshot } from "../../../packages/shared/src/budget.js";
+import crypto from "node:crypto";
 import { SUPPORTED_CURRENCY_CODES, fallbackThbRate, isSupportedCurrency, normalizeCurrency } from "../../../packages/shared/src/currencies.js";
 import {
   localDateKey as sharedLocalDateKey,
@@ -102,6 +103,66 @@ export function createRepository(pool, options = {}) {
         });
         return { recorded: false };
       }
+    },
+
+    async reservePaidProviderUsage({ userId, provider, windowMs, maxRequests, maxAudioSeconds, audioSeconds = 0, requestUnits = 1, requestKey = null }) {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        const requestKeyHash = requestKey == null ? null : hashPaidProviderRequestKey(requestKey);
+        await client.query(
+          `INSERT INTO paid_provider_usage_windows (user_id, provider)
+           VALUES ($1, $2)
+           ON CONFLICT (user_id, provider) DO NOTHING`,
+          [userId, provider]
+        );
+        const selected = await client.query(
+          `SELECT window_started_at, request_count, audio_seconds,
+                  now() - window_started_at >= ($3::bigint * interval '1 millisecond') AS reset_due
+           FROM paid_provider_usage_windows
+           WHERE user_id = $1 AND provider = $2 FOR UPDATE`,
+          [userId, provider, windowMs]
+        );
+        const row = selected.rows[0];
+        if (requestKeyHash) {
+          const existing = await client.query(
+            `SELECT 1 FROM paid_provider_usage_reservations
+             WHERE user_id = $1 AND provider = $2 AND request_key_hash = $3`,
+            [userId, provider, requestKeyHash]
+          );
+          if (existing.rows[0]) {
+            await client.query("COMMIT");
+            return { allowed: true, replayed: true };
+          }
+        }
+        const requestCount = row.reset_due ? 0 : Number(row.request_count);
+        const usedAudioSeconds = row.reset_due ? 0 : Number(row.audio_seconds);
+        const nextRequests = requestCount + Number(requestUnits);
+        const nextAudioSeconds = usedAudioSeconds + Number(audioSeconds);
+        if (nextRequests > Number(maxRequests) || (maxAudioSeconds != null && nextAudioSeconds > Number(maxAudioSeconds))) {
+          await client.query("ROLLBACK");
+          return { allowed: false };
+        }
+        await client.query(
+          `UPDATE paid_provider_usage_windows
+           SET window_started_at = CASE WHEN $3 THEN now() ELSE window_started_at END,
+               request_count = $4, audio_seconds = $5
+           WHERE user_id = $1 AND provider = $2`,
+          [userId, provider, row.reset_due, nextRequests, nextAudioSeconds]
+        );
+        if (requestKeyHash) {
+          await client.query(
+            `INSERT INTO paid_provider_usage_reservations (user_id, provider, request_key_hash)
+             VALUES ($1, $2, $3)`,
+            [userId, provider, requestKeyHash]
+          );
+        }
+        await client.query("COMMIT");
+        return { allowed: true };
+      } catch (error) {
+        try { await client.query("ROLLBACK"); } catch { /* preserve original error */ }
+        throw error;
+      } finally { client.release(); }
     },
 
     async createFeedback(input) {
@@ -4179,6 +4240,10 @@ export function createRepository(pool, options = {}) {
       };
     }
   };
+}
+
+function hashPaidProviderRequestKey(value) {
+  return crypto.createHash("sha256").update(String(value)).digest("hex");
 }
 
 async function dashboardAnalytics(pool, user, topCategories, snapshot, now, timeZone = userTimezone(user)) {

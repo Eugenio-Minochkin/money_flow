@@ -114,6 +114,50 @@ test("reports unconfigured voice transcription", () => {
   assert.equal(transcriber.isConfigured(), false);
 });
 
+test("rejects a voice message over the configured duration before downloading it", async () => {
+  let fetchCalls = 0;
+  const transcriber = createVoiceTranscriber({
+    telegramBotToken: "telegram-token",
+    deepgramApiKey: "deepgram-key",
+    maxAudioDurationSec: 60,
+    fetchImpl: async () => { fetchCalls += 1; throw new Error("network must not be used"); }
+  });
+
+  await assert.rejects(
+    () => transcriber.transcribeTelegramVoice({ file_id: "long-voice", duration: 61 }),
+    (error) => error?.code === "voice_message_too_long"
+  );
+  assert.equal(fetchCalls, 0);
+});
+
+test("reserves the Deepgram allowance after download and before the paid request", async () => {
+  const stages = [];
+  const transcriber = createVoiceTranscriber({
+    telegramBotToken: "telegram-token",
+    deepgramApiKey: "deepgram-key",
+    consumeVoiceUsage: async ({ audioDurationSec }) => {
+      assert.equal(audioDurationSec, 7);
+      stages.push("allowance");
+    },
+    fetchImpl: async (url) => {
+      if (String(url).includes("/getFile")) {
+        stages.push("metadata");
+        return jsonResponse({ ok: true, result: { file_path: "voice/file.oga" } });
+      }
+      if (String(url).includes("/file/bot")) {
+        stages.push("download");
+        return { ok: true, async arrayBuffer() { return new Uint8Array([1]).buffer; }, async text() { return ""; } };
+      }
+      stages.push("deepgram");
+      return jsonResponse({ results: { channels: [{ alternatives: [{ transcript: "coffee 70" }] }] } });
+    }
+  });
+
+  await transcriber.transcribeTelegramVoice({ file_id: "voice-id", duration: 7 });
+
+  assert.deepEqual(stages, ["metadata", "download", "allowance", "deepgram"]);
+});
+
 function jsonResponse(body, options = {}) {
   return {
     ok: options.ok ?? true,
