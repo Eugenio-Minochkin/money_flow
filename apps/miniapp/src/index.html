@@ -403,11 +403,17 @@
                   <input id="baseCurrencySearch" type="search" placeholder="Search currency" autocomplete="off" />
                   <select id="baseCurrencyInput" name="baseCurrency"></select>
                 </label>
-                <label class="settings-row">
-                  <span data-i18n="settings.displayCurrency">Display currency</span>
-                  <input id="displayCurrencySearch" type="search" placeholder="Search currency" autocomplete="off" />
-                  <select id="displayCurrencyInput" name="displayCurrency"></select>
+                <label class="toggle-setting settings-toggle">
+                  <span data-i18n="settings.displayCurrencyFollowsBase">Same as base currency</span>
+                  <input id="displayCurrencyFollowsBaseInput" name="displayCurrencyFollowsBase" type="checkbox" />
                 </label>
+                <div id="customDisplayCurrencyControls">
+                  <label class="settings-row">
+                    <span data-i18n="settings.displayCurrency">Display currency</span>
+                    <input id="displayCurrencySearch" type="search" placeholder="Search currency" autocomplete="off" />
+                    <select id="displayCurrencyInput" name="displayCurrency"></select>
+                  </label>
+                </div>
               </div>
             </section>
             <section class="settings-section">
@@ -450,8 +456,13 @@
                 <label class="settings-row">
                   <span data-i18n="settings.timezone">Time zone</span>
                   <div class="timezone-control">
-                    <select id="timezoneInput" name="timezone"></select>
+                    <select id="timezoneInput" name="timezone" class="hidden"></select>
+                    <button type="button" id="timezonePickerButton" class="ghost-button"></button>
                     <button type="button" id="detectTimezoneButton" class="ghost-button timezone-action" data-i18n="settings.detectTimezone">Detect automatically</button>
+                  </div>
+                  <div id="timezonePicker" class="timezone-picker hidden">
+                    <input id="timezoneSearch" type="search" autocomplete="off" placeholder="Search city or UTC" />
+                    <div id="timezoneOptions" class="timezone-picker__options" role="listbox"></div>
                   </div>
                 </label>
               </div>

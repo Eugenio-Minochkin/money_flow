@@ -1,0 +1,2 @@
+ALTER TABLE users
+  ADD COLUMN IF NOT EXISTS display_currency_follows_base BOOLEAN NOT NULL DEFAULT FALSE;

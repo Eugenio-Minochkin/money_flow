@@ -835,7 +835,15 @@ async function route(req, res) {
     const body = await readJson(req);
     const auth = apiSecurity.resolveTelegramUserId(req, url, body);
     if (auth.error) return sendJson(res, 400, { error: auth.error });
-    const user = await repository.updateMonthlyBudget(auth.telegramUserId, Number(body.monthlyBudgetAmount));
+    let user;
+    try {
+      user = await repository.updateMonthlyBudget(auth.telegramUserId, Number(body.monthlyBudgetAmount));
+    } catch (error) {
+      if (error.code === "reserve_conflicts_with_budget_change") {
+        return sendJson(res, 409, { error: error.code, details: error.details });
+      }
+      throw error;
+    }
     if (!user) return sendJson(res, 404, { error: "user_not_found" });
     return sendJson(res, 200, { user });
   }
@@ -854,7 +862,7 @@ async function route(req, res) {
       });
     } catch (error) {
       if (error.code === "reserve_conflicts_with_budget_change") {
-        return sendJson(res, 409, { error: error.code });
+        return sendJson(res, 409, { error: error.code, details: error.details });
       }
       throw error;
     }
@@ -871,7 +879,7 @@ async function route(req, res) {
       user = await repository.updateUserSettings(auth.telegramUserId, body.settings ?? {});
     } catch (error) {
       if (["reserve_conflicts_with_budget_change", "reserve_blocks_base_currency_change"].includes(error.code)) {
-        return sendJson(res, 409, { error: error.code });
+        return sendJson(res, 409, { error: error.code, details: error.details });
       }
       if (error.code === "unsupported_currency") return sendJson(res, 400, { error: error.code });
       throw error;

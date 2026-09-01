@@ -2373,6 +2373,11 @@ select {
   gap: 8px;
 }
 
+.timezone-picker { grid-column: 2; display: grid; gap: 8px; padding-top: 8px; }
+.timezone-picker__options { display: grid; max-height: 280px; overflow-y: auto; border: 1px solid var(--line); border-radius: 12px; }
+.timezone-picker__option { display: grid; gap: 2px; padding: 10px 12px; border-radius: 0; text-align: left; background: var(--panel); color: var(--ink); border-bottom: 1px solid var(--line); }
+.timezone-picker__option small { color: var(--muted); }
+
 .timezone-action {
   min-height: 42px;
   white-space: nowrap;
@@ -2891,6 +2896,8 @@ button:disabled {
   .timezone-control {
     grid-template-columns: 1fr;
   }
+
+  .timezone-picker { grid-column: 1; }
 
 }
 

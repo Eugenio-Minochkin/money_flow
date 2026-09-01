@@ -22,6 +22,7 @@ Money Flow UI should feel light and direct. Favor quick comprehension over dense
 - Keep high-frequency settings easy to scan and low-frequency settings tucked away.
 - Save low-risk selects and toggles after an intentional change without a global Settings submit step; serialize writes and restore the last confirmed value after an error.
 - Require explicit old-to-new confirmation for the regular monthly budget, while keeping the current-month override as a separate flow.
+- Keep the custom display currency reversible: following the base currency must not erase a previously selected secondary currency. A blocked regular-budget change must explain the calculated minimum rather than show the generic Settings autosave error.
 - Keep account deletion collapsed by default and preserve every existing destructive confirmation step after disclosure.
 
 ## Editing

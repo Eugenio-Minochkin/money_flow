@@ -12,7 +12,7 @@ export const COMMON_TIMEZONES = [
   "Asia/Tbilisi",
   "Asia/Yerevan",
   "Asia/Dubai",
-  "Asia/Bali",
+  "Asia/Makassar",
   "Europe/Warsaw",
   "Europe/Berlin",
   "America/New_York",
@@ -34,13 +34,42 @@ export function isValidTimeZone(value, intl = Intl) {
 }
 
 export function allTimeZones(intl = Intl) {
-  try {
-    const zones = intl.supportedValuesOf?.("timeZone");
-    if (Array.isArray(zones) && zones.length > 0) return zones;
-  } catch {
-    // Use the stable common list when this runtime has no supportedValuesOf().
-  }
-  return COMMON_TIMEZONES;
+  return IANA_TIME_ZONES.filter((timeZone) => isValidTimeZone(timeZone, intl));
+}
+
+export function timeZoneOffsetLabel(timeZone, instant = new Date(), intl = Intl) {
+  const parts = new intl.DateTimeFormat("en-US", {
+    timeZone,
+    timeZoneName: "longOffset"
+  }).formatToParts(instant);
+  const raw = parts.find((part) => part.type === "timeZoneName")?.value ?? "GMT+00:00";
+  const offset = raw.replace(/^GMT/, "UTC").replace("-", "−");
+  return offset === "UTC" ? "UTC+00:00" : offset;
+}
+
+export function filterTimeZones(query = "", instant = new Date(), intl = Intl) {
+  const normalizedQuery = normalizeTimeZoneSearch(query);
+  return allTimeZones(intl)
+    .filter((timeZone) => {
+      const label = timeZoneCityLabel(timeZone);
+      const offset = timeZoneOffsetLabel(timeZone, instant, intl);
+      return !normalizedQuery || [timeZone, label, offset].some((value) => normalizeTimeZoneSearch(value).includes(normalizedQuery));
+    })
+    .sort((left, right) => {
+      const offsetDifference = offsetMinutes(left, instant, intl) - offsetMinutes(right, instant, intl);
+      return offsetDifference || timeZoneCityLabel(left).localeCompare(timeZoneCityLabel(right));
+    });
+}
+
+function normalizeTimeZoneSearch(value) {
+  return String(value).toLocaleLowerCase().replaceAll("_", " ").replaceAll("−", "-").replace(/\s+/g, " ").trim();
+}
+
+function offsetMinutes(timeZone, instant, intl) {
+  const match = timeZoneOffsetLabel(timeZone, instant, intl).match(/^UTC([+−])(\d{2}):(\d{2})$/);
+  if (!match) return 0;
+  const minutes = Number(match[2]) * 60 + Number(match[3]);
+  return match[1] === "−" ? -minutes : minutes;
 }
 
 export function detectBrowserTimeZone(intl = Intl) {
@@ -135,3 +164,4 @@ function localMonthKey(now, timeZone = "Asia/Bangkok") {
   }).formatToParts(now).filter((part) => part.type !== "literal").map((part) => [part.type, part.value]));
   return `${parts.year}-${parts.month}`;
 }
+import { IANA_TIME_ZONES, timeZoneCityLabel } from "./timezones.js";
