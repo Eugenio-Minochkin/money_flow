@@ -57,7 +57,7 @@ export function createStaticHandler({ webRoot }) {
 
 function cacheControl(filePath, searchParams) {
   if (extname(filePath) === ".html") return "no-cache";
-  return searchParams.has("v")
+  return /^[a-f0-9]{16}$/.test(searchParams.get("v") ?? "")
     ? "public, max-age=31536000, immutable"
     : "no-cache";
 }

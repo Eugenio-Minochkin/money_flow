@@ -26,10 +26,17 @@ test("static handler keeps HTML and modules revalidated but caches explicit vers
 
   const versioned = responseRecorder();
   await serve(versioned.res, "/app.js", {
-    searchParams: new URLSearchParams("v=20260813-startup"),
+    searchParams: new URLSearchParams("v=0123456789abcdef"),
     requestHeaders: {}
   });
   assert.equal(versioned.headers["cache-control"], "public, max-age=31536000, immutable");
+
+  const sourceMarker = responseRecorder();
+  await serve(sourceMarker.res, "/app.js", {
+    searchParams: new URLSearchParams("v=__MINIAPP_ASSET_VERSION__"),
+    requestHeaders: {}
+  });
+  assert.equal(sourceMarker.headers["cache-control"], "no-cache");
 
   const conditional = responseRecorder();
   await serve(conditional.res, "/app.js", {
