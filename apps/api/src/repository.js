@@ -909,6 +909,7 @@ export function createRepository(pool, options = {}) {
          SET base_currency = $1,
              monthly_budget_amount = $2,
              onboarding_step = $3,
+             display_currency_follows_base = true,
              onboarding_data = '{}'::jsonb
          WHERE telegram_user_id = $4
          RETURNING *`,
@@ -924,6 +925,7 @@ export function createRepository(pool, options = {}) {
       const result = await pool.query(
         `UPDATE users
          SET base_currency = $1,
+             display_currency_follows_base = true,
              onboarding_step = 'monthly_budget'
          WHERE telegram_user_id = $2
          RETURNING *`,
@@ -1429,12 +1431,13 @@ export function createRepository(pool, options = {}) {
     },
 
     async updateUserSettings(telegramUserId, settings, now = new Date()) {
-      const monthlyBudgetAmount = Number(settings.monthlyBudgetAmount);
+      const hasMonthlyBudgetAmount = Object.hasOwn(settings, "monthlyBudgetAmount");
+      const monthlyBudgetAmount = hasMonthlyBudgetAmount ? Number(settings.monthlyBudgetAmount) : null;
       const weeklyBudgetAmount = settings.weeklyBudgetAmount === "" || settings.weeklyBudgetAmount == null
         ? null
         : Number(settings.weeklyBudgetAmount);
       const usdThbRate = Number(settings.usdThbRate ?? 32.65);
-      if (!Number.isFinite(monthlyBudgetAmount) || monthlyBudgetAmount <= 0) {
+      if (hasMonthlyBudgetAmount && (!Number.isFinite(monthlyBudgetAmount) || monthlyBudgetAmount <= 0)) {
         throw new Error("Monthly budget must be positive");
       }
       if (weeklyBudgetAmount != null && (!Number.isFinite(weeklyBudgetAmount) || weeklyBudgetAmount <= 0)) {
@@ -1453,6 +1456,9 @@ export function createRepository(pool, options = {}) {
       const timeZone = normalizeTimeZone(settings.timezone).timeZone;
       const currentUser = await this.getUserByTelegramId(telegramUserId);
       if (!currentUser) return null;
+      const displayCurrencyFollowsBase = Object.hasOwn(settings, "displayCurrencyFollowsBase")
+        ? settings.displayCurrencyFollowsBase === true
+        : currentUser.display_currency_follows_base === true;
       const budgetAdviceEnabled = Object.hasOwn(settings, "budgetAdviceEnabled")
         ? settings.budgetAdviceEnabled === true
         : currentUser.budget_advice_enabled !== false;
@@ -1463,26 +1469,28 @@ export function createRepository(pool, options = {}) {
         if (baseCurrency !== currentUser.base_currency) {
           await assertReserveCurrencyChangeAllowed(pool, currentUser.id);
         }
-        await assertReserveBudgetCapacity(pool, currentUser, monthlyBudgetAmount, now);
+        if (hasMonthlyBudgetAmount) await assertReserveBudgetCapacity(pool, currentUser, monthlyBudgetAmount, now);
       }
       const result = await pool.query(
         `UPDATE users
-         SET monthly_budget_amount = $1,
+         SET monthly_budget_amount = COALESCE($1, monthly_budget_amount),
              base_currency = $2,
              display_currency = $3,
-             usd_thb_rate = $4,
-             weekly_budget_amount = $5,
-             interface_language = $6,
-             budget_advice_enabled = $7,
-             daily_entry_reminder_enabled = $8,
-             interface_theme = $9,
-             timezone = $10
-         WHERE telegram_user_id = $11
+             display_currency_follows_base = $4,
+             usd_thb_rate = $5,
+             weekly_budget_amount = $6,
+             interface_language = $7,
+             budget_advice_enabled = $8,
+             daily_entry_reminder_enabled = $9,
+             interface_theme = $10,
+             timezone = $11
+         WHERE telegram_user_id = $12
          RETURNING *`,
         [
           monthlyBudgetAmount,
           baseCurrency,
           displayCurrency,
+          displayCurrencyFollowsBase,
           usdThbRate,
           weeklyBudgetAmount,
           interfaceLanguage,
@@ -1501,7 +1509,7 @@ export function createRepository(pool, options = {}) {
           source: "settings"
         });
       }
-      if (user && Number(monthlyBudgetAmount) !== Number(currentUser.monthly_budget_amount)) {
+      if (user && hasMonthlyBudgetAmount && Number(monthlyBudgetAmount) !== Number(currentUser.monthly_budget_amount)) {
         await this.recordAppEvent(user.id, "budget_changed", { source: "settings" });
       }
       return user;
@@ -2039,7 +2047,7 @@ export function createRepository(pool, options = {}) {
       const isWeekly = reportType === "weekly";
       const metrics = buildReportMetrics({
         currency,
-        displayCurrency: user.display_currency ?? "USD",
+        displayCurrency: effectiveDisplayCurrency(user),
         expenses,
         paidPlannedPayments,
         budgetTopups,
@@ -2615,6 +2623,7 @@ export function createRepository(pool, options = {}) {
                   users.monthly_budget_amount,
                   users.base_currency,
                   users.display_currency,
+                  users.display_currency_follows_base,
                   users.usd_thb_rate,
                   users.timezone
            FROM budget_topup_drafts
@@ -2765,6 +2774,7 @@ export function createRepository(pool, options = {}) {
                   users.monthly_budget_amount,
                   users.base_currency,
                   users.display_currency,
+                  users.display_currency_follows_base,
                   users.usd_thb_rate,
                   users.timezone
            FROM budget_topups
@@ -3458,7 +3468,7 @@ export function createRepository(pool, options = {}) {
          GROUP BY category_slug
          ORDER BY total DESC
          LIMIT 6`,
-        [userId, bounds.start, bounds.end, user.display_currency ?? "USD", displayThbRate(user)]
+        [userId, bounds.start, bounds.end, effectiveDisplayCurrency(user), displayThbRate(user)]
       );
       return result.rows.map((row) => withDisplayTotal(row, user));
     },
@@ -3487,6 +3497,7 @@ export function createRepository(pool, options = {}) {
                 users.timezone AS user_timezone,
                 users.base_currency AS user_base_currency,
                 users.display_currency AS user_display_currency,
+                users.display_currency_follows_base AS user_display_currency_follows_base,
                 users.usd_thb_rate AS user_usd_thb_rate,
                 COALESCE(paid.paid_count, 0)::int AS paid_count,
                 COALESCE(paid.paid_amount_base, 0)::float AS paid_amount_base
@@ -3502,6 +3513,7 @@ export function createRepository(pool, options = {}) {
           user_timezone,
           user_base_currency,
           user_display_currency,
+          user_display_currency_follows_base,
           user_usd_thb_rate,
           ...planned
         } = row;
@@ -3509,6 +3521,7 @@ export function createRepository(pool, options = {}) {
           timezone: user_timezone,
           base_currency: user_base_currency,
           display_currency: user_display_currency,
+          display_currency_follows_base: user_display_currency_follows_base,
           usd_thb_rate: user_usd_thb_rate
         };
         const mapped = withDisplayPlanned(planned, user);
@@ -4048,7 +4061,7 @@ export function createRepository(pool, options = {}) {
         remaining: plannedMonthRemaining,
         total: roundMoney(plannedMonthPaid + plannedMonthRemaining),
         display: {
-          currency: user.display_currency ?? "USD",
+          currency: effectiveDisplayCurrency(user),
           paid: plannedMonthDisplayPaid,
           remaining: plannedMonthDisplayRemaining,
           total: roundMoney(plannedMonthDisplayPaid + plannedMonthDisplayRemaining)
@@ -4090,7 +4103,7 @@ export function createRepository(pool, options = {}) {
         weekRemainingRawDisplay: displayFromBase(weekRemainingRaw, user),
         weekAvailableDisplay: displayFromBase(weekAvailable, user),
         baseCurrency: user.base_currency ?? "THB",
-        displayCurrency: user.display_currency ?? "USD",
+        displayCurrency: effectiveDisplayCurrency(user),
         budgetAdviceEnabled: user.budget_advice_enabled !== false,
         timeZone: calculationTimeZone
       }));
@@ -4110,7 +4123,7 @@ export function createRepository(pool, options = {}) {
         todayDisplayTotal: totals.todayDisplay,
         weekDisplayTotal: totals.weekDisplay,
         monthDisplayTotal: totals.monthDisplay,
-        displayCurrency: user.display_currency ?? "USD",
+        displayCurrency: effectiveDisplayCurrency(user),
         monthlyBudget: currentBudget.amount,
         monthlyBudgetDisplay: displayFromBase(currentBudget.amount, user),
         dayPlanDays: currentBudget.partialPeriodDays,
@@ -4190,7 +4203,7 @@ async function dashboardAnalytics(pool, user, topCategories, snapshot, now, time
       previous: previousWeek.regularTotal,
       delta: roundMoney(snapshot.week - previousWeek.regularTotal),
       display: {
-        currency: user.display_currency ?? "USD",
+        currency: effectiveDisplayCurrency(user),
         current: snapshot.display.week,
         previous: previousWeek.regularDisplayTotal,
         delta: roundMoney(snapshot.display.week - previousWeek.regularDisplayTotal)
@@ -4200,7 +4213,7 @@ async function dashboardAnalytics(pool, user, topCategories, snapshot, now, time
       active: otherPercent > 10,
       percent: otherPercent,
       total: roundMoney(otherTotal),
-      display: otherCategory?.display ?? { currency: user.display_currency ?? "USD", amount: 0 }
+      display: otherCategory?.display ?? { currency: effectiveDisplayCurrency(user), amount: 0 }
     }
   };
 }
@@ -4230,13 +4243,13 @@ async function topTagsForMonth(pool, userId, now, user, timeZone = userTimezone(
      GROUP BY tag
      ORDER BY total DESC
      LIMIT 8`,
-    [userId, bounds.start, bounds.end, user.display_currency ?? "USD", displayThbRate(user)]
+    [userId, bounds.start, bounds.end, effectiveDisplayCurrency(user), displayThbRate(user)]
   );
   return result.rows.map((row) => ({
     tag: row.tag,
     total: roundMoney(Number(row.total)),
     display: {
-      currency: user.display_currency ?? "USD",
+      currency: effectiveDisplayCurrency(user),
       amount: roundMoney(Number(row.display_total ?? 0))
     }
   }));
@@ -4554,7 +4567,7 @@ async function reportPaidPlannedPaymentsForPeriod(pool, user, bounds, timeZone) 
   return result.rows.map((row) => ({
     ...row,
     display: {
-      currency: user.display_currency ?? "USD",
+      currency: effectiveDisplayCurrency(user),
       amount: displayFromBase(row.amount_base, user)
     }
   }));
@@ -4662,7 +4675,7 @@ async function currentMonthBudget(pool, user, now, timeZone = userTimezone(user)
     partialPeriodDays,
     topups,
     display: {
-      currency: user.display_currency ?? "USD",
+      currency: effectiveDisplayCurrency(user),
       amount: displayFromBase(amount, user),
       baseBudget: displayFromBase(baseBudget, user),
       topupsTotal: displayFromBase(topupsTotal, user)
@@ -4756,6 +4769,7 @@ async function readOwnedArchivedPlannedExpense(queryable, telegramUserId, archiv
     `SELECT planned_expenses.*,
             users.base_currency,
             users.display_currency,
+            users.display_currency_follows_base,
             users.usd_thb_rate,
             users.timezone
      FROM planned_expenses
@@ -4899,11 +4913,18 @@ function isLegacyManualCurrency(currency) {
   return ["THB", "USD", "RUB", "IDR", "EUR", "BYN", "GEL"].includes(currency);
 }
 
+export function effectiveDisplayCurrency(user = {}) {
+  const baseCurrency = normalizeCurrency(user.base_currency, "THB");
+  return user.display_currency_follows_base === true
+    ? baseCurrency
+    : normalizeCurrency(user.display_currency, "USD");
+}
+
 function withDisplay(row, user) {
   return {
     ...row,
     display: {
-      currency: user.display_currency ?? "USD",
+      currency: effectiveDisplayCurrency(user),
       amount: displayAmount(row, user)
     }
   };
@@ -4913,7 +4934,7 @@ function withDisplayTotal(row, user) {
   return {
     ...row,
     display: {
-      currency: user.display_currency ?? "USD",
+      currency: effectiveDisplayCurrency(user),
       amount: roundMoney(Number(row.display_total ?? displayFromBase(row.total, user)))
     }
   };
@@ -4923,7 +4944,7 @@ function withDisplayPlanned(row, user) {
   return {
     ...row,
     display: {
-      currency: user.display_currency ?? "USD",
+      currency: effectiveDisplayCurrency(user),
       amount: displayFromBase(row.amount_base, user)
     }
   };
@@ -4933,13 +4954,13 @@ function displayAmount(row, user) {
   const converted = typeof row.converted_amounts === "string"
     ? JSON.parse(row.converted_amounts)
     : row.converted_amounts;
-  const currency = user.display_currency ?? "USD";
+  const currency = effectiveDisplayCurrency(user);
   if (converted && converted[currency] != null) return roundMoney(Number(converted[currency]));
   return displayFromBase(row.amount_base, user);
 }
 
 function displayFromBase(amountBaseValue, user) {
-  const currency = user.display_currency ?? "USD";
+  const currency = effectiveDisplayCurrency(user);
   const baseCurrency = normalizeCurrency(user.base_currency, "THB");
   const numeric = Number(amountBaseValue);
   if (currency === baseCurrency) return roundMoney(numeric);
@@ -4949,7 +4970,7 @@ function displayFromBase(amountBaseValue, user) {
 }
 
 function displayThbRate(user) {
-  const currency = user.display_currency ?? "USD";
+  const currency = effectiveDisplayCurrency(user);
   if (currency === "THB") return 1;
   return currency === "USD" ? Number(user.usd_thb_rate ?? fallbackThbRate("USD")) : currencyThbRate(currency);
 }
@@ -5019,7 +5040,13 @@ async function assertReserveBudgetCapacity(pool, user, budgetAmount, now) {
   });
   if (!capacity.valid) {
     throw Object.assign(new Error("reserve_conflicts_with_budget_change"), {
-      code: "reserve_conflicts_with_budget_change"
+      code: "reserve_conflicts_with_budget_change",
+      details: {
+        nextBudgetAmount: Number(budgetAmount),
+        plannedAmount: Number(plannedAmount),
+        reserveAmount: Number(reserve.reserve_amount),
+        minimumBudgetAmount: Number(plannedAmount) + Number(reserve.reserve_amount)
+      }
     });
   }
 }
@@ -5227,7 +5254,7 @@ function reportUnpaidPlannedPayments(plannedExpenses, user, now, timeZone, perio
         dueDate: dateKey,
         overdue: lookbackDays > 0 && dateKey < periodStart,
         display: {
-          currency: user.display_currency ?? "USD",
+          currency: effectiveDisplayCurrency(user),
           amount: displayFromBase(planned.amount_base, user)
         }
       }));
@@ -5488,7 +5515,7 @@ async function totalForPeriod(pool, userId, period, now, user = {}, timeZone = u
             COALESCE(SUM(COALESCE(NULLIF(converted_amounts->>$4, '')::float, amount_base / NULLIF($5::numeric, 0))) FILTER (WHERE budget_impact = 'large_oneoff'), 0)::float AS large_oneoff_display_total
      FROM expenses
      WHERE user_id = $1 AND spent_at >= $2 AND spent_at < $3`,
-    [userId, bounds.start, bounds.end, user.display_currency ?? "USD", displayThbRate(user)]
+    [userId, bounds.start, bounds.end, effectiveDisplayCurrency(user), displayThbRate(user)]
   );
   return {
     total: Number(result.rows[0]?.total ?? 0),

@@ -295,6 +295,10 @@ test("monthly budget changes reject values that cannot fit planned obligations a
   await assert.rejects(
     repo.updateMonthlyBudget(100, 6000, now),
     (error) => error.code === "reserve_conflicts_with_budget_change"
+      && error.details.nextBudgetAmount === 6000
+      && error.details.plannedAmount === 2000
+      && error.details.reserveAmount === 5000
+      && error.details.minimumBudgetAmount === 7000
   );
 
   assert.equal(state.user.monthly_budget_amount, "42000");

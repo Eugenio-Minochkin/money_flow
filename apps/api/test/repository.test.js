@@ -3,9 +3,14 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
 import { createExchangeRateProvider } from "../src/exchangeRates.js";
-import { createRepository, shouldInvalidateExpenseSnapshot } from "../src/repository.js";
+import { createRepository, effectiveDisplayCurrency, shouldInvalidateExpenseSnapshot } from "../src/repository.js";
 import * as repositoryModule from "../src/repository.js";
 import { formatSavedSummary } from "../src/telegramFormat.js";
+
+test("effective display currency keeps custom preference while follows-base is enabled", () => {
+  assert.equal(effectiveDisplayCurrency({ base_currency: "THB", display_currency: "USD", display_currency_follows_base: false }), "USD");
+  assert.equal(effectiveDisplayCurrency({ base_currency: "GEL", display_currency: "USD", display_currency_follows_base: true }), "GEL");
+});
 
 test("openReserveMonth reports each potentially blocking reserve phase", async () => {
   const phases = [];
@@ -964,13 +969,14 @@ test("updates user budget and display currency settings", async () => {
         monthly_budget_amount: params[0],
         base_currency: params[1],
         display_currency: params[2],
-        usd_thb_rate: params[3],
-        weekly_budget_amount: params[4],
-        interface_language: params[5],
-        budget_advice_enabled: params[6],
-        daily_entry_reminder_enabled: params[7],
-        interface_theme: params[8],
-        timezone: params[9]
+        display_currency_follows_base: params[3],
+        usd_thb_rate: params[4],
+        weekly_budget_amount: params[5],
+        interface_language: params[6],
+        budget_advice_enabled: params[7],
+        daily_entry_reminder_enabled: params[8],
+        interface_theme: params[9],
+        timezone: params[10]
       }]
     };
   }));
@@ -997,14 +1003,15 @@ test("updates user budget and display currency settings", async () => {
   assert.equal(Number(user.usd_thb_rate), 36.5);
   assert.equal(user.daily_entry_reminder_enabled, true);
   const updateQuery = queries.find((query) => query.sql.startsWith("UPDATE users"));
-  assert.equal(updateQuery.params[3], 36.5);
-  assert.equal(updateQuery.params[4], 12000);
-  assert.equal(updateQuery.params[5], "ru");
-  assert.equal(updateQuery.params[6], false);
-  assert.equal(updateQuery.params[7], true);
-  assert.equal(updateQuery.params[8], "light");
-  assert.equal(updateQuery.params[9], "America/New_York");
-  assert.equal(updateQuery.params[10], 100);
+  assert.equal(updateQuery.params[3], false);
+  assert.equal(updateQuery.params[4], 36.5);
+  assert.equal(updateQuery.params[5], 12000);
+  assert.equal(updateQuery.params[6], "ru");
+  assert.equal(updateQuery.params[7], false);
+  assert.equal(updateQuery.params[8], true);
+  assert.equal(updateQuery.params[9], "light");
+  assert.equal(updateQuery.params[10], "America/New_York");
+  assert.equal(updateQuery.params[11], 100);
   const events = queries
     .filter((query) => query.sql.includes("INSERT INTO app_events"))
     .map((query) => [query.params[1], JSON.parse(query.params[2])]);
@@ -1014,13 +1021,66 @@ test("updates user budget and display currency settings", async () => {
   ]);
 });
 
+test("updateUserSettings preserves custom display currency while follow-base is enabled", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    const query = String(sql);
+    queries.push({ sql: query, params });
+    if (query.startsWith("SELECT * FROM users")) {
+      return { rows: [{ id: 7, telegram_user_id: "100", monthly_budget_amount: "45000", base_currency: "THB", display_currency: "USD", display_currency_follows_base: false }] };
+    }
+    return { rows: [{ id: 7, base_currency: params[1], display_currency: params[2], display_currency_follows_base: params[3] }] };
+  }));
+
+  const user = await repo.updateUserSettings(100, {
+    monthlyBudgetAmount: 45000,
+    baseCurrency: "GEL",
+    displayCurrency: "USD",
+    displayCurrencyFollowsBase: true,
+    usdThbRate: 32.65,
+    interfaceLanguage: "en",
+    interfaceTheme: "light"
+  });
+
+  assert.equal(user.display_currency, "USD");
+  assert.equal(user.display_currency_follows_base, true);
+  assert.equal(effectiveDisplayCurrency(user), "GEL");
+  const update = queries.find((query) => query.sql.startsWith("UPDATE users"));
+  assert.equal(update.params[2], "USD");
+  assert.equal(update.params[3], true);
+});
+
+test("updateUserSettings leaves the stored monthly budget untouched when omitted", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    const query = String(sql);
+    queries.push({ sql: query, params });
+    if (query.startsWith("SELECT * FROM users")) {
+      return { rows: [{ id: 7, telegram_user_id: "100", monthly_budget_amount: "70000", base_currency: "THB", display_currency: "USD" }] };
+    }
+    return { rows: [{ id: 7, monthly_budget_amount: "70000" }] };
+  }));
+
+  await repo.updateUserSettings(100, {
+    baseCurrency: "THB",
+    displayCurrency: "USD",
+    usdThbRate: 32.65,
+    interfaceLanguage: "en",
+    interfaceTheme: "light"
+  });
+
+  const update = queries.find((query) => query.sql.startsWith("UPDATE users"));
+  assert.match(update.sql, /monthly_budget_amount = COALESCE\(\$1, monthly_budget_amount\)/);
+  assert.equal(update.params[0], null);
+});
+
 test("updateUserSettings preserves disabled budget advice when omitted", async () => {
   const repo = createRepository(fakePool((sql, params) => {
     const query = String(sql);
     if (query.startsWith("SELECT * FROM users")) {
       return { rows: [{ id: 7, telegram_user_id: "100", base_currency: "THB", budget_advice_enabled: false, daily_entry_reminder_enabled: true }] };
     }
-    return { rows: [{ id: 7, budget_advice_enabled: params[6], daily_entry_reminder_enabled: params[7] }] };
+    return { rows: [{ id: 7, budget_advice_enabled: params[7], daily_entry_reminder_enabled: params[8] }] };
   }));
 
   const user = await repo.updateUserSettings(100, {
@@ -1042,7 +1102,7 @@ test("updateUserSettings explicitly saves budget advice boolean when included", 
       if (query.startsWith("SELECT * FROM users")) {
         return { rows: [{ id: 7, telegram_user_id: "100", base_currency: "THB", budget_advice_enabled: !budgetAdviceEnabled, daily_entry_reminder_enabled: true }] };
       }
-      return { rows: [{ id: 7, budget_advice_enabled: params[6] }] };
+      return { rows: [{ id: 7, budget_advice_enabled: params[7] }] };
     }));
 
     const user = await repo.updateUserSettings(100, {
@@ -1065,7 +1125,7 @@ test("updateUserSettings saves disabled daily entry reminder from payload", asyn
     if (query.startsWith("SELECT * FROM users")) {
       return { rows: [{ id: 7, telegram_user_id: "100", base_currency: "THB", budget_advice_enabled: true, daily_entry_reminder_enabled: true }] };
     }
-    return { rows: [{ id: 7, daily_entry_reminder_enabled: params[7] }] };
+    return { rows: [{ id: 7, daily_entry_reminder_enabled: params[8] }] };
   }));
 
   const user = await repo.updateUserSettings(100, {
@@ -1087,7 +1147,7 @@ test("updateUserSettings preserves daily entry reminder when omitted", async () 
     if (query.startsWith("SELECT * FROM users")) {
       return { rows: [{ id: 7, telegram_user_id: "100", base_currency: "THB", budget_advice_enabled: true, daily_entry_reminder_enabled: false }] };
     }
-    return { rows: [{ id: 7, daily_entry_reminder_enabled: params[7] }] };
+    return { rows: [{ id: 7, daily_entry_reminder_enabled: params[8] }] };
   }));
 
   const user = await repo.updateUserSettings(100, {
@@ -1110,7 +1170,7 @@ test("falls back to Bangkok when settings timezone is invalid", async () => {
     if (query.startsWith("SELECT * FROM users")) {
       return { rows: [{ id: 7, telegram_user_id: "100", base_currency: "THB", budget_advice_enabled: true, daily_entry_reminder_enabled: true }] };
     }
-    return { rows: [{ timezone: params[9] }] };
+    return { rows: [{ timezone: params[10] }] };
   }));
 
   const user = await repo.updateUserSettings(100, {
@@ -1127,7 +1187,7 @@ test("falls back to Bangkok when settings timezone is invalid", async () => {
 
   assert.equal(user.timezone, "Asia/Bangkok");
   const updateQuery = queries.find((query) => query.sql.startsWith("UPDATE users"));
-  assert.match(updateQuery.sql, /timezone = \$10/);
+  assert.match(updateQuery.sql, /timezone = \$11/);
 });
 
 test("updateUserSettings deletes daily_budget_snapshots for current day after settings update", async () => {
@@ -1175,12 +1235,12 @@ test("persists dark interface theme without normalizing it back to light", async
           monthly_budget_amount: params[0],
           base_currency: params[1],
           display_currency: params[2],
-          usd_thb_rate: params[3],
-          weekly_budget_amount: params[4],
-          interface_language: params[5],
-          budget_advice_enabled: params[6],
-          daily_entry_reminder_enabled: params[7],
-          interface_theme: params[8]
+          usd_thb_rate: params[4],
+          weekly_budget_amount: params[5],
+          interface_language: params[6],
+          budget_advice_enabled: params[7],
+          daily_entry_reminder_enabled: params[8],
+          interface_theme: params[9]
         }]
       };
     }
@@ -1199,7 +1259,7 @@ test("persists dark interface theme without normalizing it back to light", async
 
   assert.equal(user.interface_theme, "dark");
   const updateQuery = queries.find((query) => query.sql.startsWith("UPDATE users"));
-  assert.equal(updateQuery.params[8], "dark");
+  assert.equal(updateQuery.params[9], "dark");
 });
 
 test("updates only the current month budget override for a Telegram user", async () => {

@@ -86,14 +86,15 @@ import {
   weekdayOptions as plannedWeekdayOptions
 } from "./planned.js";
 import {
-  allTimeZones,
-  COMMON_TIMEZONES,
   commitMonthlyBudgetChange,
   createSettingsSaveQueue,
   detectBrowserTimeZone,
+  filterTimeZones,
   normalizeSettingsTimeZone,
-  shouldShowCurrentMonthBudgetOverride
+  shouldShowCurrentMonthBudgetOverride,
+  timeZoneOffsetLabel
 } from "./settings.js";
+import { timeZoneCityLabel } from "./timezones.js";
 import { createHistoryLoader } from "./historyLoad.js";
 import { finishStartup, markStartup } from "./startupTiming.js";
 
@@ -136,9 +137,10 @@ const deleteAccountConfirmButton = document.getElementById("deleteAccountConfirm
 const deleteAccountSection = document.getElementById("deleteAccountSection");
 const settingsSaveQueue = createSettingsSaveQueue({
   save: async (settings) => {
+    const { monthlyBudgetAmount: _monthlyBudgetAmount, ...autosaveSettings } = settings;
     const result = await api("/api/settings", {
       method: "PATCH",
-      body: { telegramUserId, settings }
+      body: { telegramUserId, settings: autosaveSettings }
     });
     if (dashboardState?.user && result.user) dashboardState.user = result.user;
     return settingsStateFromUser(result.user);
@@ -614,9 +616,10 @@ document.querySelectorAll("[data-tab]").forEach((button) => {
   button.addEventListener("click", () => switchTab(button.dataset.tab));
 });
 document.querySelector("#settingsForm")?.addEventListener("submit", (event) => event.preventDefault());
-for (const selector of ["#baseCurrencyInput", "#displayCurrencyInput", "#dailyReminderInput", "#timezoneInput"]) {
+for (const selector of ["#baseCurrencyInput", "#displayCurrencyInput", "#displayCurrencyFollowsBaseInput", "#dailyReminderInput", "#timezoneInput"]) {
   document.querySelector(selector)?.addEventListener("change", scheduleSettingsAutosave);
 }
+document.querySelector("#displayCurrencyFollowsBaseInput")?.addEventListener("change", applyDisplayCurrencyFollowsBase);
 for (const [searchSelector, selectSelector] of [["#baseCurrencySearch", "#baseCurrencyInput"], ["#displayCurrencySearch", "#displayCurrencyInput"]]) {
   document.querySelector(searchSelector)?.addEventListener("input", (event) => {
     const select = document.querySelector(selectSelector);
@@ -641,6 +644,16 @@ document.querySelector("#budgetInput")?.addEventListener("keydown", (event) => {
   event.currentTarget.blur();
 });
 document.querySelector("#detectTimezoneButton")?.addEventListener("click", detectTimezone);
+document.querySelector("#timezonePickerButton")?.addEventListener("click", () => document.querySelector("#timezonePicker")?.classList.toggle("hidden"));
+document.querySelector("#timezoneSearch")?.addEventListener("input", () => renderTimezoneOptions(document.querySelector("#timezoneInput")?.value));
+document.querySelector("#timezoneOptions")?.addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-timezone]");
+  if (!button) return;
+  document.querySelector("#timezoneInput").value = button.dataset.timezone;
+  document.querySelector("#timezonePicker").classList.add("hidden");
+  renderTimezoneOptions();
+  scheduleSettingsAutosave();
+});
 document.querySelector("#openShortcutSetupButton")?.addEventListener("click", openShortcutSetup);
 document.querySelector("#closeShortcutSetupButton")?.addEventListener("click", closeShortcutSetup);
 document.querySelector("#shortcutSetupBackdrop")?.addEventListener("click", closeShortcutSetup);
@@ -1623,6 +1636,8 @@ function renderSettings(user) {
   displayCurrencyInput.innerHTML = currencyOptions(user.display_currency ?? "USD", option, document.querySelector("#displayCurrencySearch")?.value);
   baseCurrencyInput.value = user.base_currency ?? "THB";
   displayCurrencyInput.value = user.display_currency ?? "USD";
+  document.querySelector("#displayCurrencyFollowsBaseInput").checked = user.display_currency_follows_base === true;
+  applyDisplayCurrencyFollowsBase();
   document.querySelector("#interfaceLanguageInput").value = currentLanguage;
   document.querySelector("#interfaceThemeInput").value = currentTheme;
   renderTimezoneOptions(user.timezone);
@@ -2674,13 +2689,28 @@ async function saveMonthlyBudget() {
       to: formatMoney(to, currency)
     })),
     save: async (monthlyBudgetAmount) => {
-      const result = await settingsSaveQueue.enqueue({
-        ...collectAutosaveSettingsState(),
-        monthlyBudgetAmount
+      const result = await api("/api/settings/budget", {
+        method: "PATCH",
+        body: { telegramUserId, monthlyBudgetAmount }
       });
-      if (result.status === "failed") throw result.error;
+      if (dashboardState?.user && result.user) dashboardState.user = result.user;
+      settingsSaveQueue.reset(settingsStateFromUser(result.user));
+      await loadDashboard();
+      showToast(t("toast.settingsSaved"));
     }
   });
+  if (outcome.status === "failed") {
+    const code = outcome.error?.body?.error ?? outcome.error?.message;
+    if (code === "reserve_conflicts_with_budget_change") {
+      const details = outcome.error?.body?.details ?? {};
+      showToast(t("toast.budgetReserveConflict", {
+        attempted: formatMoney(details.nextBudgetAmount ?? Number(input?.value), currency),
+        minimum: formatMoney(details.minimumBudgetAmount, currency)
+      }));
+    } else {
+      showToast(t("toast.settingsSaveFailed"));
+    }
+  }
   if (["cancelled", "failed"].includes(outcome.status) && input) input.value = Math.round(currentValue);
 }
 
@@ -2810,6 +2840,7 @@ function detectTimezone() {
   const input = document.querySelector("#timezoneInput");
   if (!input) return;
   input.value = detectBrowserTimeZone();
+  renderTimezoneOptions(input.value);
   scheduleSettingsAutosave();
 }
 
@@ -2817,11 +2848,15 @@ function renderTimezoneOptions(value) {
   const input = document.querySelector("#timezoneInput");
   if (!input) return;
   const selected = normalizeSettingsTimeZone(value);
-  const zones = [...new Set([...COMMON_TIMEZONES, ...allTimeZones(), selected])];
-  input.innerHTML = zones
+  const zones = filterTimeZones(document.querySelector("#timezoneSearch")?.value ?? "");
+  input.innerHTML = [...new Set([...zones, selected])]
     .map((timeZone) => option(timeZone, selected, timeZone))
     .join("");
   input.value = selected;
+  const pickerButton = document.querySelector("#timezonePickerButton");
+  pickerButton.textContent = `${timeZoneOffsetLabel(selected)} · ${timeZoneCityLabel(selected)}`;
+  const options = document.querySelector("#timezoneOptions");
+  if (options) options.innerHTML = zones.map((timeZone) => `<button type="button" class="timezone-picker__option" data-timezone="${escapeHtml(timeZone)}" role="option" aria-selected="${timeZone === selected}"><strong>${escapeHtml(`${timeZoneOffsetLabel(timeZone)} · ${timeZoneCityLabel(timeZone)}`)}</strong><small>${escapeHtml(timeZone)}</small></button>`).join("");
 }
 
 async function saveCurrentMonthBudget() {
@@ -3089,6 +3124,7 @@ function settingsStateFromUser(user = {}) {
     monthlyBudgetAmount: Math.round(Number(user.monthly_budget_amount ?? 45000)),
     baseCurrency: user.base_currency ?? "THB",
     displayCurrency: user.display_currency ?? "USD",
+    displayCurrencyFollowsBase: user.display_currency_follows_base === true,
     dailyEntryReminderEnabled: user.daily_entry_reminder_enabled !== false,
     interfaceLanguage: user.interface_language === "ru" ? "ru" : "en",
     interfaceTheme: user.interface_theme === "dark" ? "dark" : "light",
@@ -3103,6 +3139,7 @@ function collectAutosaveSettingsState() {
     monthlyBudgetAmount: Number(confirmed?.monthlyBudgetAmount ?? document.querySelector("#budgetInput")?.value),
     baseCurrency: document.querySelector("#baseCurrencyInput")?.value ?? "THB",
     displayCurrency: document.querySelector("#displayCurrencyInput")?.value ?? "USD",
+    displayCurrencyFollowsBase: document.querySelector("#displayCurrencyFollowsBaseInput")?.checked === true,
     dailyEntryReminderEnabled: document.querySelector("#dailyReminderInput")?.checked === true,
     interfaceLanguage: document.querySelector("#interfaceLanguageInput")?.value ?? "en",
     interfaceTheme: document.querySelector("#interfaceThemeInput")?.value ?? "light",
@@ -3115,12 +3152,22 @@ function restoreAutosaveControls(settings) {
   if (!settings) return;
   document.querySelector("#baseCurrencyInput").value = settings.baseCurrency;
   document.querySelector("#displayCurrencyInput").value = settings.displayCurrency;
+  document.querySelector("#displayCurrencyFollowsBaseInput").checked = settings.displayCurrencyFollowsBase === true;
+  applyDisplayCurrencyFollowsBase();
   document.querySelector("#dailyReminderInput").checked = settings.dailyEntryReminderEnabled;
   document.querySelector("#interfaceLanguageInput").value = settings.interfaceLanguage;
   document.querySelector("#interfaceThemeInput").value = settings.interfaceTheme;
   renderTimezoneOptions(settings.timezone);
   applyLanguage(settings.interfaceLanguage);
   applyTheme(settings.interfaceTheme);
+}
+
+function applyDisplayCurrencyFollowsBase() {
+  const followsBase = document.querySelector("#displayCurrencyFollowsBaseInput")?.checked === true;
+  const controls = document.querySelector("#customDisplayCurrencyControls");
+  controls?.classList.toggle("hidden", followsBase);
+  document.querySelector("#displayCurrencySearch").disabled = followsBase;
+  document.querySelector("#displayCurrencyInput").disabled = followsBase;
 }
 
 function option(value, selected, label = value) {

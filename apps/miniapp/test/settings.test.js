@@ -8,8 +8,10 @@ const {
   commitMonthlyBudgetChange,
   createSettingsSaveQueue,
   detectBrowserTimeZone,
+  filterTimeZones,
   normalizeSettingsTimeZone,
-  shouldShowCurrentMonthBudgetOverride
+  shouldShowCurrentMonthBudgetOverride,
+  timeZoneOffsetLabel
 } = settingsModule;
 
 test("hides current month budget block when calculated budget has no override", () => {
@@ -58,6 +60,28 @@ test("accepts every runtime-valid IANA timezone and only falls back for invalid 
   assert.equal(normalizeSettingsTimeZone("America/Sao_Paulo"), "America/Sao_Paulo");
   assert.equal(normalizeSettingsTimeZone("Mars/Olympus"), "Asia/Bangkok");
   assert.equal(COMMON_TIMEZONES.includes("Asia/Bangkok"), true);
+});
+
+test("bundled timezone catalogue works without supportedValuesOf and excludes Asia/Bali", () => {
+  const zones = settingsModule.allTimeZones({ DateTimeFormat: Intl.DateTimeFormat });
+  for (const zone of ["Asia/Tokyo", "Europe/Oslo", "Australia/Sydney", "America/Sao_Paulo", "America/New_York", "Africa/Johannesburg", "Asia/Almaty", "Asia/Makassar"]) {
+    assert.ok(zones.includes(zone));
+  }
+  assert.equal(zones.includes("Asia/Bali"), false);
+  assert.ok(filterTimeZones("cape town").includes("Africa/Johannesburg"));
+});
+
+test("timezone labels use offsets for the supplied instant including fractional offsets", () => {
+  assert.equal(timeZoneOffsetLabel("America/New_York", new Date("2026-01-15T12:00:00Z")), "UTC−05:00");
+  assert.equal(timeZoneOffsetLabel("America/New_York", new Date("2026-07-15T12:00:00Z")), "UTC−04:00");
+  assert.equal(timeZoneOffsetLabel("Asia/Kolkata", new Date("2026-07-15T12:00:00Z")), "UTC+05:30");
+  assert.equal(timeZoneOffsetLabel("Australia/Eucla", new Date("2026-07-15T12:00:00Z")), "UTC+08:45");
+});
+
+test("timezone search normalizes city punctuation, spaces, underscores and case", () => {
+  for (const query of ["new york", "New_York", "America/New_York", "utc-05:00"]) {
+    assert.ok(filterTimeZones(query, new Date("2026-01-15T12:00:00Z")).includes("America/New_York"));
+  }
 });
 
 test("detects browser timezone when it is in the supported list", () => {
