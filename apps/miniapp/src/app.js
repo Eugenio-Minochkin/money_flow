@@ -272,6 +272,8 @@ document.querySelector("#cancelQuickCaptureButton")?.addEventListener("click", (
 function quickEntryErrorMessage(error) {
   const code = String(error?.body?.error ?? error?.message ?? "");
   if (code === "amount_not_found") return t("quickEntry.error.amountNotFound");
+  if (code === "paid_provider_limit_reached") return t("quickEntry.error.processingLimit");
+  if (code === "paid_provider_disabled") return t("quickEntry.error.processingUnavailable");
   if (/failed to fetch|networkerror|network request failed/i.test(code)) return t("quickEntry.error.network");
   return t("quickEntry.error.generic");
 }

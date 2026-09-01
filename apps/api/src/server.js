@@ -18,6 +18,7 @@ import { createExpenseDraftFromText, ExpenseTextNotRecognizedError, ShortcutRequ
 import { createQuickAccessToken, hashQuickAccessToken } from "./quickAccessService.js";
 import { processMiniAppQuickCapture } from "./quickCapture.js";
 import { processShortcutCapture } from "./shortcutCapture.js";
+import { createPaidProviderUsageGate } from "./paidProviderUsage.js";
 import { acceptReviewRecovery, previewSmartSaveRecovery, saveSmartSaveRecovery } from "./smartSaveRecovery.js";
 import { handleHealth } from "./health.js";
 import { createJsonReader, createStaticHandler, sendJson } from "./http.js";
@@ -96,11 +97,29 @@ const expenseParser = createExpenseParser({
   localFirstUserIds: config.expenseParserLocalFirstUserIds,
   maxLocalAmount: config.expenseParserMaxLocalAmount,
   llmTimeoutMs: config.expenseParserLlmTimeoutMs,
+  llmEnabled: config.openAiParserGlobalEnabled,
+  consumeLlmUsage: createPaidProviderUsageGate({
+    repository,
+    provider: "openai_parser",
+    windowMs: config.paidAiWindowMs,
+    maxRequests: config.openAiParserUserLimit,
+    enabled: config.openAiParserGlobalEnabled
+  }),
   parserTextHashSecret: config.parserTextHashSecret
 });
 const voiceTranscriber = createVoiceTranscriber({
   telegramBotToken: config.telegramBotToken,
-  deepgramApiKey: config.deepgramApiKey
+  deepgramApiKey: config.deepgramApiKey,
+  enabled: config.deepgramTranscriptionGlobalEnabled,
+  maxAudioDurationSec: config.deepgramMaxAudioDurationSec,
+  consumeVoiceUsage: createPaidProviderUsageGate({
+    repository,
+    provider: "deepgram_transcription",
+    windowMs: config.paidAiWindowMs,
+    maxRequests: config.deepgramTranscriptionUserLimit,
+    maxAudioSeconds: config.deepgramMaxAudioWindowSec,
+    enabled: config.deepgramTranscriptionGlobalEnabled
+  })
 });
 const expenseExportService = createExpenseExportService({
   repository,
@@ -226,6 +245,9 @@ const server = createServer(async (req, res) => {
   } catch (error) {
     if (error.statusCode) {
       return sendJson(res, error.statusCode, { error: error.message });
+    }
+    if (["paid_provider_limit_reached", "paid_provider_disabled"].includes(error?.code)) {
+      return sendJson(res, 429, { error: error.code });
     }
     console.error(error);
     void safeNotifyAdminError(adminAlertService, error, {

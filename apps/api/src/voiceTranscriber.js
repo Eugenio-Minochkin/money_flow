@@ -1,19 +1,31 @@
 const DEEPGRAM_LISTEN_URL = "https://api.deepgram.com/v1/listen?model=nova-3-general&language=multi&smart_format=true";
 
+export class VoiceMessageTooLongError extends Error {
+  constructor() { super("voice_message_too_long"); this.code = "voice_message_too_long"; }
+}
+
 export function createVoiceTranscriber(options = {}) {
   const telegramBotToken = options.telegramBotToken;
   const deepgramApiKey = options.deepgramApiKey;
   const fetchImpl = options.fetchImpl ?? globalThis.fetch;
+  const maxAudioDurationSec = options.maxAudioDurationSec ?? 60;
+  const consumeVoiceUsage = options.consumeVoiceUsage ?? null;
+  const enabled = options.enabled !== false;
 
   return {
+    isEnabled() {
+      return enabled;
+    },
+
     isConfigured() {
-      return Boolean(telegramBotToken && deepgramApiKey && fetchImpl);
+      return Boolean(telegramBotToken && deepgramApiKey && fetchImpl && enabled);
     },
 
     async transcribeTelegramVoice(voice, options = {}) {
       if (!this.isConfigured()) {
         throw new Error("Voice transcription is not configured");
       }
+      if (Number(voice?.duration) > maxAudioDurationSec) throw new VoiceMessageTooLongError();
 
       const onPerfStage = options.onPerfStage ?? (() => {});
       onPerfStage("telegram_file_download_start", voiceMetadata(voice));
@@ -27,6 +39,11 @@ export function createVoiceTranscriber(options = {}) {
       onPerfStage("transcription_start", {
         ...voiceMetadata(voice),
         transcriptionProvider: "deepgram"
+      });
+      await consumeVoiceUsage?.({
+        userId: options.userId,
+        audioDurationSec: Number(voice?.duration) || 0,
+        requestKey: options.requestKey ?? null
       });
       return transcribeWithDeepgram({
         deepgramApiKey,

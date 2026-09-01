@@ -131,6 +131,22 @@ Optional:
 
 Do not put Telegram, database, OpenAI, or Deepgram secrets in GitHub Actions. They stay on the server in `.env.production`.
 
+## Paid AI Usage Guardrails
+
+The general API rate limiter is separate from the paid-provider guard. Before a request reaches OpenAI or Deepgram, Money Flow reserves a per-user allowance in PostgreSQL. The default window is 24 hours: 100 OpenAI parser calls and 50 Deepgram transcriptions per user. Deepgram also rejects a voice message over 60 seconds and caps a user's accepted audio at 900 seconds (15 minutes) per window.
+
+```env
+PAID_AI_USAGE_WINDOW_MS=86400000
+OPENAI_PARSER_GLOBAL_ENABLED=true
+OPENAI_PARSER_USER_LIMIT=100
+DEEPGRAM_TRANSCRIPTION_GLOBAL_ENABLED=true
+DEEPGRAM_TRANSCRIPTION_USER_LIMIT=50
+DEEPGRAM_MAX_AUDIO_DURATION_SEC=60
+DEEPGRAM_MAX_AUDIO_WINDOW_SEC=900
+```
+
+Set `OPENAI_PARSER_GLOBAL_ENABLED=false` or `DEEPGRAM_TRANSCRIPTION_GLOBAL_ENABLED=false` for an emergency stop of the corresponding paid route, then restart through the approved deploy procedure. Local-safe expense parsing remains available when the OpenAI route is unavailable. Do not log expense text, audio, auth headers, tokens, `initData`, or Telegram profile data while investigating limits.
+
 ## Rate Limit Proxy Settings
 
 The API rate limiter trusts `X-Forwarded-For` only from `TRUSTED_PROXY_IPS`.

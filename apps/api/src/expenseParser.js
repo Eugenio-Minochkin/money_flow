@@ -5,6 +5,7 @@ import { SUPPORTED_CURRENCY_CODES, normalizeCurrency } from "../../../packages/s
 import { CATEGORIES } from "../../../packages/shared/src/categories.js";
 import { localDateKey } from "../../../packages/shared/src/time.js";
 import { normalizeRolloutPercent } from "./parserRollout.js";
+import { PaidProviderDisabledError } from "./paidProviderUsage.js";
 
 const DEFAULT_MODEL = "gpt-4.1-mini";
 const DEFAULT_LLM_TIMEOUT_MS = 20_000;
@@ -30,6 +31,8 @@ export function createExpenseParser(options = {}) {
     ? options.llmTimeoutMs
     : DEFAULT_LLM_TIMEOUT_MS;
   const performanceNow = options.performanceNow ?? (() => performance.now());
+  const consumeLlmUsage = options.consumeLlmUsage ?? null;
+  const llmEnabled = options.llmEnabled !== false;
 
   return {
     model: apiKey ? model : "local-parser",
@@ -110,6 +113,12 @@ export function createExpenseParser(options = {}) {
         return localResult;
       }
 
+      if (!llmEnabled) {
+        const error = new PaidProviderDisabledError("openai_parser");
+        if (isLocalFallbackAcceptance(localFastPath.localAcceptanceLevel) && localResult) return localResult;
+        throw error;
+      }
+
       if (hasCurrencyAmbiguity(localResult)) {
         emitTrace({
           parserEngine: "local-ambiguity-barrier",
@@ -144,7 +153,11 @@ export function createExpenseParser(options = {}) {
 
       try {
         const parsed = await parseWithOpenAI({
-          text, apiKey, model, fetchImpl, now: now(), defaultCurrency, timeZone, performanceNow, llmTimeoutMs
+          text, apiKey, model, fetchImpl, now: now(), defaultCurrency, timeZone, performanceNow, llmTimeoutMs,
+          consumeUsage: consumeLlmUsage ? () => consumeLlmUsage({
+            userId: parseOptions.userId,
+            requestKey: parseOptions.requestKey ?? null
+          }) : null
         });
         const parserRoute = resolveLlmParserRoute({ fastPathMode, inRollout, localFastPath, localParserError });
         const shouldCompareShadow = (fastPathMode === "shadow" || parserRoute === "rollout_excluded")
@@ -305,6 +318,7 @@ async function parseWithOpenAI({
   timeZone,
   performanceNow,
   llmTimeoutMs
+  ,consumeUsage
 }) {
   const systemPrompt = buildSystemPrompt(now, defaultCurrency, timeZone);
   const llmHttpStartedAt = performanceNow();
@@ -313,6 +327,7 @@ async function parseWithOpenAI({
   let response;
   let responseText;
   try {
+    await consumeUsage?.();
     response = await fetchImpl(OPENAI_RESPONSES_URL, {
       method: "POST",
       headers: {

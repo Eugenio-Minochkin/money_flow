@@ -255,7 +255,13 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
     return sendTelegramResponse(trace, () => sendMessage(token, chatId, botText(language, "unsupported"), null, telegramClient));
   }
   if (hasVoice && !rawText && !voiceTranscriber?.isConfigured()) {
-    return sendTelegramResponse(trace, () => sendMessage(token, chatId, botText(language, "unsupported"), null, telegramClient));
+    return sendTelegramResponse(trace, () => sendMessage(
+      token,
+      chatId,
+      botText(language, voiceTranscriber?.isEnabled?.() === false ? "paid_provider_disabled" : "unsupported"),
+      null,
+      telegramClient
+    ));
   }
 
   if (rawText && !hasVoice) {
@@ -494,6 +500,7 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
   let processingDraftType;
   let processingParserRoute;
   let transcriptChars = null;
+  let voiceCaptureClaim = null;
 
   const deliverQueuedResult = async (input) => {
     const delivered = await deliverResultMessage(input);
@@ -514,7 +521,7 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
       let onboardingTextInput = rawText;
       if (!onboardingTextInput && hasVoice) {
         try {
-          onboardingTextInput = await transcribeVoice(message, voiceTranscriber, trace);
+          onboardingTextInput = await transcribeVoice(message, voiceTranscriber, trace, user);
         } catch (error) {
           trace.failActive(["telegram_file_download", "transcription"], error);
           console.error("[telegram] voice transcription failed during onboarding", error.message);
@@ -531,8 +538,19 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
     try {
       let text = rawText;
       if (!text && hasVoice) {
+        voiceCaptureClaim = await repository.claimTelegramExpenseCapture?.(user.id, chatId, message.message_id);
+        if (voiceCaptureClaim?.state === "completed" || voiceCaptureClaim?.state === "processing") {
+          const completed = voiceCaptureClaim.state === "completed"
+            ? voiceCaptureClaim
+            : await repository.waitForTelegramExpenseCapture(user.id, chatId, message.message_id);
+          if (completed?.draft) {
+            markTelegramJobTerminalResponse(deliveryState);
+            return sendTelegramResponse(trace, () => deleteMessage(token, chatId, loader.messageId, telegramClient));
+          }
+          if (!completed?.draft) throw new Error("telegram_expense_capture_in_progress");
+        }
         try {
-          text = await transcribeVoice(message, voiceTranscriber, trace);
+          text = await transcribeVoice(message, voiceTranscriber, trace, user);
           transcriptChars = String(text ?? "").length;
         } catch (error) {
           processingResult = "transcription_failed";
@@ -660,6 +678,7 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
       try {
         created = await createTelegramExpenseDraft({
           user, chatId, messageId: message.message_id, text, expenseParser, repository,
+          claim: voiceCaptureClaim?.state === "claimed" ? voiceCaptureClaim : null,
           parserOptions: {
           userId: from.id,
           onLlmTrace(metadata) {
@@ -759,6 +778,17 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
       }
       return delivered;
     } catch (error) {
+      if (voiceCaptureClaim?.state === "claimed") {
+        await repository.releaseTelegramExpenseCapture?.(user.id, chatId, message.message_id, voiceCaptureClaim.claimVersion)
+          .catch(() => {});
+      }
+      if (["paid_provider_limit_reached", "paid_provider_disabled", "voice_message_too_long"].includes(error?.code)) {
+        processingResult = error.code;
+        return deliverQueuedResult({
+          token, chatId, loaderMessageId: loader.messageId,
+          text: botText(language, error.code), replyMarkup: null, telegramClient, trace
+        });
+      }
       trace.failActive(["telegram_file_download", "transcription", "llm_parse", "db_save"], error);
       console.error("[telegram] expense processing failed", error.message);
       return deliverQueuedResult({
@@ -1088,11 +1118,13 @@ function formatReleaseVersionLine(result) {
   return `Версии: ${versionFrom} — ${versionTo}`;
 }
 
-async function transcribeVoice(message, voiceTranscriber, trace) {
+async function transcribeVoice(message, voiceTranscriber, trace, user) {
   if (!voiceTranscriber?.isConfigured()) return null;
   const voice = message.voice ?? message.audio;
   if (!voice) return null;
   return voiceTranscriber.transcribeTelegramVoice(voice, {
+    userId: user?.id,
+    requestKey: `telegram:${user?.id}:${message.chat?.id}:${message.message_id}`,
     onPerfStage(stage, metadata = {}) {
       if (stage.endsWith("_start")) {
         trace.start(stage.replace(/_start$/, ""), metadata);
@@ -3465,6 +3497,9 @@ function botText(language, key, values = {}) {
       budgetTopupWrongMonth: "В MVP пополнения можно добавлять только к текущему месяцу. Для прошлого месяца это пополнение не сохранено.",
       budgetTopupUndoExpired: "Это пополнение уже нельзя отменить через кнопку. Открой Mini App или напиши мне, если нужно исправить бюджет.",
       transcriptionFailed: "Не смог разобрать голосовое. Попробуй ещё раз или напиши текстом: кофе 70 бат",
+      paid_provider_limit_reached: "Лимит обработки на сегодня исчерпан. Попробуй позже или введи расход вручную.",
+      paid_provider_disabled: "Автоматическая обработка временно недоступна. Введи расход вручную позже.",
+      voice_message_too_long: "Голосовое слишком длинное. Отправь запись до 60 секунд или введи расход текстом.",
       amountNotFound: "Не нашел сумму. Напиши так: <b>кофе 70 бат</b>.",
       amountNotFoundWithTranscript: `Я услышал: «${formatTranscriptForTelegram(values.transcript)}». Но не нашёл сумму. Напиши, например: <b>кофе 70 бат</b>`,
       unsupportedPhoto: "Фото чеков пока не умею читать. Отправь расход текстом или голосом: кофе 70 бат",
@@ -3523,6 +3558,9 @@ function botText(language, key, values = {}) {
       budgetTopupWrongMonth: "For the MVP, budget top-ups can be added only to the current month. This previous-month top-up was not saved.",
       budgetTopupUndoExpired: "This top-up can no longer be undone from the button. Open the Mini App or message me if you need to fix the budget.",
       transcriptionFailed: "I couldn’t understand the voice message. Try again or type it: coffee 70 baht",
+      paid_provider_limit_reached: "Today’s processing limit is reached. Try later or enter the expense manually.",
+      paid_provider_disabled: "Automatic processing is temporarily unavailable. Please enter the expense manually later.",
+      voice_message_too_long: "The voice message is too long. Send up to 60 seconds or enter the expense as text.",
       amountNotFound: "I did not find an amount. Try: <b>coffee 70 baht</b>.",
       amountNotFoundWithTranscript: `I heard: “${formatTranscriptForTelegram(values.transcript)}”. But I couldn’t find an amount. Try: <b>coffee 70 baht</b>`,
       unsupportedPhoto: "I can’t read receipt photos yet. Send the expense by text or voice: coffee 70 baht",
