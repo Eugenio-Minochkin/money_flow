@@ -23,8 +23,7 @@ test("Mini App keeps app.js and styles.css cache-busters in sync", async () => {
   assert.ok(appVersion, "index.html should version app.js with a ?v= query");
   assert.ok(cssVersion, "index.html should version styles.css with a ?v= query");
   assert.equal(appVersion, cssVersion, "app.js and styles.css cache-busters must stay in sync");
-  assert.equal(appVersion, "20260821-shortcut-key-handoff-v1");
-  assert.notEqual(appVersion, "20260626-dashboard-v12", "app.js must not keep the stale dashboard-v12 cache-buster");
+  assert.equal(appVersion, "__MINIAPP_ASSET_VERSION__", "build must substitute a release fingerprint into both URLs");
 });
 
 test("Mini App acknowledges Telegram before evaluating the module and measures usable Dashboard", async () => {
@@ -54,14 +53,31 @@ test("Mini App starts CSS and module fetches before the blocking Telegram SDK", 
   const html = await readFile(join(miniAppRoot, "index.html"), "utf8");
   const telegramSdk = html.indexOf('<script src="https://telegram.org/js/telegram-web-app.js"');
   const preconnect = html.indexOf('<link rel="preconnect" href="https://telegram.org"');
-  const stylesheet = html.indexOf('<link rel="stylesheet" href="/styles.css?v=20260821-shortcut-key-handoff-v1"');
-  const modulePreload = html.indexOf('<link rel="modulepreload" href="/app.js?v=20260821-shortcut-key-handoff-v1"');
-  const appExecution = html.indexOf('<script src="/app.js?v=20260821-shortcut-key-handoff-v1" type="module">');
+  const stylesheet = html.indexOf('<link rel="stylesheet" href="/styles.css?v=__MINIAPP_ASSET_VERSION__"');
+  const modulePreload = html.indexOf('<link rel="modulepreload" href="/app.js?v=__MINIAPP_ASSET_VERSION__"');
+  const appExecution = html.indexOf('<script src="/app.js?v=__MINIAPP_ASSET_VERSION__" type="module">');
 
   assert.ok(preconnect >= 0 && preconnect < telegramSdk);
   assert.ok(stylesheet >= 0 && stylesheet < telegramSdk);
   assert.ok(modulePreload >= 0 && modulePreload < telegramSdk);
   assert.ok(appExecution > telegramSdk, "app.js must still execute after Telegram bootstrap");
+});
+
+test("Mini App signals a Settings initialization failure before controls remain empty", async () => {
+  const html = await readFile(join(miniAppRoot, "index.html"), "utf8");
+  const app = await readFile(join(miniAppRoot, "app.js"), "utf8");
+  const settingsStart = app.indexOf("function renderSettings(user)");
+  const settingsEnd = app.indexOf("function renderReserveSettings", settingsStart);
+  const settings = app.slice(settingsStart, settingsEnd);
+
+  assert.match(html, /window\.addEventListener\("error",/);
+  assert.match(html, /window\.addEventListener\("unhandledrejection",/);
+  assert.match(html, /window\.removeEventListener\("error",/);
+  assert.match(html, /__moneyFlowCompleteStartup/);
+  assert.match(html, /__moneyFlowReportStartupError/);
+  assert.match(settings, /reportSettingsInitializationFailure\(error\)/);
+  assert.match(app, /markStartup\("dashboard_usable"\);\s*window\.__moneyFlowCompleteStartup\?\.\(\)/);
+  assert.match(app, /if \(isOnboardingDashboardResponse\(dashboard\)\) \{\s*window\.__moneyFlowCompleteStartup\?\.\(\);\s*return;\s*\}/);
 });
 
 test("Mini App reports privacy-safe startup timings after Dashboard becomes usable", async () => {
@@ -273,7 +289,7 @@ test("Mini App renders onboarding state before dashboard and history", async () 
   assert.match(html, /id="onboardingState"/);
   assert.match(html, /data-i18n="onboarding\.continueInBot"/);
   assert.match(app, /if \(isOnboardingDashboardResponse\(data\)\)\s*{\s*renderOnboardingState\(data\.user\);\s*return data;/);
-  assert.match(app, /const dashboard = await loadDashboard\(\);\s*if \(isOnboardingDashboardResponse\(dashboard\)\) return;/);
+  assert.match(app, /const dashboard = await loadDashboard\(\);\s*if \(isOnboardingDashboardResponse\(dashboard\)\) \{\s*window\.__moneyFlowCompleteStartup\?\.\(\);\s*return;\s*\}/);
   assert.match(app, /buildDashboardRequestPath\(telegramUserId, window\.location\.search\)/);
   assert.match(css, /\.onboarding-state\.hidden\s*{[^}]*display:\s*none/s);
   for (const language of ["en", "ru"]) {
@@ -320,6 +336,7 @@ test("regular monthly budget is confirmed separately from autosave", async () =>
 
   assert.ok(handlerStart >= 0);
   assert.match(handler, /commitMonthlyBudgetChange/);
+  assert.match(handler, /api\("\/api\/settings\/budget"/);
   assert.match(handler, /settingsSaveQueue\.enqueue/);
   assert.match(handler, /window\.confirm/);
   assert.match(app, /#budgetInput"\)\?\.addEventListener\("keydown"[^]*event\.key !== "Enter"[^]*event\.currentTarget\.blur\(\)/);

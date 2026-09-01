@@ -6,8 +6,28 @@
     <title>Money Flow</title>
     <script>performance.mark("mf:html_start")</script>
     <link rel="preconnect" href="https://telegram.org" />
-    <link rel="stylesheet" href="/styles.css?v=20260821-shortcut-key-handoff-v1" />
-    <link rel="modulepreload" href="/app.js?v=20260821-shortcut-key-handoff-v1" />
+    <script>
+      let moneyFlowStartupOpen = true;
+      window.__moneyFlowReportStartupError = (code) => {
+        if (!moneyFlowStartupOpen) return;
+        const safeCode = typeof code === "string" && /^[a-z_]+$/.test(code) ? code : "unknown_startup_error";
+        window.__moneyFlowStartupError = safeCode;
+        document.documentElement.dataset.moneyFlowStartupError = safeCode;
+        console.error("[miniapp] startup error", safeCode);
+      };
+      const reportModuleError = () => window.__moneyFlowReportStartupError("module_runtime_error");
+      const reportModuleRejection = () => window.__moneyFlowReportStartupError("module_promise_rejection");
+      window.addEventListener("error", reportModuleError);
+      window.addEventListener("unhandledrejection", reportModuleRejection);
+      window.__moneyFlowCompleteStartup = () => {
+        if (!moneyFlowStartupOpen) return;
+        moneyFlowStartupOpen = false;
+        window.removeEventListener("error", reportModuleError);
+        window.removeEventListener("unhandledrejection", reportModuleRejection);
+      };
+    </script>
+    <link rel="stylesheet" href="/styles.css?v=__MINIAPP_ASSET_VERSION__" />
+    <link rel="modulepreload" href="/app.js?v=__MINIAPP_ASSET_VERSION__" />
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script>
       performance.mark("mf:telegram_sdk_available");
@@ -404,7 +424,7 @@
                   <select id="baseCurrencyInput" name="baseCurrency"></select>
                 </label>
                 <label class="toggle-setting settings-toggle">
-                  <span data-i18n="settings.displayCurrencyFollowsBase">Same as base currency</span>
+                  <span id="displayCurrencyFollowsBaseLabel" data-i18n="settings.displayCurrencyFollowsBase">Same as base currency</span>
                   <input id="displayCurrencyFollowsBaseInput" name="displayCurrencyFollowsBase" type="checkbox" />
                 </label>
                 <div id="customDisplayCurrencyControls">
@@ -624,6 +644,6 @@
     </nav>
 
     <div class="toast hidden" id="toast" role="status" aria-live="polite"></div>
-    <script src="/app.js?v=20260821-shortcut-key-handoff-v1" type="module"></script>
+    <script src="/app.js?v=__MINIAPP_ASSET_VERSION__" type="module"></script>
   </body>
 </html>

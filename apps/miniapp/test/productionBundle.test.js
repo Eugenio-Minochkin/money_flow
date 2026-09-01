@@ -20,7 +20,11 @@ test("production Mini App build collapses the module graph into one entry", asyn
       readFile(join(outputRoot, "styles.css"), "utf8")
     ]);
 
-    assert.match(html, /<script src="\/app\.js\?v=[^"]+" type="module"><\/script>/);
+    const appVersion = html.match(/<script src="\/app\.js\?v=([a-f0-9]{16})" type="module"><\/script>/)?.[1];
+    const stylesVersion = html.match(/<link rel="stylesheet" href="\/styles\.css\?v=([a-f0-9]{16})"/)?.[1];
+
+    assert.ok(appVersion, "production app.js URL must have a content-derived fingerprint");
+    assert.equal(stylesVersion, appVersion, "HTML must point CSS and JavaScript at the same release");
     assert.doesNotMatch(app, /\bimport\s+[^;]+\s+from\s+["']\.\//);
     assert.match(app, /["']app_evaluated["']/);
     assert.match(styles, /\.shell\s*{/);

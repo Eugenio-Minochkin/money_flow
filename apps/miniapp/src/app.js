@@ -97,6 +97,7 @@ import {
 import { timeZoneCityLabel } from "./timezones.js";
 import { createHistoryLoader } from "./historyLoad.js";
 import { finishStartup, markStartup } from "./startupTiming.js";
+import { assertSettingsInitialized } from "./settingsStartupSmoke.js";
 
 markStartup("app_evaluated");
 
@@ -732,8 +733,12 @@ async function load() {
   if (!telegramUserId) throw new Error("No Telegram user id. Open Mini App from the bot.");
   renderPlannedForm();
   const dashboard = await loadDashboard();
-  if (isOnboardingDashboardResponse(dashboard)) return;
+  if (isOnboardingDashboardResponse(dashboard)) {
+    window.__moneyFlowCompleteStartup?.();
+    return;
+  }
   markStartup("dashboard_usable");
+  window.__moneyFlowCompleteStartup?.();
   const startupTimings = finishStartup();
   void reportStartupTimings(startupTimings);
   if (params.get("view") === "history") {
@@ -1618,6 +1623,15 @@ function setDashboardCardFlipped(card, isFlipped) {
 }
 
 function renderSettings(user) {
+  try {
+    renderSettingsControls(user);
+  } catch (error) {
+    reportSettingsInitializationFailure(error);
+    throw error;
+  }
+}
+
+function renderSettingsControls(user) {
   currentLanguage = user.interface_language ?? "en";
   currentTheme = user.interface_theme ?? "light";
   applyTheme(currentTheme);
@@ -1655,6 +1669,16 @@ function renderSettings(user) {
     : "current";
   renderReserveSettings();
   settingsSaveQueue.reset(settingsStateFromUser(user));
+  assertSettingsInitialized({
+    document,
+    user,
+    followBaseLabel: t("settings.displayCurrencyFollowsBase")
+  });
+}
+
+function reportSettingsInitializationFailure(error) {
+  window.__moneyFlowReportStartupError?.("settings_initialization_failed");
+  console.error("[miniapp] Settings initialization failed", error?.name ?? "Error");
 }
 
 function renderReserveSettings() {
