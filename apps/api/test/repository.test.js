@@ -6485,6 +6485,155 @@ test("rejects stale or invalid draft item updates with stable domain codes", asy
   );
 });
 
+test("expense evidence resolve locks the owned candidate and marks it already accounted without saving", async () => {
+  const statements = [];
+  const client = {
+    async query(sql, params = []) {
+      const query = String(sql);
+      statements.push({ query, params });
+      if (["BEGIN", "COMMIT", "ROLLBACK"].includes(query)) return { rows: [] };
+      if (query.includes("FROM expense_evidence_candidates") && query.includes("FOR UPDATE")) {
+        return { rows: [{ candidate_id: 8, candidate_status: "ready", draft_id: 12 }] };
+      }
+      if (query.startsWith("UPDATE expense_evidence_candidates")) return { rows: [{ id: 8 }] };
+      throw new Error(`Unexpected SQL: ${query}`);
+    },
+    release() {}
+  };
+  const repo = createRepository({ async connect() { return client; } });
+  repo.saveDraftAsExpense = async () => { throw new Error("must not save"); };
+
+  const result = await repo.resolveExpenseEvidenceCandidate({ userId: 2, importId: 7, candidateId: 8, action: "already_accounted" });
+
+  assert.deepEqual(result, { state: "already_accounted", draftId: 12 });
+  assert.ok(statements.some(({ query }) => query.includes("FOR UPDATE")));
+  assert.ok(statements.some(({ query }) => query.startsWith("UPDATE expense_evidence_candidates")));
+});
+
+test("expense evidence save failure returns a reviewing candidate to ready for retry", async () => {
+  let status = "ready";
+  let saves = 0;
+  const client = {
+    async query(sql) {
+      const query = String(sql);
+      if (["BEGIN", "COMMIT", "ROLLBACK"].includes(query)) return { rows: [] };
+      if (query.includes("FROM expense_evidence_candidates") && query.includes("FOR UPDATE")) {
+        return { rows: [{ candidate_id: 8, candidate_status: status, draft_id: 12, telegram_user_id: 100 }] };
+      }
+      if (query.includes("FROM drafts CROSS JOIN") && query.includes("WHERE id = $1")) {
+        return { rows: [{ amount: "10", currency: "THB", spentOn: "2026-08-18", spentAt: "12:00", merchant: "shop" }] };
+      }
+      if (query.startsWith("SELECT amount_original")) return { rows: [] };
+      if (query.startsWith("UPDATE expense_evidence_candidates SET status = 'reviewing'")) { status = "reviewing"; return { rows: [] }; }
+      if (query.startsWith("UPDATE expense_evidence_candidates SET status = 'ready'")) { status = "ready"; return { rows: [] }; }
+      if (query.startsWith("UPDATE expense_evidence_candidates SET status = 'saved'")) { status = "saved"; return { rows: [] }; }
+      throw new Error(`Unexpected SQL: ${query}`);
+    },
+    release() {}
+  };
+  const repo = createRepository({
+    async connect() { return client; },
+    async query(sql) {
+      if (String(sql).startsWith("UPDATE expense_evidence_candidates SET status = 'saved'")) { status = "saved"; return { rows: [] }; }
+      if (String(sql).startsWith("UPDATE expense_evidence_candidates SET status = 'ready'")) { status = "ready"; return { rows: [] }; }
+      throw new Error(`Unexpected pool SQL: ${sql}`);
+    }
+  });
+  repo.saveDraftAsExpense = async () => {
+    saves += 1;
+    if (saves === 1) throw new Error("temporary save failure");
+    return { alreadySaved: false };
+  };
+
+  await assert.rejects(() => repo.resolveExpenseEvidenceCandidate({ userId: 2, importId: 7, candidateId: 8, action: "save" }), /temporary save failure/);
+  assert.equal(status, "ready");
+  const retry = await repo.resolveExpenseEvidenceCandidate({ userId: 2, importId: 7, candidateId: 8, action: "save" });
+  assert.equal(retry.state, "saved");
+  assert.equal(status, "saved");
+});
+
+test("evidence duplicate rows use linked merchant metadata and UTC timestamps, not expense descriptions", async () => {
+  let statement;
+  const repo = createRepository(fakePool((sql) => {
+    statement = String(sql);
+    return { rows: [{ amount: "1840", currency: "THB", spentOn: "2026-08-18", spentAt: "12:00", merchant: "Big C" }] };
+  }));
+
+  const rows = await repo.listExpenseEvidenceDuplicateCandidates(2);
+
+  assert.equal(rows[0].merchant, "Big C");
+  assert.match(statement, /item->>'merchant' AS merchant/);
+  assert.match(statement, /item->>'description' = expenses\.description/);
+  assert.doesNotMatch(statement, /description AS merchant/);
+  assert.match(statement, /spent_at AT TIME ZONE 'UTC'/);
+});
+
+test("evidence add override is accepted by the repository action guard", async () => {
+  const client = {
+    async query(sql) {
+      const query = String(sql);
+      if (["BEGIN", "COMMIT", "ROLLBACK"].includes(query)) return { rows: [] };
+      if (query.includes("FROM expense_evidence_candidates") && query.includes("FOR UPDATE")) return { rows: [{ candidate_id: 8, candidate_status: "likely_duplicate", draft_id: 12, telegram_user_id: 100 }] };
+      if (query.startsWith("UPDATE expense_evidence_candidates SET status = 'reviewing'")) return { rows: [] };
+      if (query.startsWith("UPDATE expense_evidence_candidates SET status = 'saved'")) return { rows: [] };
+      throw new Error(`Unexpected SQL: ${query}`);
+    }, release() {}
+  };
+  const repo = createRepository({ async connect() { return client; }, async query() { return { rows: [] }; } });
+  let canonical = false;
+  repo.saveDraftAsExpense = async (_draftId, _telegramId, options) => { canonical = options.client === client; return { alreadySaved: false }; };
+
+  const result = await repo.resolveExpenseEvidenceCandidate({ userId: 2, importId: 7, candidateId: 8, action: "add" });
+
+  assert.equal(canonical, true);
+  assert.equal(result.state, "saved");
+});
+
+test("expense evidence cancel marks an owned ready candidate and its unresolved draft cancelled", async () => {
+  const statements = [];
+  const client = {
+    async query(sql, params = []) {
+      const query = String(sql);
+      statements.push(query);
+      if (["BEGIN", "COMMIT", "ROLLBACK"].includes(query)) return { rows: [] };
+      if (query.includes("FROM expense_evidence_candidates") && query.includes("FOR UPDATE")) return { rows: [{ candidate_id: 8, candidate_status: "ready", draft_id: 12, telegram_user_id: 100 }] };
+      if (query.startsWith("UPDATE drafts SET status = 'cancelled'")) return { rows: [] };
+      if (query.startsWith("UPDATE expense_evidence_candidates SET status = 'cancelled'")) return { rows: [] };
+      throw new Error(`Unexpected SQL: ${query}`);
+    }, release() {}
+  };
+  const repo = createRepository({ async connect() { return client; } });
+  const result = await repo.resolveExpenseEvidenceCandidate({ userId: 2, importId: 7, candidateId: 8, action: "cancel" });
+
+  assert.deepEqual(result, { state: "cancelled", draftId: 12 });
+  assert.ok(statements.some((query) => query.startsWith("UPDATE drafts SET status = 'cancelled'")));
+  assert.ok(statements.some((query) => query.startsWith("UPDATE expense_evidence_candidates SET status = 'cancelled'")));
+});
+
+test("finds only an owned active evidence candidate for an editor draft", async () => {
+  let sql;
+  const repo = createRepository(fakePool((query) => {
+    sql = String(query);
+    return { rows: [{ import_id: 7, candidate_id: 8, draft_id: 12, candidate_status: "reviewing" }] };
+  }));
+  const result = await repo.getActiveExpenseEvidenceCandidateForDraft(2, 12);
+  assert.deepEqual(result, { importId: 7, candidateId: 8, draftId: 12, status: "reviewing" });
+  assert.match(sql, /imports\.user_id = \$1/);
+  assert.match(sql, /candidates\.status IN \('ready', 'reviewing'\)/);
+});
+
+test("marks an owned active evidence candidate saved after generic draft confirmation", async () => {
+  const statements = [];
+  const repo = createRepository(fakePool((sql) => {
+    statements.push(String(sql));
+    return { rows: [{ import_id: 7, candidate_id: 8, draft_id: 12, candidate_status: "saved" }] };
+  }));
+  const result = await repo.markExpenseEvidenceCandidateSavedForDraft(2, 12);
+  assert.deepEqual(result, { importId: 7, candidateId: 8, draftId: 12, status: "saved" });
+  assert.match(statements[0], /status = 'saved'/);
+  assert.match(statements[0], /status IN \('ready', 'reviewing'\)/);
+});
+
 function fakePool(handler) {
   return {
     async query(sql, params = []) {
@@ -6890,6 +7039,57 @@ test("saveDraftAsExpense confirms an open draft and returns alreadySaved false",
   assert.equal(result.dashboardSnapshot.baseCurrency, "THB");
   assert.ok(queries.some((q) => q.includes("FOR UPDATE")));
   assert.ok(queries.some((q) => q.includes("status = 'confirmed'") && q.includes("version = version + 1")));
+});
+
+test("saveDraftAsExpense runs beforeSave on the supplied transaction client after lock and before insert", async () => {
+  const queries = [];
+  let insertAfterCallback = false;
+  const client = fakeConfirmClient({
+    draftRow: { id: 7, user_id: 1, status: "pending", base_currency: "THB", usd_thb_rate: 32.65,
+      items: [{ amount: 80, currency: "THB", description: "Groceries", merchant: "Big C", category_slug: "food_cafe", budget_impact: "regular", needs_review: false, category_source: "parser", tags: [], spent_at: "2026-06-25T10:00:00Z" }] },
+    onQuery: (query) => {
+      queries.push(String(query));
+      if (callbackIndex != null && String(query).includes("INSERT INTO expenses")) insertAfterCallback = true;
+    }
+  });
+  const repo = createRepository({ ...fakePool(() => ({ rows: [] })), async connect() { throw new Error("must use supplied client"); } });
+  let callbackClient;
+  let callbackIndex;
+
+  await repo.saveDraftAsExpense(7, 100, {
+    client,
+    beforeSave: async (draft) => {
+      callbackClient = client;
+      callbackIndex = queries.length;
+      assert.equal(draft.id, 7);
+    }
+  });
+
+  const lockIndex = queries.findIndex((query) => query.includes("FROM drafts") && query.includes("FOR UPDATE"));
+  const financialLockIndex = queries.findIndex((query) => query.includes("pg_advisory_xact_lock"));
+  assert.equal(callbackClient, client);
+  assert.ok(lockIndex >= 0 && financialLockIndex >= 0 && lockIndex < financialLockIndex && financialLockIndex < callbackIndex && insertAfterCallback);
+  assert.equal(queries.includes("BEGIN"), false);
+  assert.equal(queries.includes("COMMIT"), false);
+});
+
+test("blocked evidence beforeSave leaves an explicit-acceptance draft reviewable", async () => {
+  const queries = [];
+  const originalItem = { amount: 80, currency: "THB", description: "Groceries", merchant: "Big C", category_slug: "food_cafe", budget_impact: "regular", needs_review: true, category_source: "parser", tags: [], spent_at: "2026-06-25T10:00:00Z" };
+  const client = fakeConfirmClient({
+    draftRow: { id: 7, user_id: 1, status: "pending", base_currency: "THB", usd_thb_rate: 32.65, items: [originalItem] },
+    onQuery: (query) => queries.push(String(query))
+  });
+  const repo = createRepository({ ...fakePool(() => ({ rows: [] })), async connect() { throw new Error("must use supplied client"); } });
+
+  await assert.rejects(
+    () => repo.saveDraftAsExpense(7, 100, { client, explicitCategoryAcceptance: true, beforeSave: async () => { throw new Error("duplicate blocked"); } }),
+    /duplicate blocked/
+  );
+
+  assert.equal(originalItem.needs_review, true);
+  assert.equal(originalItem.category_source, "parser");
+  assert.equal(queries.some((query) => query.startsWith("UPDATE drafts SET items")), false);
 });
 
 test("saveDraftAsExpense preserves a saved open draft when its dashboard snapshot is unavailable", async () => {

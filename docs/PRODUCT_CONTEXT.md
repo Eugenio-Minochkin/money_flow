@@ -6,7 +6,7 @@ The product should feel simple, fast, and light: a user records expenses in the 
 ## Product Promise
 
 - Help a person understand where their money is going without turning tracking into a chore.
-- Make expense capture quick through text and voice.
+- Make expense capture quick through text, voice, and an optional single-image import for a bank-history screenshot, receipt, or completed payment confirmation.
 - Use confirmation before saving parsed expenses so the user stays in control.
 - Keep the Mini App dashboard focused on budget state, recent movement, and immediate next actions.
 - Allow simple one-off budget top-ups when extra money arrives during the month, without turning the product into income accounting.
@@ -31,6 +31,7 @@ The product should feel simple, fast, and light: a user records expenses in the 
 - Planned-payment reminders should use explicit payment terminology, avoid competing with the empty-day reminder, and become inactive when Mini App already changed the underlying plan.
 - Timezone settings should stay lightweight: show the current UTC offset and city, allow auto-detect, and keep the bundled runtime-valid IANA catalogue searchable without depending on a WebView API.
 - Reports should feel calm and readable: meaningful sections, exact sums, no shame, and no double-counting.
+- Image import is conservative: it makes drafts for review, recognizes only JPEG/PNG evidence, and never treats extraction or duplicate matching as an automatic financial fact.
 
 ## Product Analytics Boundaries
 

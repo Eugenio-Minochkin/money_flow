@@ -27,6 +27,7 @@ import { formatReportMoney } from "./reportFormat.js";
 import { priorMonthlyBounds, priorWeeklyBounds } from "./reportPeriods.js";
 import { categoryLabel } from "../../../packages/shared/src/categories.js";
 import { classifyExplicitAcceptanceDraft } from "./smartSave.js";
+import { classifyExpenseEvidenceDuplicate } from "./expenseEvidenceDedupe.js";
 import {
   MONTHLY_CHANGE_ABSOLUTE_TOTAL_SHARE,
   MONTHLY_CHANGE_RELATIVE_MIN,
@@ -221,6 +222,233 @@ export function createRepository(pool, options = {}) {
     async getUserByTelegramId(telegramUserId) {
       const result = await pool.query("SELECT * FROM users WHERE telegram_user_id = $1", [telegramUserId]);
       return result.rows[0] ?? null;
+    },
+
+    async claimExpenseEvidenceImport(userId, chatId, messageId) {
+      const result = await pool.query(
+        `INSERT INTO expense_evidence_imports AS imports (user_id, source_chat_id, source_message_id, image_bytes_hmac, status, claim_version, lease_expires_at)
+         VALUES ($1, $2, $3, 'pending', 'processing', 1, now() + interval '60 seconds')
+         ON CONFLICT (user_id, source_chat_id, source_message_id) DO UPDATE
+           SET claim_version = imports.claim_version + 1, lease_expires_at = now() + interval '60 seconds'
+         WHERE imports.status = 'processing' AND imports.lease_expires_at <= now()
+         RETURNING claim_version`,
+        [userId, chatId, messageId]
+      );
+      if (result.rows[0]) return { state: 'claimed', claimVersion: result.rows[0].claim_version };
+      const prior = await pool.query(
+        `SELECT id, status FROM expense_evidence_imports WHERE user_id = $1 AND source_chat_id = $2 AND source_message_id = $3`,
+        [userId, chatId, messageId]
+      );
+      return prior.rows[0] ? { state: prior.rows[0].status, id: prior.rows[0].id } : null;
+    },
+
+    async releaseExpenseEvidenceImport(userId, chatId, messageId, claimVersion) {
+      await pool.query(
+        `UPDATE expense_evidence_imports SET status = 'failed', lease_expires_at = NULL, failure_code = 'analysis_failed', updated_at = now()
+         WHERE user_id = $1 AND source_chat_id = $2 AND source_message_id = $3 AND status = 'processing' AND claim_version = $4`,
+        [userId, chatId, messageId, claimVersion]
+      );
+    },
+
+    async completeExpenseEvidenceImport({ userId, chatId, messageId, claimVersion, imageBytesHmac, telegramFileHmac, candidateSetHmac, candidates }) {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        const claimed = await client.query(
+          `SELECT id FROM expense_evidence_imports WHERE user_id = $1 AND source_chat_id = $2 AND source_message_id = $3
+           AND status = 'processing' AND claim_version = $4 AND lease_expires_at > now() FOR UPDATE`,
+          [userId, chatId, messageId, claimVersion]
+        );
+        const importRow = claimed.rows[0];
+        if (!importRow) { await client.query('ROLLBACK'); return null; }
+        for (const candidate of candidates) {
+          const draftStatus = candidate.items.some((item) => item.needs_review) ? 'inbox' : 'pending';
+          const draft = await client.query(
+            `INSERT INTO drafts (user_id, status, source_text, items) VALUES ($1, $2, 'Image evidence import', $3) RETURNING id`,
+            [userId, draftStatus, JSON.stringify(candidate.items)]
+          );
+          await client.query(
+            `INSERT INTO expense_evidence_candidates (import_id, ordinal, evidence_type, draft_id, status, dedupe_classification, dedupe_reason_code)
+             VALUES ($1, $2, $3, $4, 'ready', $5, $6)`,
+            [importRow.id, candidate.ordinal, candidate.evidenceType, draft.rows[0].id, candidate.dedupeClassification, candidate.dedupeReasonCode]
+          );
+        }
+        const completed = await client.query(
+          `UPDATE expense_evidence_imports SET image_bytes_hmac = $5, telegram_file_hmac = $6, candidate_set_hmac = $7,
+             status = 'ready', lease_expires_at = NULL, completed_at = now(), updated_at = now()
+           WHERE id = $1 RETURNING id`,
+          [importRow.id, userId, chatId, messageId, imageBytesHmac, telegramFileHmac, candidateSetHmac]
+        );
+        await client.query('COMMIT');
+        return completed.rows[0];
+      } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
+    },
+
+    async listExpenseEvidenceDuplicateCandidates(userId, client = pool, excludedDraftId = null) {
+      const result = await client.query(
+        `SELECT expenses.amount_original AS amount, expenses.currency_original AS currency,
+                to_char(expenses.spent_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS "spentOn", to_char(expenses.spent_at AT TIME ZONE 'UTC', 'HH24:MI') AS "spentAt",
+                item->>'merchant' AS merchant
+         FROM expenses
+         LEFT JOIN drafts ON drafts.id = expenses.draft_id
+         LEFT JOIN LATERAL jsonb_array_elements(drafts.items) AS item ON item->>'description' = expenses.description
+         WHERE expenses.user_id = $1
+         UNION ALL
+         SELECT (item->>'amount')::numeric AS amount, item->>'currency' AS currency,
+                substring(item->>'spent_at', 1, 10) AS "spentOn", substring(item->>'spent_at', 12, 5) AS "spentAt",
+                item->>'description' AS merchant
+         FROM drafts CROSS JOIN LATERAL jsonb_array_elements(items) AS item
+         WHERE drafts.user_id = $1 AND drafts.status IN ('pending', 'inbox') AND ($2::bigint IS NULL OR drafts.id <> $2)`,
+        [userId, excludedDraftId]
+      );
+      return result.rows;
+    },
+
+    async getExpenseEvidenceImport(userId, importId) {
+      const result = await pool.query(
+        `SELECT imports.id, imports.status, imports.candidate_set_hmac, imports.created_at, imports.completed_at,
+                candidates.id AS candidate_id, candidates.ordinal, candidates.evidence_type, candidates.draft_id,
+                candidates.status AS candidate_status, candidates.dedupe_classification, candidates.dedupe_reason_code
+         FROM expense_evidence_imports AS imports
+         LEFT JOIN expense_evidence_candidates AS candidates ON candidates.import_id = imports.id
+         WHERE imports.id = $1 AND imports.user_id = $2
+         ORDER BY candidates.ordinal`,
+        [importId, userId]
+      );
+      if (!result.rows[0]) return null;
+      const first = result.rows[0];
+      return {
+        id: first.id,
+        status: first.status,
+        candidateSetHmac: first.candidate_set_hmac,
+        createdAt: first.created_at,
+        completedAt: first.completed_at,
+        candidates: result.rows.filter((row) => row.candidate_id != null).map((row) => ({
+          id: row.candidate_id, ordinal: row.ordinal, evidenceType: row.evidence_type, draftId: row.draft_id,
+          status: row.candidate_status, dedupeClassification: row.dedupe_classification, dedupeReasonCode: row.dedupe_reason_code
+        }))
+      };
+    },
+
+    async getActiveExpenseEvidenceCandidateForDraft(userId, draftId) {
+      const result = await pool.query(
+        `SELECT candidates.import_id, candidates.id AS candidate_id, candidates.draft_id, candidates.status AS candidate_status
+         FROM expense_evidence_candidates AS candidates
+         JOIN expense_evidence_imports AS imports ON imports.id = candidates.import_id
+         WHERE imports.user_id = $1 AND candidates.draft_id = $2 AND candidates.status IN ('ready', 'reviewing')`,
+        [userId, draftId]
+      );
+      return normalizeEvidenceCandidateLink(result.rows[0]);
+    },
+
+    async markExpenseEvidenceCandidateSavedForDraft(userId, draftId) {
+      const result = await pool.query(
+        `UPDATE expense_evidence_candidates AS candidates
+         SET status = 'saved', resolved_at = now(), updated_at = now()
+         FROM expense_evidence_imports AS imports
+         WHERE candidates.import_id = imports.id AND imports.user_id = $1 AND candidates.draft_id = $2
+           AND candidates.status IN ('ready', 'reviewing')
+         RETURNING candidates.import_id, candidates.id AS candidate_id, candidates.draft_id, candidates.status AS candidate_status`,
+        [userId, draftId]
+      );
+      return normalizeEvidenceCandidateLink(result.rows[0]);
+    },
+
+    async resolveExpenseEvidenceCandidate({ userId, importId, candidateId, action }) {
+      const client = await pool.connect();
+      let reviewingCandidateId = null;
+      try {
+        await client.query("BEGIN");
+        const locked = await client.query(
+          `SELECT candidates.id AS candidate_id, candidates.status AS candidate_status, candidates.draft_id, users.telegram_user_id
+           FROM expense_evidence_candidates AS candidates
+           JOIN expense_evidence_imports AS imports ON imports.id = candidates.import_id
+           JOIN users ON users.id = imports.user_id
+           WHERE candidates.id = $1 AND candidates.import_id = $2 AND imports.user_id = $3
+           FOR UPDATE`,
+          [candidateId, importId, userId]
+        );
+        const candidate = locked.rows[0];
+        if (!candidate) { await client.query("ROLLBACK"); return { state: "not_found" }; }
+        if (["saved", "already_accounted", "cancelled", "reviewing"].includes(candidate.candidate_status)) {
+          await client.query("ROLLBACK");
+          return { state: candidate.candidate_status, draftId: candidate.draft_id };
+        }
+        if (action === "already_accounted") {
+          await client.query(
+            `UPDATE expense_evidence_candidates SET status = 'already_accounted', resolved_at = now(), updated_at = now() WHERE id = $1`,
+            [candidate.candidate_id]
+          );
+          await client.query("COMMIT");
+          return { state: "already_accounted", draftId: candidate.draft_id };
+        }
+        if (action === "cancel") {
+          if (candidate.draft_id) {
+            await client.query(
+              `UPDATE drafts SET status = 'cancelled', cancelled_at = now(), version = version + 1
+               WHERE id = $1 AND status IN ('pending', 'inbox')`,
+              [candidate.draft_id]
+            );
+          }
+          await client.query(
+            `UPDATE expense_evidence_candidates SET status = 'cancelled', resolved_at = now(), updated_at = now() WHERE id = $1`,
+            [candidate.candidate_id]
+          );
+          await client.query("COMMIT");
+          return { state: "cancelled", draftId: candidate.draft_id };
+        }
+        if (!["save", "add"].includes(action) || !candidate.draft_id) { await client.query("ROLLBACK"); return { state: "invalid_action" }; }
+
+        if (candidate.candidate_status === "likely_duplicate" && action !== "add") {
+          await client.query("ROLLBACK");
+          return { state: "blocked", reasonCode: "likely_duplicate" };
+        }
+        await client.query(
+          `UPDATE expense_evidence_candidates SET status = 'reviewing', updated_at = now() WHERE id = $1`,
+          [candidate.candidate_id]
+        );
+        reviewingCandidateId = candidate.candidate_id;
+        let saved;
+        try {
+          saved = await this.saveDraftAsExpense(candidate.draft_id, candidate.telegram_user_id, {
+            explicitCategoryAcceptance: true,
+            client,
+            beforeSave: async (draft) => {
+              if (action === "add") return;
+              const current = evidenceCandidateFromDraft(draft);
+              const existing = await this.listExpenseEvidenceDuplicateCandidates(userId, client, candidate.draft_id);
+              const duplicate = current && classifyExpenseEvidenceDuplicate(current, existing);
+              if (duplicate?.classification === "likely_duplicate") throw evidenceDuplicateError(duplicate.reasonCode);
+            }
+          });
+        } catch (error) {
+          if (error?.code !== "evidence_likely_duplicate") throw error;
+          await client.query(
+            `UPDATE expense_evidence_candidates SET status = 'likely_duplicate', dedupe_classification = 'likely_duplicate', dedupe_reason_code = $2, updated_at = now() WHERE id = $1`,
+            [candidate.candidate_id, error.reasonCode]
+          );
+          await client.query("COMMIT");
+          return { state: "blocked", reasonCode: error.reasonCode };
+        }
+        await client.query(
+          `UPDATE expense_evidence_candidates SET status = 'saved', resolved_at = now(), updated_at = now() WHERE id = $1 AND status IN ('ready', 'reviewing')`,
+          [candidate.candidate_id]
+        );
+        await client.query("COMMIT");
+        return { state: "saved", draftId: candidate.draft_id, alreadySaved: Boolean(saved.alreadySaved) };
+      } catch (error) {
+        try { await client.query("ROLLBACK"); } catch { /* preserve the original error */ }
+        if (reviewingCandidateId != null) {
+          try {
+            await pool.query(
+              `UPDATE expense_evidence_candidates SET status = 'ready', updated_at = now()
+               WHERE id = $1 AND status = 'reviewing'`,
+              [reviewingCandidateId]
+            );
+          } catch { /* preserve the original error */ }
+        }
+        throw error;
+      } finally { client.release(); }
     },
 
     async prepareQuickAccessToken(userId, tokenHash) {
@@ -3102,7 +3330,8 @@ export function createRepository(pool, options = {}) {
     },
 
     async saveDraftAsExpense(draftId, telegramUserId, options = {}) {
-      const client = await pool.connect();
+      const client = options.client ?? await pool.connect();
+      const ownsTransaction = !options.client;
       const readDashboardSnapshot = async () => {
         try {
           return (await this.dashboard(telegramUserId)).snapshot;
@@ -3112,7 +3341,7 @@ export function createRepository(pool, options = {}) {
         }
       };
       try {
-        await client.query("BEGIN");
+        if (ownsTransaction) await client.query("BEGIN");
         const draftResult = await client.query(
           `SELECT drafts.*, users.base_currency, users.usd_thb_rate, users.timezone
            FROM drafts
@@ -3123,19 +3352,19 @@ export function createRepository(pool, options = {}) {
         );
         const draft = draftResult.rows[0];
         if (!draft) {
-          await client.query("ROLLBACK");
+          if (ownsTransaction) await client.query("ROLLBACK");
           throw new DraftNotFoundError();
         }
         const status = draft.status;
         if (status !== "pending" && status !== "inbox") {
-          await client.query("ROLLBACK");
+          if (ownsTransaction) await client.query("ROLLBACK");
           if (status === "cancelled") throw new DraftCanceledError();
           // already confirmed -> loser path: return the already-created expenses
           const existing = await pool.query(
             `SELECT * FROM expenses WHERE draft_id = $1 ORDER BY id`,
             [draftId]
           );
-          const snapshot = await readDashboardSnapshot();
+          const snapshot = ownsTransaction ? await readDashboardSnapshot() : null;
           return { expenses: existing.rows, dashboardSnapshot: snapshot, alreadySaved: true };
         }
 
@@ -3143,21 +3372,14 @@ export function createRepository(pool, options = {}) {
         if (hasUnresolvedCurrencyAmbiguity(items)) {
           throw codedError("Draft requires an explicit currency selection", "currency_selection_required");
         }
-        if (options.explicitCategoryAcceptance) {
-          const classification = classifyExplicitAcceptanceDraft({ items }, {
-            now: options.now,
-            timeZone: userTimezone(draft)
-          });
-          if (!classification.eligible) throw explicitAcceptanceError(classification.reason);
-          items = items.map((item) => ({ ...item, category_source: "user", needs_review: false }));
-          await client.query(
-            `UPDATE drafts SET items = $1, version = version + 1 WHERE id = $2`,
-            [JSON.stringify(items), draft.id]
-          );
-        } else if (!draftHasValidCategories(items)) {
+        if (!options.explicitCategoryAcceptance && !draftHasValidCategories(items)) {
           console.warn("[repository] confirm blocked: missing valid category", { draftId });
           throw new CategoryRequiredError();
         }
+        const explicitAcceptance = options.explicitCategoryAcceptance
+          ? classifyExplicitAcceptanceDraft({ items }, { now: options.now, timeZone: userTimezone(draft) })
+          : null;
+        if (explicitAcceptance && !explicitAcceptance.eligible) throw explicitAcceptanceError(explicitAcceptance.reason);
 
         const timeZone = userTimezone(draft);
         const monthKeys = items.map((item) => timeZoneMonthKey(new Date(item.spent_at), timeZone));
@@ -3165,7 +3387,14 @@ export function createRepository(pool, options = {}) {
         if ((await closedReserveMonths(client, draft.user_id, monthKeys)).size > 0) {
           throw codedError("Source month closed", "expense_source_month_closed");
         }
-
+        await options.beforeSave?.(draft);
+        if (options.explicitCategoryAcceptance) {
+          items = items.map((item) => ({ ...item, category_source: "user", needs_review: false }));
+          await client.query(
+            `UPDATE drafts SET items = $1, version = version + 1 WHERE id = $2`,
+            [JSON.stringify(items), draft.id]
+          );
+        }
         const inserted = [];
         for (const item of items) {
           const spentAt = new Date(item.spent_at);
@@ -3201,14 +3430,16 @@ export function createRepository(pool, options = {}) {
           `UPDATE drafts SET status = 'confirmed', confirmed_at = now(), version = version + 1 WHERE id = $1`,
           [draft.id]
         );
-        await client.query("COMMIT");
-        const snapshot = await readDashboardSnapshot();
+        if (ownsTransaction) await client.query("COMMIT");
+        const snapshot = ownsTransaction ? await readDashboardSnapshot() : null;
         return { expenses: inserted, dashboardSnapshot: snapshot, alreadySaved: false };
       } catch (error) {
-        try { await client.query("ROLLBACK"); } catch { /* already rolled back or connection gone */ }
+        if (ownsTransaction) {
+          try { await client.query("ROLLBACK"); } catch { /* already rolled back or connection gone */ }
+        }
         throw error;
       } finally {
-        client.release();
+        if (ownsTransaction) client.release();
       }
     },
 
@@ -4867,6 +5098,7 @@ function normalizeDraftItem(item) {
       review_reason: "currency_ambiguous"
     } : {}),
     description: String(item.description || "расход").trim(),
+    merchant: typeof item.merchant === "string" && item.merchant.trim() ? item.merchant.trim() : null,
     category_slug: item.category_slug || "other",
     category_source: item.category_source === "user" || item.category_source === "parser" ? item.category_source : null,
     tags: Array.isArray(item.tags) ? item.tags.map(String).filter(Boolean) : [],
@@ -4875,6 +5107,29 @@ function normalizeDraftItem(item) {
     confidence: Number.isFinite(Number(item.confidence)) ? Number(item.confidence) : 1,
     needs_review: unresolvedCurrency || Boolean(item.needs_review)
   };
+}
+
+function evidenceCandidateFromDraft(draft) {
+  const item = (Array.isArray(draft.items) ? draft.items : JSON.parse(draft.items))[0];
+  if (!item) return null;
+  return {
+    amount: item.amount,
+    currency: item.currency,
+    spentOn: String(item.spent_at ?? "").slice(0, 10),
+    spentAt: String(item.spent_at ?? "").slice(11, 16),
+    merchant: item.merchant
+  };
+}
+
+function normalizeEvidenceCandidateLink(row) {
+  if (!row) return null;
+  return { importId: row.import_id, candidateId: row.candidate_id, draftId: row.draft_id, status: row.candidate_status };
+}
+
+function evidenceDuplicateError(reasonCode) {
+  const error = codedError("Evidence likely duplicates an existing expense", "evidence_likely_duplicate");
+  error.reasonCode = reasonCode;
+  return error;
 }
 
 function normalizePlannedExpense(item) {

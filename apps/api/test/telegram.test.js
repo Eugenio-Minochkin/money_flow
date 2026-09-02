@@ -2439,6 +2439,228 @@ test("photo input returns a friendly unsupported-photo response without creating
   assert.equal(completed.metadata.status, "unsupported_photo");
 });
 
+test("enabled evidence import routes a photo to the import service and keeps its caption out of Telegram output", async () => {
+  const repo = fakeRepository();
+  const messages = [];
+  const calls = [];
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: repo,
+    telegramClient: captureTelegramClient(messages),
+    expenseEvidenceImportService: {
+      async importImage(input) {
+        calls.push(input);
+        return { state: "ready", importId: 77, evidenceType: "receipt", candidates: [{ ordinal: 0 }] };
+      }
+    }
+  });
+
+  await bot.handleUpdate({ message: { chat: { id: 10 }, from: { id: 100, first_name: "M" }, message_id: 9, caption: "private supermarket receipt", photo: [{ file_id: "small", file_unique_id: "u1" }, { file_id: "large", file_unique_id: "u2" }] } });
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].fileId, "large");
+  assert.equal(calls[0].fileUniqueId, "u2");
+  assert.equal(calls[0].caption, "private supermarket receipt");
+  assert.doesNotMatch(messages.at(-1).text, /private supermarket receipt/);
+  assert.equal(messages.at(-1).text, "Готово к проверке: 1 расход.");
+  assert.deepEqual(messages.at(-1).replyMarkup.inline_keyboard.flat().map((button) => button.callback_data), [
+    "ei:77:save", "ei:77:review", "ei:77:cancel"
+  ]);
+});
+
+test("English evidence summary and actions are localized", async () => {
+  const repo = fakeRepository();
+  repo.user = { ...repo.user, interface_language: "en" };
+  const messages = [];
+  const bot = createTelegramBot({ token: "test-token", miniAppUrl: "http://localhost:3000", repository: repo, telegramClient: captureTelegramClient(messages), expenseEvidenceImportService: {
+    async importImage() { return { state: "ready", importId: 77, evidenceType: "receipt", candidates: [{ ordinal: 0 }] }; }
+  } });
+  await bot.handleUpdate({ message: { chat: { id: 10 }, from: { id: 100, first_name: "M" }, message_id: 9, photo: [{ file_id: "photo" }] } });
+  assert.equal(messages.at(-1).text, "Ready to review: 1 expense.");
+  assert.doesNotMatch(messages.at(-1).text, /Готово|расход/);
+  assert.deepEqual(messages.at(-1).replyMarkup.inline_keyboard.flat().map((button) => button.text), ["✅ Save", "🔎 Review", "🗑 Cancel"]);
+});
+
+test("confirming an edited evidence draft marks it once and advances to the next candidate", async () => {
+  const repo = fakeRepository();
+  const calls = [];
+  repo.confirmDraftWithExplicitAcceptance = async () => ({ expenses: [{ id: 71, amount_base: 75, amount_original: 75, currency_original: "THB", category_slug: "food_cafe", description: "breakfast" }], dashboardSnapshot: null, alreadySaved: false });
+  repo.getExpenseEvidenceImport = async () => ({ id: 77, candidates: [{ id: 5, status: "saved", draftId: 42 }, { id: 6, status: "ready", draftId: 43 }] });
+  const marked = [];
+  const bot = createTelegramBot({ token: "test-token", miniAppUrl: "http://localhost:3000", repository: repo, telegramClient: capturingClient(calls), expenseEvidenceImportService: {
+    async getActiveCandidateForDraft(input) { return input.draftId === "42" ? { importId: 77, candidateId: 5, draftId: 42, status: "ready" } : null; },
+    async markCandidateSavedAfterDraftConfirmation(input) { marked.push(input); return { state: "saved" }; }
+  } });
+
+  await bot.handleUpdate({ callback_query: { id: "confirm-evidence", data: "confirm:42", from: { id: 100 }, message: { chat: { id: 10 }, message_id: 55 } } });
+
+  assert.deepEqual(marked, [{ userId: 1, draftId: "42" }]);
+  const edited = calls.find((call) => call.method === "editMessageText");
+  assert.equal(edited.text, "Проверьте расход перед сохранением.");
+  assert.equal(edited.replyMarkup.inline_keyboard[0][0].callback_data, "ei:77:6:accounted");
+});
+
+test("enabled evidence import routes JPEG and PNG documents without exposing their caption or file id", async (t) => {
+  for (const mimeType of ["image/jpeg", "image/png"]) {
+    await t.test(mimeType, async () => {
+      const repo = fakeRepository();
+      const messages = [];
+      const calls = [];
+      const bot = createTelegramBot({
+        token: "test-token", miniAppUrl: "http://localhost:3000", repository: repo,
+        telegramClient: captureTelegramClient(messages),
+        expenseEvidenceImportService: {
+          async importImage(input) {
+            calls.push(input);
+            return { state: "ready", importId: 77, evidenceType: "receipt", candidates: [{ ordinal: 0 }] };
+          }
+        }
+      });
+
+      await bot.handleUpdate({ message: {
+        chat: { id: 10 }, from: { id: 100, first_name: "M" }, message_id: 9,
+        caption: "private caption", document: { file_id: "secret-file-id", file_unique_id: "u2", mime_type: mimeType }
+      } });
+
+      assert.equal(calls.length, 1);
+      assert.equal(calls[0].declaredMimeType, mimeType);
+      assert.doesNotMatch(messages.at(-1).text, /private caption|secret-file-id/);
+      assert.equal(messages.at(-1).text, "Готово к проверке: 1 расход.");
+    });
+  }
+});
+
+test("non-image document stays unsupported when evidence import is enabled", async () => {
+  const repo = fakeRepository();
+  const messages = [];
+  let imports = 0;
+  const bot = createTelegramBot({
+    token: "test-token", miniAppUrl: "http://localhost:3000", repository: repo,
+    telegramClient: captureTelegramClient(messages),
+    expenseEvidenceImportService: { async importImage() { imports += 1; } }
+  });
+
+  await bot.handleUpdate({ message: { chat: { id: 10 }, from: { id: 100, first_name: "M" }, document: { file_id: "doc", mime_type: "application/pdf" } } });
+
+  assert.equal(imports, 0);
+  assert.match(messages.at(-1).text, /только текстовые и голосовые|only text and voice/i);
+});
+
+test("evidence save callback resolves only the owner's ready candidates", async () => {
+  const repo = fakeRepository();
+  const messages = [];
+  const actions = [];
+  repo.getExpenseEvidenceImport = async (userId, importId) => {
+    assert.equal(userId, 1);
+    assert.equal(importId, "77");
+    return { id: 77, status: "ready", candidates: [{ id: 5, status: "ready", draftId: 44 }] };
+  };
+  const bot = createTelegramBot({
+    token: "test-token", miniAppUrl: "http://localhost:3000", repository: repo,
+    telegramClient: captureTelegramClient(messages),
+    expenseEvidenceImportService: {
+      async resolveImportCandidates(input) { actions.push(input); return { outcomes: [{ candidateId: 5, state: "saved" }] }; }
+    }
+  });
+
+  await bot.handleUpdate({ callback_query: { id: "evidence-save", data: "ei:77:save", from: { id: 100 }, message: { chat: { id: 10 }, message_id: 21 } } });
+
+  assert.deepEqual(actions, [{ userId: 1, importId: "77", actions: [{ candidateId: 5, action: "save" }] }]);
+  const edited = messages.find((message) => message.messageId === 21);
+  assert.equal(edited?.text, "Импорт обработан.");
+  assert.deepEqual(edited?.replyMarkup, { inline_keyboard: [] });
+});
+
+test("evidence callback rejects imports outside the Telegram user's ownership", async () => {
+  const repo = fakeRepository();
+  const messages = [];
+  let resolved = false;
+  repo.getExpenseEvidenceImport = async () => null;
+  const bot = createTelegramBot({
+    token: "test-token", miniAppUrl: "http://localhost:3000", repository: repo,
+    telegramClient: captureTelegramClient(messages),
+    expenseEvidenceImportService: { async resolveImportCandidates() { resolved = true; } }
+  });
+
+  await bot.handleUpdate({ callback_query: { id: "evidence-other-user", data: "ei:77:cancel", from: { id: 100 }, message: { chat: { id: 10 }, message_id: 21 } } });
+
+  assert.equal(resolved, false);
+});
+
+test("evidence cancel callback resolves each owned ready candidate", async () => {
+  const repo = fakeRepository();
+  const inputs = [];
+  repo.getExpenseEvidenceImport = async () => ({ id: 77, status: "ready", candidates: [{ id: 5, status: "ready", draftId: 44 }, { id: 6, status: "saved", draftId: 45 }] });
+  const bot = createTelegramBot({
+    token: "test-token", miniAppUrl: "http://localhost:3000", repository: repo,
+    telegramClient: captureTelegramClient([]),
+    expenseEvidenceImportService: { async resolveImportCandidates(input) { inputs.push(input); return { outcomes: [{ candidateId: 5, state: "cancelled" }] }; } }
+  });
+
+  await bot.handleUpdate({ callback_query: { id: "evidence-cancel", data: "ei:77:cancel", from: { id: 100 }, message: { chat: { id: 10 }, message_id: 21 } } });
+
+  assert.deepEqual(inputs, [{ userId: 1, importId: "77", actions: [{ candidateId: 5, action: "cancel" }] }]);
+});
+
+test("stale evidence candidate callback does not resolve a candidate twice", async () => {
+  const repo = fakeRepository();
+  let resolved = false;
+  let calls = 0;
+  repo.getExpenseEvidenceImport = async () => ({ id: 77, candidates: [{ id: 5, status: resolved ? "saved" : "ready", draftId: 44 }] });
+  const bot = createTelegramBot({ token: "test-token", miniAppUrl: "http://localhost:3000", repository: repo, telegramClient: captureTelegramClient([]), expenseEvidenceImportService: {
+    async resolveImportCandidates() { calls += 1; resolved = true; return { outcomes: [{ candidateId: 5, state: "saved" }] }; }
+  } });
+  const callback = (id) => bot.handleUpdate({ callback_query: { id, data: "ei:77:5:add", from: { id: 100 }, message: { chat: { id: 10 }, message_id: 21 } } });
+  await callback("fresh");
+  await callback("stale");
+  assert.equal(calls, 1);
+});
+
+test("evidence review advances to the next candidate after accounted or add", async (t) => {
+  for (const [callbackAction, serviceAction] of [["accounted", "already_accounted"], ["add", "add"]]) {
+    await t.test(callbackAction, async () => {
+      const repo = fakeRepository();
+      const messages = [];
+      const actions = [];
+      let resolved = false;
+      repo.getExpenseEvidenceImport = async () => ({ id: 77, status: "ready", candidates: resolved
+        ? [{ id: 5, status: "saved", draftId: 44 }, { id: 6, status: "ready", draftId: 45 }]
+        : [{ id: 5, status: "ready", draftId: 44 }, { id: 6, status: "ready", draftId: 45 }]
+      });
+      const bot = createTelegramBot({
+        token: "test-token", miniAppUrl: "http://localhost:3000", repository: repo,
+        telegramClient: captureTelegramClient(messages),
+        expenseEvidenceImportService: { async resolveImportCandidates(input) { actions.push(input); resolved = true; return { outcomes: [{ candidateId: 5, state: "saved" }] }; } }
+      });
+
+      await bot.handleUpdate({ callback_query: { id: `review-${callbackAction}`, data: "ei:77:review", from: { id: 100 }, message: { chat: { id: 10 }, message_id: 21 } } });
+      assert.equal(messages.at(-1).replyMarkup.inline_keyboard[0][0].callback_data, "ei:77:5:accounted");
+      await bot.handleUpdate({ callback_query: { id: callbackAction, data: `ei:77:5:${callbackAction}`, from: { id: 100 }, message: { chat: { id: 10 }, message_id: 21 } } });
+
+      assert.deepEqual(actions, [{ userId: 1, importId: "77", actions: [{ candidateId: 5, action: serviceAction }] }]);
+      assert.equal(messages.at(-1).replyMarkup.inline_keyboard[0][0].callback_data, "ei:77:6:accounted");
+    });
+  }
+});
+
+test("evidence edit delegates to the existing draft editor", async () => {
+  const repo = fakeRepository();
+  const messages = [];
+  const draftCalls = [];
+  repo.getExpenseEvidenceImport = async () => ({ id: 77, candidates: [{ id: 5, status: "ready", draftId: 44 }] });
+  repo.getDraftForTelegramUser = async (...args) => {
+    draftCalls.push(args);
+    return { id: 44, items: [{ amount: 70, currency: "THB", description: "coffee", category_slug: "food_cafe", spent_at: "2026-08-14T12:00:00.000Z", budget_impact: "regular" }] };
+  };
+  const bot = createTelegramBot({ token: "test-token", miniAppUrl: "http://localhost:3000", repository: repo, telegramClient: captureTelegramClient(messages), expenseEvidenceImportService: {} });
+
+  await bot.handleUpdate({ callback_query: { id: "evidence-edit", data: "ei:77:5:edit", from: { id: 100 }, message: { chat: { id: 10 }, message_id: 21 } } });
+
+  assert.deepEqual(draftCalls, [[44, 100]]);
+  assert.ok(messages.at(-1).replyMarkup.inline_keyboard.flat().some((button) => button.callback_data === "ee:d:44:0:f:a"));
+});
+
 test("throwing event logger does not break expense processing", async () => {
   const repo = fakeRepository();
   repo.recordAppEvent = async () => {

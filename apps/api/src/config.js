@@ -4,6 +4,8 @@ const DEFAULT_RELEASE_DIGEST_SEND_HOUR = 21;
 const DEFAULT_RELEASE_DIGEST_CHECK_INTERVAL_MINUTES = 15;
 const DEFAULT_EXPENSE_PARSER_MAX_LOCAL_AMOUNT = 1_000_000;
 const DEFAULT_EXPENSE_PARSER_LLM_TIMEOUT_MS = 20_000;
+const DEFAULT_EXPENSE_EVIDENCE_MAX_BYTES = 10_485_760;
+const DEFAULT_EXPENSE_EVIDENCE_TIMEOUT_MS = 30_000;
 const MAX_TIMER_DELAY_MS = 2_147_483_647;
 const DEFAULT_RATE_LIMIT_WINDOW_MS = 60_000;
 const DEFAULT_RATE_LIMIT_MAX = 120;
@@ -73,6 +75,21 @@ export function buildConfig(env) {
     deepgramMaxAudioDurationSec: parsePositiveInteger(env.DEEPGRAM_MAX_AUDIO_DURATION_SEC, DEFAULT_DEEPGRAM_MAX_AUDIO_DURATION_SEC),
     deepgramMaxAudioWindowSec: parsePositiveInteger(env.DEEPGRAM_MAX_AUDIO_WINDOW_SEC, DEFAULT_DEEPGRAM_MAX_AUDIO_WINDOW_SEC),
     parserTextHashSecret: env.PARSER_TEXT_HASH_SECRET ?? (nodeEnv === "test" ? "test-parser-text-hash-secret" : ""),
+    expenseEvidenceImportEnabled: env.EXPENSE_EVIDENCE_IMPORT_ENABLED === "true",
+    expenseEvidenceMaxBytes: parseStrictPositiveInteger(
+      env.EXPENSE_EVIDENCE_MAX_BYTES,
+      DEFAULT_EXPENSE_EVIDENCE_MAX_BYTES,
+      "EXPENSE_EVIDENCE_MAX_BYTES",
+      DEFAULT_EXPENSE_EVIDENCE_MAX_BYTES
+    ),
+    expenseEvidenceTimeoutMs: parseStrictPositiveInteger(
+      env.EXPENSE_EVIDENCE_TIMEOUT_MS,
+      DEFAULT_EXPENSE_EVIDENCE_TIMEOUT_MS,
+      "EXPENSE_EVIDENCE_TIMEOUT_MS",
+      MAX_TIMER_DELAY_MS
+    ),
+    expenseEvidenceModel: env.EXPENSE_EVIDENCE_MODEL ?? env.OPENAI_MODEL ?? "gpt-5-mini",
+    expenseEvidenceHmacSecret: env.EXPENSE_EVIDENCE_HMAC_SECRET ?? (nodeEnv === "test" ? "test-expense-evidence-hmac-secret" : ""),
     deepgramApiKey: env.DEEPGRAM_API_KEY,
     telegramWebhookSecret: env.TELEGRAM_WEBHOOK_SECRET,
     requireTelegramInitData: env.REQUIRE_TELEGRAM_INIT_DATA === "true",
@@ -124,6 +141,9 @@ export function requireRuntimeConfig(runtimeConfig = config) {
     if (localFirstDiagnosticsEnabled(runtimeConfig) && !runtimeConfig.parserTextHashSecret) {
       throw new Error("PARSER_TEXT_HASH_SECRET is required in production when parser diagnostics or rollout are enabled");
     }
+    if (runtimeConfig.expenseEvidenceImportEnabled && !runtimeConfig.expenseEvidenceHmacSecret) {
+      throw new Error("EXPENSE_EVIDENCE_HMAC_SECRET is required in production when expense evidence import is enabled");
+    }
   }
 }
 
@@ -148,6 +168,16 @@ function parseStrictOptionalTimeout(value, fallback, name) {
   const number = Number(text);
   if (!/^[1-9]\d*$/.test(text) || !Number.isSafeInteger(number) || number > MAX_TIMER_DELAY_MS) {
     throw new Error(`Invalid configuration: ${name} must be a positive integer from 1 to ${MAX_TIMER_DELAY_MS} milliseconds`);
+  }
+  return number;
+}
+
+function parseStrictPositiveInteger(value, fallback, name, max) {
+  if (value === undefined) return fallback;
+  const text = String(value);
+  const number = Number(text);
+  if (!/^[1-9]\d*$/.test(text) || !Number.isSafeInteger(number) || number > max) {
+    throw new Error(`Invalid configuration: ${name} must be a positive integer from 1 to ${max}`);
   }
   return number;
 }

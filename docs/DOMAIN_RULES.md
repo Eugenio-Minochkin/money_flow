@@ -15,6 +15,16 @@ This file records stable product and business rules. Read it before changing bud
 - Recovery includes every unresolved `pending` and `inbox` draft. Preview is advisory: the mutation must re-read and reclassify each selected draft, preserve its original `spent_at`, and call `saveDraftAsExpense()` separately so retries and concurrent confirmation remain idempotent.
 - Recovery preview exposes both draft counts and expense-item counts. Strict recovery-save remains Smart Save-only; the separate explicit acceptance batch re-reads each selected draft and returns per-draft partial outcomes so one blocked draft cannot roll back successfully saved drafts.
 
+## Expense Evidence Images
+
+- A Telegram photo or JPEG/PNG document may create reviewable expense evidence drafts only when the image-import switch is enabled. The feature is disabled by default.
+- Image evidence accepts one supported JPEG or PNG image. Albums, PDFs, HEIC, animated images, bank connections, and item-level receipt accounting are out of scope.
+- Image bytes are bounded, sanitized, stripped of supported metadata, and used only for the request that analyzes the image. The persistent workflow contains import/candidate state and ordinary drafts, not the image bytes, Telegram URL, or OCR/model response.
+- An image candidate is not a financial fact. Each candidate maps to an ordinary draft, and `saveDraftAsExpense()` remains the only canonical and idempotent expense-save boundary.
+- Receipt, order-confirmation, and payment-confirmation evidence creates at most one candidate from the final paid amount; an unpaid order, line items, subtotal, balance, credit, transfer, refund, reward, or account identifier is not an expense candidate.
+- Missing or uncertain amount, currency, or date stays in review. The user's base currency is never substituted for a missing or ambiguous image currency, and a closed month remains closed for batch save, review, retry, and any duplicate override.
+- Deduplication is user-scoped and compares confirmed expenses, unresolved drafts, and unfinished imports. `likely_duplicate` is not safely saved; an explicit `Add` can override only a `possible_duplicate` warning and still rechecks ownership, validation, replay, already-saved, and closed-month rules through the canonical save path.
+
 ## Monthly Budget
 
 - The monthly budget is the user's main recurring budget.
