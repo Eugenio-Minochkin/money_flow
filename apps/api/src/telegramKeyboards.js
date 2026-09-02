@@ -192,6 +192,28 @@ export function inboxDraftKeyboard(miniAppUrl, telegramUserId, draftId, language
   };
 }
 
+export function expenseEvidenceImportKeyboard(importId, language = "ru") {
+  const ru = language === "ru";
+  return {
+    inline_keyboard: [[
+      { text: ru ? "✅ Сохранить" : "✅ Save", callback_data: `ei:${importId}:save`, style: "success" },
+      { text: ru ? "🔎 Разобрать" : "🔎 Review", callback_data: `ei:${importId}:review` },
+      { text: ru ? "🗑 Отменить" : "🗑 Cancel", callback_data: `ei:${importId}:cancel` }
+    ]]
+  };
+}
+
+export function expenseEvidenceCandidateKeyboard(importId, candidateId, language = "ru") {
+  const ru = language === "ru";
+  return {
+    inline_keyboard: [[
+      { text: ru ? "✅ Учесть" : "✅ Accounted", callback_data: `ei:${importId}:${candidateId}:accounted`, style: "success" },
+      { text: ru ? "➕ Добавить" : "➕ Add", callback_data: `ei:${importId}:${candidateId}:add` },
+      { text: ru ? "✏️ Изменить" : "✏️ Edit", callback_data: `ei:${importId}:${candidateId}:edit` }
+    ]]
+  };
+}
+
 export function dailyReminderKeyboard(language = "ru") {
   const text = language === "en"
     ? { add: "➕ Add expense", noSpending: "✅ No spending today", disable: "🔕 Turn off reminders" }

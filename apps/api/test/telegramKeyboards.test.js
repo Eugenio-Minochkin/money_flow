@@ -11,10 +11,23 @@ import {
   budgetTopupUndoKeyboard,
   dailyReminderKeyboard,
   draftKeyboard,
+  expenseEvidenceCandidateKeyboard,
+  expenseEvidenceImportKeyboard,
   inboxDraftKeyboard,
   plannedDraftKeyboard,
   savedExpenseKeyboard
 } from "../src/telegramKeyboards.js";
+
+test("expense evidence keyboards use compact localized callbacks", () => {
+  for (const [language, labels] of [["ru", ["✅ Сохранить", "🔎 Разобрать", "🗑 Отменить", "✅ Учесть", "➕ Добавить", "✏️ Изменить"]], ["en", ["✅ Save", "🔎 Review", "🗑 Cancel", "✅ Accounted", "➕ Add", "✏️ Edit"]]]) {
+    const summary = expenseEvidenceImportKeyboard("import-42", language).inline_keyboard.flat();
+    assert.deepEqual(summary.map((button) => button.callback_data), ["ei:import-42:save", "ei:import-42:review", "ei:import-42:cancel"]);
+    assert.deepEqual(summary.map((button) => button.text), labels.slice(0, 3));
+    const candidate = expenseEvidenceCandidateKeyboard("import-42", "candidate-7", language).inline_keyboard.flat();
+    assert.deepEqual(candidate.map((button) => button.callback_data), ["ei:import-42:candidate-7:accounted", "ei:import-42:candidate-7:add", "ei:import-42:candidate-7:edit"]);
+    assert.deepEqual(candidate.map((button) => button.text), labels.slice(3));
+  }
+});
 
 test("single-item draft keyboard uses canonical category callbacks", () => {
   const keyboard = draftKeyboard(42, [{

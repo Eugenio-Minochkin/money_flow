@@ -30,6 +30,8 @@ import {
   budgetTopupSuccessKeyboard,
   categorySlugFromCode,
   draftKeyboard,
+  expenseEvidenceCandidateKeyboard,
+  expenseEvidenceImportKeyboard,
   inboxDraftKeyboard,
   parseBudgetTopupCallback,
   parseDraftCallback,
@@ -116,7 +118,7 @@ export function createTelegramBot({
       }
       if (update.callback_query) {
         try {
-          const result = await handleCallback({ update, repository, token, miniAppUrl, telegramClient, adminAlertService, expenseExportService: sharedExpenseExportService, trace, now });
+          const result = await handleCallback({ update, repository, token, miniAppUrl, expenseEvidenceImportService, telegramClient, adminAlertService, expenseExportService: sharedExpenseExportService, trace, now });
           success = true;
           return result;
         } catch (error) {
@@ -253,7 +255,7 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
     }
   }
 
-  if (!rawText && !hasVoice && !hasPhoto) {
+  if (!rawText && !hasVoice && !hasPhoto && !hasImageDocument) {
     return sendTelegramResponse(trace, () => sendMessage(token, chatId, botText(language, "unsupported"), null, telegramClient));
   }
   if (hasVoice && !rawText && !voiceTranscriber?.isConfigured()) {
@@ -565,7 +567,17 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
           const photo = message.photo?.at(-1) ?? message.document;
           const imported = await expenseEvidenceImportService.importImage({ user, chatId, messageId: message.message_id, fileId: photo?.file_id, fileUniqueId: photo?.file_unique_id, declaredMimeType: message.document?.mime_type ?? "image/jpeg", caption: message.caption ?? "" });
           processingResult = imported.state === "ready" ? "evidence_ready" : "evidence_processing";
-          return deliverQueuedResult({ token, chatId, loaderMessageId: loader.messageId, text: imported.evidenceType === "unsupported" ? botText(language, "unsupportedPhoto") : `Нашёл ${imported.candidates?.length ?? 0} расходов. Откройте черновики для проверки.`, replyMarkup: null, telegramClient, trace });
+          const candidateCount = imported.candidates?.length ?? 0;
+          const ready = imported.state === "ready" && imported.importId != null && imported.evidenceType !== "unsupported";
+          return deliverQueuedResult({
+            token,
+            chatId,
+            loaderMessageId: loader.messageId,
+            text: ready ? expenseEvidenceImportSummary(candidateCount, language) : botText(language, "unsupportedPhoto"),
+            replyMarkup: ready ? expenseEvidenceImportKeyboard(imported.importId, language) : null,
+            telegramClient,
+            trace
+          });
         }
         processingResult = "unsupported_photo";
         await safeRecordAppEvent(repository, user.id, "unsupported_photo_input", { inputType: "photo" });
@@ -1826,7 +1838,72 @@ async function handleExpenseEditorCallback({ callback, parsed, repository, token
   return answerCallback(token, callback.id, language === "ru" ? "Недоступно." : "Unavailable.", telegramClient);
 }
 
-export async function handleCallback({ update, repository, token, miniAppUrl, telegramClient, adminAlertService, expenseExportService, trace, now = () => new Date() }) {
+function parseExpenseEvidenceCallback(data) {
+  const parts = String(data ?? "").split(":");
+  if (parts[0] !== "ei" || !/^\d+$/u.test(parts[1] ?? "")) return null;
+  if (["save", "review", "cancel"].includes(parts[2]) && parts.length === 3) return { importId: parts[1], action: parts[2] };
+  if (/^\d+$/u.test(parts[2] ?? "") && ["accounted", "add", "edit"].includes(parts[3]) && parts.length === 4) {
+    return { importId: parts[1], candidateId: parts[2], action: parts[3] };
+  }
+  return null;
+}
+
+async function handleExpenseEvidenceCallback({ callback, parsed, repository, expenseEvidenceImportService, token, miniAppUrl, telegramClient, language, user, telegramUserId, trace, now }) {
+  if (!expenseEvidenceImportService || typeof repository.getExpenseEvidenceImport !== "function") {
+    return answerCallback(token, callback.id, evidenceText(language, "unavailable"), telegramClient);
+  }
+  const imported = await repository.getExpenseEvidenceImport(user?.id, parsed.importId);
+  if (!imported) return answerCallback(token, callback.id, evidenceText(language, "unavailable"), telegramClient);
+
+  if (parsed.action === "edit") {
+    const candidate = imported.candidates.find((item) => String(item.id) === parsed.candidateId);
+    if (!candidate?.draftId) return answerCallback(token, callback.id, evidenceText(language, "unavailable"), telegramClient);
+    const editor = parseExpenseEditorCallback(`ee:d:${candidate.draftId}:0:o`);
+    return handleExpenseEditorCallback({ callback, parsed: editor, repository, token, miniAppUrl, telegramClient, language, user, telegramUserId, now });
+  }
+
+  const ready = imported.candidates.filter((candidate) => candidate.status === "ready");
+  if (parsed.action === "review") return showExpenseEvidenceCandidate({ callback, imported, candidate: ready[0], token, telegramClient, language, trace });
+  if (parsed.candidateId && !imported.candidates.some((candidate) => String(candidate.id) === parsed.candidateId && ["ready", "likely_duplicate"].includes(candidate.status))) {
+    return answerCallback(token, callback.id, evidenceText(language, "complete"), telegramClient);
+  }
+
+  const actions = parsed.action === "save" || parsed.action === "cancel"
+    ? ready.map((candidate) => ({ candidateId: candidate.id, action: parsed.action === "cancel" ? "cancel" : "save" }))
+    : [{ candidateId: Number(parsed.candidateId), action: parsed.action === "accounted" ? "already_accounted" : "add" }];
+  if (!actions.length) return answerCallback(token, callback.id, evidenceText(language, "complete"), telegramClient);
+  const result = await expenseEvidenceImportService.resolveImportCandidates({ userId: user.id, importId: parsed.importId, actions });
+  const terminal = result.outcomes.every((outcome) => ["saved", "already_accounted", "cancelled"].includes(outcome.state));
+  if (parsed.candidateId || !terminal) {
+    const refreshed = await repository.getExpenseEvidenceImport(user.id, parsed.importId);
+    const candidate = refreshed?.candidates.find((item) => ["ready", "likely_duplicate"].includes(item.status));
+    if (candidate) return showExpenseEvidenceCandidate({ callback, imported: refreshed, candidate, token, telegramClient, language, trace });
+  }
+  return sendTelegramResponse(trace, async () => {
+    await answerCallback(token, callback.id, evidenceText(language, "complete"), telegramClient);
+    return editMessageText(token, callback.message.chat.id, callback.message.message_id, evidenceText(language, "complete"), { inline_keyboard: [] }, telegramClient);
+  });
+}
+
+async function showExpenseEvidenceCandidate({ callback, imported, candidate, token, telegramClient, language, trace }) {
+  if (!candidate) return answerCallback(token, callback.id, evidenceText(language, "complete"), telegramClient);
+  return sendTelegramResponse(trace, async () => {
+    await answerCallback(token, callback.id, evidenceText(language, "review"), telegramClient);
+    return editMessageText(token, callback.message.chat.id, callback.message.message_id, evidenceText(language, "candidate"), expenseEvidenceCandidateKeyboard(imported.id, candidate.id, language), telegramClient);
+  });
+}
+
+function evidenceText(language, key) {
+  const ru = language === "ru";
+  return ({
+    unavailable: ru ? "Импорт недоступен." : "This import is unavailable.",
+    complete: ru ? "Импорт обработан." : "Import processed.",
+    review: ru ? "Проверьте расход." : "Review this expense.",
+    candidate: ru ? "Проверьте расход перед сохранением." : "Review this expense before saving."
+  })[key];
+}
+
+export async function handleCallback({ update, repository, token, miniAppUrl, expenseEvidenceImportService, telegramClient, adminAlertService, expenseExportService, trace, now = () => new Date() }) {
   const callback = update.callback_query;
   const [action, draftId, itemIndex, value] = callback.data.split(":");
   const telegramUserId = callback.from.id;
@@ -1834,6 +1911,14 @@ export async function handleCallback({ update, repository, token, miniAppUrl, te
   const user = await repository.getUserByTelegramId?.(telegramUserId);
   trace.end("user_context");
   const language = user?.interface_language ?? "en";
+
+  const evidenceCallback = parseExpenseEvidenceCallback(callback.data);
+  if (evidenceCallback) {
+    return handleExpenseEvidenceCallback({
+      callback, parsed: evidenceCallback, repository, expenseEvidenceImportService, token, miniAppUrl,
+      telegramClient, language, user, telegramUserId, trace, now
+    });
+  }
 
   const expenseEditorCallback = parseExpenseEditorCallback(callback.data);
   if (expenseEditorCallback) {
@@ -1884,7 +1969,7 @@ export async function handleCallback({ update, repository, token, miniAppUrl, te
 
   const draftCallback = parseDraftCallback(callback.data);
   if (draftCallback) {
-    return handleDraftCallback({ callback, parsed: draftCallback, repository, token, miniAppUrl, telegramClient, adminAlertService, language, user, trace, now });
+    return handleDraftCallback({ callback, parsed: draftCallback, repository, token, miniAppUrl, expenseEvidenceImportService, telegramClient, adminAlertService, language, user, trace, now });
   }
 
   if (action === "ppr") {
@@ -2029,7 +2114,7 @@ export async function handleCallback({ update, repository, token, miniAppUrl, te
   }
 
   if (action === "confirm") {
-    return handleConfirmDraft(trace, token, telegramClient, callback, draftId, telegramUserId, language, miniAppUrl, repository, user, adminAlertService, now);
+    return handleConfirmDraft(trace, token, telegramClient, callback, draftId, telegramUserId, language, miniAppUrl, repository, user, adminAlertService, now, expenseEvidenceImportService);
   }
 
   if (action === "cancel") {
@@ -2128,10 +2213,10 @@ async function handleBudgetTopupCallback({ callback, parsed, repository, token, 
   });
 }
 
-async function handleDraftCallback({ callback, parsed, repository, token, miniAppUrl, telegramClient, adminAlertService, language, user, trace, now }) {
+async function handleDraftCallback({ callback, parsed, repository, token, miniAppUrl, expenseEvidenceImportService, telegramClient, adminAlertService, language, user, trace, now }) {
   const telegramUserId = callback.from.id;
   if (parsed.action === "confirm") {
-    return handleConfirmDraft(trace, token, telegramClient, callback, parsed.draftId, telegramUserId, language, miniAppUrl, repository, user, adminAlertService, now);
+    return handleConfirmDraft(trace, token, telegramClient, callback, parsed.draftId, telegramUserId, language, miniAppUrl, repository, user, adminAlertService, now, expenseEvidenceImportService);
   }
   if (parsed.action === "cancel") {
     return handleCancelDraft(trace, token, telegramClient, callback, parsed.draftId, telegramUserId, language, repository, user, now);
@@ -2193,7 +2278,7 @@ async function redrawDraft(trace, token, telegramClient, callback, updated, lang
   });
 }
 
-async function handleConfirmDraft(trace, token, telegramClient, callback, draftId, telegramUserId, language, miniAppUrl, repository, user, adminAlertService, now) {
+async function handleConfirmDraft(trace, token, telegramClient, callback, draftId, telegramUserId, language, miniAppUrl, repository, user, adminAlertService, now, expenseEvidenceImportService) {
   const startedAt = performance.now();
   const chatId = callback.message?.chat?.id;
   const messageId = callback.message?.message_id;
@@ -2241,6 +2326,20 @@ async function handleConfirmDraft(trace, token, telegramClient, callback, draftI
   let text;
   let replyMarkup;
   if (successfulSave) {
+    const evidenceCandidate = await expenseEvidenceImportService?.getActiveCandidateForDraft?.({ userId: user?.id, draftId });
+    if (evidenceCandidate && !result.alreadySaved) {
+      await expenseEvidenceImportService.markCandidateSavedAfterDraftConfirmation({ userId: user.id, draftId });
+      const imported = await repository.getExpenseEvidenceImport?.(user.id, evidenceCandidate.importId);
+      const nextCandidate = imported?.candidates.find((candidate) => ["ready", "likely_duplicate"].includes(candidate.status));
+      if (nextCandidate) {
+        text = evidenceText(language, "candidate");
+        replyMarkup = expenseEvidenceCandidateKeyboard(imported.id, nextCandidate.id, language);
+      } else {
+        text = evidenceText(language, "complete");
+        replyMarkup = { inline_keyboard: [] };
+      }
+    }
+    if (!text) {
     const summaryStartedAt = performance.now();
     const total = expenses.reduce((sum, expense) => sum + Number(expense.amount_base), 0);
     text = formatSavedSummary(total, result.dashboardSnapshot, { language, expenses });
@@ -2248,6 +2347,7 @@ async function handleConfirmDraft(trace, token, telegramClient, callback, draftI
       ? savedExpenseKeyboard(expenses[0].id, miniAppUrl, telegramUserId, language)
       : appKeyboard(miniAppUrl, telegramUserId, language);
     summaryBuildMs = elapsedSince(summaryStartedAt);
+    }
   } else if (outcome === "cancelled") {
     text = botText(language, "draftCanceledMessage");
     replyMarkup = { inline_keyboard: [] };
@@ -3619,6 +3719,14 @@ function botText(language, key, values = {}) {
 
 function formatTranscriptForTelegram(transcript) {
   return escapeTelegramHtml(truncateText(String(transcript ?? "").trim(), 140));
+}
+
+function expenseEvidenceImportSummary(candidateCount, language) {
+  if (language === "ru") {
+    const ending = candidateCount % 10 >= 2 && candidateCount % 10 <= 4 && (candidateCount % 100 < 10 || candidateCount % 100 >= 20) ? "а" : candidateCount === 1 ? "" : "ов";
+    return `Готово к проверке: ${candidateCount} расход${ending}.`;
+  }
+  return `Ready to review: ${candidateCount} expense${candidateCount === 1 ? "" : "s"}.`;
 }
 
 function truncateText(text, maxLength) {

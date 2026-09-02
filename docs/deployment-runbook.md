@@ -147,6 +147,26 @@ DEEPGRAM_MAX_AUDIO_WINDOW_SEC=900
 
 Set `OPENAI_PARSER_GLOBAL_ENABLED=false` or `DEEPGRAM_TRANSCRIPTION_GLOBAL_ENABLED=false` for an emergency stop of the corresponding paid route, then restart through the approved deploy procedure. Local-safe expense parsing remains available when the OpenAI route is unavailable. Do not log expense text, audio, auth headers, tokens, `initData`, or Telegram profile data while investigating limits.
 
+## Expense Evidence Image Import
+
+Expense-evidence import is an opt-in Telegram capture route and defaults to disabled. It accepts one JPEG or PNG image supplied as a Telegram photo or document; PDFs, HEIC, animated images, albums, and non-image documents remain unsupported.
+
+```env
+EXPENSE_EVIDENCE_IMPORT_ENABLED=false
+EXPENSE_EVIDENCE_MAX_BYTES=10485760
+EXPENSE_EVIDENCE_TIMEOUT_MS=30000
+EXPENSE_EVIDENCE_MODEL=gpt-5-mini
+EXPENSE_EVIDENCE_HMAC_SECRET=<unique-production-secret>
+```
+
+Set `EXPENSE_EVIDENCE_IMPORT_ENABLED=true` only through the approved deployment procedure. Production startup requires `EXPENSE_EVIDENCE_HMAC_SECRET` whenever it is enabled; do not place this secret in PR text, logs, or alerts. `EXPENSE_EVIDENCE_MODEL` falls back to `OPENAI_MODEL` when unset.
+
+Telegram image bytes are downloaded with a size bound, validated as JPEG/PNG using declared type and file bytes, sanitized in memory, and sent to the Responses API as request-scoped data. Every image-analysis request must set `store: false`; this is not a promise of zero retention and must never be documented as one. The route does not upload an OpenAI File and does not send a Telegram URL.
+
+Operational logs, traces, and admin alerts must contain only safe operational state or error codes. Never include image bytes, data URLs, Telegram file IDs or paths, HMACs/fingerprints, captions, OCR/model output, merchant text, financial amounts/dates/balances, account identifiers, headers, tokens, or provider response bodies. Use synthetic fixtures only when diagnosing or testing the route.
+
+The import persists workflow/candidate state and ordinary drafts, not image bytes. A candidate becomes an expense only through `saveDraftAsExpense()`. Before batch save and explicit possible-duplicate `Add`, the service rechecks duplicate, ownership, validation, replay, already-saved, and closed-month rules; no operational procedure may bypass that boundary.
+
 ## Rate Limit Proxy Settings
 
 The API rate limiter trusts `X-Forwarded-For` only from `TRUSTED_PROXY_IPS`.

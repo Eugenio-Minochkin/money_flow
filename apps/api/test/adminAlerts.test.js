@@ -156,6 +156,30 @@ test("sanitizeAlertContext removes sensitive fields recursively and keeps safe s
   });
 });
 
+test("sanitizeAlertContext excludes image-evidence financial and correlation data", () => {
+  const sanitized = sanitizeAlertContext({
+    source: "telegram",
+    operation: "expense_evidence_import",
+    imageBytes: "synthetic-image-bytes",
+    dataUrl: "data:image/png;base64,c3ludGhldGlj",
+    telegramFileId: "synthetic-file-id",
+    caption: "Synthetic merchant 42 THB",
+    merchant: "Synthetic merchant",
+    amount: 42,
+    spentOn: "2026-09-02",
+    balance: 1000,
+    candidateSetHmac: "synthetic-hmac",
+    modelOutput: "synthetic OCR output",
+    extra: { provider: "openai", imageBytes: "synthetic-image-bytes", hmac: "synthetic-hmac" }
+  });
+
+  assert.deepEqual(sanitized, {
+    source: "telegram",
+    operation: "expense_evidence_import",
+    extra: { provider: "openai" }
+  });
+});
+
 test("notifyAdminError redacts secrets from the final alert text", async () => {
   const sent = [];
   const service = createAdminAlertService({
