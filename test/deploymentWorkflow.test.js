@@ -67,6 +67,23 @@ test('durable docs preserve product analytics cohort and privacy contracts', () 
   assert.match(testing, /exclude.*SQL.*index.*taxonomy/i);
 });
 
+test('expense-evidence docs preserve Phase 2 raw-context and batch-save safety boundaries', () => {
+  const domain = readText('docs/DOMAIN_RULES.md');
+  const product = readText('docs/PRODUCT_CONTEXT.md');
+  const runbook = readText('docs/deployment-runbook.md');
+
+  for (const text of [domain, product, runbook]) {
+    assert.match(text, /process restart/i);
+    assert.match(text, /raw.*context|shared.*context/i);
+  }
+  assert.match(domain, /15-minute TTL/i);
+  assert.match(domain, /`product_price`.*never create an expense/i);
+  assert.match(domain, /`purchase_photo`.*review-only/i);
+  assert.match(domain, /saveDraftAsExpense\(\).*separately/i);
+  assert.match(runbook, /do not add durable raw-context storage/i);
+  assert.match(runbook, /batch preview is advisory/i);
+});
+
 test('production compose passes configured admin Telegram ids to the API', () => {
   const compose = readText('compose.prod.yml');
 

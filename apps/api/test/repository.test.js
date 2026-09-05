@@ -6610,6 +6610,141 @@ test("expense evidence cancel marks an owned ready candidate and its unresolved 
   assert.ok(statements.some((query) => query.startsWith("UPDATE expense_evidence_candidates SET status = 'cancelled'")));
 });
 
+test("starts one owned collecting evidence session and expires a stale predecessor", async () => {
+  const statements = [];
+  const client = {
+    async query(sql, params = []) {
+      const query = String(sql);
+      statements.push({ query, params });
+      if (["BEGIN", "COMMIT", "ROLLBACK"].includes(query)) return { rows: [] };
+      if (query.startsWith("SELECT id FROM users WHERE id = $1 FOR UPDATE")) return { rows: [{ id: 2 }] };
+      if (query.startsWith("UPDATE expense_evidence_sessions SET status = 'expired'")) return { rows: [] };
+      if (query.includes("FROM expense_evidence_sessions") && query.includes("FOR UPDATE")) return { rows: [] };
+      if (query.startsWith("INSERT INTO expense_evidence_sessions")) return { rows: [{ id: 41, status: "collecting", expires_at: "2026-09-03T12:15:00.000Z" }] };
+      throw new Error(`Unexpected SQL: ${query}`);
+    }, release() {}
+  };
+  const repo = createRepository({ async connect() { return client; } });
+
+  const result = await repo.startOrResumeExpenseEvidenceSession({ userId: 2, chatId: 8, ttlMs: 900_000 });
+
+  assert.deepEqual(result, { state: "started", id: 41, status: "collecting", expiresAt: "2026-09-03T12:15:00.000Z" });
+  assert.ok(statements.some(({ query }) => query.startsWith("UPDATE expense_evidence_sessions SET status = 'expired'")));
+  assert.ok(statements.some(({ query, params }) => query.startsWith("INSERT INTO expense_evidence_sessions") && params[0] === 2 && params[1] === 8 && params[2] === 900_000));
+});
+
+test("resumes only an unexpired collecting evidence session owned by the user and chat", async () => {
+  const statements = [];
+  const client = {
+    async query(sql, params = []) {
+      const query = String(sql);
+      statements.push({ query, params });
+      if (["BEGIN", "COMMIT", "ROLLBACK"].includes(query)) return { rows: [] };
+      if (query.startsWith("SELECT id FROM users WHERE id = $1 FOR UPDATE")) return { rows: [{ id: 2 }] };
+      if (query.startsWith("UPDATE expense_evidence_sessions SET status = 'expired'")) return { rows: [] };
+      if (query.includes("FROM expense_evidence_sessions") && query.includes("FOR UPDATE")) return { rows: [{ id: 41, status: "collecting", expires_at: "2026-09-03T12:15:00.000Z" }] };
+      if (query.startsWith("UPDATE expense_evidence_sessions SET expires_at")) return { rows: [{ id: 41, status: "collecting", expires_at: "2026-09-03T12:15:00.000Z" }] };
+      throw new Error(`Unexpected SQL: ${query}`);
+    }, release() {}
+  };
+  const repo = createRepository({ async connect() { return client; } });
+
+  const result = await repo.startOrResumeExpenseEvidenceSession({ userId: 2, chatId: 8, ttlMs: 900_000 });
+
+  assert.equal(result.state, "resumed");
+  const lock = statements.find(({ query }) => query.includes("FROM expense_evidence_sessions") && query.includes("FOR UPDATE"));
+  assert.match(lock.query, /user_id = \$1 AND source_chat_id = \$2/);
+  assert.match(lock.query, /status = 'collecting'/);
+});
+
+test("serializes competing evidence session starts through the owned user row", async () => {
+  const statements = [];
+  const client = {
+    async query(sql) {
+      const query = String(sql);
+      statements.push(query);
+      if (["BEGIN", "COMMIT", "ROLLBACK"].includes(query)) return { rows: [] };
+      if (query.startsWith("SELECT id FROM users WHERE id = $1 FOR UPDATE")) return { rows: [{ id: 2 }] };
+      if (query.startsWith("UPDATE expense_evidence_sessions SET status = 'expired'")) return { rows: [] };
+      if (query.includes("FROM expense_evidence_sessions")) return { rows: [{ id: 41, status: "collecting", expires_at: "2026-09-03T12:15:00.000Z" }] };
+      if (query.startsWith("UPDATE expense_evidence_sessions SET expires_at")) return { rows: [{ id: 41, status: "collecting", expires_at: "2026-09-03T12:15:00.000Z" }] };
+      throw new Error(`Unexpected SQL: ${query}`);
+    }, release() {}
+  };
+  const repo = createRepository({ async connect() { return client; } });
+
+  await repo.startOrResumeExpenseEvidenceSession({ userId: 2, chatId: 8, ttlMs: 900_000 });
+
+  assert.ok(statements.some((query) => query.startsWith("SELECT id FROM users WHERE id = $1 FOR UPDATE")));
+});
+
+test("links only an owned ready import to an active owned session", async () => {
+  const statements = [];
+  const client = {
+    async query(sql, params = []) {
+      const query = String(sql);
+      statements.push({ query, params });
+      if (["BEGIN", "COMMIT", "ROLLBACK"].includes(query)) return { rows: [] };
+      if (query.includes("FROM expense_evidence_sessions") && query.includes("FOR UPDATE")) return { rows: [{ id: 41 }] };
+      if (query.includes("FROM expense_evidence_imports") && query.includes("FOR UPDATE")) return { rows: [{ id: 9 }] };
+      if (query.startsWith("INSERT INTO expense_evidence_session_imports")) return { rows: [{ ordinal: 1 }] };
+      throw new Error(`Unexpected SQL: ${query}`);
+    }, release() {}
+  };
+  const repo = createRepository({ async connect() { return client; } });
+
+  const result = await repo.linkExpenseEvidenceImportToSession({ userId: 2, chatId: 8, sessionId: 41, importId: 9 });
+
+  assert.deepEqual(result, { state: "linked", ordinal: 1 });
+  const importLock = statements.find(({ query }) => query.includes("FROM expense_evidence_imports") && query.includes("FOR UPDATE"));
+  assert.match(importLock.query, /user_id = \$2 AND source_chat_id = \$3/);
+  assert.match(importLock.query, /status IN \('ready', 'completed'\)/);
+});
+
+test("finishes and cancels an owned active or ready-preview session without changing standalone imports", async () => {
+  const statements = [];
+  const repo = createRepository(fakePool((sql) => {
+    const query = String(sql);
+    statements.push(query);
+    if (query.includes("SET status = 'ready'")) return { rows: [{ id: 41, status: "ready" }] };
+    if (query.includes("SET status = 'cancelled'")) return { rows: [{ id: 41, status: "cancelled" }] };
+    throw new Error(`Unexpected SQL: ${query}`);
+  }));
+
+  assert.deepEqual(await repo.finishExpenseEvidenceSession({ userId: 2, chatId: 8, sessionId: 41 }), { state: "ready", id: 41 });
+  assert.deepEqual(await repo.cancelExpenseEvidenceSession({ userId: 2, chatId: 8, sessionId: 41 }), { state: "cancelled", id: 41 });
+  const cancellation = statements.find((query) => query.includes("SET status = 'cancelled'"));
+  assert.match(cancellation, /status IN \('collecting', 'finalizing', 'ready'\)/);
+  assert.equal(statements.some((query) => query.includes("expense_evidence_imports") || query.includes("expense_evidence_candidates") || query.includes("UPDATE drafts")), false);
+});
+
+test("expires collecting sessions without touching ready or cancelled sessions", async () => {
+  let statement;
+  const repo = createRepository(fakePool((sql) => {
+    statement = String(sql);
+    return { rowCount: 3, rows: [] };
+  }));
+
+  assert.equal(await repo.expireExpenseEvidenceSessions(), 3);
+  assert.match(statement, /status = 'collecting' AND expires_at <= now\(\)/);
+  assert.doesNotMatch(statement, /'ready'|'cancelled'/);
+});
+
+test("reads aggregate candidates through owned session import links", async () => {
+  let statement;
+  const repo = createRepository(fakePool((sql) => {
+    statement = String(sql);
+    return { rows: [{ session_id: 41, import_id: 9, import_ordinal: 0, candidate_id: 12, candidate_ordinal: 0, evidence_type: "receipt", draft_id: 14, candidate_status: "ready", dedupe_classification: "new", dedupe_reason_code: null }] };
+  }));
+
+  const result = await repo.getExpenseEvidenceSessionCandidates({ userId: 2, sessionId: 41 });
+
+  assert.equal(result[0].candidateId, 12);
+  assert.match(statement, /sessions\.user_id = \$1 AND sessions\.id = \$2/);
+  assert.match(statement, /JOIN expense_evidence_session_imports/);
+  assert.match(statement, /JOIN expense_evidence_imports/);
+});
+
 test("finds only an owned active evidence candidate for an editor draft", async () => {
   let sql;
   const repo = createRepository(fakePool((query) => {

@@ -18,12 +18,16 @@ This file records stable product and business rules. Read it before changing bud
 ## Expense Evidence Images
 
 - A Telegram photo or JPEG/PNG document may create reviewable expense evidence drafts only when the image-import switch is enabled. The feature is disabled by default.
-- Image evidence accepts one supported JPEG or PNG image. Albums, PDFs, HEIC, animated images, bank connections, and item-level receipt accounting are out of scope.
+- Each image import accepts one supported JPEG or PNG image. A collecting catch-up session may group several sequential imports from its owning user and chat; PDFs, HEIC, animated images, bank connections, and item-level receipt accounting remain out of scope.
 - Image bytes are bounded, sanitized, stripped of supported metadata, and used only for the request that analyzes the image. The persistent workflow contains import/candidate state and ordinary drafts, not the image bytes, Telegram URL, or OCR/model response.
+- A collecting catch-up session is owned by one internal user and source chat, has a 15-minute TTL, and ends explicitly with `Done` or `Cancel`, or when it expires. Durable session state may contain only safe workflow metadata and links to already-created imports/candidates; it must not contain raw captions, voice transcripts, Telegram file IDs or paths, image bytes, OCR/model output, merchant text, amounts, account identifiers, or shared free-text context.
+- A caption belongs only to the image that carried it and is used only in that image's request. Optional text or voice supplied as shared catch-up context is request-scoped memory: it is cleared on `Done`, `Cancel`, expiry, or process restart. A restart never reconstructs it; the user may repeat the explanation, while already extracted candidates and safe workflow metadata remain durable.
 - An image candidate is not a financial fact. Each candidate maps to an ordinary draft, and `saveDraftAsExpense()` remains the only canonical and idempotent expense-save boundary.
 - Receipt, order-confirmation, and payment-confirmation evidence creates at most one candidate from the final paid amount; an unpaid order, line items, subtotal, balance, credit, transfer, refund, reward, or account identifier is not an expense candidate.
+- `product_price` and `unknown` evidence never create an expense or a saveable candidate merely because a price is visible. `purchase_photo` may create a review-only candidate only with sufficient purchase evidence or an explicit user explanation; it is never silently saved from a visible price.
 - Missing or uncertain amount, currency, or date stays in review. The user's base currency is never substituted for a missing or ambiguous image currency, and a closed month remains closed for batch save, review, retry, and any duplicate override.
 - Deduplication is user-scoped and compares confirmed expenses, unresolved drafts, and unfinished imports. `likely_duplicate` is not safely saved; an explicit `Add` can override only a `possible_duplicate` warning and still rechecks ownership, validation, replay, already-saved, and closed-month rules through the canonical save path.
+- A session batch preview is advisory and contains only the minimum aggregate state needed for the next action. Each selected candidate is re-read and resolved through its own ordinary import/draft path; batch outcomes may be partial, and every successful save still calls `saveDraftAsExpense()` separately.
 
 ## Monthly Budget
 

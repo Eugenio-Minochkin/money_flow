@@ -149,7 +149,7 @@ Set `OPENAI_PARSER_GLOBAL_ENABLED=false` or `DEEPGRAM_TRANSCRIPTION_GLOBAL_ENABL
 
 ## Expense Evidence Image Import
 
-Expense-evidence import is an opt-in Telegram capture route and defaults to disabled. It accepts one JPEG or PNG image supplied as a Telegram photo or document; PDFs, HEIC, animated images, albums, and non-image documents remain unsupported.
+Expense-evidence import is an opt-in Telegram capture route and defaults to disabled. Each import accepts one JPEG or PNG image supplied as a Telegram photo or document; a user may gather several sequential imports in an explicit 15-minute catch-up session and choose `Done` or `Cancel`. PDFs, HEIC, animated images, albums, and non-image documents remain unsupported.
 
 ```env
 EXPENSE_EVIDENCE_IMPORT_ENABLED=false
@@ -163,7 +163,9 @@ Set `EXPENSE_EVIDENCE_IMPORT_ENABLED=true` only through the approved deployment 
 
 Telegram image bytes are downloaded with a size bound, validated as JPEG/PNG using declared type and file bytes, sanitized in memory, and sent to the Responses API as request-scoped data. Every image-analysis request must set `store: false`; this is not a promise of zero retention and must never be documented as one. The route does not upload an OpenAI File and does not send a Telegram URL.
 
-Operational logs, traces, and admin alerts must contain only safe operational state or error codes. Never include image bytes, data URLs, Telegram file IDs or paths, HMACs/fingerprints, captions, OCR/model output, merchant text, financial amounts/dates/balances, account identifiers, headers, tokens, or provider response bodies. Use synthetic fixtures only when diagnosing or testing the route.
+Operational logs, traces, and admin alerts must contain only safe operational state or error codes. Never include image bytes, data URLs, Telegram file IDs or paths, HMACs/fingerprints, captions, shared catch-up text, voice transcripts, OCR/model output, merchant text, financial amounts/dates/balances, account identifiers, headers, tokens, or provider response bodies. Use synthetic fixtures only when diagnosing or testing the route.
+
+Catch-up sessions may durably retain only ownership, status, expiry, and links to existing imports/candidates. Shared text or voice context is request-scoped memory and must be discarded on `Done`, `Cancel`, expiry, or process restart; do not add durable raw-context storage as an operational workaround. `product_price` and `unknown` never become expenses from a visible price, and `purchase_photo` remains review-only unless sufficient purchase evidence or an explicit user explanation supports a candidate. A batch preview is advisory: each selected item must use the existing canonical draft resolution and save boundary, so a blocked item cannot make another item silently save or roll back.
 
 The import persists workflow/candidate state and ordinary drafts, not image bytes. A candidate becomes an expense only through `saveDraftAsExpense()`. Before batch save and explicit possible-duplicate `Add`, the service rechecks duplicate, ownership, validation, replay, already-saved, and closed-month rules; no operational procedure may bypass that boundary.
 

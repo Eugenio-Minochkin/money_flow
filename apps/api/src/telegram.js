@@ -32,6 +32,8 @@ import {
   draftKeyboard,
   expenseEvidenceCandidateKeyboard,
   expenseEvidenceImportKeyboard,
+  expenseEvidenceSessionCollectingKeyboard,
+  expenseEvidenceSessionPreviewKeyboard,
   inboxDraftKeyboard,
   parseBudgetTopupCallback,
   parseDraftCallback,
@@ -76,6 +78,7 @@ export function createTelegramBot({
   expenseParser = createExpenseParser(),
   voiceTranscriber,
   expenseEvidenceImportService,
+  expenseEvidenceSessionService,
   telegramClient,
   perfLogger = console.info,
   adminTelegramIds = new Set(),
@@ -88,6 +91,7 @@ export function createTelegramBot({
   telegramJobQueue = createTelegramJobQueue(telegramJobQueueOptions),
   awaitQueuedJobs = true
 }) {
+  const activeEvidenceSessions = new Map();
   const sharedExpenseExportService = expenseExportService ?? createExpenseExportService({
     repository,
     now,
@@ -105,7 +109,7 @@ export function createTelegramBot({
       }
       if (update.message) {
         try {
-          const result = await handleMessage({ update, repository, token, miniAppUrl, expenseParser, voiceTranscriber, expenseEvidenceImportService, telegramClient, adminTelegramIds, adminStatsService, releaseNotesService, adminAlertService, expenseExportService: sharedExpenseExportService, now, trace, telegramJobQueue, awaitQueuedJobs });
+          const result = await handleMessage({ update, repository, token, miniAppUrl, expenseParser, voiceTranscriber, expenseEvidenceImportService, expenseEvidenceSessionService, activeEvidenceSessions, telegramClient, adminTelegramIds, adminStatsService, releaseNotesService, adminAlertService, expenseExportService: sharedExpenseExportService, now, trace, telegramJobQueue, awaitQueuedJobs });
           success = !result?.queued;
           return result;
         } catch (error) {
@@ -118,7 +122,7 @@ export function createTelegramBot({
       }
       if (update.callback_query) {
         try {
-          const result = await handleCallback({ update, repository, token, miniAppUrl, expenseEvidenceImportService, telegramClient, adminAlertService, expenseExportService: sharedExpenseExportService, trace, now });
+          const result = await handleCallback({ update, repository, token, miniAppUrl, expenseEvidenceImportService, expenseEvidenceSessionService, activeEvidenceSessions, telegramClient, adminAlertService, expenseExportService: sharedExpenseExportService, trace, now });
           success = true;
           return result;
         } catch (error) {
@@ -171,7 +175,7 @@ export async function deliverShortcutCaptureToTelegramBestEffort({ onError = () 
   }
 }
 
-async function handleMessage({ update, repository, token, miniAppUrl, expenseParser, voiceTranscriber, expenseEvidenceImportService, telegramClient, adminTelegramIds, adminStatsService, releaseNotesService, adminAlertService, expenseExportService, now, trace, telegramJobQueue, awaitQueuedJobs }) {
+async function handleMessage({ update, repository, token, miniAppUrl, expenseParser, voiceTranscriber, expenseEvidenceImportService, expenseEvidenceSessionService, activeEvidenceSessions, telegramClient, adminTelegramIds, adminStatsService, releaseNotesService, adminAlertService, expenseExportService, now, trace, telegramJobQueue, awaitQueuedJobs }) {
   const message = update.message;
   const from = message.from;
   if (!from) return { ok: true };
@@ -393,7 +397,7 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
   const deliveryState = createTelegramJobDeliveryState();
   const queued = telegramJobQueue.enqueue({
     userId: from.id,
-    run: () => processQueuedMessage({ message, from, user, rawText, hasVoice, inputType: trackExpenseMessage ? inputType : null, repository, token, miniAppUrl, expenseParser, voiceTranscriber, expenseEvidenceImportService, telegramClient, adminTelegramIds, adminAlertService, now, trace, deliveryState }),
+    run: () => processQueuedMessage({ message, from, user, rawText, hasVoice, inputType: trackExpenseMessage ? inputType : null, repository, token, miniAppUrl, expenseParser, voiceTranscriber, expenseEvidenceImportService, expenseEvidenceSessionService, activeEvidenceSessions, telegramClient, adminTelegramIds, adminAlertService, now, trace, deliveryState }),
     onStart: (metadata) => trace.event("queue_job_start", metadata),
     onFinish: (metadata) => trace.event("queue_job_done", metadata)
   });
@@ -496,7 +500,7 @@ function pruneExpiredPendingFeedback(currentTime) {
   }
 }
 
-export async function processQueuedMessage({ message, from, user, rawText, hasVoice, inputType, repository, token, miniAppUrl, expenseParser, voiceTranscriber, expenseEvidenceImportService, telegramClient, adminTelegramIds = new Set(), adminAlertService, now = () => new Date(), trace, deliveryState = createTelegramJobDeliveryState() }) {
+export async function processQueuedMessage({ message, from, user, rawText, hasVoice, inputType, repository, token, miniAppUrl, expenseParser, voiceTranscriber, expenseEvidenceImportService, expenseEvidenceSessionService, activeEvidenceSessions, telegramClient, adminTelegramIds = new Set(), adminAlertService, now = () => new Date(), trace, deliveryState = createTelegramJobDeliveryState() }) {
   const processingStartedAt = performance.now();
   const language = user.interface_language ?? "en";
   const chatId = message.chat.id;
@@ -569,6 +573,22 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
           processingResult = imported.state === "ready" ? "evidence_ready" : "evidence_processing";
           const candidateCount = imported.candidates?.length ?? 0;
           const ready = imported.state === "ready" && imported.importId != null && imported.evidenceType !== "unsupported";
+          const activeSession = getActiveEvidenceSession(activeEvidenceSessions, user.id, chatId, now());
+          if (ready && activeSession && expenseEvidenceSessionService) {
+            const linked = await expenseEvidenceSessionService.linkCompletedImport({ userId: user.id, chatId, sessionId: activeSession.sessionId, imported });
+            if (linked?.state === "linked") {
+              return deliverQueuedResult({
+                token,
+                chatId,
+                loaderMessageId: loader.messageId,
+                text: evidenceSessionText(language, "added"),
+                replyMarkup: expenseEvidenceSessionCollectingKeyboard(activeSession.sessionId, language),
+                telegramClient,
+                trace
+              });
+            }
+            activeEvidenceSessions?.delete(evidenceSessionKey(user.id, chatId));
+          }
           return deliverQueuedResult({
             token,
             chatId,
@@ -1848,6 +1868,77 @@ function parseExpenseEvidenceCallback(data) {
   return null;
 }
 
+function parseExpenseEvidenceSessionCallback(data) {
+  const parts = String(data ?? "").split(":");
+  if (parts[0] !== "es" || !/^[A-Za-z0-9-]+$/u.test(parts[1] ?? "") || parts.length !== 3) return null;
+  if (!["start", "add", "finish", "save", "review", "cancel"].includes(parts[2])) return null;
+  return { id: parts[1], action: parts[2] };
+}
+
+async function handleExpenseEvidenceSessionCallback({ callback, parsed, repository, expenseEvidenceSessionService, activeEvidenceSessions, token, telegramClient, language, user, trace, now }) {
+  const chatId = callback.message?.chat?.id;
+  if (!expenseEvidenceSessionService || !user || chatId == null) {
+    return answerCallback(token, callback.id, evidenceText(language, "unavailable"), telegramClient);
+  }
+  if (parsed.action === "start") {
+    const imported = await repository.getExpenseEvidenceImport?.(user.id, parsed.id);
+    if (!imported) return answerCallback(token, callback.id, evidenceText(language, "unavailable"), telegramClient);
+    const started = await expenseEvidenceSessionService.startOrResume({ userId: user.id, chatId });
+    if (!started?.id) return answerCallback(token, callback.id, evidenceText(language, "unavailable"), telegramClient);
+    const linked = await expenseEvidenceSessionService.linkCompletedImport({ userId: user.id, chatId, sessionId: started.id, imported: { id: imported.id, state: "ready" } });
+    if (linked?.state !== "linked") return answerCallback(token, callback.id, evidenceText(language, "unavailable"), telegramClient);
+    activeEvidenceSessions.set(evidenceSessionKey(user.id, chatId), {
+      sessionId: started.id,
+      expiresAtMs: evidenceSessionExpiry(started.expiresAt, now)
+    });
+    return sendTelegramResponse(trace, async () => {
+      await answerCallback(token, callback.id, evidenceSessionText(language, "started"), telegramClient);
+      return editMessageText(token, chatId, callback.message.message_id, evidenceSessionText(language, "started"), expenseEvidenceSessionCollectingKeyboard(started.id, language), telegramClient);
+    });
+  }
+
+  const active = getActiveEvidenceSession(activeEvidenceSessions, user.id, chatId, now());
+  if (!active || String(active.sessionId) !== parsed.id) return answerCallback(token, callback.id, evidenceText(language, "unavailable"), telegramClient);
+  if (parsed.action === "add") return answerCallback(token, callback.id, evidenceSessionText(language, "awaiting_photo"), telegramClient);
+  if (parsed.action === "finish") {
+    const finished = await expenseEvidenceSessionService.finish({ userId: user.id, chatId, sessionId: Number(parsed.id) });
+    if (finished?.state !== "ready") return answerCallback(token, callback.id, evidenceText(language, "unavailable"), telegramClient);
+    active.ready = true;
+    return sendTelegramResponse(trace, async () => {
+      await answerCallback(token, callback.id, evidenceSessionText(language, "finished"), telegramClient);
+      return editMessageText(token, chatId, callback.message.message_id, expenseEvidenceSessionSummary(finished.preview, language), expenseEvidenceSessionPreviewKeyboard(parsed.id, language), telegramClient);
+    });
+  }
+  if (parsed.action === "cancel") {
+    const cancelled = await expenseEvidenceSessionService.cancel({ userId: user.id, chatId, sessionId: Number(parsed.id) });
+    if (cancelled?.state !== "cancelled") return answerCallback(token, callback.id, evidenceText(language, "unavailable"), telegramClient);
+    activeEvidenceSessions.delete(evidenceSessionKey(user.id, chatId));
+    return sendTelegramResponse(trace, async () => {
+      await answerCallback(token, callback.id, evidenceSessionText(language, "cancelled"), telegramClient);
+      return editMessageText(token, chatId, callback.message.message_id, evidenceSessionText(language, "cancelled"), { inline_keyboard: [] }, telegramClient);
+    });
+  }
+  const candidates = await repository.getExpenseEvidenceSessionCandidates?.({ userId: user.id, sessionId: Number(parsed.id) }) ?? [];
+  const unresolved = candidates.filter((candidate) => ["ready", "likely_duplicate"].includes(candidate.status));
+  if (parsed.action === "save") {
+    if (!unresolved.length) return answerCallback(token, callback.id, evidenceText(language, "complete"), telegramClient);
+    await expenseEvidenceSessionService.resolve({ userId: user.id, sessionId: Number(parsed.id), actions: unresolved.map((candidate) => ({ candidateId: candidate.candidateId, action: "save" })) });
+    activeEvidenceSessions.delete(evidenceSessionKey(user.id, chatId));
+    return sendTelegramResponse(trace, async () => {
+      await answerCallback(token, callback.id, evidenceText(language, "complete"), telegramClient);
+      return editMessageText(token, chatId, callback.message.message_id, evidenceText(language, "complete"), { inline_keyboard: [] }, telegramClient);
+    });
+  }
+  if (parsed.action === "review") {
+    const candidate = unresolved[0];
+    const imported = candidate && await repository.getExpenseEvidenceImport?.(user.id, candidate.importId);
+    if (!imported) return answerCallback(token, callback.id, evidenceText(language, "complete"), telegramClient);
+    const importedCandidate = imported.candidates.find((item) => String(item.id) === String(candidate.candidateId));
+    return showExpenseEvidenceCandidate({ callback, imported, candidate: importedCandidate, token, telegramClient, language, trace });
+  }
+  return answerCallback(token, callback.id, evidenceText(language, "unavailable"), telegramClient);
+}
+
 async function handleExpenseEvidenceCallback({ callback, parsed, repository, expenseEvidenceImportService, token, miniAppUrl, telegramClient, language, user, telegramUserId, trace, now }) {
   if (!expenseEvidenceImportService || typeof repository.getExpenseEvidenceImport !== "function") {
     return answerCallback(token, callback.id, evidenceText(language, "unavailable"), telegramClient);
@@ -1903,7 +1994,7 @@ function evidenceText(language, key) {
   })[key];
 }
 
-export async function handleCallback({ update, repository, token, miniAppUrl, expenseEvidenceImportService, telegramClient, adminAlertService, expenseExportService, trace, now = () => new Date() }) {
+export async function handleCallback({ update, repository, token, miniAppUrl, expenseEvidenceImportService, expenseEvidenceSessionService, activeEvidenceSessions, telegramClient, adminAlertService, expenseExportService, trace, now = () => new Date() }) {
   const callback = update.callback_query;
   const [action, draftId, itemIndex, value] = callback.data.split(":");
   const telegramUserId = callback.from.id;
@@ -1911,6 +2002,14 @@ export async function handleCallback({ update, repository, token, miniAppUrl, ex
   const user = await repository.getUserByTelegramId?.(telegramUserId);
   trace.end("user_context");
   const language = user?.interface_language ?? "en";
+
+  const evidenceSessionCallback = parseExpenseEvidenceSessionCallback(callback.data);
+  if (evidenceSessionCallback) {
+    return handleExpenseEvidenceSessionCallback({
+      callback, parsed: evidenceSessionCallback, repository, expenseEvidenceSessionService, activeEvidenceSessions,
+      token, telegramClient, language, user, trace, now
+    });
+  }
 
   const evidenceCallback = parseExpenseEvidenceCallback(callback.data);
   if (evidenceCallback) {
@@ -3727,6 +3826,53 @@ function expenseEvidenceImportSummary(candidateCount, language) {
     return `Готово к проверке: ${candidateCount} расход${ending}.`;
   }
   return `Ready to review: ${candidateCount} expense${candidateCount === 1 ? "" : "s"}.`;
+}
+
+function evidenceSessionKey(userId, chatId) {
+  return `${userId}:${chatId}`;
+}
+
+function evidenceSessionExpiry(expiresAt, now) {
+  const parsed = new Date(expiresAt).getTime();
+  return Number.isFinite(parsed) ? parsed : now().getTime() + 15 * 60 * 1000;
+}
+
+function getActiveEvidenceSession(activeEvidenceSessions, userId, chatId, currentTime) {
+  const key = evidenceSessionKey(userId, chatId);
+  const active = activeEvidenceSessions?.get(key);
+  if (!active) return null;
+  if (active.expiresAtMs <= currentTime.getTime()) {
+    activeEvidenceSessions.delete(key);
+    return null;
+  }
+  return active;
+}
+
+function evidenceSessionText(language, key) {
+  const ru = language === "ru";
+  return ({
+    started: ru ? "Добавьте фото, затем нажмите «Готово»." : "Add photos, then tap Finish.",
+    added: ru ? "Фото добавлено. Добавьте ещё или нажмите «Готово»." : "Photo added. Add another or tap Finish.",
+    awaiting_photo: ru ? "Пришлите JPEG или PNG изображение." : "Send a JPEG or PNG image.",
+    finished: ru ? "Подготовлен общий просмотр." : "Batch preview is ready.",
+    cancelled: ru ? "Сессия отменена." : "Session cancelled."
+  })[key];
+}
+
+function expenseEvidenceSessionSummary(preview, language) {
+  const importCount = Number(preview?.importCount ?? 0);
+  const unresolvedCount = Number(preview?.unresolvedCount ?? 0);
+  if (language === "ru") return `Готово: ${importCount} ${pluralizeRussian(importCount, "изображение", "изображения", "изображений")}, ${unresolvedCount} ${pluralizeRussian(unresolvedCount, "расход", "расхода", "расходов")} к проверке.`;
+  return `Ready: ${importCount} image${importCount === 1 ? "" : "s"}, ${unresolvedCount} expense${unresolvedCount === 1 ? "" : "s"} to review.`;
+}
+
+function pluralizeRussian(value, one, few, many) {
+  const lastTwo = value % 100;
+  if (lastTwo >= 11 && lastTwo <= 14) return many;
+  const last = value % 10;
+  if (last === 1) return one;
+  if (last >= 2 && last <= 4) return few;
+  return many;
 }
 
 function truncateText(text, maxLength) {
