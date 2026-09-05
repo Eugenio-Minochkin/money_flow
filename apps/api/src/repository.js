@@ -738,10 +738,10 @@ export function createRepository(pool, options = {}) {
       const hasPayload = payload != null;
       const claimed = await pool.query(
         `INSERT INTO telegram_expense_captures AS captures (user_id, chat_id, message_id, status, claim_version, lease_expires_at${hasPayload ? ", payload, attempt_count" : ""})
-         VALUES ($1, $2, $3, 'processing', 1, now() + interval '60 seconds'${hasPayload ? ", $4, 0" : ""})
+         VALUES ($1, $2, $3, 'processing', 1, now() + interval '30 minutes'${hasPayload ? ", $4, 0" : ""})
          ON CONFLICT (user_id, chat_id, message_id) DO UPDATE
            SET claim_version = captures.claim_version + 1,
-               lease_expires_at = now() + interval '60 seconds'${hasPayload ? ", payload = COALESCE(captures.payload, EXCLUDED.payload), attempt_count = captures.attempt_count + 1" : ""}
+               lease_expires_at = now() + interval '30 minutes'${hasPayload ? ", payload = COALESCE(captures.payload, EXCLUDED.payload), attempt_count = captures.attempt_count + 1" : ""}
          WHERE captures.status = 'processing' AND captures.lease_expires_at <= now()
          RETURNING claim_version`,
         hasPayload ? [userId, chatId, messageId, JSON.stringify(payload)] : [userId, chatId, messageId]
@@ -765,9 +765,21 @@ export function createRepository(pool, options = {}) {
       return result.rows;
     },
 
+    async renewTelegramExpenseCapture(userId, chatId, messageId, claimVersion) {
+      const result = await pool.query(
+        `UPDATE telegram_expense_captures
+         SET lease_expires_at = now() + interval '30 minutes'
+         WHERE user_id = $1 AND chat_id = $2 AND message_id = $3
+           AND status = 'processing' AND claim_version = $4
+         RETURNING claim_version`,
+        [userId, chatId, messageId, claimVersion]
+      );
+      return result.rowCount === 1;
+    },
+
     async readTelegramExpenseCapture(userId, chatId, messageId) {
       const result = await pool.query(
-        `SELECT captures.status AS request_status, drafts.*
+        `SELECT captures.status AS request_status, captures.last_error_code, drafts.*
          FROM telegram_expense_captures captures
          LEFT JOIN drafts ON drafts.id = captures.draft_id
          WHERE captures.user_id = $1 AND captures.chat_id = $2 AND captures.message_id = $3`,
@@ -777,13 +789,15 @@ export function createRepository(pool, options = {}) {
       if (!row) return null;
       return row.request_status === "completed"
         ? { state: "completed", draft: normalizeDraft(row) }
-        : { state: "processing" };
+        : row.request_status === "failed"
+          ? { state: "failed", errorCode: row.last_error_code ?? null }
+          : { state: "processing" };
     },
 
     async waitForTelegramExpenseCapture(userId, chatId, messageId) {
       for (let attempt = 0; attempt < 1200; attempt += 1) {
         const result = await this.readTelegramExpenseCapture(userId, chatId, messageId);
-        if (!result || result.state === "completed") return result;
+        if (!result || result.state !== "processing") return result;
         await new Promise((resolve) => setTimeout(resolve, 25));
       }
       return null;
@@ -791,10 +805,23 @@ export function createRepository(pool, options = {}) {
 
     async releaseTelegramExpenseCapture(userId, chatId, messageId, claimVersion) {
       await pool.query(
-        `DELETE FROM telegram_expense_captures
+        `UPDATE telegram_expense_captures
+         SET status = 'failed', lease_expires_at = NULL, payload = NULL,
+             finished_at = now(), last_error_code = 'telegram_expense_capture_released'
          WHERE user_id = $1 AND chat_id = $2 AND message_id = $3
            AND status = 'processing' AND claim_version = $4`,
         [userId, chatId, messageId, claimVersion]
+      );
+    },
+
+    async failTelegramExpenseCapture(userId, chatId, messageId, claimVersion, errorCode = "telegram_expense_capture_failed") {
+      await pool.query(
+        `UPDATE telegram_expense_captures
+         SET status = 'failed', lease_expires_at = NULL, payload = NULL,
+             finished_at = now(), last_error_code = $5
+         WHERE user_id = $1 AND chat_id = $2 AND message_id = $3
+           AND status = 'processing' AND claim_version = $4`,
+        [userId, chatId, messageId, claimVersion, String(errorCode).slice(0, 120)]
       );
     },
 

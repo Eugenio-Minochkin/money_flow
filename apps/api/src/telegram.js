@@ -410,24 +410,49 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
   }
 
   let expenseCaptureClaim = null;
+  const queueReservation = telegramJobQueue.reserve?.(from.id) ?? null;
+  if (queueReservation && !queueReservation.accepted) {
+    const key = queueReservation.status === "globalQueueFull" ? "globalQueueFull" : "userQueueFull";
+    return sendTelegramResponse(trace, () => sendMessage(token, chatId, botText(language, key), null, telegramClient));
+  }
   if (trackExpenseMessage && inputType !== "photo" && typeof repository.claimTelegramExpenseCapture === "function") {
-    expenseCaptureClaim = await repository.claimTelegramExpenseCapture(
-      user.id,
-      chatId,
-      message.message_id,
-      telegramCapturePayload(message)
-    );
+    try {
+      expenseCaptureClaim = await repository.claimTelegramExpenseCapture(
+        user.id, chatId, message.message_id, telegramCapturePayload(message)
+      );
+    } catch (error) {
+      telegramJobQueue.releaseReservation?.(queueReservation?.token);
+      throw error;
+    }
     if (expenseCaptureClaim?.state === "processing") {
+      telegramJobQueue.releaseReservation?.(queueReservation?.token);
+      return { ok: true, replayed: true };
+    }
+    if (expenseCaptureClaim?.state === "failed") {
+      telegramJobQueue.releaseReservation?.(queueReservation?.token);
       return { ok: true, replayed: true };
     }
   }
 
+  const renewCaptureLease = expenseCaptureClaim?.state === "claimed"
+    && typeof repository.renewTelegramExpenseCapture === "function"
+    ? setInterval(() => {
+      void repository.renewTelegramExpenseCapture(user.id, chatId, message.message_id, expenseCaptureClaim.claimVersion)
+        .catch((error) => console.error("[telegram] capture lease renewal failed", error.message));
+    }, 10_000)
+    : null;
+  renewCaptureLease?.unref?.();
+
   const deliveryState = createTelegramJobDeliveryState();
   const queued = telegramJobQueue.enqueue({
     userId: from.id,
-    run: () => processQueuedMessage({ message, from, user, rawText, hasVoice, inputType: trackExpenseMessage ? inputType : null, repository, token, miniAppUrl, expenseParser, voiceTranscriber, expenseEvidenceImportService, expenseEvidenceSessionService, activeEvidenceSessions, telegramClient, adminTelegramIds, adminAlertService, now, trace, deliveryState, expenseCaptureClaim }),
+    run: ({ signal }) => processQueuedMessage({ message, from, user, rawText, hasVoice, inputType: trackExpenseMessage ? inputType : null, repository, token, miniAppUrl, expenseParser, voiceTranscriber, expenseEvidenceImportService, expenseEvidenceSessionService, activeEvidenceSessions, telegramClient, adminTelegramIds, adminAlertService, now, trace, deliveryState, expenseCaptureClaim, signal }),
     onStart: (metadata) => trace.event("queue_job_start", metadata),
-    onFinish: (metadata) => trace.event("queue_job_done", metadata)
+    onFinish: (metadata) => {
+      clearInterval(renewCaptureLease);
+      trace.event("queue_job_done", metadata);
+    },
+    reservation: queueReservation?.token
   });
 
   trace.event("queue_enqueue", {
@@ -438,6 +463,7 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
   }, queued.accepted);
 
   if (!queued.accepted) {
+    clearInterval(renewCaptureLease);
     const key = queued.status === "globalQueueFull" ? "globalQueueFull" : "userQueueFull";
     return sendTelegramResponse(trace, () => sendMessage(token, chatId, botText(language, key), null, telegramClient));
   }
@@ -540,7 +566,7 @@ function pruneExpiredPendingFeedback(currentTime) {
   }
 }
 
-export async function processQueuedMessage({ message, from, user, rawText, hasVoice, inputType, repository, token, miniAppUrl, expenseParser, voiceTranscriber, expenseEvidenceImportService, expenseEvidenceSessionService, activeEvidenceSessions, telegramClient, adminTelegramIds = new Set(), adminAlertService, now = () => new Date(), trace, deliveryState = createTelegramJobDeliveryState(), expenseCaptureClaim = null }) {
+export async function processQueuedMessage({ message, from, user, rawText, hasVoice, inputType, repository, token, miniAppUrl, expenseParser, voiceTranscriber, expenseEvidenceImportService, expenseEvidenceSessionService, activeEvidenceSessions, telegramClient, adminTelegramIds = new Set(), adminAlertService, now = () => new Date(), trace, deliveryState = createTelegramJobDeliveryState(), expenseCaptureClaim = null, signal = null }) {
   const processingStartedAt = performance.now();
   const language = user.interface_language ?? "en";
   const chatId = message.chat.id;
@@ -587,11 +613,15 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
       let text = rawText;
       if (!text && hasVoice) {
         voiceCaptureClaim = voiceCaptureClaim ?? await repository.claimTelegramExpenseCapture?.(user.id, chatId, message.message_id);
-        if (voiceCaptureClaim?.state === "completed" || voiceCaptureClaim?.state === "processing") {
+        if (voiceCaptureClaim?.state === "completed" || voiceCaptureClaim?.state === "processing" || voiceCaptureClaim?.state === "failed") {
           const completed = voiceCaptureClaim.state === "completed"
             ? voiceCaptureClaim
             : await repository.waitForTelegramExpenseCapture(user.id, chatId, message.message_id);
           if (completed?.draft) {
+            markTelegramJobTerminalResponse(deliveryState);
+            return sendTelegramResponse(trace, () => deleteMessage(token, chatId, loader.messageId, telegramClient));
+          }
+          if (voiceCaptureClaim.state === "failed") {
             markTelegramJobTerminalResponse(deliveryState);
             return sendTelegramResponse(trace, () => deleteMessage(token, chatId, loader.messageId, telegramClient));
           }
@@ -762,6 +792,7 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
           claim: voiceCaptureClaim?.state === "claimed" ? voiceCaptureClaim : null,
           parserOptions: {
           userId: from.id,
+          signal,
           onLlmTrace(metadata) {
             llmMetadata = { ...llmMetadata, ...metadata };
           }
@@ -860,7 +891,7 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
       return delivered;
     } catch (error) {
       if (voiceCaptureClaim?.state === "claimed") {
-        await repository.releaseTelegramExpenseCapture?.(user.id, chatId, message.message_id, voiceCaptureClaim.claimVersion)
+        await repository.failTelegramExpenseCapture?.(user.id, chatId, message.message_id, voiceCaptureClaim.claimVersion, error?.code ?? "telegram_expense_capture_failed")
           .catch(() => {});
       }
       if (["paid_provider_limit_reached", "paid_provider_disabled", "voice_message_too_long"].includes(error?.code)) {

@@ -47,9 +47,11 @@ export async function createTelegramExpenseDraft({ user, chatId, messageId, text
   if (existingClaim?.state === "completed") return { draft: existingClaim.draft, replayed: true };
   if (existingClaim?.state === "processing") {
     const completed = await repository.waitForTelegramExpenseCapture(user.id, chatId, messageId);
-    if (!completed) throw new ShortcutRequestInProgressError();
+    if (!completed || completed.state === "processing") throw new ShortcutRequestInProgressError();
+    if (completed.state === "failed") throw new TelegramExpenseCaptureFailedError(completed.errorCode);
     return { draft: completed.draft, replayed: true };
   }
+  if (existingClaim?.state === "failed") throw new TelegramExpenseCaptureFailedError(existingClaim.errorCode);
   const key = `${user.id}:${chatId}:${messageId}`;
   if (telegramExpenseInFlight.has(key)) {
     const shared = await telegramExpenseInFlight.get(key);
@@ -64,9 +66,11 @@ async function createTelegramExpenseDraftOnce({ user, chatId, messageId, text, e
   const claim = existingClaim ?? await repository.claimTelegramExpenseCapture(user.id, chatId, messageId);
   if (!claim) return null;
   if (claim.state === "completed") return { draft: claim.draft, replayed: true };
+  if (claim.state === "failed") throw new TelegramExpenseCaptureFailedError(claim.errorCode);
   if (claim.state === "processing") {
     const completed = await repository.waitForTelegramExpenseCapture(user.id, chatId, messageId);
-    if (!completed) throw new ShortcutRequestInProgressError();
+    if (!completed || completed.state === "processing") throw new ShortcutRequestInProgressError();
+    if (completed.state === "failed") throw new TelegramExpenseCaptureFailedError(completed.errorCode);
     return { draft: completed.draft, replayed: true };
   }
   try {
@@ -74,6 +78,7 @@ async function createTelegramExpenseDraftOnce({ user, chatId, messageId, text, e
       ...parserOptions,
       requestKey: parserOptions.requestKey ?? `telegram:${user.id}:${chatId}:${messageId}`
     } });
+    throwIfAborted(parserOptions.signal);
     onBeforePersist?.();
     const result = await repository.completeTelegramExpenseCapture({
       userId: user.id,
@@ -89,6 +94,18 @@ async function createTelegramExpenseDraftOnce({ user, chatId, messageId, text, e
     await repository.releaseTelegramExpenseCapture(user.id, chatId, messageId, claim.claimVersion);
     throw error;
   }
+}
+
+export class TelegramExpenseCaptureFailedError extends Error {
+  constructor(code = "telegram_expense_capture_failed") {
+    super(code);
+    this.code = code;
+  }
+}
+
+function throwIfAborted(signal) {
+  if (!signal?.aborted) return;
+  throw signal.reason instanceof Error ? signal.reason : new Error("Telegram job aborted");
 }
 
 async function createMiniAppQuickCaptureDraftOnce({ user, clientRequestId, text, expenseParser, repository }) {

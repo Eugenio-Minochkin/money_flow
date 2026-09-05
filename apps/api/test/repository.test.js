@@ -7176,6 +7176,45 @@ test("saveDraftAsExpense confirms an open draft and returns alreadySaved false",
   assert.ok(queries.some((q) => q.includes("status = 'confirmed'") && q.includes("version = version + 1")));
 });
 
+test("reads a terminal Telegram capture failure without making it runnable again", async () => {
+  const repo = createRepository(fakePool((sql) => {
+    assert.match(String(sql), /last_error_code/);
+    return { rows: [{ request_status: "failed", last_error_code: "telegram_job_timeout" }] };
+  }));
+
+  assert.deepEqual(await repo.readTelegramExpenseCapture(7, 10, 55), {
+    state: "failed",
+    errorCode: "telegram_job_timeout"
+  });
+});
+
+test("terminally fails a Telegram capture instead of deleting its idempotency record", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql: String(sql), params });
+    return { rows: [] };
+  }));
+
+  await repo.failTelegramExpenseCapture(7, 10, 55, 2, "telegram_job_timeout");
+
+  assert.match(queries[0].sql, /UPDATE telegram_expense_captures/);
+  assert.match(queries[0].sql, /status = 'failed'/);
+  assert.doesNotMatch(queries[0].sql, /DELETE FROM telegram_expense_captures/);
+  assert.deepEqual(queries[0].params, [7, 10, 55, 2, "telegram_job_timeout"]);
+});
+
+test("renews a live Telegram capture lease by its claim version", async () => {
+  const queries = [];
+  const repo = createRepository(fakePool((sql, params) => {
+    queries.push({ sql: String(sql), params });
+    return { rowCount: 1, rows: [{ claim_version: 2 }] };
+  }));
+
+  assert.equal(await repo.renewTelegramExpenseCapture(7, 10, 55, 2), true);
+  assert.match(queries[0].sql, /SET lease_expires_at = now\(\) \+ interval '30 minutes'/);
+  assert.deepEqual(queries[0].params, [7, 10, 55, 2]);
+});
+
 test("saveDraftAsExpense does not request exchange rates for a same-currency expense", async () => {
   let rateCalls = 0;
   const client = fakeConfirmClient({

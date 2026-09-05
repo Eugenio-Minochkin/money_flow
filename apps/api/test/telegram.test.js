@@ -4256,6 +4256,42 @@ test("full user queue uses localized text for ru and en users", async () => {
   }
 });
 
+test("queue-full Telegram delivery is rejected before it creates a durable capture", async () => {
+  const messages = [];
+  const parser = controlledExpenseParser();
+  const repo = fakeRepository();
+  const claimedMessageIds = [];
+  repo.claimTelegramExpenseCapture = async (_userId, _chatId, messageId) => {
+    claimedMessageIds.push(messageId);
+    return { state: "claimed", claimVersion: messageId };
+  };
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: repo,
+    expenseParser: parser,
+    telegramClient: captureTelegramClient(messages),
+    awaitQueuedJobs: false,
+    telegramJobQueueOptions: { globalConcurrency: 1, userQueueLimit: 2, jobTimeoutMs: 10_000 },
+    perfLogger: () => {}
+  });
+
+  await bot.handleUpdate(textUpdate("first expense", 100));
+  await bot.handleUpdate(textUpdate("second expense", 100));
+  await bot.handleUpdate(textUpdate("third expense", 100));
+  await bot.handleUpdate(textUpdate("fourth expense", 100));
+
+  assert.equal(claimedMessageIds.length, 3);
+  assert.ok(messages.some((message) => message.text.includes("несколько твоих сообщений")));
+
+  await parser.waitForCalls(1);
+  parser.resolveNext();
+  await parser.waitForCalls(2);
+  parser.resolveNext();
+  await parser.waitForCalls(3);
+  parser.resolveNext();
+});
+
 test("admin release preview is denied to non-admin users", async () => {
   const messages = [];
   const bot = createTelegramBot({
