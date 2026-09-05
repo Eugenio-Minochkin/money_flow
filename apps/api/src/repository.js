@@ -3478,6 +3478,9 @@ export function createRepository(pool, options = {}) {
     async saveDraftAsExpense(draftId, telegramUserId, options = {}) {
       const client = options.client ?? await pool.connect();
       const ownsTransaction = !options.client;
+      const prefetched = ownsTransaction
+        ? await prefetchDraftMoneyAmounts(pool, exchangeRates, draftId, telegramUserId)
+        : null;
       const readDashboardSnapshot = async () => {
         try {
           return (await this.dashboard(telegramUserId)).snapshot;
@@ -3515,6 +3518,12 @@ export function createRepository(pool, options = {}) {
         }
 
         let items = Array.isArray(draft.items) ? draft.items : JSON.parse(draft.items);
+        const moneyAmountsByItem = prefetched
+          ? matchingPrefetchedMoneyAmounts(prefetched, draft, items)
+          : null;
+        if (prefetched && !moneyAmountsByItem) {
+          throw codedError("Draft changed while preparing exchange rates", "draft_changed_retry");
+        }
         if (hasUnresolvedCurrencyAmbiguity(items)) {
           throw codedError("Draft requires an explicit currency selection", "currency_selection_required");
         }
@@ -3542,9 +3551,10 @@ export function createRepository(pool, options = {}) {
           );
         }
         const inserted = [];
-        for (const item of items) {
+        for (const [itemIndex, item] of items.entries()) {
           const spentAt = new Date(item.spent_at);
-          const moneyAmounts = await buildMoneyAmounts(exchangeRates, item.amount, item.currency, spentAt, draft);
+          const moneyAmounts = moneyAmountsByItem?.[itemIndex]
+            ?? await buildMoneyAmounts(exchangeRates, item.amount, item.currency, spentAt, draft);
           const result = await client.query(
             `INSERT INTO expenses (
                user_id, draft_id, amount_original, currency_original, amount_base, base_currency,
@@ -5323,6 +5333,35 @@ function normalizeTheme(value) {
 
 function userTimezone(user) {
   return normalizeTimeZone(user?.timezone).timeZone;
+}
+
+async function prefetchDraftMoneyAmounts(pool, exchangeRates, draftId, telegramUserId) {
+  if (typeof pool.query !== "function") return null;
+  const result = await pool.query(
+    `SELECT drafts.items, drafts.version, drafts.status, users.base_currency
+     FROM drafts JOIN users ON users.id = drafts.user_id
+     WHERE drafts.id = $1 AND users.telegram_user_id = $2`,
+    [draftId, telegramUserId]
+  );
+  const draft = result.rows[0];
+  if (!draft || !["pending", "inbox"].includes(draft.status)) return null;
+  const items = Array.isArray(draft.items) ? draft.items : JSON.parse(draft.items);
+  return {
+    version: String(draft.version),
+    baseCurrency: normalizeCurrency(draft.base_currency, "THB"),
+    itemSignature: JSON.stringify(items),
+    moneyAmounts: await Promise.all(items.map((item) => buildMoneyAmounts(
+      exchangeRates, item.amount, item.currency, new Date(item.spent_at), draft
+    )))
+  };
+}
+
+function matchingPrefetchedMoneyAmounts(prefetched, draft, items) {
+  return String(prefetched.version) === String(draft.version)
+    && prefetched.baseCurrency === normalizeCurrency(draft.base_currency, "THB")
+    && prefetched.itemSignature === JSON.stringify(items)
+    ? prefetched.moneyAmounts
+    : null;
 }
 
 async function buildMoneyAmounts(exchangeRates, amount, currency, date, user = {}) {
