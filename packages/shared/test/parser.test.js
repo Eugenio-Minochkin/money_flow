@@ -145,6 +145,24 @@ test("parses compact thousands notation", () => {
   assert.equal(spaced.expenses[0].amount, 14000);
 });
 
+test("treats compact thousands suffixes as notation instead of a description initial", () => {
+  const cases = [
+    ["150 кофе", 150, "кофе"],
+    ["400 кино", 400, "кино"],
+    ["65 кофе", 65, "кофе"],
+    ["150 kebab", 150, "kebab"],
+    ["14к такси", 14000, "такси"],
+    ["14k taxi", 14000, "taxi"]
+  ];
+
+  for (const [text, amount, description] of cases) {
+    const result = parseExpenseText(text, { defaultCurrency: "THB" });
+    assert.equal(result.expenses.length, 1, text);
+    assert.equal(result.expenses[0].amount, amount, text);
+    assert.equal(result.expenses[0].description, description, text);
+  }
+});
+
 test("marks explicitly large one-off expenses as non-daily impact", () => {
   const result = parseExpenseText("крупная разовая покупка продукты 2000 бат", {
     now: new Date("2026-06-06T10:00:00+07:00")

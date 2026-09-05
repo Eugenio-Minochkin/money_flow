@@ -172,6 +172,7 @@ test("safe text message is saved immediately with edit and delete actions", asyn
 
 test("safe voice message is saved immediately", async () => {
   const calls = [];
+  const parsedTexts = [];
   const repo = fakeRepository();
   repo.listClosedReserveMonthsForTelegramUser = async () => [];
   repo.saveDraftAsExpense = async (draftId) => ({
@@ -181,14 +182,15 @@ test("safe voice message is saved immediately", async () => {
   });
   const bot = createTelegramBot({
     token: "test-token", miniAppUrl: "http://localhost:3000", repository: repo,
-    voiceTranscriber: { isConfigured: () => true, async transcribeTelegramVoice() { return "такси 460 бат"; } },
-    expenseParser: { async parse() { return { expenses: [{ amount: 460, currency: "THB", description: "такси", category_slug: "transport", category_source: "parser", needs_review: false, spent_at: "2026-08-14T08:00:00.000Z", budget_impact: "regular" }] }; } },
+    voiceTranscriber: { isConfigured: () => true, async transcribeTelegramVoice() { return "Такси 8:50 лари"; } },
+    expenseParser: { async parse(text) { parsedTexts.push(text); return { expenses: [{ amount: 8.5, currency: "GEL", description: "такси", category_slug: "transport", category_source: "parser", needs_review: false, spent_at: "2026-08-14T08:00:00.000Z", budget_impact: "regular" }] }; } },
     telegramClient: capturingClient(calls)
   });
 
   await bot.handleUpdate({ message: { message_id: 56, chat: { id: 10 }, from: { id: 100, first_name: "M" }, voice: { file_id: "voice-1", mime_type: "audio/ogg" } } });
 
   assert.ok(calls.some((call) => ["sendMessage", "editMessageText"].includes(call.method) && /Записал/.test(call.text)));
+  assert.deepEqual(parsedTexts, ["Такси 8.50 лари"]);
   assert.equal(repo.events.filter((event) => event.eventName === "expense_saved").length, 1);
 });
 

@@ -7176,6 +7176,25 @@ test("saveDraftAsExpense confirms an open draft and returns alreadySaved false",
   assert.ok(queries.some((q) => q.includes("status = 'confirmed'") && q.includes("version = version + 1")));
 });
 
+test("saveDraftAsExpense does not request exchange rates for a same-currency expense", async () => {
+  let rateCalls = 0;
+  const client = fakeConfirmClient({
+    draftRow: { id: 7, user_id: 1, status: "pending", base_currency: "GEL", items: [{
+      amount: 8.5, currency: "GEL", description: "taxi", category_slug: "transport",
+      budget_impact: "regular", needs_review: false, category_source: "parser", tags: [], spent_at: "2026-06-25T10:00:00Z"
+    }] }
+  });
+  const repo = createRepository({ ...fakePool(() => ({ rows: [] })), async connect() { return client; } }, {
+    exchangeRates: { async ratesFor() { rateCalls += 1; throw new Error("rate provider must not be called"); } }
+  });
+  repo.dashboard = async () => ({ snapshot: { baseCurrency: "GEL" } });
+
+  const saved = await repo.saveDraftAsExpense(7, 100);
+
+  assert.equal(saved.expenses.length, 1);
+  assert.equal(rateCalls, 0);
+});
+
 test("saveDraftAsExpense runs beforeSave on the supplied transaction client after lock and before insert", async () => {
   const queries = [];
   let insertAfterCallback = false;

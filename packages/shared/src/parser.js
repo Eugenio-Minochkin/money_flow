@@ -175,7 +175,7 @@ function parsePart(part, now, defaultCurrency, timeZone, maxLocalAmount, require
 
 function findAmountMatches(part) {
   const matches = [];
-  const pattern = /([$฿₽€₾])?\s*(\d[\d\s\u00a0.,]*)([kк])?\s*([$฿₽€₾])?/giu;
+  const pattern = /([$฿₽€₾])?\s*(\d[\d\s\u00a0.,]*)([kк](?=$|[\s.,;:!?…$฿₽€₾]))?\s*([$฿₽€₾])?/giu;
   for (const match of part.matchAll(pattern)) {
     const rawAmount = match[2].trim();
     if (!rawAmount || !amountShapeIsSupported(rawAmount)) {

@@ -19,6 +19,7 @@ import { createExpenseExportService } from "./expenseExportService.js";
 import { createTelegramExpenseDraft, ExpenseTextNotRecognizedError } from "./expenseDraftService.js";
 import { createTelegramJobQueue } from "./telegramJobQueue.js";
 import { createTelegramJobDeliveryState, markTelegramJobTerminalResponse, shouldNotifyTelegramJobFailure } from "./telegramJobOutcome.js";
+import { normalizeVoiceMoneyTranscript } from "./voiceMoneyNormalization.js";
 import { syncTelegramUserCommandMenu } from "./telegramCommands.js";
 import { renderDraftPreview } from "./draftPreview.js";
 import { formatPlannedPaymentReminder } from "./plannedPaymentReminderService.js";
@@ -559,6 +560,7 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
         }
         try {
           text = await transcribeVoice(message, voiceTranscriber, trace, user);
+          text = normalizeVoiceMoneyTranscript(text);
           transcriptChars = String(text ?? "").length;
         } catch (error) {
           processingResult = "transcription_failed";
@@ -837,7 +839,11 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
         loaderMessageId: loader.messageId,
         text: processingResult === "transcription_failed"
           ? botText(language, "transcriptionFailed")
-          : (processingResult === "parser_failed" ? botText(language, "parseFailed") : botText(language, "jobProcessingFailed")),
+          : (processingResult === "parser_failed"
+            ? (inputType === "voice" && text
+              ? botText(language, "amountNotFoundWithTranscript", { transcript: text })
+              : botText(language, "parseFailed"))
+            : botText(language, "jobProcessingFailed")),
         replyMarkup: null,
         telegramClient,
         trace

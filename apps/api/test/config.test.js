@@ -61,6 +61,12 @@ test("rate limiter config falls back from invalid values", () => {
   assert.deepEqual(config.trustedProxyIps, ["127.0.0.1", "::1", "172.18.0.1"]);
 });
 
+test("Telegram job queue supports a normal ten-message user burst by default", () => {
+  const defaults = buildConfig({});
+  assert.equal(defaults.telegramJobUserQueueLimit, 16);
+  assert.equal(buildConfig({ TELEGRAM_JOB_USER_QUEUE_LIMIT: "24" }).telegramJobUserQueueLimit, 24);
+});
+
 test("admin alert config parses explicit safe values", () => {
   const config = buildConfig({
     ADMIN_ALERTS_ENABLED: "true",

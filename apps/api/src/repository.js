@@ -734,19 +734,33 @@ export function createRepository(pool, options = {}) {
       } finally { client.release(); }
     },
 
-    async claimTelegramExpenseCapture(userId, chatId, messageId) {
+    async claimTelegramExpenseCapture(userId, chatId, messageId, payload = null) {
+      const hasPayload = payload != null;
       const claimed = await pool.query(
-        `INSERT INTO telegram_expense_captures AS captures (user_id, chat_id, message_id, status, claim_version, lease_expires_at)
-         VALUES ($1, $2, $3, 'processing', 1, now() + interval '60 seconds')
+        `INSERT INTO telegram_expense_captures AS captures (user_id, chat_id, message_id, status, claim_version, lease_expires_at${hasPayload ? ", payload, attempt_count" : ""})
+         VALUES ($1, $2, $3, 'processing', 1, now() + interval '60 seconds'${hasPayload ? ", $4, 0" : ""})
          ON CONFLICT (user_id, chat_id, message_id) DO UPDATE
            SET claim_version = captures.claim_version + 1,
-               lease_expires_at = now() + interval '60 seconds'
+               lease_expires_at = now() + interval '60 seconds'${hasPayload ? ", payload = COALESCE(captures.payload, EXCLUDED.payload), attempt_count = captures.attempt_count + 1" : ""}
          WHERE captures.status = 'processing' AND captures.lease_expires_at <= now()
          RETURNING claim_version`,
-        [userId, chatId, messageId]
+        hasPayload ? [userId, chatId, messageId, JSON.stringify(payload)] : [userId, chatId, messageId]
       );
       if (claimed.rows[0]) return { state: "claimed", claimVersion: claimed.rows[0].claim_version };
       return this.readTelegramExpenseCapture(userId, chatId, messageId);
+    },
+
+    async listRunnableTelegramExpenseCaptures(limit = 100) {
+      const result = await pool.query(
+        `SELECT captures.user_id, captures.chat_id, captures.message_id, captures.claim_version, captures.payload
+         FROM telegram_expense_captures captures
+         WHERE captures.status = 'processing' AND captures.payload IS NOT NULL
+           AND (captures.lease_expires_at IS NULL OR captures.lease_expires_at <= now())
+         ORDER BY captures.created_at, captures.id
+         LIMIT $1`,
+        [Math.max(1, Math.min(Number(limit) || 100, 500))]
+      );
+      return result.rows;
     },
 
     async readTelegramExpenseCapture(userId, chatId, messageId) {
@@ -803,7 +817,8 @@ export function createRepository(pool, options = {}) {
         );
         const completed = await client.query(
           `UPDATE telegram_expense_captures
-           SET draft_id = $4, status = 'completed', completed_at = now(), lease_expires_at = NULL
+           SET draft_id = $4, status = 'completed', completed_at = now(), lease_expires_at = NULL,
+               payload = NULL, finished_at = now()
            WHERE user_id = $1 AND chat_id = $2 AND message_id = $3 AND status = 'processing'
              AND claim_version = $5 AND lease_expires_at > now()
            RETURNING id`,
@@ -5309,9 +5324,17 @@ function userTimezone(user) {
 }
 
 async function buildMoneyAmounts(exchangeRates, amount, currency, date, user = {}) {
-  const rates = await exchangeRates.ratesFor(date);
   const normalizedCurrency = normalizeCurrency(currency, "THB");
   const baseCurrency = normalizeCurrency(user?.base_currency, "THB");
+  if (normalizedCurrency === baseCurrency) {
+    const value = roundMoney(amount);
+    return {
+      amountBase: value,
+      convertedAmounts: { [baseCurrency]: value },
+      source: "identity"
+    };
+  }
+  const rates = await exchangeRates.ratesFor(date);
   const amounts = convertedAmounts(amount, normalizedCurrency, baseCurrency, rates);
   return {
     amountBase: amounts[baseCurrency],

@@ -47,6 +47,17 @@ test("Telegram capture safety migration adds durable chat and message claims", a
   assert.match(sql, /draft_id BIGINT REFERENCES drafts\(id\)/i);
 });
 
+test("Telegram capture inbox migration retains restart-resumable work", async () => {
+  const dir = resolve(dirname(fileURLToPath(import.meta.url)), "..", "migrations");
+  const sql = await readFile(resolve(dir, "022_telegram_capture_inbox.sql"), "utf8");
+
+  assert.match(sql, /ALTER TABLE telegram_expense_captures/i);
+  assert.match(sql, /payload JSONB/i);
+  assert.match(sql, /last_error_code TEXT/i);
+  assert.match(sql, /attempt_count INTEGER NOT NULL DEFAULT 0/i);
+  assert.match(sql, /WHERE status = 'processing'/i);
+});
+
 test("Quick Capture safety migration adds durable claims and inactive prepared keys", async () => {
   const dir = resolve(dirname(fileURLToPath(import.meta.url)), "..", "migrations");
   const sql = await readFile(resolve(dir, "015_quick_capture_safety.sql"), "utf8");

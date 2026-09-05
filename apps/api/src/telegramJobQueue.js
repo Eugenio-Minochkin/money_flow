@@ -1,6 +1,6 @@
 export function createTelegramJobQueue(options = {}) {
   const globalConcurrency = positiveInteger(options.globalConcurrency, 3);
-  const userQueueLimit = positiveInteger(options.userQueueLimit, 2);
+  const userQueueLimit = positiveInteger(options.userQueueLimit, 16);
   const jobTimeoutMs = positiveInteger(options.jobTimeoutMs, 90_000);
   const globalQueueLimit = Number.isFinite(options.globalQueueLimit) ? Number(options.globalQueueLimit) : Infinity;
 
