@@ -752,8 +752,10 @@ export function createRepository(pool, options = {}) {
 
     async listRunnableTelegramExpenseCaptures(limit = 100) {
       const result = await pool.query(
-        `SELECT captures.user_id, captures.chat_id, captures.message_id, captures.claim_version, captures.payload
+        `SELECT captures.user_id, captures.chat_id, captures.message_id, captures.claim_version, captures.payload,
+                users.telegram_user_id, users.first_name
          FROM telegram_expense_captures captures
+         JOIN users ON users.id = captures.user_id
          WHERE captures.status = 'processing' AND captures.payload IS NOT NULL
            AND (captures.lease_expires_at IS NULL OR captures.lease_expires_at <= now())
          ORDER BY captures.created_at, captures.id

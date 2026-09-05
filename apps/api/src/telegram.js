@@ -100,6 +100,20 @@ export function createTelegramBot({
   });
 
   return {
+    async resumePendingCaptures() {
+      const captures = await repository.listRunnableTelegramExpenseCaptures?.();
+      for (const capture of captures ?? []) {
+        const payload = typeof capture.payload === "string" ? JSON.parse(capture.payload) : capture.payload;
+        if (!payload || (!payload.text && !payload.voice)) continue;
+        await this.handleUpdate({ message: {
+          message_id: Number(capture.message_id),
+          chat: { id: Number(capture.chat_id) },
+          from: { id: Number(capture.telegram_user_id), first_name: capture.first_name ?? "" },
+          ...(payload.text ? { text: payload.text } : {}),
+          ...(payload.voice ? { voice: { file_id: payload.voice.fileId, mime_type: payload.voice.mimeType ?? undefined, duration: payload.voice.duration ?? undefined } } : {})
+        } });
+      }
+    },
     async handleUpdate(update) {
       const trace = createPerfTrace({ update, logger: perfLogger });
       let success = false;
@@ -395,10 +409,23 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
     await safeRecordAppEvent(repository, user.id, "message_received", { inputType });
   }
 
+  let expenseCaptureClaim = null;
+  if (trackExpenseMessage && inputType !== "photo" && typeof repository.claimTelegramExpenseCapture === "function") {
+    expenseCaptureClaim = await repository.claimTelegramExpenseCapture(
+      user.id,
+      chatId,
+      message.message_id,
+      telegramCapturePayload(message)
+    );
+    if (expenseCaptureClaim?.state === "processing") {
+      return { ok: true, replayed: true };
+    }
+  }
+
   const deliveryState = createTelegramJobDeliveryState();
   const queued = telegramJobQueue.enqueue({
     userId: from.id,
-    run: () => processQueuedMessage({ message, from, user, rawText, hasVoice, inputType: trackExpenseMessage ? inputType : null, repository, token, miniAppUrl, expenseParser, voiceTranscriber, expenseEvidenceImportService, expenseEvidenceSessionService, activeEvidenceSessions, telegramClient, adminTelegramIds, adminAlertService, now, trace, deliveryState }),
+    run: () => processQueuedMessage({ message, from, user, rawText, hasVoice, inputType: trackExpenseMessage ? inputType : null, repository, token, miniAppUrl, expenseParser, voiceTranscriber, expenseEvidenceImportService, expenseEvidenceSessionService, activeEvidenceSessions, telegramClient, adminTelegramIds, adminAlertService, now, trace, deliveryState, expenseCaptureClaim }),
     onStart: (metadata) => trace.event("queue_job_start", metadata),
     onFinish: (metadata) => trace.event("queue_job_done", metadata)
   });
@@ -465,6 +492,18 @@ async function sendQueuedJobFailure({ error, token, chatId, language, telegramCl
   }
 }
 
+function telegramCapturePayload(message) {
+  const voice = message.voice ?? message.audio;
+  return {
+    text: message.text?.trim() ?? null,
+    voice: voice ? {
+      fileId: voice.file_id,
+      mimeType: voice.mime_type ?? null,
+      duration: Number(voice.duration) || null
+    } : null
+  };
+}
+
 function setPendingFeedback(telegramUserId, now = new Date()) {
   const currentTime = new Date(now).getTime();
   pruneExpiredPendingFeedback(currentTime);
@@ -501,7 +540,7 @@ function pruneExpiredPendingFeedback(currentTime) {
   }
 }
 
-export async function processQueuedMessage({ message, from, user, rawText, hasVoice, inputType, repository, token, miniAppUrl, expenseParser, voiceTranscriber, expenseEvidenceImportService, expenseEvidenceSessionService, activeEvidenceSessions, telegramClient, adminTelegramIds = new Set(), adminAlertService, now = () => new Date(), trace, deliveryState = createTelegramJobDeliveryState() }) {
+export async function processQueuedMessage({ message, from, user, rawText, hasVoice, inputType, repository, token, miniAppUrl, expenseParser, voiceTranscriber, expenseEvidenceImportService, expenseEvidenceSessionService, activeEvidenceSessions, telegramClient, adminTelegramIds = new Set(), adminAlertService, now = () => new Date(), trace, deliveryState = createTelegramJobDeliveryState(), expenseCaptureClaim = null }) {
   const processingStartedAt = performance.now();
   const language = user.interface_language ?? "en";
   const chatId = message.chat.id;
@@ -509,7 +548,7 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
   let processingDraftType;
   let processingParserRoute;
   let transcriptChars = null;
-  let voiceCaptureClaim = null;
+  let voiceCaptureClaim = expenseCaptureClaim;
 
   const deliverQueuedResult = async (input) => {
     const delivered = await deliverResultMessage(input);
@@ -547,7 +586,7 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
     try {
       let text = rawText;
       if (!text && hasVoice) {
-        voiceCaptureClaim = await repository.claimTelegramExpenseCapture?.(user.id, chatId, message.message_id);
+        voiceCaptureClaim = voiceCaptureClaim ?? await repository.claimTelegramExpenseCapture?.(user.id, chatId, message.message_id);
         if (voiceCaptureClaim?.state === "completed" || voiceCaptureClaim?.state === "processing") {
           const completed = voiceCaptureClaim.state === "completed"
             ? voiceCaptureClaim
