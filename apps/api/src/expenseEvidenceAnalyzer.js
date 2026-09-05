@@ -4,7 +4,7 @@ import { CATEGORIES } from "../../../packages/shared/src/categories.js";
 import { SUPPORTED_CURRENCY_CODES } from "../../../packages/shared/src/currencies.js";
 
 const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
-const EVIDENCE_TYPES = ["bank_transactions", "receipt", "order_confirmation", "payment_confirmation", "unsupported"];
+const EVIDENCE_TYPES = ["bank_transactions", "bank_history", "receipt", "order_confirmation", "payment_confirmation", "bill", "product_price", "purchase_photo", "unknown", "unsupported"];
 const CATEGORIES_BY_SLUG = new Set(CATEGORIES.map((category) => category.slug));
 const CURRENCIES = new Set(SUPPORTED_CURRENCY_CODES);
 
@@ -43,7 +43,7 @@ async function requestStructuredAnalysis({ apiKey, model, timeoutMs, fetchImpl, 
         model,
         store: false,
         input: [
-          { role: "system", content: "Extract personal expense evidence from one image. Return only JSON matching the schema. Never invent a currency, a date, or a paid total." },
+          { role: "system", content: "Extract personal expense evidence from one image. Return only JSON matching the schema. Never invent a currency, a date, or a paid total. Classify arbitrary/non-expense images as unknown and visible price tags as product_price; never treat a visible product price as a purchase. For purchase_photo, set paid_purchase_evidence true only for clear paid-purchase evidence. For bank history, mark only outgoing expenses debit; credits, transfers, and balances are not expenses. For receipts and bills, mark only the final paid total is_final_total true." },
           {
             role: "user",
             content: [
@@ -72,8 +72,28 @@ async function requestStructuredAnalysis({ apiKey, model, timeoutMs, fetchImpl, 
 function normalizeAnalysis(value, now) {
   const evidenceType = EVIDENCE_TYPES.includes(value?.evidence_type) ? value.evidence_type : "unsupported";
   if (evidenceType === "unsupported" || !Array.isArray(value?.candidates)) return { evidenceType: "unsupported", candidates: [] };
-  const candidates = value.candidates.map((candidate) => normalizeCandidate(candidate, now)).filter(Boolean);
-  if (["receipt", "order_confirmation", "payment_confirmation"].includes(evidenceType)) return { evidenceType, candidates: candidates.slice(0, 1) };
+  if (["product_price", "unknown"].includes(evidenceType)) return { evidenceType, candidates: [] };
+  if (evidenceType === "purchase_photo") {
+    const candidates = value.candidates
+      .filter((candidate) => candidate?.paid_purchase_evidence === true)
+      .map((candidate) => normalizeCandidate(candidate, now))
+      .filter(Boolean)
+      .slice(0, 1)
+      .map(asPurchaseReviewCandidate);
+    return { evidenceType, candidates };
+  }
+  const rawCandidates = ["bank_transactions", "bank_history"].includes(evidenceType)
+    ? value.candidates.filter((candidate) => candidate?.transaction_kind === "debit")
+    : value.candidates;
+  const candidates = rawCandidates.map((candidate) => normalizeCandidate(candidate, now)).filter(Boolean);
+  if (["receipt", "bill"].includes(evidenceType)) {
+    const finalTotals = value.candidates
+      .filter((candidate) => candidate?.is_final_total === true)
+      .map((candidate) => normalizeCandidate(candidate, now))
+      .filter(Boolean);
+    return { evidenceType, candidates: finalTotals.slice(0, 1) };
+  }
+  if (["order_confirmation", "payment_confirmation"].includes(evidenceType)) return { evidenceType, candidates: candidates.slice(0, 1) };
   return { evidenceType, candidates };
 }
 
@@ -98,6 +118,10 @@ function normalizeCandidate(value, now) {
     confidence,
     needsReview
   };
+}
+
+function asPurchaseReviewCandidate(candidate) {
+  return { ...candidate, needsReview: true };
 }
 
 function normalizeDate(value, now) {
@@ -143,9 +167,10 @@ function evidenceSchema() {
           properties: {
             amount: { type: "number" }, currency: { type: "string", enum: SUPPORTED_CURRENCY_CODES },
             spent_on: { type: ["string", "null"] }, spent_at: { type: ["string", "null"] }, merchant: { type: "string" }, description: { type: "string" },
-            category_slug: { type: "string", enum: [...CATEGORIES_BY_SLUG] }, confidence: { type: "number" }, needs_review: { type: "boolean" }, uncertain: { type: "boolean" }
+            category_slug: { type: "string", enum: [...CATEGORIES_BY_SLUG] }, confidence: { type: "number" }, needs_review: { type: "boolean" }, uncertain: { type: "boolean" },
+            paid_purchase_evidence: { type: "boolean" }, transaction_kind: { type: "string", enum: ["debit", "credit", "transfer", "balance", "unknown"] }, is_final_total: { type: "boolean" }
           },
-          required: ["amount", "currency", "spent_on", "spent_at", "merchant", "description", "category_slug", "confidence", "needs_review", "uncertain"]
+          required: ["amount", "currency", "spent_on", "spent_at", "merchant", "description", "category_slug", "confidence", "needs_review", "uncertain", "paid_purchase_evidence", "transaction_kind", "is_final_total"]
         }
       }
     },

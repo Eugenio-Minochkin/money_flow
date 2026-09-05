@@ -18,6 +18,7 @@ import { createExpenseParser } from "./expenseParser.js";
 import { createExpenseEvidenceAnalyzer } from "./expenseEvidenceAnalyzer.js";
 import { createExpenseEvidenceImportService } from "./expenseEvidenceImportService.js";
 import { downloadAndSanitizeExpenseEvidenceImage } from "./expenseEvidenceImage.js";
+import { createExpenseEvidenceSessionService } from "./expenseEvidenceSessionService.js";
 import { createExpenseDraftFromText, ExpenseTextNotRecognizedError, ShortcutRequestInProgressError } from "./expenseDraftService.js";
 import { createQuickAccessToken, hashQuickAccessToken } from "./quickAccessService.js";
 import { processMiniAppQuickCapture } from "./quickCapture.js";
@@ -146,6 +147,9 @@ const expenseEvidenceImportService = config.expenseEvidenceImportEnabled
       hmac: (value) => crypto.createHmac("sha256", config.expenseEvidenceHmacSecret).update(value).digest("hex")
     })
   : null;
+const expenseEvidenceSessionService = expenseEvidenceImportService
+  ? createExpenseEvidenceSessionService({ repository, importService: expenseEvidenceImportService })
+  : null;
 const expenseExportService = createExpenseExportService({
   repository,
   sendDocument: (document) => sendTelegramDocument({
@@ -220,6 +224,7 @@ function createBot(telegramClient) {
     expenseParser,
     voiceTranscriber,
     expenseEvidenceImportService,
+    expenseEvidenceSessionService,
     token: config.telegramBotToken,
     miniAppUrl: config.miniAppUrl,
     adminTelegramIds,

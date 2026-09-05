@@ -284,6 +284,135 @@ export function createRepository(pool, options = {}) {
       } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
     },
 
+    async startOrResumeExpenseEvidenceSession({ userId, chatId, ttlMs }) {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query("SELECT id FROM users WHERE id = $1 FOR UPDATE", [userId]);
+        await client.query(
+          `UPDATE expense_evidence_sessions SET status = 'expired', updated_at = now()
+           WHERE user_id = $1 AND source_chat_id = $2 AND status = 'collecting' AND expires_at <= now()`,
+          [userId, chatId]
+        );
+        const existing = await client.query(
+          `SELECT id, status, expires_at FROM expense_evidence_sessions
+           WHERE user_id = $1 AND source_chat_id = $2 AND status = 'collecting' AND expires_at > now()
+           FOR UPDATE`,
+          [userId, chatId]
+        );
+        if (existing.rows[0]) {
+          const resumed = await client.query(
+            `UPDATE expense_evidence_sessions SET expires_at = now() + ($2 * interval '1 millisecond'), updated_at = now()
+             WHERE id = $1 RETURNING id, status, expires_at`,
+            [existing.rows[0].id, ttlMs]
+          );
+          await client.query("COMMIT");
+          return evidenceSessionResult(resumed.rows[0], "resumed");
+        }
+        const created = await client.query(
+          `INSERT INTO expense_evidence_sessions (user_id, source_chat_id, status, expires_at)
+           VALUES ($1, $2, 'collecting', now() + ($3 * interval '1 millisecond'))
+           RETURNING id, status, expires_at`,
+          [userId, chatId, ttlMs]
+        );
+        await client.query("COMMIT");
+        return evidenceSessionResult(created.rows[0], "started");
+      } catch (error) {
+        try { await client.query("ROLLBACK"); } catch { /* preserve original error */ }
+        throw error;
+      } finally { client.release(); }
+    },
+
+    async linkExpenseEvidenceImportToSession({ userId, chatId, sessionId, importId }) {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        const session = await client.query(
+          `SELECT id FROM expense_evidence_sessions
+           WHERE id = $1 AND user_id = $2 AND source_chat_id = $3
+             AND status = 'collecting' AND expires_at > now()
+           FOR UPDATE`,
+          [sessionId, userId, chatId]
+        );
+        if (!session.rows[0]) { await client.query("ROLLBACK"); return { state: "unavailable" }; }
+        const imported = await client.query(
+          `SELECT id FROM expense_evidence_imports
+           WHERE id = $1 AND user_id = $2 AND source_chat_id = $3 AND status IN ('ready', 'completed')
+           FOR UPDATE`,
+          [importId, userId, chatId]
+        );
+        if (!imported.rows[0]) { await client.query("ROLLBACK"); return { state: "unavailable" }; }
+        const linked = await client.query(
+          `INSERT INTO expense_evidence_session_imports (session_id, import_id, ordinal)
+           VALUES ($1, $2, (SELECT COALESCE(MAX(ordinal) + 1, 0) FROM expense_evidence_session_imports WHERE session_id = $1))
+           ON CONFLICT (session_id, import_id) DO UPDATE SET import_id = EXCLUDED.import_id
+           RETURNING ordinal`,
+          [sessionId, importId]
+        );
+        await client.query("COMMIT");
+        return { state: "linked", ordinal: linked.rows[0].ordinal };
+      } catch (error) {
+        try { await client.query("ROLLBACK"); } catch { /* preserve original error */ }
+        throw error;
+      } finally { client.release(); }
+    },
+
+    async finishExpenseEvidenceSession({ userId, chatId, sessionId }) {
+      const result = await pool.query(
+        `UPDATE expense_evidence_sessions SET status = 'ready', completed_at = now(), updated_at = now(), lease_expires_at = NULL
+         WHERE id = $1 AND user_id = $2 AND source_chat_id = $3 AND status = 'collecting' AND expires_at > now()
+         RETURNING id, status`,
+        [sessionId, userId, chatId]
+      );
+      return result.rows[0] ? { state: result.rows[0].status, id: result.rows[0].id } : { state: "unavailable" };
+    },
+
+    async cancelExpenseEvidenceSession({ userId, chatId, sessionId }) {
+      const result = await pool.query(
+        `UPDATE expense_evidence_sessions SET status = 'cancelled', completed_at = now(), updated_at = now(), lease_expires_at = NULL
+         WHERE id = $1 AND user_id = $2 AND source_chat_id = $3 AND status IN ('collecting', 'finalizing', 'ready')
+         RETURNING id, status`,
+        [sessionId, userId, chatId]
+      );
+      return result.rows[0] ? { state: result.rows[0].status, id: result.rows[0].id } : { state: "unavailable" };
+    },
+
+    async expireExpenseEvidenceSessions() {
+      const result = await pool.query(
+        `UPDATE expense_evidence_sessions SET status = 'expired', updated_at = now(), lease_expires_at = NULL
+         WHERE status = 'collecting' AND expires_at <= now()`
+      );
+      return result.rowCount ?? 0;
+    },
+
+    async getExpenseEvidenceSessionCandidates({ userId, sessionId }) {
+      const result = await pool.query(
+        `SELECT sessions.id AS session_id, imports.id AS import_id, links.ordinal AS import_ordinal,
+                candidates.id AS candidate_id, candidates.ordinal AS candidate_ordinal, candidates.evidence_type,
+                candidates.draft_id, candidates.status AS candidate_status, candidates.dedupe_classification,
+                candidates.dedupe_reason_code
+         FROM expense_evidence_sessions AS sessions
+         JOIN expense_evidence_session_imports AS links ON links.session_id = sessions.id
+         JOIN expense_evidence_imports AS imports ON imports.id = links.import_id
+         JOIN expense_evidence_candidates AS candidates ON candidates.import_id = imports.id
+         WHERE sessions.user_id = $1 AND sessions.id = $2
+         ORDER BY links.ordinal, candidates.ordinal`,
+        [userId, sessionId]
+      );
+      return result.rows.map((row) => ({
+        sessionId: row.session_id,
+        importId: row.import_id,
+        importOrdinal: row.import_ordinal,
+        candidateId: row.candidate_id,
+        candidateOrdinal: row.candidate_ordinal,
+        evidenceType: row.evidence_type,
+        draftId: row.draft_id,
+        status: row.candidate_status,
+        dedupeClassification: row.dedupe_classification,
+        dedupeReasonCode: row.dedupe_reason_code
+      }));
+    },
+
     async listExpenseEvidenceDuplicateCandidates(userId, client = pool, excludedDraftId = null) {
       const result = await client.query(
         `SELECT expenses.amount_original AS amount, expenses.currency_original AS currency,
@@ -5786,6 +5915,15 @@ function mapAccountDeletionRequest(row) {
     stage: row.stage,
     source: row.source,
     expiresAt: row.expires_at instanceof Date ? row.expires_at : new Date(row.expires_at)
+  };
+}
+
+function evidenceSessionResult(row, state) {
+  return {
+    state,
+    id: row.id,
+    status: row.status,
+    expiresAt: row.expires_at
   };
 }
 
