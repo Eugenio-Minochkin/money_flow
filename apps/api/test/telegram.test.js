@@ -349,6 +349,7 @@ test("normal text message records received draft and processing events", async (
 test("message processing completed event includes stage performance metadata", async () => {
   const repo = fakeRepository();
   const originalLog = console.log;
+  let voiceAbortSignal = null;
   console.log = () => {};
   try {
     const bot = createTelegramBot({
@@ -383,6 +384,7 @@ test("message processing completed event includes stage performance metadata", a
       voiceTranscriber: {
         isConfigured: () => true,
         async transcribeTelegramVoice(_voice, options = {}) {
+          voiceAbortSignal = options.signal;
           options.onPerfStage("telegram_file_download_start", { audioDurationSec: 3 });
           options.onPerfStage("telegram_file_download_end", { audioDurationSec: 3, fileSizeKb: 12 });
           options.onPerfStage("transcription_start", { transcriptionProvider: "deepgram" });
@@ -416,6 +418,7 @@ test("message processing completed event includes stage performance metadata", a
   assert.equal(Number.isFinite(completed.metadata.transcriptionMs), true);
   assert.equal(Number.isFinite(completed.metadata.llmParseMs), true);
   assert.equal(Number.isFinite(completed.metadata.dbSaveMs), true);
+  assert.ok(voiceAbortSignal instanceof AbortSignal);
 });
 
 test("successful draft processing records a completed result", async () => {

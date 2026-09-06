@@ -7211,7 +7211,7 @@ test("renews a live Telegram capture lease by its claim version", async () => {
   }));
 
   assert.equal(await repo.renewTelegramExpenseCapture(7, 10, 55, 2), true);
-  assert.match(queries[0].sql, /SET lease_expires_at = now\(\) \+ interval '30 minutes'/);
+  assert.match(queries[0].sql, /SET lease_expires_at = now\(\) \+ interval '2 minutes'/);
   assert.deepEqual(queries[0].params, [7, 10, 55, 2]);
 });
 

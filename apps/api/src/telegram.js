@@ -595,7 +595,7 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
       let onboardingTextInput = rawText;
       if (!onboardingTextInput && hasVoice) {
         try {
-          onboardingTextInput = await transcribeVoice(message, voiceTranscriber, trace, user);
+          onboardingTextInput = await transcribeVoice(message, voiceTranscriber, trace, user, signal);
         } catch (error) {
           trace.failActive(["telegram_file_download", "transcription"], error);
           console.error("[telegram] voice transcription failed during onboarding", error.message);
@@ -628,7 +628,7 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
           if (!completed?.draft) throw new Error("telegram_expense_capture_in_progress");
         }
         try {
-          text = await transcribeVoice(message, voiceTranscriber, trace, user);
+          text = await transcribeVoice(message, voiceTranscriber, trace, user, signal);
           text = normalizeVoiceMoneyTranscript(text);
           transcriptChars = String(text ?? "").length;
         } catch (error) {
@@ -1234,13 +1234,14 @@ function formatReleaseVersionLine(result) {
   return `Версии: ${versionFrom} — ${versionTo}`;
 }
 
-async function transcribeVoice(message, voiceTranscriber, trace, user) {
+async function transcribeVoice(message, voiceTranscriber, trace, user, signal = null) {
   if (!voiceTranscriber?.isConfigured()) return null;
   const voice = message.voice ?? message.audio;
   if (!voice) return null;
   return voiceTranscriber.transcribeTelegramVoice(voice, {
     userId: user?.id,
     requestKey: `telegram:${user?.id}:${message.chat?.id}:${message.message_id}`,
+    signal,
     onPerfStage(stage, metadata = {}) {
       if (stage.endsWith("_start")) {
         trace.start(stage.replace(/_start$/, ""), metadata);

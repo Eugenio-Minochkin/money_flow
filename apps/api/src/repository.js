@@ -738,10 +738,10 @@ export function createRepository(pool, options = {}) {
       const hasPayload = payload != null;
       const claimed = await pool.query(
         `INSERT INTO telegram_expense_captures AS captures (user_id, chat_id, message_id, status, claim_version, lease_expires_at${hasPayload ? ", payload, attempt_count" : ""})
-         VALUES ($1, $2, $3, 'processing', 1, now() + interval '30 minutes'${hasPayload ? ", $4, 0" : ""})
+         VALUES ($1, $2, $3, 'processing', 1, now() + interval '2 minutes'${hasPayload ? ", $4, 0" : ""})
          ON CONFLICT (user_id, chat_id, message_id) DO UPDATE
            SET claim_version = captures.claim_version + 1,
-               lease_expires_at = now() + interval '30 minutes'${hasPayload ? ", payload = COALESCE(captures.payload, EXCLUDED.payload), attempt_count = captures.attempt_count + 1" : ""}
+               lease_expires_at = now() + interval '2 minutes'${hasPayload ? ", payload = COALESCE(captures.payload, EXCLUDED.payload), attempt_count = captures.attempt_count + 1" : ""}
          WHERE captures.status = 'processing' AND captures.lease_expires_at <= now()
          RETURNING claim_version`,
         hasPayload ? [userId, chatId, messageId, JSON.stringify(payload)] : [userId, chatId, messageId]
@@ -768,7 +768,7 @@ export function createRepository(pool, options = {}) {
     async renewTelegramExpenseCapture(userId, chatId, messageId, claimVersion) {
       const result = await pool.query(
         `UPDATE telegram_expense_captures
-         SET lease_expires_at = now() + interval '30 minutes'
+         SET lease_expires_at = now() + interval '2 minutes'
          WHERE user_id = $1 AND chat_id = $2 AND message_id = $3
            AND status = 'processing' AND claim_version = $4
          RETURNING claim_version`,
