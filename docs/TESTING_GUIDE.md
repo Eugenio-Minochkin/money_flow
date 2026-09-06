@@ -4,7 +4,7 @@ Use this guide when changing business logic or UI around the main Money Flow sur
 
 ## Expense Capture Reliability
 
-Run focused capture checks with `npm.cmd test -- packages/shared/test/parser.test.js apps/api/test/voiceMoneyNormalization.test.js apps/api/test/telegram.test.js apps/api/test/repository.test.js apps/api/test/db.test.js`. PostgreSQL coverage uses only the disposable integration database via `npm.cmd run test:integration:postgres`.
+Run focused capture checks with `npm.cmd test -- packages/shared/test/parser.test.js apps/api/test/voiceMoneyNormalization.test.js apps/api/test/telegram.test.js apps/api/test/repository.test.js apps/api/test/db.test.js`. Cover joined STT number/currency boundaries, spoken decimal wording, true whole-number preservation, and loader edit/plain-edit/delete fallback without duplicate terminal messages. PostgreSQL coverage uses only the disposable integration database via `npm.cmd run test:integration:postgres`.
 
 ## Always Consider
 

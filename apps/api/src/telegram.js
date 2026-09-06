@@ -1279,15 +1279,33 @@ async function sendExpenseProcessingMessage(token, chatId, language, telegramCli
 async function deliverResultMessage({ token, chatId, loaderMessageId, text, replyMarkup, telegramClient, trace }) {
   if (loaderMessageId) {
     try {
-      return await sendTelegramResponse(trace, () => editMessageText(token, chatId, loaderMessageId, text, replyMarkup, telegramClient));
+      const result = await sendTelegramResponse(trace, () => editMessageText(token, chatId, loaderMessageId, text, replyMarkup, telegramClient));
+      trace.event("telegram_terminalization", { mode: "edit" });
+      return result;
     } catch (error) {
-      console.error("[telegram] editing loader into result failed, falling back to new message", error.message);
-      await deleteMessage(token, chatId, loaderMessageId, telegramClient).catch((deleteError) => {
-        console.error("[telegram] failed to delete loader after edit failure", deleteError.message);
-      });
+      console.error("[telegram] editing loader into result failed, retrying plain edit", error.message);
+      try {
+        const result = await sendTelegramResponse(trace, () => editMessageText(token, chatId, loaderMessageId, stripTelegramHtml(text), replyMarkup, telegramClient));
+        trace.event("telegram_terminalization", { mode: "plain_edit_fallback" });
+        return result;
+      } catch (plainEditError) {
+        console.error("[telegram] plain loader edit failed, deleting before sending result", plainEditError.message);
+        try {
+          await deleteMessage(token, chatId, loaderMessageId, telegramClient);
+        } catch (deleteError) {
+          trace.event("telegram_terminalization", { mode: "cleanup_failed" });
+          console.error("[telegram] failed to delete loader after edit failure", deleteError.message);
+          return { ok: false, terminalizationMode: "cleanup_failed" };
+        }
+        const result = await sendTelegramResponse(trace, () => sendMessage(token, chatId, text, replyMarkup, telegramClient));
+        trace.event("telegram_terminalization", { mode: "delete_and_send_fallback" });
+        return result;
+      }
     }
   }
-  return sendTelegramResponse(trace, () => sendMessage(token, chatId, text, replyMarkup, telegramClient));
+  const result = await sendTelegramResponse(trace, () => sendMessage(token, chatId, text, replyMarkup, telegramClient));
+  trace.event("telegram_terminalization", { mode: "delete_and_send_fallback" });
+  return result;
 }
 
 function extractMessageId(sendResult) {
