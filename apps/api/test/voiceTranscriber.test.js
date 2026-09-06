@@ -158,6 +158,25 @@ test("reserves the Deepgram allowance after download and before the paid request
   assert.deepEqual(stages, ["metadata", "download", "allowance", "deepgram"]);
 });
 
+test("passes the queue cancellation signal to Telegram and Deepgram fetches", async () => {
+  const signals = [];
+  const controller = new AbortController();
+  const transcriber = createVoiceTranscriber({
+    telegramBotToken: "telegram-token",
+    deepgramApiKey: "deepgram-key",
+    fetchImpl: async (url, options = {}) => {
+      signals.push(options.signal);
+      if (String(url).includes("/getFile")) return jsonResponse({ ok: true, result: { file_path: "voice/file.oga" } });
+      if (String(url).includes("/file/bot")) return { ok: true, async arrayBuffer() { return new Uint8Array([1]).buffer; }, async text() { return ""; } };
+      return jsonResponse({ results: { channels: [{ alternatives: [{ transcript: "coffee 70" }] }] } });
+    }
+  });
+
+  await transcriber.transcribeTelegramVoice({ file_id: "voice-id" }, { signal: controller.signal });
+
+  assert.deepEqual(signals, [controller.signal, controller.signal, controller.signal]);
+});
+
 function jsonResponse(body, options = {}) {
   return {
     ok: options.ok ?? true,

@@ -109,7 +109,7 @@ export function buildConfig(env) {
     trustedProxyIps: parseCsv(env.TRUSTED_PROXY_IPS, DEFAULT_TRUSTED_PROXY_IPS),
     maxJsonBytes: Number(env.MAX_JSON_BYTES ?? 256_000),
     telegramJobGlobalConcurrency: Number(env.TELEGRAM_JOB_GLOBAL_CONCURRENCY ?? 3),
-    telegramJobUserQueueLimit: Number(env.TELEGRAM_JOB_USER_QUEUE_LIMIT ?? 2),
+    telegramJobUserQueueLimit: Number(env.TELEGRAM_JOB_USER_QUEUE_LIMIT ?? 16),
     telegramJobTimeoutMs: Number(env.TELEGRAM_JOB_TIMEOUT_MS ?? 90_000),
     releaseDigestAutoSendEnabled: env.RELEASE_DIGEST_AUTO_SEND_ENABLED === "true",
     releaseDigestTimezone: env.RELEASE_DIGEST_TIMEZONE ?? "Asia/Bangkok",

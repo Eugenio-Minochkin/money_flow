@@ -2,6 +2,10 @@
 
 Use this guide when changing business logic or UI around the main Money Flow surfaces.
 
+## Expense Capture Reliability
+
+Run focused capture checks with `npm.cmd test -- packages/shared/test/parser.test.js apps/api/test/voiceMoneyNormalization.test.js apps/api/test/telegram.test.js apps/api/test/repository.test.js apps/api/test/db.test.js`. PostgreSQL coverage uses only the disposable integration database via `npm.cmd run test:integration:postgres`.
+
 ## Always Consider
 
 - Monthly budget calculation.

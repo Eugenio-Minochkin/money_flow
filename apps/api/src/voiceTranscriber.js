@@ -29,8 +29,8 @@ export function createVoiceTranscriber(options = {}) {
 
       const onPerfStage = options.onPerfStage ?? (() => {});
       onPerfStage("telegram_file_download_start", voiceMetadata(voice));
-      const file = await getTelegramFile({ telegramBotToken, fileId: voice.file_id, fetchImpl });
-      const audio = await downloadTelegramFile({ telegramBotToken, filePath: file.filePath, fetchImpl });
+      const file = await getTelegramFile({ telegramBotToken, fileId: voice.file_id, fetchImpl, signal: options.signal });
+      const audio = await downloadTelegramFile({ telegramBotToken, filePath: file.filePath, fetchImpl, signal: options.signal });
       onPerfStage("telegram_file_download_end", {
         ...voiceMetadata(voice),
         fileSizeKb: bytesToKb(file.fileSizeBytes)
@@ -49,7 +49,8 @@ export function createVoiceTranscriber(options = {}) {
         deepgramApiKey,
         audio,
         mimeType: voice.mime_type ?? contentTypeForPath(file.filePath),
-        fetchImpl
+        fetchImpl,
+        signal: options.signal
       }).then((transcript) => {
         onPerfStage("transcription_end", {
           ...voiceMetadata(voice),
@@ -62,8 +63,8 @@ export function createVoiceTranscriber(options = {}) {
   };
 }
 
-async function getTelegramFile({ telegramBotToken, fileId, fetchImpl }) {
-  const response = await fetchImpl(`https://api.telegram.org/bot${telegramBotToken}/getFile?file_id=${encodeURIComponent(fileId)}`);
+async function getTelegramFile({ telegramBotToken, fileId, fetchImpl, signal }) {
+  const response = await fetchImpl(`https://api.telegram.org/bot${telegramBotToken}/getFile?file_id=${encodeURIComponent(fileId)}`, { signal });
   const body = await response.json();
   if (!response.ok || !body.ok || !body.result?.file_path) {
     throw new Error(`Telegram getFile failed: ${response.status}`);
@@ -74,21 +75,22 @@ async function getTelegramFile({ telegramBotToken, fileId, fetchImpl }) {
   };
 }
 
-async function downloadTelegramFile({ telegramBotToken, filePath, fetchImpl }) {
-  const response = await fetchImpl(`https://api.telegram.org/file/bot${telegramBotToken}/${filePath}`);
+async function downloadTelegramFile({ telegramBotToken, filePath, fetchImpl, signal }) {
+  const response = await fetchImpl(`https://api.telegram.org/file/bot${telegramBotToken}/${filePath}`, { signal });
   if (!response.ok) {
     throw new Error(`Telegram file download failed: ${response.status} ${await response.text()}`);
   }
   return response.arrayBuffer();
 }
 
-async function transcribeWithDeepgram({ deepgramApiKey, audio, mimeType, fetchImpl }) {
+async function transcribeWithDeepgram({ deepgramApiKey, audio, mimeType, fetchImpl, signal }) {
   const response = await fetchImpl(DEEPGRAM_LISTEN_URL, {
     method: "POST",
     headers: {
       "authorization": `Token ${deepgramApiKey}`,
       "content-type": normalizeMimeType(mimeType)
     },
+    signal,
     body: Buffer.from(await audio)
   });
 

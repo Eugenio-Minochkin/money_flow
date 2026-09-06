@@ -242,6 +242,10 @@ function createBot(telegramClient) {
   });
 }
 const bot = createBot();
+const resumeTelegramCaptures = () => bot.resumePendingCaptures()
+  .catch((error) => console.error("[telegram] capture inbox resume failed", error.message));
+void resumeTelegramCaptures();
+setInterval(resumeTelegramCaptures, 10_000).unref();
 if (config.telegramBotToken) {
   void syncTelegramCommandMenu({ token: config.telegramBotToken })
     .catch((error) => console.error("[telegram] command menu sync failed", error.message));

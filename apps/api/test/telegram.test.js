@@ -172,6 +172,7 @@ test("safe text message is saved immediately with edit and delete actions", asyn
 
 test("safe voice message is saved immediately", async () => {
   const calls = [];
+  const parsedTexts = [];
   const repo = fakeRepository();
   repo.listClosedReserveMonthsForTelegramUser = async () => [];
   repo.saveDraftAsExpense = async (draftId) => ({
@@ -181,14 +182,15 @@ test("safe voice message is saved immediately", async () => {
   });
   const bot = createTelegramBot({
     token: "test-token", miniAppUrl: "http://localhost:3000", repository: repo,
-    voiceTranscriber: { isConfigured: () => true, async transcribeTelegramVoice() { return "такси 460 бат"; } },
-    expenseParser: { async parse() { return { expenses: [{ amount: 460, currency: "THB", description: "такси", category_slug: "transport", category_source: "parser", needs_review: false, spent_at: "2026-08-14T08:00:00.000Z", budget_impact: "regular" }] }; } },
+    voiceTranscriber: { isConfigured: () => true, async transcribeTelegramVoice() { return "Такси 8:50 лари"; } },
+    expenseParser: { async parse(text) { parsedTexts.push(text); return { expenses: [{ amount: 8.5, currency: "GEL", description: "такси", category_slug: "transport", category_source: "parser", needs_review: false, spent_at: "2026-08-14T08:00:00.000Z", budget_impact: "regular" }] }; } },
     telegramClient: capturingClient(calls)
   });
 
   await bot.handleUpdate({ message: { message_id: 56, chat: { id: 10 }, from: { id: 100, first_name: "M" }, voice: { file_id: "voice-1", mime_type: "audio/ogg" } } });
 
   assert.ok(calls.some((call) => ["sendMessage", "editMessageText"].includes(call.method) && /Записал/.test(call.text)));
+  assert.deepEqual(parsedTexts, ["Такси 8.50 лари"]);
   assert.equal(repo.events.filter((event) => event.eventName === "expense_saved").length, 1);
 });
 
@@ -347,6 +349,7 @@ test("normal text message records received draft and processing events", async (
 test("message processing completed event includes stage performance metadata", async () => {
   const repo = fakeRepository();
   const originalLog = console.log;
+  let voiceAbortSignal = null;
   console.log = () => {};
   try {
     const bot = createTelegramBot({
@@ -381,6 +384,7 @@ test("message processing completed event includes stage performance metadata", a
       voiceTranscriber: {
         isConfigured: () => true,
         async transcribeTelegramVoice(_voice, options = {}) {
+          voiceAbortSignal = options.signal;
           options.onPerfStage("telegram_file_download_start", { audioDurationSec: 3 });
           options.onPerfStage("telegram_file_download_end", { audioDurationSec: 3, fileSizeKb: 12 });
           options.onPerfStage("transcription_start", { transcriptionProvider: "deepgram" });
@@ -414,6 +418,7 @@ test("message processing completed event includes stage performance metadata", a
   assert.equal(Number.isFinite(completed.metadata.transcriptionMs), true);
   assert.equal(Number.isFinite(completed.metadata.llmParseMs), true);
   assert.equal(Number.isFinite(completed.metadata.dbSaveMs), true);
+  assert.ok(voiceAbortSignal instanceof AbortSignal);
 });
 
 test("successful draft processing records a completed result", async () => {
@@ -4252,6 +4257,42 @@ test("full user queue uses localized text for ru and en users", async () => {
     await parser.waitForCalls(3);
     parser.resolveNext();
   }
+});
+
+test("queue-full Telegram delivery is rejected before it creates a durable capture", async () => {
+  const messages = [];
+  const parser = controlledExpenseParser();
+  const repo = fakeRepository();
+  const claimedMessageIds = [];
+  repo.claimTelegramExpenseCapture = async (_userId, _chatId, messageId) => {
+    claimedMessageIds.push(messageId);
+    return { state: "claimed", claimVersion: messageId };
+  };
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: repo,
+    expenseParser: parser,
+    telegramClient: captureTelegramClient(messages),
+    awaitQueuedJobs: false,
+    telegramJobQueueOptions: { globalConcurrency: 1, userQueueLimit: 2, jobTimeoutMs: 10_000 },
+    perfLogger: () => {}
+  });
+
+  await bot.handleUpdate(textUpdate("first expense", 100));
+  await bot.handleUpdate(textUpdate("second expense", 100));
+  await bot.handleUpdate(textUpdate("third expense", 100));
+  await bot.handleUpdate(textUpdate("fourth expense", 100));
+
+  assert.equal(claimedMessageIds.length, 3);
+  assert.ok(messages.some((message) => message.text.includes("несколько твоих сообщений")));
+
+  await parser.waitForCalls(1);
+  parser.resolveNext();
+  await parser.waitForCalls(2);
+  parser.resolveNext();
+  await parser.waitForCalls(3);
+  parser.resolveNext();
 });
 
 test("admin release preview is denied to non-admin users", async () => {

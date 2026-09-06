@@ -734,24 +734,52 @@ export function createRepository(pool, options = {}) {
       } finally { client.release(); }
     },
 
-    async claimTelegramExpenseCapture(userId, chatId, messageId) {
+    async claimTelegramExpenseCapture(userId, chatId, messageId, payload = null) {
+      const hasPayload = payload != null;
       const claimed = await pool.query(
-        `INSERT INTO telegram_expense_captures AS captures (user_id, chat_id, message_id, status, claim_version, lease_expires_at)
-         VALUES ($1, $2, $3, 'processing', 1, now() + interval '60 seconds')
+        `INSERT INTO telegram_expense_captures AS captures (user_id, chat_id, message_id, status, claim_version, lease_expires_at${hasPayload ? ", payload, attempt_count" : ""})
+         VALUES ($1, $2, $3, 'processing', 1, now() + interval '2 minutes'${hasPayload ? ", $4, 0" : ""})
          ON CONFLICT (user_id, chat_id, message_id) DO UPDATE
            SET claim_version = captures.claim_version + 1,
-               lease_expires_at = now() + interval '60 seconds'
+               lease_expires_at = now() + interval '2 minutes'${hasPayload ? ", payload = COALESCE(captures.payload, EXCLUDED.payload), attempt_count = captures.attempt_count + 1" : ""}
          WHERE captures.status = 'processing' AND captures.lease_expires_at <= now()
          RETURNING claim_version`,
-        [userId, chatId, messageId]
+        hasPayload ? [userId, chatId, messageId, JSON.stringify(payload)] : [userId, chatId, messageId]
       );
       if (claimed.rows[0]) return { state: "claimed", claimVersion: claimed.rows[0].claim_version };
       return this.readTelegramExpenseCapture(userId, chatId, messageId);
     },
 
+    async listRunnableTelegramExpenseCaptures(limit = 100) {
+      const result = await pool.query(
+        `SELECT captures.user_id, captures.chat_id, captures.message_id, captures.claim_version, captures.payload,
+                users.telegram_user_id, users.first_name
+         FROM telegram_expense_captures captures
+         JOIN users ON users.id = captures.user_id
+         WHERE captures.status = 'processing' AND captures.payload IS NOT NULL
+           AND (captures.lease_expires_at IS NULL OR captures.lease_expires_at <= now())
+         ORDER BY captures.created_at, captures.id
+         LIMIT $1`,
+        [Math.max(1, Math.min(Number(limit) || 100, 500))]
+      );
+      return result.rows;
+    },
+
+    async renewTelegramExpenseCapture(userId, chatId, messageId, claimVersion) {
+      const result = await pool.query(
+        `UPDATE telegram_expense_captures
+         SET lease_expires_at = now() + interval '2 minutes'
+         WHERE user_id = $1 AND chat_id = $2 AND message_id = $3
+           AND status = 'processing' AND claim_version = $4
+         RETURNING claim_version`,
+        [userId, chatId, messageId, claimVersion]
+      );
+      return result.rowCount === 1;
+    },
+
     async readTelegramExpenseCapture(userId, chatId, messageId) {
       const result = await pool.query(
-        `SELECT captures.status AS request_status, drafts.*
+        `SELECT captures.status AS request_status, captures.last_error_code, drafts.*
          FROM telegram_expense_captures captures
          LEFT JOIN drafts ON drafts.id = captures.draft_id
          WHERE captures.user_id = $1 AND captures.chat_id = $2 AND captures.message_id = $3`,
@@ -761,13 +789,15 @@ export function createRepository(pool, options = {}) {
       if (!row) return null;
       return row.request_status === "completed"
         ? { state: "completed", draft: normalizeDraft(row) }
-        : { state: "processing" };
+        : row.request_status === "failed"
+          ? { state: "failed", errorCode: row.last_error_code ?? null }
+          : { state: "processing" };
     },
 
     async waitForTelegramExpenseCapture(userId, chatId, messageId) {
       for (let attempt = 0; attempt < 1200; attempt += 1) {
         const result = await this.readTelegramExpenseCapture(userId, chatId, messageId);
-        if (!result || result.state === "completed") return result;
+        if (!result || result.state !== "processing") return result;
         await new Promise((resolve) => setTimeout(resolve, 25));
       }
       return null;
@@ -775,10 +805,23 @@ export function createRepository(pool, options = {}) {
 
     async releaseTelegramExpenseCapture(userId, chatId, messageId, claimVersion) {
       await pool.query(
-        `DELETE FROM telegram_expense_captures
+        `UPDATE telegram_expense_captures
+         SET status = 'failed', lease_expires_at = NULL, payload = NULL,
+             finished_at = now(), last_error_code = 'telegram_expense_capture_released'
          WHERE user_id = $1 AND chat_id = $2 AND message_id = $3
            AND status = 'processing' AND claim_version = $4`,
         [userId, chatId, messageId, claimVersion]
+      );
+    },
+
+    async failTelegramExpenseCapture(userId, chatId, messageId, claimVersion, errorCode = "telegram_expense_capture_failed") {
+      await pool.query(
+        `UPDATE telegram_expense_captures
+         SET status = 'failed', lease_expires_at = NULL, payload = NULL,
+             finished_at = now(), last_error_code = $5
+         WHERE user_id = $1 AND chat_id = $2 AND message_id = $3
+           AND status = 'processing' AND claim_version = $4`,
+        [userId, chatId, messageId, claimVersion, String(errorCode).slice(0, 120)]
       );
     },
 
@@ -803,7 +846,8 @@ export function createRepository(pool, options = {}) {
         );
         const completed = await client.query(
           `UPDATE telegram_expense_captures
-           SET draft_id = $4, status = 'completed', completed_at = now(), lease_expires_at = NULL
+           SET draft_id = $4, status = 'completed', completed_at = now(), lease_expires_at = NULL,
+               payload = NULL, finished_at = now()
            WHERE user_id = $1 AND chat_id = $2 AND message_id = $3 AND status = 'processing'
              AND claim_version = $5 AND lease_expires_at > now()
            RETURNING id`,
@@ -3461,6 +3505,9 @@ export function createRepository(pool, options = {}) {
     async saveDraftAsExpense(draftId, telegramUserId, options = {}) {
       const client = options.client ?? await pool.connect();
       const ownsTransaction = !options.client;
+      const prefetched = ownsTransaction
+        ? await prefetchDraftMoneyAmounts(pool, exchangeRates, draftId, telegramUserId)
+        : null;
       const readDashboardSnapshot = async () => {
         try {
           return (await this.dashboard(telegramUserId)).snapshot;
@@ -3498,6 +3545,12 @@ export function createRepository(pool, options = {}) {
         }
 
         let items = Array.isArray(draft.items) ? draft.items : JSON.parse(draft.items);
+        const moneyAmountsByItem = prefetched
+          ? matchingPrefetchedMoneyAmounts(prefetched, draft, items)
+          : null;
+        if (prefetched && !moneyAmountsByItem) {
+          throw codedError("Draft changed while preparing exchange rates", "draft_changed_retry");
+        }
         if (hasUnresolvedCurrencyAmbiguity(items)) {
           throw codedError("Draft requires an explicit currency selection", "currency_selection_required");
         }
@@ -3525,9 +3578,10 @@ export function createRepository(pool, options = {}) {
           );
         }
         const inserted = [];
-        for (const item of items) {
+        for (const [itemIndex, item] of items.entries()) {
           const spentAt = new Date(item.spent_at);
-          const moneyAmounts = await buildMoneyAmounts(exchangeRates, item.amount, item.currency, spentAt, draft);
+          const moneyAmounts = moneyAmountsByItem?.[itemIndex]
+            ?? await buildMoneyAmounts(exchangeRates, item.amount, item.currency, spentAt, draft);
           const result = await client.query(
             `INSERT INTO expenses (
                user_id, draft_id, amount_original, currency_original, amount_base, base_currency,
@@ -5308,10 +5362,47 @@ function userTimezone(user) {
   return normalizeTimeZone(user?.timezone).timeZone;
 }
 
+async function prefetchDraftMoneyAmounts(pool, exchangeRates, draftId, telegramUserId) {
+  if (typeof pool.query !== "function") return null;
+  const result = await pool.query(
+    `SELECT drafts.items, drafts.version, drafts.status, users.base_currency
+     FROM drafts JOIN users ON users.id = drafts.user_id
+     WHERE drafts.id = $1 AND users.telegram_user_id = $2`,
+    [draftId, telegramUserId]
+  );
+  const draft = result.rows[0];
+  if (!draft || !["pending", "inbox"].includes(draft.status)) return null;
+  const items = Array.isArray(draft.items) ? draft.items : JSON.parse(draft.items);
+  return {
+    version: String(draft.version),
+    baseCurrency: normalizeCurrency(draft.base_currency, "THB"),
+    itemSignature: JSON.stringify(items),
+    moneyAmounts: await Promise.all(items.map((item) => buildMoneyAmounts(
+      exchangeRates, item.amount, item.currency, new Date(item.spent_at), draft
+    )))
+  };
+}
+
+function matchingPrefetchedMoneyAmounts(prefetched, draft, items) {
+  return String(prefetched.version) === String(draft.version)
+    && prefetched.baseCurrency === normalizeCurrency(draft.base_currency, "THB")
+    && prefetched.itemSignature === JSON.stringify(items)
+    ? prefetched.moneyAmounts
+    : null;
+}
+
 async function buildMoneyAmounts(exchangeRates, amount, currency, date, user = {}) {
-  const rates = await exchangeRates.ratesFor(date);
   const normalizedCurrency = normalizeCurrency(currency, "THB");
   const baseCurrency = normalizeCurrency(user?.base_currency, "THB");
+  if (normalizedCurrency === baseCurrency) {
+    const value = roundMoney(amount);
+    return {
+      amountBase: value,
+      convertedAmounts: { [baseCurrency]: value },
+      source: "identity"
+    };
+  }
+  const rates = await exchangeRates.ratesFor(date);
   const amounts = convertedAmounts(amount, normalizedCurrency, baseCurrency, rates);
   return {
     amountBase: amounts[baseCurrency],

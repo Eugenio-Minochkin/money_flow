@@ -1,24 +1,45 @@
 export function createTelegramJobQueue(options = {}) {
   const globalConcurrency = positiveInteger(options.globalConcurrency, 3);
-  const userQueueLimit = positiveInteger(options.userQueueLimit, 2);
+  const userQueueLimit = positiveInteger(options.userQueueLimit, 16);
   const jobTimeoutMs = positiveInteger(options.jobTimeoutMs, 90_000);
   const globalQueueLimit = Number.isFinite(options.globalQueueLimit) ? Number(options.globalQueueLimit) : Infinity;
 
   const users = new Map();
   let globalActiveJobs = 0;
   let globalPendingJobs = 0;
+  let globalReservedJobs = 0;
 
   return {
-    enqueue({ userId, run, onStart, onFinish }) {
+    reserve(userId) {
       const state = userState(userId);
-      if (state.pending.length >= userQueueLimit) {
+      if (state.pending.length + state.reserved >= userQueueLimit) return { accepted: false, status: "userQueueFull", stats: stats(state) };
+      if (globalPendingJobs + globalReservedJobs >= globalQueueLimit) return { accepted: false, status: "globalQueueFull", stats: stats(state) };
+      state.reserved += 1;
+      globalReservedJobs += 1;
+      return { accepted: true, token: { state, released: false }, stats: stats(state) };
+    },
+    releaseReservation(token) {
+      if (!token || token.released) return;
+      token.released = true;
+      token.state.reserved = Math.max(0, token.state.reserved - 1);
+      globalReservedJobs = Math.max(0, globalReservedJobs - 1);
+    },
+    enqueue({ userId, run, onStart, onFinish, reservation = null }) {
+      const state = userState(userId);
+      const reserved = reservation?.state === state && !reservation.released;
+      if (reserved) {
+        reservation.released = true;
+        state.reserved -= 1;
+        globalReservedJobs -= 1;
+      }
+      if (!reserved && state.pending.length + state.reserved >= userQueueLimit) {
         return {
           accepted: false,
           status: "userQueueFull",
           stats: stats(state)
         };
       }
-      if (globalPendingJobs >= globalQueueLimit) {
+      if (!reserved && globalPendingJobs + globalReservedJobs >= globalQueueLimit) {
         return {
           accepted: false,
           status: "globalQueueFull",
@@ -100,7 +121,7 @@ export function createTelegramJobQueue(options = {}) {
     const key = String(userId);
     let state = users.get(key);
     if (!state) {
-      state = { active: null, pending: [] };
+      state = { active: null, pending: [], reserved: 0 };
       users.set(key, state);
     }
     return state;
@@ -116,16 +137,26 @@ export function createTelegramJobQueue(options = {}) {
 }
 
 async function runWithTimeout(run, timeoutMs) {
+  const controller = new AbortController();
+  let timedOut = false;
   let timeoutId;
   try {
-    return await Promise.race([
-      run(),
-      new Promise((_, reject) => {
-        timeoutId = setTimeout(() => reject(new Error("Telegram job timed out")), timeoutMs);
-      })
-    ]);
+    timeoutId = setTimeout(() => {
+      timedOut = true;
+      controller.abort(new TelegramJobTimeoutError());
+    }, timeoutMs);
+    const result = await run({ signal: controller.signal });
+    if (timedOut) throw new TelegramJobTimeoutError();
+    return result;
   } finally {
     clearTimeout(timeoutId);
+  }
+}
+
+export class TelegramJobTimeoutError extends Error {
+  constructor() {
+    super("Telegram job timed out");
+    this.code = "telegram_job_timeout";
   }
 }
 
