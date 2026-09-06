@@ -11,7 +11,10 @@ test("normalizes an unambiguous currency-qualified spoken decimal", () => {
     ["Такси 8:50 лари", "Такси 8.50 лари"],
     ["Такси 8 50 лари", "Такси 8.50 лари"],
     ["Такси восемь пятьдесят лари", "Такси 8.50 лари"],
-    ["Taxi 8:50 dollars", "Taxi 8.50 dollars"]
+    ["Такси три точка пятьдесят лари", "Такси 3.50 лари"],
+    ["Taxi 8:50 dollars", "Taxi 8.50 dollars"],
+    ["Чурчхела семьлари", "Чурчхела семь лари"],
+    ["Чурчхела семилари", "Чурчхела семь лари"]
   ]) {
     assert.equal(normalizeVoiceMoneyTranscript(input), expected, input);
   }

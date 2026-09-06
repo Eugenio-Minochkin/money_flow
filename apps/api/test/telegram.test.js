@@ -5413,6 +5413,52 @@ test("expense processing loader uses the selected custom emoji and replies to th
   }
 });
 
+test("expense loader terminalization retries a plain edit before deleting or sending another message", async () => {
+  const cases = [
+    { name: "plain edit fallback", editFailures: 1, deleteFails: false, expectedEdits: 2, expectedSends: 1 },
+    { name: "delete and send fallback", editFailures: 2, deleteFails: false, expectedEdits: 2, expectedSends: 2 },
+    { name: "cleanup failure does not send a duplicate terminal message", editFailures: 2, deleteFails: true, expectedEdits: 2, expectedSends: 1 }
+  ];
+
+  for (const scenario of cases) {
+    const calls = [];
+    let editAttempts = 0;
+    await processQueuedMessage({
+      message: { chat: { id: 5 }, message_id: 321 },
+      from: { id: 100 },
+      user: { id: 1, interface_language: "ru", base_currency: "THB", onboarding_step: "completed", timezone: "Asia/Bangkok" },
+      rawText: "переведи 1000",
+      inputType: "text",
+      repository: { async recordAppEvent() {} },
+      token: null,
+      miniAppUrl: "http://x",
+      expenseParser: { async parse() { throw new Error("expense parser should not be called"); } },
+      telegramClient: {
+        async sendMessage(message) {
+          calls.push({ method: "sendMessage", ...message });
+          return { ok: true, result: { message_id: 777 } };
+        },
+        async editMessageText(message) {
+          calls.push({ method: "editMessageText", ...message });
+          editAttempts += 1;
+          if (editAttempts <= scenario.editFailures) throw new Error("edit failed");
+          return { ok: true, result: { message_id: 777 } };
+        },
+        async deleteMessage(message) {
+          calls.push({ method: "deleteMessage", ...message });
+          if (scenario.deleteFails) throw new Error("delete failed");
+          return { ok: true };
+        }
+      },
+      now: () => new Date("2026-06-30T10:00:00Z"),
+      trace: stubTrace()
+    });
+
+    assert.equal(calls.filter((call) => call.method === "editMessageText").length, scenario.expectedEdits, scenario.name);
+    assert.equal(calls.filter((call) => call.method === "sendMessage").length, scenario.expectedSends, scenario.name);
+  }
+});
+
 test("processQueuedMessage creates budget top-up draft before expense parser", async () => {
   let topupDraft = null;
   let expenseParserCalled = false;

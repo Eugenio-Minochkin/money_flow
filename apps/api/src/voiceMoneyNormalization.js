@@ -10,7 +10,7 @@ const RU_TENS = new Map([
 ]);
 
 export function normalizeVoiceMoneyTranscript(value) {
-  const text = String(value ?? "").trim();
+  const text = splitJoinedLariToken(String(value ?? "").trim());
   const currency = recognizeCurrencyText(text);
   if (!text || currency.kind !== "exact") return text;
 
@@ -22,7 +22,7 @@ export function normalizeVoiceMoneyTranscript(value) {
     }
   }
 
-  const wordMatches = [...text.matchAll(/(?<![\p{L}])(один|одна|одно|два|две|три|четыре|пять|шесть|семь|восемь|девять)\s+(двадцать|тридцать|сорок|пятьдесят|шестьдесят|семьдесят|восемьдесят|девяносто)(?![\p{L}])/giu)];
+  const wordMatches = [...text.matchAll(/(?<![\p{L}])(один|одна|одно|два|две|три|четыре|пять|шесть|семь|восемь|девять)(?:\s+точка)?\s+(двадцать|тридцать|сорок|пятьдесят|шестьдесят|семьдесят|восемьдесят|девяносто)(?![\p{L}])/giu)];
   if (wordMatches.length !== 1 && numericTokenCount(text) === 0) return text;
   if (wordMatches.length === 1 && numericTokenCount(text) === 0) {
     const match = wordMatches[0];
@@ -35,6 +35,14 @@ export function normalizeVoiceMoneyTranscript(value) {
     }
   }
   return text;
+}
+
+function splitJoinedLariToken(text) {
+  const matches = [...text.matchAll(/(?<![\p{L}])(семь|семи)лари(?![\p{L}])/giu)];
+  if (matches.length !== 1) return text;
+  const match = matches[0];
+  const unit = match[1].toLowerCase() === "семи" ? "семь" : match[1];
+  return `${text.slice(0, match.index)}${unit} лари${text.slice(match.index + match[0].length)}`;
 }
 
 function hasAdjacentExactCurrency(text, end, currencyCode) {
