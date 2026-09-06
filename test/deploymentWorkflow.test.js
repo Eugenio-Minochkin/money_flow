@@ -307,7 +307,12 @@ test('deployment runbook documents start-of-task git sync preflight', () => {
   assert.match(runbook, /git pull --ff-only origin master/);
   assert.match(runbook, /git status -sb/);
   assert.match(runbook, /diverged branch/);
-  assert.match(runbook, /stop and ask the user/);
+  assert.match(runbook, /stop and ask the user to choose merge or rebase/);
+  assert.match(runbook, /Preserve unrelated changes; they do not require stopping/);
+  assert.match(runbook, /isolated worktree from the refreshed `origin\/master`/);
+  assert.match(runbook, /resolve the base before publishing a new task PR/);
+  assert.match(runbook, /gh pr create --base master --draft/);
+  assert.match(runbook, /Do not repair history, reset, stash, delete branches/);
 });
 
 test('production compose enables strict Telegram Mini App auth', () => {

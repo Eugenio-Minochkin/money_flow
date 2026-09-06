@@ -6,31 +6,20 @@ Keep changes focused on helping one user understand day-to-day money movement wi
 ## Working Agreement For Agents
 
 - Treat `master` and production as protected. Do not push directly to `master`, merge your own PR, deploy, roll back, SSH into production, or run production commands unless the user explicitly asks for that exact action in the current task.
-- Make code and documentation changes on a short-lived branch, open a GitHub PR into `master`, and send the user the PR link for review. Stop after opening or updating the PR unless the user explicitly asks to merge or deploy.
-- Opening or updating a draft PR is the required completion step for code/documentation changes and does not require separate approval. Only merge, deploy, production access, and database writes require explicit approval.
-- Classify the task as DIRECT, STANDARD, or DEEP before choosing a workflow. Use the least heavy process that reliably addresses the task; do not turn a local change into a broader project. If an existing approved plan under `docs/superpowers/plans/` is directly applicable, follow it and keep its status honest.
+- For requested code or documentation implementation, use a short-lived task branch. Ordinary pushes of that branch and opening or updating a draft PR into `master` are explicitly authorized without another confirmation; this is the repository exception to the global push restriction. Send the PR link after checking the published head and checks. Do not force-push, amend, merge, or deploy without an explicit request.
+- A draft PR is the required completion step for code/documentation changes unless the user requests local-only work. If publication is blocked, preserve the patch and report the actual blocker. Production access and persistent/user-data database writes require explicit approval under the safety rules below.
+- Follow the loaded global rules for task/model routing, skills, narrow scope, proportional verification, and simplify; keep those definitions in one place. If global rules are unavailable, use the smallest safe workflow and the configured model, and disclose missing model-routing guidance. Follow an existing approved plan under `docs/superpowers/plans/` only when directly applicable, and keep its status honest.
 - Ask clarifying questions when requirements are ambiguous, especially around product behavior, budgets, currencies, planned payments, reserve, onboarding, reminders, Telegram UX, release notes, security, migrations, database writes, or production operations. If progress is still safe without an answer, document assumptions in the PR.
-- Keep the scope narrow. Do not include drive-by refactors, dependency upgrades, formatting churn, or unrelated fixes without asking first.
 - Before editing, inspect the relevant code, tests, and docs. Do not guess paths or rewrite flows from memory.
-
-## Task Complexity Routing
-
-- **DIRECT** — an unambiguous, local change with a known or quickly verifiable cause; no public API, schema, security, dependency, migration, or product/architecture decision changes. Examples: typo, text change, small CSS defect, focused fixture correction, obvious null guard, or a single existing configuration value. Inspect the relevant files, make the smallest change, run proportionate focused verification, and report it briefly. Do not wait for a separate confirmation before a safe DIRECT change. Do not automatically invoke `using-superpowers`, `grill-with-docs`, brainstorming, systematic debugging, TDD, a large plan, a worktree, or subagents.
-- **STANDARD** — a bounded change across several related parts where the intended behavior is understood. A short 3–6 step outline, focused tests, and one directly relevant skill are allowed when they materially reduce risk. Do not start interviews, worktrees, multiple subagents, or a separate design process without a concrete need.
-- **DEEP** — a change with unresolved product or architecture choices, a public API, migration/schema/security impact, major cross-layer behavior, or multiple independent workstreams. First clarify the unresolved decision. Brainstorming, an implementation plan, isolation, or subagents may be used only when each is proportionate to that concrete risk.
-- When a DEEP task has a genuinely unresolved product, domain, or architecture decision, several materially different options, and a likely need to record the decision in `CONTEXT.md`, an ADR, or a glossary, briefly offer `$grill-with-docs` and explain its benefit in one sentence. Do not start it until the user agrees. Do not offer it for DIRECT work, ordinary bug fixes, a clear specification, a small refactor, one or two normal clarifying questions, or DEEP work based only on size or file count.
-- Apply `systematic-debugging` when the cause of a failure is unknown or ambiguous. For an obvious local regression, inspect the relevant evidence and add focused regression coverage when code behavior changes; do not automatically run the full debugging workflow.
-- Apply TDD to a testable change of behavior when a reasonable regression test can be added, especially new or substantially changed business logic. It is not required for text, documentation, configuration-only, fixture-only, or obvious CSS edits unless a changed behavior needs regression coverage.
-- Keep verification proportionate: a focused check is sufficient for DIRECT; expand it only when the change or its risk warrants it. Explicit user requests for a named skill always take precedence.
 
 ## Start-Of-Task Git Hygiene
 
-- Before changing files, fetch and sync from `origin/master`.
-- If working on `master`, run `git pull --ff-only origin master` before creating a task branch.
-- Create task branches only from updated `master` / `origin/master`, not from stale local history.
-- Verify that repository instruction files such as `AGENTS.md` and required docs such as `docs/superpowers/` exist locally before editing.
-- If sync fails, the branch has diverged, the working tree is unexpectedly dirty, or required instruction/docs files are missing locally, stop and ask the user. Do not create missing instruction files from scratch.
-- Do not use `git reset --hard`, `git stash`, branch deletion, or overwrite local files unless the user explicitly approves that exact recovery action.
+- Inspect branch, worktree status, and relevant local changes before editing. Fetch `origin/master` once when starting new implementation; create new task branches from the refreshed remote base. On a clean `master`, use `git pull --ff-only origin master` before branching.
+- When continuing an existing task branch, preserve it; do not switch to `master` or merge/rebase automatically. Ask the user to choose merge or rebase only when integration of diverged history is actually needed.
+- Unrelated local changes are not an automatic blocker. Preserve them and continue if they do not overlap the task; use an isolated worktree from the refreshed base when needed. Ask only if overlapping changes cannot be safely separated or ownership is unclear.
+- If fetch/sync fails, diagnose the cause and continue independent read-only work or safe local preparation with the known base explicitly disclosed. Do not claim the branch is current; resolve the base before publishing a new task PR.
+- Read relevant instruction/docs files before editing. If a required file is missing, check the fetched base and existing paths first; ask only when the missing guidance blocks safe progress. Do not fabricate missing instructions.
+- Do not use `git reset --hard`, `git stash`, branch deletion, or overwrite another task's changes without explicit approval for that recovery action. See `docs/deployment-runbook.md` for commands.
 
 ## Product Shape
 
@@ -42,7 +31,6 @@ Keep changes focused on helping one user understand day-to-day money movement wi
 ## Domain Safety
 
 - Before changing budget, planned payment, reserve, onboarding, dashboard, or currency logic, read `docs/DOMAIN_RULES.md`.
-- When changing business logic, add or update tests that cover the changed behavior.
 - When making an important domain change, update `docs/DOMAIN_RULES.md` or `docs/DECISIONS.md`.
 - Keep `docs/PRODUCT_CONTEXT.md`, `docs/UI_PRINCIPLES.md`, and `docs/TESTING_GUIDE.md` in sync with product-facing changes.
 
@@ -55,10 +43,9 @@ Keep changes focused on helping one user understand day-to-day money movement wi
 
 ## Testing And PR Readiness
 
-- Add or update tests for changed behavior. Prefer focused failing tests first, then implementation.
-- Run relevant focused tests before the full test suite. For broad changes, run `npm test`.
+- Use `docs/TESTING_GUIDE.md` to select relevant focused tests; on Windows use `npm.cmd test -- <test-path>`. Run the full `npm.cmd test` suite when the change or its risk warrants it.
 - Review `git diff` before committing and remove accidental unrelated changes.
-- Every PR should include: summary, changed areas, docs checked/updated, tests run, DB/prod impact, release notes impact, screenshots for UI changes, and any open questions or assumptions.
+- Every PR should explain the concrete change and actual verification. Include docs updates, DB/prod impact, screenshots, and assumptions only when relevant; avoid empty checklist sections. Report material blockers and unverified behavior.
 - Every PR with user-visible changes must include the `## User Release Notes` block described in `docs/deployment-runbook.md`.
 - Every PR that adds or changes admin alerts / Telegram observability must show an example alert from a test or local run in the PR description, with sensitive values redacted and message length reviewed.
 
