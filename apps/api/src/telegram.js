@@ -805,7 +805,7 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
           user, chatId, messageId: message.message_id, text, expenseParser, repository,
           claim: voiceCaptureClaim?.state === "claimed" ? voiceCaptureClaim : null,
           parserOptions: {
-          userId: from.id,
+          rolloutUserId: from.id,
           signal,
           onLlmTrace(metadata) {
             llmMetadata = { ...llmMetadata, ...metadata };

@@ -161,7 +161,8 @@ async function parseExpenseItems({ user, text, expenseParser, parserOptions = {}
     userId: user.id,
     defaultCurrency: user.base_currency ?? "THB",
     timeZone: user.timezone,
-    ...parserOptions
+    ...parserOptions,
+    usageUserId: user.id
   });
   const items = parsed?.expenses ?? [];
   if (items.length === 0) throw new ExpenseTextNotRecognizedError();

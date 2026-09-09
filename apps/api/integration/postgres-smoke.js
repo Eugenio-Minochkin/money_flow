@@ -8,6 +8,8 @@ import { migrate } from "../src/db.js";
 import { normalizePlannedDateKey } from "../src/plannedOccurrenceDates.js";
 import { createRepository } from "../src/repository.js";
 import { createMiniAppQuickCaptureDraft, createShortcutExpenseDraft, createTelegramExpenseDraft } from "../src/expenseDraftService.js";
+import { createExpenseParser } from "../src/expenseParser.js";
+import { createPaidProviderUsageGate } from "../src/paidProviderUsage.js";
 import { processMiniAppQuickCapture } from "../src/quickCapture.js";
 import { processShortcutCapture } from "../src/shortcutCapture.js";
 import { acceptReviewRecovery, previewSmartSaveRecovery, saveSmartSaveRecovery } from "../src/smartSaveRecovery.js";
@@ -107,6 +109,59 @@ test("reserves paid-provider usage once for the same durable request key", async
     [user.id, input.provider]
   );
   assert.deepEqual(stored.rows, [{ request_count: 1, audio_seconds: 42 }]);
+});
+
+test("Telegram parsing reserves OpenAI usage for the internal user without changing rollout identity", async () => {
+  const telegramUserId = 990202;
+  const user = await createSmokeUser(telegramUserId);
+  const expenseParser = createExpenseParser({
+    apiKey: "test-key",
+    fastPathMode: "enabled",
+    localFirstUserIds: [String(telegramUserId)],
+    parserTextHashSecret: "test-secret",
+    consumeLlmUsage: createPaidProviderUsageGate({
+      repository: repo,
+      provider: "openai_parser",
+      windowMs: 86_400_000,
+      maxRequests: 50
+    }),
+    fetchImpl: async () => ({
+      ok: true,
+      async text() {
+        return JSON.stringify({ output_text: JSON.stringify({ expenses: [{
+          amount: 80,
+          currency: "THB",
+          description: "thing",
+          category_slug: "other",
+          tags: [],
+          spent_at: "2026-09-01T10:00:00.000Z",
+          budget_impact: "regular",
+          confidence: 0.6,
+          needs_review: true
+        }], notes: [] }) });
+      }
+    })
+  });
+  const input = {
+    user,
+    chatId: 880202,
+    messageId: 77,
+    text: "thing 80",
+    expenseParser,
+    repository: repo,
+    parserOptions: { rolloutUserId: telegramUserId }
+  };
+
+  const first = await createTelegramExpenseDraft(input);
+  const replay = await createTelegramExpenseDraft(input);
+
+  assert.equal(first.replayed, false);
+  assert.equal(replay.replayed, true);
+  assert.equal(replay.draft.id, first.draft.id);
+  const stored = await pool.query(
+    "SELECT user_id, request_count FROM paid_provider_usage_windows WHERE provider = 'openai_parser'"
+  );
+  assert.deepEqual(stored.rows, [{ user_id: user.id, request_count: 1 }]);
 });
 
 test("enforces singleton onboarding events without limiting repeatable events", async () => {

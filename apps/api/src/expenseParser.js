@@ -44,7 +44,7 @@ export function createExpenseParser(options = {}) {
       const shouldRunLocalFastPath = fastPathMode === "enabled" || fastPathMode === "shadow";
       const inRollout = fastPathMode === "enabled"
         ? isInLocalFirstRollout({
-            userId: parseOptions.userId,
+            userId: parseOptions.rolloutUserId ?? parseOptions.userId,
             percent: localFirstRolloutPercent,
             allowlist: localFirstUserIds,
             secret: parserTextHashSecret
@@ -155,7 +155,7 @@ export function createExpenseParser(options = {}) {
         const parsed = await parseWithOpenAI({
           text, apiKey, model, fetchImpl, now: now(), defaultCurrency, timeZone, performanceNow, llmTimeoutMs,
           consumeUsage: consumeLlmUsage ? () => consumeLlmUsage({
-            userId: parseOptions.userId,
+            userId: parseOptions.usageUserId ?? parseOptions.userId,
             requestKey: parseOptions.requestKey ?? null
           }) : null
         });
