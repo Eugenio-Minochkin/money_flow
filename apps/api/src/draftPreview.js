@@ -7,7 +7,8 @@ export function hasMixedDraftCurrencies(items = []) {
 
 export async function renderDraftPreview({ repository, user, items = [], language }) {
   const baseCurrency = String(user?.base_currency ?? "THB").toUpperCase();
-  const preview = hasMixedDraftCurrencies(items)
+  const hasUnresolvedCurrency = items.some((item) => item?.currency == null && item?.review_reason === "currency_ambiguous");
+  const preview = !hasUnresolvedCurrency && hasMixedDraftCurrencies(items)
     ? await repository.prepareDraftPreview(items, user)
     : undefined;
   const normalizedItems = items.map((item) => ({
@@ -19,5 +20,6 @@ export async function renderDraftPreview({ repository, user, items = [], languag
 }
 
 function normalizeDraftCurrency(currency) {
+  if (currency === null) return null;
   return String(currency ?? "THB").toUpperCase();
 }

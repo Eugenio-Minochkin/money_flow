@@ -235,13 +235,14 @@ test("queued voice transcripts create the expected GEL expense through the real 
 
 test("queued voice with an ambiguous currency stays a review draft and records that state", async () => {
   const repo = fakeRepository();
+  const messages = [];
   const bot = createTelegramBot({
     token: "test-token",
     miniAppUrl: "http://localhost:3000",
     repository: repo,
     expenseParser: createExpenseParser(),
     voiceTranscriber: { isConfigured: () => true, async transcribeTelegramVoice() { return "такси семь рупий"; } },
-    telegramClient: captureTelegramClient([])
+    telegramClient: captureTelegramClient(messages)
   });
 
   await bot.handleUpdate({
@@ -250,6 +251,8 @@ test("queued voice with an ambiguous currency stays a review draft and records t
 
   assert.equal(repo.draftItems[0].currency, null);
   assert.ok(repo.draftItems[0].currency_candidates.includes("INR"));
+  assert.match(messages.at(-1).text, /7 — выберите валюту/);
+  assert.doesNotMatch(messages.at(-1).text, /7 THB/);
   const completed = repo.events.find((event) => event.eventName === "message_processing_completed");
   assert.equal(completed.metadata.currencyRecognition, "ambiguous");
 });

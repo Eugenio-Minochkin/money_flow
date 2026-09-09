@@ -123,6 +123,35 @@ test("missing draft currency defaults to THB consistently for detection and form
   assert.doesNotMatch(text, /reliable total.*unavailable/i);
 });
 
+test("unresolved ambiguous currency stays null and asks for currency selection", async () => {
+  let repositoryCalls = 0;
+  const text = await renderDraftPreview({
+    repository: {
+      async prepareDraftPreview() {
+        repositoryCalls += 1;
+        throw new Error("unresolved currency must not be converted");
+      }
+    },
+    user: { base_currency: "THB" },
+    items: [{
+      amount: 7,
+      currency: null,
+      currency_candidates: ["INR", "IDR"],
+      description: "такси",
+      category_slug: "transport",
+      needs_review: true,
+      review_reason: "currency_ambiguous"
+    }],
+    language: "ru"
+  });
+
+  assert.equal(repositoryCalls, 0);
+  assert.match(text, /7 — выберите валюту/);
+  assert.match(text, /Итого:<\/b> выберите валюту/);
+  assert.match(text, /Уточни валюту перед сохранением/);
+  assert.doesNotMatch(text, /7 THB/);
+});
+
 test("unavailable mixed preview renders subtotals and warning without an aggregate", async () => {
   const repository = {
     async prepareDraftPreview() {
