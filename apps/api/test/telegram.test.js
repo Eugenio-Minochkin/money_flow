@@ -561,7 +561,7 @@ test("/export shows expense export period choices", async () => {
 
   await bot.handleUpdate({
     message: {
-      chat: { id: 10 },
+      chat: { id: 10, type: "private" },
       from: { id: 100, first_name: "M" },
       text: "/export"
     }
@@ -576,6 +576,60 @@ test("/export shows expense export period choices", async () => {
       [{ text: "All time", callback_data: "export:all" }]
     ]
   });
+});
+
+test("group messages are redirected to a private chat before expense parsing", async () => {
+  const calls = [];
+  let parserCalls = 0;
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: fakeRepository(),
+    expenseParser: {
+      async parse() {
+        parserCalls += 1;
+        return { expenses: [] };
+      }
+    },
+    telegramClient: capturingClient(calls)
+  });
+
+  await bot.handleUpdate({
+    message: {
+      message_id: 56,
+      chat: { id: -100123, type: "group" },
+      from: { id: 100, first_name: "M" },
+      text: "coffee 70 baht"
+    }
+  });
+
+  assert.equal(parserCalls, 0);
+  assert.equal(calls.filter((call) => call.method === "sendMessage").length, 1);
+  assert.match(calls[0].text, /личном чате|private chat/i);
+  assert.equal(calls[0].replyMarkup, null);
+});
+
+test("/export in a group does not expose export controls", async () => {
+  const calls = [];
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: fakeRepository(),
+    telegramClient: capturingClient(calls)
+  });
+
+  await bot.handleUpdate({
+    message: {
+      chat: { id: -100123, type: "group" },
+      from: { id: 100, first_name: "M" },
+      text: "/export"
+    }
+  });
+
+  const message = calls.find((call) => call.method === "sendMessage");
+  assert.ok(message);
+  assert.match(message.text, /личном чате|private chat/i);
+  assert.equal(message.replyMarkup, null);
 });
 
 test("/last shows the saved expense card with edit and delete actions", async () => {
@@ -1023,7 +1077,7 @@ test("export callback sends CSV document through Telegram", async () => {
       id: "callback-export-month",
       data: "export:month",
       from: { id: 100 },
-      message: { chat: { id: 10 }, message_id: 55 }
+      message: { chat: { id: 10, type: "private" }, message_id: 55 }
     }
   });
 
@@ -1035,6 +1089,39 @@ test("export callback sends CSV document through Telegram", async () => {
   assert.match(document.content.toString("utf8"), /^﻿date,amount,currency,amount_display,display_currency,category,note,type,created_at/);
   assert.match(document.content.toString("utf8"), /"coffee, milk",expense/);
   assert.ok(calls.some((call) => call.method === "answerCallbackQuery" && /Preparing export/i.test(call.text)));
+});
+
+test("export callback in a supergroup does not request or send CSV", async () => {
+  const calls = [];
+  let exportRequests = 0;
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: fakeRepository(),
+    expenseExportService: {
+      async requestExport() {
+        exportRequests += 1;
+        return { status: "sent" };
+      }
+    },
+    telegramClient: capturingClient(calls)
+  });
+
+  await bot.handleUpdate({
+    callback_query: {
+      id: "callback-export-group",
+      data: "export:all",
+      from: { id: 100 },
+      message: { chat: { id: -100456, type: "supergroup" }, message_id: 55 }
+    }
+  });
+
+  assert.equal(exportRequests, 0);
+  assert.equal(calls.some((call) => call.method === "sendDocument"), false);
+  assert.equal(calls.some((call) => call.method === "sendMessage"), false);
+  const answer = calls.find((call) => call.method === "answerCallbackQuery");
+  assert.ok(answer);
+  assert.match(answer.text, /личном чате|private chat/i);
 });
 
 test("empty export callback sends message without creating CSV document", async () => {
@@ -3078,7 +3165,7 @@ test("admin stats command sends stats only to configured admin ids", async () =>
 
     await bot.handleUpdate({
       message: {
-        chat: { id: 10 },
+        chat: { id: 10, type: "private" },
         from: { id: 100, first_name: "M" },
         text: "/admin_stats"
       }
@@ -3091,6 +3178,38 @@ test("admin stats command sends stats only to configured admin ids", async () =>
   assert.match(calls[0][1].text, /Product stats/);
   assert.match(calls[0][1].text, /Today/);
   assert.match(calls[0][1].text, /Active users: <b>1<\/b> \/ new users: 0/);
+});
+
+test("admin stats in a group do not query or reveal statistics", async () => {
+  const calls = [];
+  let serviceCalls = 0;
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: fakeRepository(),
+    adminTelegramIds: new Set([100]),
+    adminStatsService: {
+      async getAdminStats() {
+        serviceCalls += 1;
+        return emptyProductAdminStats();
+      }
+    },
+    telegramClient: capturingClient(calls)
+  });
+
+  await bot.handleUpdate({
+    message: {
+      chat: { id: -100123, type: "group" },
+      from: { id: 100, first_name: "M" },
+      text: "/admin_stats"
+    }
+  });
+
+  assert.equal(serviceCalls, 0);
+  const message = calls.find((call) => call.method === "sendMessage");
+  assert.ok(message);
+  assert.match(message.text, /личном чате|private chat/i);
+  assert.doesNotMatch(message.text, /Product stats|Active users/i);
 });
 
 test("admin stats accepts numeric-string ids and bot command suffixes", async () => {

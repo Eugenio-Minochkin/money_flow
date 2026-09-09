@@ -218,6 +218,10 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
   const language = user.interface_language ?? "en";
   const chatId = message.chat.id;
 
+  if (isNonPrivateTelegramChat(message.chat)) {
+    return sendTelegramResponse(trace, () => sendMessage(token, chatId, botText(language, "privateChatRequired"), null, telegramClient));
+  }
+
   if (commandText === "/start") {
     await syncUserCommandMenuSafely({
       token,
@@ -2110,6 +2114,11 @@ function evidenceText(language, key) {
   })[key];
 }
 
+function isNonPrivateTelegramChat(chat) {
+  const type = String(chat?.type ?? "").toLowerCase();
+  return Boolean(type) && type !== "private";
+}
+
 export async function handleCallback({ update, repository, token, miniAppUrl, expenseEvidenceImportService, expenseEvidenceSessionService, activeEvidenceSessions, telegramClient, adminAlertService, expenseExportService, trace, now = () => new Date() }) {
   const callback = update.callback_query;
   const [action, draftId, itemIndex, value] = callback.data.split(":");
@@ -2118,6 +2127,10 @@ export async function handleCallback({ update, repository, token, miniAppUrl, ex
   const user = await repository.getUserByTelegramId?.(telegramUserId);
   trace.end("user_context");
   const language = user?.interface_language ?? "en";
+
+  if (isNonPrivateTelegramChat(callback.message?.chat)) {
+    return sendTelegramResponse(trace, () => answerCallback(token, callback.id, botText(language, "privateChatRequired"), telegramClient));
+  }
 
   const evidenceSessionCallback = parseExpenseEvidenceSessionCallback(callback.data);
   if (evidenceSessionCallback) {
@@ -3840,6 +3853,7 @@ function botText(language, key, values = {}) {
       draftCanceledAlert: "Этот черновик уже отменён.",
       alreadySavedCallback: "Уже сохранено",
       editInMiniApp: "Редактирование доступно в Mini App.",
+      privateChatRequired: "Для защиты данных используй Money Flow только в личном чате с ботом.",
       exportChoosePeriod: "Экспорт расходов в CSV. Выбери период:",
       exportPreparingCallback: "Готовлю экспорт",
       expenseProcessing: `<tg-emoji emoji-id="${EXPENSE_PROCESSING_CUSTOM_EMOJI_ID}">🎲</tg-emoji> Заношу расход…`,
@@ -3903,6 +3917,7 @@ function botText(language, key, values = {}) {
       draftCanceledAlert: "This draft was canceled.",
       alreadySavedCallback: "Already saved",
       editInMiniApp: "Editing is available in Mini App.",
+      privateChatRequired: "To protect your data, use Money Flow only in a private chat with the bot.",
       exportChoosePeriod: "Export expenses to CSV. Choose a period:",
       exportPreparingCallback: "Preparing export",
       expenseProcessing: `<tg-emoji emoji-id="${EXPENSE_PROCESSING_CUSTOM_EMOJI_ID}">🎲</tg-emoji> Adding expense…`,
