@@ -3503,11 +3503,17 @@ export function createRepository(pool, options = {}) {
     },
 
     async saveDraftAsExpense(draftId, telegramUserId, options = {}) {
-      const client = options.client ?? await pool.connect();
       const ownsTransaction = !options.client;
       const prefetched = ownsTransaction
         ? await prefetchDraftMoneyAmounts(pool, exchangeRates, draftId, telegramUserId)
         : null;
+      const client = options.client ?? await pool.connect();
+      let clientReleased = false;
+      const releaseOwnedClient = () => {
+        if (!ownsTransaction || clientReleased) return;
+        clientReleased = true;
+        client.release();
+      };
       const readDashboardSnapshot = async () => {
         try {
           return (await this.dashboard(telegramUserId)).snapshot;
@@ -3536,6 +3542,7 @@ export function createRepository(pool, options = {}) {
           if (ownsTransaction) await client.query("ROLLBACK");
           if (status === "cancelled") throw new DraftCanceledError();
           // already confirmed -> loser path: return the already-created expenses
+          releaseOwnedClient();
           const existing = await pool.query(
             `SELECT * FROM expenses WHERE draft_id = $1 ORDER BY id`,
             [draftId]
@@ -3614,15 +3621,16 @@ export function createRepository(pool, options = {}) {
           [draft.id]
         );
         if (ownsTransaction) await client.query("COMMIT");
+        releaseOwnedClient();
         const snapshot = ownsTransaction ? await readDashboardSnapshot() : null;
         return { expenses: inserted, dashboardSnapshot: snapshot, alreadySaved: false };
       } catch (error) {
-        if (ownsTransaction) {
+        if (ownsTransaction && !clientReleased) {
           try { await client.query("ROLLBACK"); } catch { /* already rolled back or connection gone */ }
         }
         throw error;
       } finally {
-        if (ownsTransaction) client.release();
+        releaseOwnedClient();
       }
     },
 
