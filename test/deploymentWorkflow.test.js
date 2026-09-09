@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
+import { buildConfig } from '../apps/api/src/config.js';
+
 function readText(path) {
   return readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 }
@@ -88,6 +90,16 @@ test('production compose passes configured admin Telegram ids to the API', () =>
   const compose = readText('compose.prod.yml');
 
   assert.match(compose, /ADMIN_TELEGRAM_IDS:\s*\$\{ADMIN_TELEGRAM_IDS:-\}/);
+});
+
+test('production Telegram user queue limit matches the application burst default', () => {
+  const expectedLimit = buildConfig({}).telegramJobUserQueueLimit;
+  const compose = readText('compose.prod.yml');
+  const productionEnvExample = readText('.env.production.example');
+
+  assert.equal(expectedLimit, 16);
+  assert.match(compose, new RegExp(`TELEGRAM_JOB_USER_QUEUE_LIMIT:\\s*\\$\\{TELEGRAM_JOB_USER_QUEUE_LIMIT:-${expectedLimit}\\}`));
+  assert.match(productionEnvExample, new RegExp(`^TELEGRAM_JOB_USER_QUEUE_LIMIT=${expectedLimit}$`, 'm'));
 });
 
 test('production compose passes admin alert settings to the API', () => {
