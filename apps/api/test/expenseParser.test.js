@@ -242,10 +242,11 @@ test("uses OpenAI structured output when API key is configured", async () => {
 
 test("reserves the LLM allowance only immediately before the paid OpenAI request", async () => {
   const stages = [];
+  let reservation;
   const parser = createExpenseParser({
     apiKey: "test-key",
     fastPathMode: "off",
-    consumeLlmUsage: async () => stages.push("allowance"),
+    consumeLlmUsage: async (input) => { reservation = input; stages.push("allowance"); },
     fetchImpl: async () => {
       stages.push("openai");
       return jsonResponse({ output_text: JSON.stringify({ expenses: [{
@@ -258,6 +259,34 @@ test("reserves the LLM allowance only immediately before the paid OpenAI request
   await parser.parse("coffee 70", { userId: 42 });
 
   assert.deepEqual(stages, ["allowance", "openai"]);
+  assert.deepEqual(reservation, { userId: 42, requestKey: null });
+});
+
+test("uses separate rollout and paid usage identities", async () => {
+  let reservation;
+  let trace;
+  const parser = createExpenseParser({
+    apiKey: "test-key",
+    fastPathMode: "enabled",
+    localFirstUserIds: ["100"],
+    parserTextHashSecret: "test-secret",
+    consumeLlmUsage: async (input) => { reservation = input; },
+    fetchImpl: async () => jsonResponse({ output_text: JSON.stringify({ expenses: [{
+      amount: 80, currency: "THB", description: "thing", category_slug: "other", tags: [],
+      spent_at: "2026-09-01T10:00:00.000Z", budget_impact: "regular", confidence: 0.6, needs_review: true
+    }], notes: [] }) })
+  });
+
+  await parser.parse("thing 80", {
+    userId: 7,
+    rolloutUserId: 100,
+    usageUserId: 7,
+    requestKey: "telegram:7:10:77",
+    onLlmTrace(metadata) { trace = metadata; }
+  });
+
+  assert.equal(trace.parserRoute, "local_reviewable_llm");
+  assert.deepEqual(reservation, { userId: 7, requestKey: "telegram:7:10:77" });
 });
 
 test("local-safe parsing does not reserve an LLM allowance", async () => {

@@ -22,6 +22,27 @@ test("shared expense draft service creates the parser draft and records only saf
   ]);
 });
 
+test("shared expense draft service pins paid usage to the internal user", async () => {
+  let receivedOptions;
+  await createExpenseDraftFromText({
+    user: { id: 7, base_currency: "THB", timezone: "Asia/Bangkok" },
+    text: "thing 80",
+    source: "telegram",
+    parserOptions: { rolloutUserId: 900001, usageUserId: 900001 },
+    expenseParser: {
+      async parse(_text, options) {
+        receivedOptions = options;
+        return { expenses: [{ description: "thing", amount: 80 }] };
+      }
+    },
+    repository: { async createDraft() { return { id: 42 }; } }
+  });
+
+  assert.equal(receivedOptions.userId, 7);
+  assert.equal(receivedOptions.rolloutUserId, 900001);
+  assert.equal(receivedOptions.usageUserId, 7);
+});
+
 test("shared expense draft service rejects parser results without ordinary expenses", async () => {
   await assert.rejects(
     () => createExpenseDraftFromText({

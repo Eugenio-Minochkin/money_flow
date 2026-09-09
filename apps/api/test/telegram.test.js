@@ -1433,6 +1433,64 @@ test("enabled fast-path creates voice draft metadata without OpenAI call", async
   assert.equal(completed.metadata.fastPathMode, "enabled");
 });
 
+test("Telegram keeps rollout identity while charging OpenAI usage to the internal user", async () => {
+  const messages = [];
+  const usageReservations = [];
+  const repo = fakeRepository();
+  repo.claimTelegramExpenseCapture = async () => ({ state: "claimed", claimVersion: 1 });
+  repo.completeTelegramExpenseCapture = async ({ items }) => {
+    repo.draftItems = items;
+    return { draft: { id: 42, items } };
+  };
+  repo.releaseTelegramExpenseCapture = async () => {};
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: repo,
+    telegramClient: captureTelegramClient(messages),
+    expenseParser: createExpenseParser({
+      apiKey: "test-key",
+      fastPathMode: "enabled",
+      localFirstUserIds: ["100"],
+      parserTextHashSecret: "test-secret",
+      now: () => new Date("2026-06-02T10:00:00+07:00"),
+      consumeLlmUsage: async (reservation) => { usageReservations.push(reservation); },
+      fetchImpl: async () => ({
+        ok: true,
+        async text() {
+          return JSON.stringify({ output_text: JSON.stringify({
+            expenses: [{
+              amount: 80,
+              currency: "THB",
+              description: "thing",
+              category_slug: "other",
+              tags: [],
+              spent_at: "2026-06-02T10:00:00.000+07:00",
+              budget_impact: "regular",
+              confidence: 0.6,
+              needs_review: true
+            }],
+            notes: []
+          }) });
+        }
+      })
+    })
+  });
+
+  await bot.handleUpdate({
+    message: {
+      message_id: 77,
+      chat: { id: 10 },
+      from: { id: 100, first_name: "M" },
+      text: "thing 80"
+    }
+  });
+
+  assert.deepEqual(usageReservations, [{ userId: 1, requestKey: "telegram:1:10:77" }]);
+  const completed = repo.events.find((event) => event.eventName === "message_processing_completed");
+  assert.equal(completed.metadata.parserRoute, "local_reviewable_llm");
+});
+
 test("confirm callback saves draft and returns an informative summary", async () => {
   const calls = [];
   const repo = fakeRepository();
