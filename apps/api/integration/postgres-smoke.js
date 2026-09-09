@@ -383,6 +383,29 @@ test("Smart Save replays Telegram delivery and safely recovers every unresolved 
   assert.equal(stored.rows[0].spent_at.toISOString(), "2026-08-14T05:00:00.000Z");
 });
 
+test("saveDraftAsExpense completes with a one-connection pool", async () => {
+  const telegramUserId = 990043;
+  const user = await createSmokeUser(telegramUserId);
+  const limitedPool = new Pool({ connectionString: databaseUrl, max: 1, connectionTimeoutMillis: 500 });
+  const limitedRepo = createRepository(limitedPool);
+
+  try {
+    const draft = await limitedRepo.createDraft(user.id, "coffee 125", [
+      expenseItem({ description: "coffee", amount: 125, spent_at: "2026-08-14T05:00:00.000Z" })
+    ]);
+
+    const saved = await limitedRepo.saveDraftAsExpense(draft.id, telegramUserId);
+
+    assert.equal(saved.alreadySaved, false);
+    assert.equal(saved.expenses.length, 1);
+    assert.equal(saved.dashboardSnapshot.baseCurrency, "THB");
+    assert.equal(limitedPool.waitingCount, 0);
+    assert.equal(limitedPool.idleCount, 1);
+  } finally {
+    await limitedPool.end();
+  }
+});
+
 test("persists ambiguous currency review without a default and saves only after an allowed choice", async () => {
   const telegramUserId = 990041;
   const user = await createSmokeUser(telegramUserId);

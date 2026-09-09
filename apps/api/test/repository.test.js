@@ -7176,6 +7176,77 @@ test("saveDraftAsExpense confirms an open draft and returns alreadySaved false",
   assert.ok(queries.some((q) => q.includes("status = 'confirmed'") && q.includes("version = version + 1")));
 });
 
+test("saveDraftAsExpense finishes fallible money prefetch before reserving a transaction client", async () => {
+  let connects = 0;
+  const draft = {
+    status: "pending",
+    version: 1,
+    base_currency: "THB",
+    items: [{ amount: 10, currency: "USD", spent_at: "2026-06-25T10:00:00Z" }]
+  };
+  const repo = createRepository({
+    async query(sql) {
+      assert.match(String(sql), /SELECT drafts\.items, drafts\.version/);
+      return { rows: [draft] };
+    },
+    async connect() {
+      connects += 1;
+      return { async query() { return { rows: [] }; }, release() {} };
+    }
+  }, {
+    exchangeRates: { async ratesFor() { throw new Error("rate unavailable"); } }
+  });
+
+  await assert.rejects(() => repo.saveDraftAsExpense(7, 100), /rate unavailable/);
+
+  assert.equal(connects, 0);
+});
+
+test("saveDraftAsExpense releases its transaction client before reading the dashboard snapshot", async () => {
+  let released = false;
+  const client = fakeConfirmClient({
+    draftRow: { id: 7, user_id: 1, status: "pending", base_currency: "THB",
+      items: [{ amount: 80, currency: "THB", description: "coffee", category_slug: "food_cafe", budget_impact: "regular", needs_review: false, category_source: "parser", tags: [], spent_at: "2026-06-25T10:00:00Z" }] }
+  });
+  client.release = () => { released = true; };
+  const repo = createRepository({ ...fakePool(() => ({ rows: [] })), async connect() { return client; } });
+  repo.dashboard = async () => {
+    assert.equal(released, true);
+    return { snapshot: { baseCurrency: "THB" } };
+  };
+
+  const result = await repo.saveDraftAsExpense(7, 100);
+
+  assert.equal(result.dashboardSnapshot.baseCurrency, "THB");
+});
+
+test("saveDraftAsExpense rejects a draft changed after prefetch before inserting expenses", async () => {
+  const queries = [];
+  let releases = 0;
+  const item = { amount: 80, currency: "THB", description: "coffee", category_slug: "food_cafe", budget_impact: "regular", needs_review: false, category_source: "parser", tags: [], spent_at: "2026-06-25T10:00:00Z" };
+  const client = fakeConfirmClient({
+    draftRow: { id: 7, user_id: 1, status: "pending", version: 2, base_currency: "THB", items: [item] },
+    onQuery: (query) => queries.push(String(query))
+  });
+  client.release = () => { releases += 1; };
+  const repo = createRepository({
+    async query(sql) {
+      assert.match(String(sql), /SELECT drafts\.items, drafts\.version/);
+      return { rows: [{ status: "pending", version: 1, base_currency: "THB", items: [item] }] };
+    },
+    async connect() { return client; }
+  });
+
+  await assert.rejects(
+    () => repo.saveDraftAsExpense(7, 100),
+    { code: "draft_changed_retry" }
+  );
+
+  assert.equal(queries.some((query) => query.includes("INSERT INTO expenses")), false);
+  assert.ok(queries.includes("ROLLBACK"));
+  assert.equal(releases, 1);
+});
+
 test("reads a terminal Telegram capture failure without making it runnable again", async () => {
   const repo = createRepository(fakePool((sql) => {
     assert.match(String(sql), /last_error_code/);
@@ -7237,6 +7308,7 @@ test("saveDraftAsExpense does not request exchange rates for a same-currency exp
 test("saveDraftAsExpense runs beforeSave on the supplied transaction client after lock and before insert", async () => {
   const queries = [];
   let insertAfterCallback = false;
+  let releaseCalls = 0;
   const client = fakeConfirmClient({
     draftRow: { id: 7, user_id: 1, status: "pending", base_currency: "THB", usd_thb_rate: 32.65,
       items: [{ amount: 80, currency: "THB", description: "Groceries", merchant: "Big C", category_slug: "food_cafe", budget_impact: "regular", needs_review: false, category_source: "parser", tags: [], spent_at: "2026-06-25T10:00:00Z" }] },
@@ -7245,6 +7317,7 @@ test("saveDraftAsExpense runs beforeSave on the supplied transaction client afte
       if (callbackIndex != null && String(query).includes("INSERT INTO expenses")) insertAfterCallback = true;
     }
   });
+  client.release = () => { releaseCalls += 1; };
   const repo = createRepository({ ...fakePool(() => ({ rows: [] })), async connect() { throw new Error("must use supplied client"); } });
   let callbackClient;
   let callbackIndex;
@@ -7264,6 +7337,7 @@ test("saveDraftAsExpense runs beforeSave on the supplied transaction client afte
   assert.ok(lockIndex >= 0 && financialLockIndex >= 0 && lockIndex < financialLockIndex && financialLockIndex < callbackIndex && insertAfterCallback);
   assert.equal(queries.includes("BEGIN"), false);
   assert.equal(queries.includes("COMMIT"), false);
+  assert.equal(releaseCalls, 0);
 });
 
 test("blocked evidence beforeSave leaves an explicit-acceptance draft reviewable", async () => {
@@ -7319,10 +7393,19 @@ test("saveDraftAsExpense preserves a saved open draft when its dashboard snapsho
 test("saveDraftAsExpense returns existing expenses when already confirmed", async () => {
   const { createRepository } = await import("../src/repository.js");
   const client = fakeConfirmClient({ draftRow: { id: 7, user_id: 1, status: "confirmed", items: [], base_currency: "THB" } });
+  let released = false;
+  client.release = () => { released = true; };
   let expensesQueried = false;
   const pool = {
     async connect() { return client; },
-    async query(sql) { if (String(sql).includes("FROM expenses WHERE draft_id")) { expensesQueried = true; return { rows: [{ id: 99, draft_id: 7 }] }; } return { rows: [] }; }
+    async query(sql) {
+      if (String(sql).includes("FROM expenses WHERE draft_id")) {
+        assert.equal(released, true);
+        expensesQueried = true;
+        return { rows: [{ id: 99, draft_id: 7 }] };
+      }
+      return { rows: [] };
+    }
   };
   const repo = createRepository(pool);
   repo.dashboard = async () => { throw new Error("snapshot unavailable"); };
