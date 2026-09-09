@@ -2,7 +2,7 @@ import { createExpenseParser } from "./expenseParser.js";
 import { parseExpenseText } from "../../../packages/shared/src/parser.js";
 import { parseBudgetTopupText } from "../../../packages/shared/src/budgetTopupParser.js";
 import { parsePlannedExpenseText } from "../../../packages/shared/src/plannedParser.js";
-import { normalizeCurrency, SUPPORTED_CURRENCY_CODES } from "../../../packages/shared/src/currencies.js";
+import { normalizeCurrency, recognizeCurrencyText, SUPPORTED_CURRENCY_CODES } from "../../../packages/shared/src/currencies.js";
 import { isAdminTelegramId, parseBotCommand } from "./adminAccess.js";
 import {
   localDateKey as timezoneLocalDateKey,
@@ -574,7 +574,12 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
   let processingDraftType;
   let processingParserRoute;
   let transcriptChars = null;
+  let normalizationChanged = false;
+  let currencyRecognition = inputType === "voice" ? "unavailable" : "not_applicable";
   let voiceCaptureClaim = expenseCaptureClaim;
+  let durableCaptureState = inputType === "voice"
+    ? (voiceCaptureClaim?.state ?? (typeof repository.claimTelegramExpenseCapture === "function" ? "not_claimed" : "unavailable"))
+    : "not_applicable";
 
   const deliverQueuedResult = async (input) => {
     const delivered = await deliverResultMessage(input);
@@ -612,7 +617,10 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
     let text = rawText;
     try {
       if (!text && hasVoice) {
-        voiceCaptureClaim = voiceCaptureClaim ?? await repository.claimTelegramExpenseCapture?.(user.id, chatId, message.message_id);
+        if (!voiceCaptureClaim && typeof repository.claimTelegramExpenseCapture === "function") {
+          voiceCaptureClaim = await repository.claimTelegramExpenseCapture(user.id, chatId, message.message_id);
+          durableCaptureState = voiceCaptureClaim?.state ?? "unavailable";
+        }
         if (voiceCaptureClaim?.state === "completed" || voiceCaptureClaim?.state === "processing" || voiceCaptureClaim?.state === "failed") {
           const completed = voiceCaptureClaim.state === "completed"
             ? voiceCaptureClaim
@@ -629,13 +637,19 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
         }
         try {
           text = await transcribeVoice(message, voiceTranscriber, trace, user, signal);
-          text = normalizeVoiceMoneyTranscript(text);
+          const normalizedText = normalizeVoiceMoneyTranscript(text);
+          normalizationChanged = normalizedText !== text;
+          text = normalizedText;
           transcriptChars = String(text ?? "").length;
+          currencyRecognition = recognizeCurrencyText(text).kind;
         } catch (error) {
           processingResult = "transcription_failed";
           await safeRecordAppEvent(repository, user.id, "voice_transcription_failed", { result: "transcription_failed" });
           throw error;
         }
+      }
+      if (inputType === "voice" && text && currencyRecognition === "unavailable") {
+        currencyRecognition = recognizeCurrencyText(text).kind;
       }
       if (!text && inputType === "photo") {
         if (expenseEvidenceImportService) {
@@ -891,8 +905,10 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
       return delivered;
     } catch (error) {
       if (voiceCaptureClaim?.state === "claimed") {
-        await repository.failTelegramExpenseCapture?.(user.id, chatId, message.message_id, voiceCaptureClaim.claimVersion, error?.code ?? "telegram_expense_capture_failed")
-          .catch(() => {});
+        try {
+          await repository.failTelegramExpenseCapture?.(user.id, chatId, message.message_id, voiceCaptureClaim.claimVersion, error?.code ?? "telegram_expense_capture_failed");
+          if (typeof repository.failTelegramExpenseCapture === "function") durableCaptureState = "failed";
+        } catch {}
       }
       if (["paid_provider_limit_reached", "paid_provider_disabled", "voice_message_too_long"].includes(error?.code)) {
         processingResult = error.code;
@@ -961,6 +977,9 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
         llmDecodeNormalizeMs: traceMetadata.llmParse?.llmDecodeNormalizeMs,
         parserTotalMs: traceMetadata.llmParse?.parserTotalMs,
         transcriptChars,
+        normalizationChanged: inputType === "voice" ? normalizationChanged : undefined,
+        currencyRecognition,
+        durableCaptureState,
         audioDurationSec: inputType === "voice" ? traceMetadata.audioDurationSec : undefined
       });
       if (deliveryState.terminalResponseDelivered) {

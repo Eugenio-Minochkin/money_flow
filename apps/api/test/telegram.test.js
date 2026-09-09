@@ -222,7 +222,36 @@ test("queued voice transcripts create the expected GEL expense through the real 
 
     assert.equal(repo.draftItems[0].amount, amount, transcript);
     assert.equal(repo.draftItems[0].currency, "GEL", transcript);
+    const completed = repo.events.find((event) => event.eventName === "message_processing_completed");
+    assert.equal(completed.metadata.normalizationChanged, [
+      "такси три пятьдесят лари",
+      "такси три точка пятьдесят лари",
+      "чурчхела семьлари"
+    ].includes(transcript), transcript);
+    assert.equal(completed.metadata.currencyRecognition, "exact", transcript);
+    assert.equal(completed.metadata.durableCaptureState, "unavailable", transcript);
   }
+});
+
+test("queued voice with an ambiguous currency stays a review draft and records that state", async () => {
+  const repo = fakeRepository();
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: repo,
+    expenseParser: createExpenseParser(),
+    voiceTranscriber: { isConfigured: () => true, async transcribeTelegramVoice() { return "такси семь рупий"; } },
+    telegramClient: captureTelegramClient([])
+  });
+
+  await bot.handleUpdate({
+    message: { message_id: 701, chat: { id: 10 }, from: { id: 100, first_name: "M" }, voice: { file_id: "voice-ambiguous", mime_type: "audio/ogg" } }
+  });
+
+  assert.equal(repo.draftItems[0].currency, null);
+  assert.ok(repo.draftItems[0].currency_candidates.includes("INR"));
+  const completed = repo.events.find((event) => event.eventName === "message_processing_completed");
+  assert.equal(completed.metadata.currencyRecognition, "ambiguous");
 });
 
 test("completed Telegram webhook replay removes only its new loader and keeps the original result reference", async () => {
@@ -2368,6 +2397,8 @@ test("unhandled Telegram update failures notify admins and still reject", async 
 
 test("voice transcription failure records an event and returns an error response", async () => {
   const repo = fakeRepository();
+  repo.claimTelegramExpenseCapture = async () => ({ state: "claimed", claimVersion: 1 });
+  repo.failTelegramExpenseCapture = async () => {};
   const messages = [];
   const originalError = console.error;
   console.error = () => {};
@@ -2401,6 +2432,9 @@ test("voice transcription failure records an event and returns an error response
   const completed = repo.events.find((event) => event.eventName === "message_processing_completed");
   assert.equal(completed.metadata.result, "transcription_failed");
   assert.equal(completed.metadata.status, "transcription_failed");
+  assert.equal(completed.metadata.normalizationChanged, false);
+  assert.equal(completed.metadata.currencyRecognition, "unavailable");
+  assert.equal(completed.metadata.durableCaptureState, "failed");
 });
 
 test("voice amount-not-found response includes the escaped transcript", async () => {

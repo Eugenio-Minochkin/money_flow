@@ -1,4 +1,4 @@
-const DEEPGRAM_LISTEN_URL = "https://api.deepgram.com/v1/listen?model=nova-3-general&language=multi&smart_format=true";
+const DEEPGRAM_LISTEN_URL = "https://api.deepgram.com/v1/listen?model=nova-3-general&language=multi";
 
 export class VoiceMessageTooLongError extends Error {
   constructor() { super("voice_message_too_long"); this.code = "voice_message_too_long"; }
