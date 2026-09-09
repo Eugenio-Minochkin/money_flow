@@ -31,7 +31,7 @@ test("downloads a Telegram voice file and transcribes it with Deepgram", async (
         };
       }
 
-      assert.equal(String(url), "https://api.deepgram.com/v1/listen?model=nova-3-general&language=multi&smart_format=true");
+      assert.equal(String(url), "https://api.deepgram.com/v1/listen?model=nova-3-general&language=multi");
       assert.equal(options.method, "POST");
       assert.equal(options.headers.authorization, "Token deepgram-key");
       assert.equal(options.headers["content-type"], "audio/ogg");

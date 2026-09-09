@@ -2,7 +2,7 @@ import { createExpenseParser } from "./expenseParser.js";
 import { parseExpenseText } from "../../../packages/shared/src/parser.js";
 import { parseBudgetTopupText } from "../../../packages/shared/src/budgetTopupParser.js";
 import { parsePlannedExpenseText } from "../../../packages/shared/src/plannedParser.js";
-import { normalizeCurrency, SUPPORTED_CURRENCY_CODES } from "../../../packages/shared/src/currencies.js";
+import { normalizeCurrency, recognizeCurrencyText, SUPPORTED_CURRENCY_CODES } from "../../../packages/shared/src/currencies.js";
 import { isAdminTelegramId, parseBotCommand } from "./adminAccess.js";
 import {
   localDateKey as timezoneLocalDateKey,
@@ -574,7 +574,12 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
   let processingDraftType;
   let processingParserRoute;
   let transcriptChars = null;
+  let normalizationChanged = false;
+  let currencyRecognition = inputType === "voice" ? "unavailable" : "not_applicable";
   let voiceCaptureClaim = expenseCaptureClaim;
+  let durableCaptureState = inputType === "voice"
+    ? (voiceCaptureClaim?.state ?? (typeof repository.claimTelegramExpenseCapture === "function" ? "not_claimed" : "unavailable"))
+    : "not_applicable";
 
   const deliverQueuedResult = async (input) => {
     const delivered = await deliverResultMessage(input);
@@ -609,10 +614,13 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
     }
 
     const loader = await sendExpenseProcessingMessage(token, chatId, language, telegramClient, trace, message.message_id);
+    let text = rawText;
     try {
-      let text = rawText;
       if (!text && hasVoice) {
-        voiceCaptureClaim = voiceCaptureClaim ?? await repository.claimTelegramExpenseCapture?.(user.id, chatId, message.message_id);
+        if (!voiceCaptureClaim && typeof repository.claimTelegramExpenseCapture === "function") {
+          voiceCaptureClaim = await repository.claimTelegramExpenseCapture(user.id, chatId, message.message_id);
+          durableCaptureState = voiceCaptureClaim?.state ?? "unavailable";
+        }
         if (voiceCaptureClaim?.state === "completed" || voiceCaptureClaim?.state === "processing" || voiceCaptureClaim?.state === "failed") {
           const completed = voiceCaptureClaim.state === "completed"
             ? voiceCaptureClaim
@@ -629,13 +637,19 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
         }
         try {
           text = await transcribeVoice(message, voiceTranscriber, trace, user, signal);
-          text = normalizeVoiceMoneyTranscript(text);
+          const normalizedText = normalizeVoiceMoneyTranscript(text);
+          normalizationChanged = normalizedText !== text;
+          text = normalizedText;
           transcriptChars = String(text ?? "").length;
+          currencyRecognition = recognizeCurrencyText(text).kind;
         } catch (error) {
           processingResult = "transcription_failed";
           await safeRecordAppEvent(repository, user.id, "voice_transcription_failed", { result: "transcription_failed" });
           throw error;
         }
+      }
+      if (inputType === "voice" && text && currencyRecognition === "unavailable") {
+        currencyRecognition = recognizeCurrencyText(text).kind;
       }
       if (!text && inputType === "photo") {
         if (expenseEvidenceImportService) {
@@ -803,13 +817,13 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
       } catch (error) {
         if (error instanceof ExpenseTextNotRecognizedError) {
           processingResult = "amount_not_found";
-          await safeRecordAppEvent(repository, user.id, "expense_parse_failed", { inputType });
+          await safeRecordAppEvent(repository, user.id, "expense_parse_failed", { inputType, failureStage: "amount" });
           return deliverQueuedResult({ token, chatId, loaderMessageId: loader.messageId,
             text: inputType === "voice" && text ? botText(language, "amountNotFoundWithTranscript", { transcript: text }) : botText(language, "amountNotFound"),
             replyMarkup: null, telegramClient, trace });
         }
         processingResult = error.expenseDraftStage === "persist" ? "draft_persist_failed" : "parser_failed";
-        if (error.expenseDraftStage !== "persist") await safeRecordAppEvent(repository, user.id, "expense_parse_failed", { inputType });
+        if (error.expenseDraftStage !== "persist") await safeRecordAppEvent(repository, user.id, "expense_parse_failed", { inputType, failureStage: "parser" });
         await safeNotifyAdminError(adminAlertService, error, {
           source: "parser",
           operation: "expense_parse",
@@ -891,8 +905,10 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
       return delivered;
     } catch (error) {
       if (voiceCaptureClaim?.state === "claimed") {
-        await repository.failTelegramExpenseCapture?.(user.id, chatId, message.message_id, voiceCaptureClaim.claimVersion, error?.code ?? "telegram_expense_capture_failed")
-          .catch(() => {});
+        try {
+          await repository.failTelegramExpenseCapture?.(user.id, chatId, message.message_id, voiceCaptureClaim.claimVersion, error?.code ?? "telegram_expense_capture_failed");
+          if (typeof repository.failTelegramExpenseCapture === "function") durableCaptureState = "failed";
+        } catch {}
       }
       if (["paid_provider_limit_reached", "paid_provider_disabled", "voice_message_too_long"].includes(error?.code)) {
         processingResult = error.code;
@@ -911,9 +927,11 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
           ? botText(language, "transcriptionFailed")
           : (processingResult === "parser_failed"
             ? (inputType === "voice" && text
-              ? botText(language, "amountNotFoundWithTranscript", { transcript: text })
+              ? botText(language, "parseFailedWithTranscript", { transcript: text })
               : botText(language, "parseFailed"))
-            : botText(language, "jobProcessingFailed")),
+            : (processingResult === "draft_persist_failed"
+              ? botText(language, "draftPersistFailed")
+              : botText(language, "jobProcessingFailed"))),
         replyMarkup: null,
         telegramClient,
         trace
@@ -959,6 +977,9 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
         llmDecodeNormalizeMs: traceMetadata.llmParse?.llmDecodeNormalizeMs,
         parserTotalMs: traceMetadata.llmParse?.parserTotalMs,
         transcriptChars,
+        normalizationChanged: inputType === "voice" ? normalizationChanged : undefined,
+        currencyRecognition,
+        durableCaptureState,
         audioDurationSec: inputType === "voice" ? traceMetadata.audioDurationSec : undefined
       });
       if (deliveryState.terminalResponseDelivered) {
@@ -1279,15 +1300,33 @@ async function sendExpenseProcessingMessage(token, chatId, language, telegramCli
 async function deliverResultMessage({ token, chatId, loaderMessageId, text, replyMarkup, telegramClient, trace }) {
   if (loaderMessageId) {
     try {
-      return await sendTelegramResponse(trace, () => editMessageText(token, chatId, loaderMessageId, text, replyMarkup, telegramClient));
+      const result = await sendTelegramResponse(trace, () => editMessageText(token, chatId, loaderMessageId, text, replyMarkup, telegramClient));
+      trace.event("telegram_terminalization", { mode: "edit" });
+      return result;
     } catch (error) {
-      console.error("[telegram] editing loader into result failed, falling back to new message", error.message);
-      await deleteMessage(token, chatId, loaderMessageId, telegramClient).catch((deleteError) => {
-        console.error("[telegram] failed to delete loader after edit failure", deleteError.message);
-      });
+      console.error("[telegram] editing loader into result failed, retrying plain edit", error.message);
+      try {
+        const result = await sendTelegramResponse(trace, () => editMessageText(token, chatId, loaderMessageId, stripTelegramHtml(text), replyMarkup, telegramClient));
+        trace.event("telegram_terminalization", { mode: "plain_edit_fallback" });
+        return result;
+      } catch (plainEditError) {
+        console.error("[telegram] plain loader edit failed, deleting before sending result", plainEditError.message);
+        try {
+          await deleteMessage(token, chatId, loaderMessageId, telegramClient);
+        } catch (deleteError) {
+          trace.event("telegram_terminalization", { mode: "cleanup_failed" });
+          console.error("[telegram] failed to delete loader after edit failure", deleteError.message);
+          return { ok: false, terminalizationMode: "cleanup_failed" };
+        }
+        const result = await sendTelegramResponse(trace, () => sendMessage(token, chatId, text, replyMarkup, telegramClient));
+        trace.event("telegram_terminalization", { mode: "delete_and_send_fallback" });
+        return result;
+      }
     }
   }
-  return sendTelegramResponse(trace, () => sendMessage(token, chatId, text, replyMarkup, telegramClient));
+  const result = await sendTelegramResponse(trace, () => sendMessage(token, chatId, text, replyMarkup, telegramClient));
+  trace.event("telegram_terminalization", { mode: "delete_and_send_fallback" });
+  return result;
 }
 
 function extractMessageId(sendResult) {
@@ -3774,6 +3813,8 @@ function botText(language, key, values = {}) {
       globalQueueFull: "Сейчас обработка временно занята. Дождись, пожалуйста, результата по предыдущим сообщениям и отправь это ещё раз чуть позже.",
       jobProcessingFailed: "Не получилось обработать это сообщение. Попробуй отправить его ещё раз.",
       parseFailed: "Не получилось разобрать расход. Попробуй написать проще: <b>кофе 70 бат</b>.",
+      parseFailedWithTranscript: `Я услышал: «${formatTranscriptForTelegram(values.transcript)}». Но не смог разобрать расход. Попробуй ещё раз: <b>кофе 70 бат</b>.`,
+      draftPersistFailed: "Не получилось сохранить расход. Попробуй отправить его ещё раз.",
       budgetTopupParseFailed: "Не удалось безопасно разобрать пополнение бюджета. Напиши сумму ещё раз.",
       budgetTopupCancelled: "Ок, не учитываю это в бюджете.",
       budgetTopupExpired: "Это пополнение уже устарело. Напиши сумму ещё раз, и я добавлю её к бюджету.",
@@ -3835,6 +3876,8 @@ function botText(language, key, values = {}) {
       globalQueueFull: "Processing is temporarily busy right now. Please wait for the previous messages to finish and send this again a bit later.",
       jobProcessingFailed: "I couldn’t process this message. Please try sending it again.",
       parseFailed: "I couldn’t parse the expense. Try a simpler message: <b>coffee 70 baht</b>.",
+      parseFailedWithTranscript: `I heard: “${formatTranscriptForTelegram(values.transcript)}”. But I couldn’t parse the expense. Try again: <b>coffee 70 baht</b>.`,
+      draftPersistFailed: "I couldn’t save the expense. Please send it again.",
       budgetTopupParseFailed: "I could not safely parse this budget top-up. Send the amount again.",
       budgetTopupCancelled: "Okay, I will not count it in your budget.",
       budgetTopupExpired: "This budget top-up has expired. Send the amount again and I’ll add it to your budget.",

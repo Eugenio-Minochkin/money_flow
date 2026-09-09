@@ -11,7 +11,12 @@ test("normalizes an unambiguous currency-qualified spoken decimal", () => {
     ["Такси 8:50 лари", "Такси 8.50 лари"],
     ["Такси 8 50 лари", "Такси 8.50 лари"],
     ["Такси восемь пятьдесят лари", "Такси 8.50 лари"],
-    ["Taxi 8:50 dollars", "Taxi 8.50 dollars"]
+    ["Такси три точка пятьдесят лари", "Такси 3.50 лари"],
+    ["Taxi 8:50 dollars", "Taxi 8.50 dollars"],
+    ["Чурчхела семьлари", "Чурчхела семь лари"],
+    ["Чурчхела семилари", "Чурчхела семь лари"],
+    ["Чурчхела двадцатьлари", "Чурчхела двадцать лари"],
+    ["Такси семьрублей", "Такси семь рублей"]
   ]) {
     assert.equal(normalizeVoiceMoneyTranscript(input), expected, input);
   }
@@ -22,7 +27,8 @@ test("does not reinterpret time-like or multi-amount speech without one safe mon
     "встреча в 8:50",
     "Такси 8:50 лари и кофе 3 лари",
     "5 сентября в 8:50 лари",
-    "Такси 8-50 без валюты"
+    "Такси 8-50 без валюты",
+    "Такси 350лари"
   ]) {
     assert.equal(normalizeVoiceMoneyTranscript(input), input, input);
   }
