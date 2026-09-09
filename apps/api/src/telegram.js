@@ -609,8 +609,8 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
     }
 
     const loader = await sendExpenseProcessingMessage(token, chatId, language, telegramClient, trace, message.message_id);
+    let text = rawText;
     try {
-      let text = rawText;
       if (!text && hasVoice) {
         voiceCaptureClaim = voiceCaptureClaim ?? await repository.claimTelegramExpenseCapture?.(user.id, chatId, message.message_id);
         if (voiceCaptureClaim?.state === "completed" || voiceCaptureClaim?.state === "processing" || voiceCaptureClaim?.state === "failed") {
@@ -803,13 +803,13 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
       } catch (error) {
         if (error instanceof ExpenseTextNotRecognizedError) {
           processingResult = "amount_not_found";
-          await safeRecordAppEvent(repository, user.id, "expense_parse_failed", { inputType });
+          await safeRecordAppEvent(repository, user.id, "expense_parse_failed", { inputType, failureStage: "amount" });
           return deliverQueuedResult({ token, chatId, loaderMessageId: loader.messageId,
             text: inputType === "voice" && text ? botText(language, "amountNotFoundWithTranscript", { transcript: text }) : botText(language, "amountNotFound"),
             replyMarkup: null, telegramClient, trace });
         }
         processingResult = error.expenseDraftStage === "persist" ? "draft_persist_failed" : "parser_failed";
-        if (error.expenseDraftStage !== "persist") await safeRecordAppEvent(repository, user.id, "expense_parse_failed", { inputType });
+        if (error.expenseDraftStage !== "persist") await safeRecordAppEvent(repository, user.id, "expense_parse_failed", { inputType, failureStage: "parser" });
         await safeNotifyAdminError(adminAlertService, error, {
           source: "parser",
           operation: "expense_parse",
@@ -911,9 +911,11 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
           ? botText(language, "transcriptionFailed")
           : (processingResult === "parser_failed"
             ? (inputType === "voice" && text
-              ? botText(language, "amountNotFoundWithTranscript", { transcript: text })
+              ? botText(language, "parseFailedWithTranscript", { transcript: text })
               : botText(language, "parseFailed"))
-            : botText(language, "jobProcessingFailed")),
+            : (processingResult === "draft_persist_failed"
+              ? botText(language, "draftPersistFailed")
+              : botText(language, "jobProcessingFailed"))),
         replyMarkup: null,
         telegramClient,
         trace
@@ -3792,6 +3794,8 @@ function botText(language, key, values = {}) {
       globalQueueFull: "Сейчас обработка временно занята. Дождись, пожалуйста, результата по предыдущим сообщениям и отправь это ещё раз чуть позже.",
       jobProcessingFailed: "Не получилось обработать это сообщение. Попробуй отправить его ещё раз.",
       parseFailed: "Не получилось разобрать расход. Попробуй написать проще: <b>кофе 70 бат</b>.",
+      parseFailedWithTranscript: `Я услышал: «${formatTranscriptForTelegram(values.transcript)}». Но не смог разобрать расход. Попробуй ещё раз: <b>кофе 70 бат</b>.`,
+      draftPersistFailed: "Не получилось сохранить расход. Попробуй отправить его ещё раз.",
       budgetTopupParseFailed: "Не удалось безопасно разобрать пополнение бюджета. Напиши сумму ещё раз.",
       budgetTopupCancelled: "Ок, не учитываю это в бюджете.",
       budgetTopupExpired: "Это пополнение уже устарело. Напиши сумму ещё раз, и я добавлю её к бюджету.",
@@ -3853,6 +3857,8 @@ function botText(language, key, values = {}) {
       globalQueueFull: "Processing is temporarily busy right now. Please wait for the previous messages to finish and send this again a bit later.",
       jobProcessingFailed: "I couldn’t process this message. Please try sending it again.",
       parseFailed: "I couldn’t parse the expense. Try a simpler message: <b>coffee 70 baht</b>.",
+      parseFailedWithTranscript: `I heard: “${formatTranscriptForTelegram(values.transcript)}”. But I couldn’t parse the expense. Try again: <b>coffee 70 baht</b>.`,
+      draftPersistFailed: "I couldn’t save the expense. Please send it again.",
       budgetTopupParseFailed: "I could not safely parse this budget top-up. Send the amount again.",
       budgetTopupCancelled: "Okay, I will not count it in your budget.",
       budgetTopupExpired: "This budget top-up has expired. Send the amount again and I’ll add it to your budget.",

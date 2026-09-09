@@ -194,6 +194,37 @@ test("safe voice message is saved immediately", async () => {
   assert.equal(repo.events.filter((event) => event.eventName === "expense_saved").length, 1);
 });
 
+test("queued voice transcripts create the expected GEL expense through the real parser path", async () => {
+  const cases = [
+    ["чурчхела семь лари", 7],
+    ["такси семь лари", 7],
+    ["такси три пятьдесят лари", 3.5],
+    ["такси три точка пятьдесят лари", 3.5],
+    ["такси триста пятьдесят лари", 350],
+    ["чурчхела семьлари", 7]
+  ];
+
+  for (const [transcript, amount] of cases) {
+    const repo = fakeRepository();
+    repo.listClosedReserveMonthsForTelegramUser = async () => [];
+    const bot = createTelegramBot({
+      token: "test-token",
+      miniAppUrl: "http://localhost:3000",
+      repository: repo,
+      expenseParser: createExpenseParser(),
+      voiceTranscriber: { isConfigured: () => true, async transcribeTelegramVoice() { return transcript; } },
+      telegramClient: captureTelegramClient([])
+    });
+
+    await bot.handleUpdate({
+      message: { message_id: 700, chat: { id: 10 }, from: { id: 100, first_name: "M" }, voice: { file_id: "voice-7", mime_type: "audio/ogg" } }
+    });
+
+    assert.equal(repo.draftItems[0].amount, amount, transcript);
+    assert.equal(repo.draftItems[0].currency, "GEL", transcript);
+  }
+});
+
 test("completed Telegram webhook replay removes only its new loader and keeps the original result reference", async () => {
   const calls = [];
   const repo = fakeRepository();
@@ -5411,6 +5442,75 @@ test("expense processing loader uses the selected custom emoji and replies to th
       replyParameters: { message_id: 321, allow_sending_without_reply: true }
     });
   }
+});
+
+test("voice parser failure keeps its transcript but does not claim that the amount is missing", async () => {
+  const repo = fakeRepository();
+  repo.user = { ...repo.user, interface_language: "en" };
+  const messages = [];
+  const originalError = console.error;
+  console.error = () => {};
+  try {
+    const bot = createTelegramBot({
+      token: "test-token",
+      miniAppUrl: "http://localhost:3000",
+      repository: repo,
+      telegramClient: captureTelegramClient(messages),
+      voiceTranscriber: {
+        isConfigured: () => true,
+        async transcribeTelegramVoice() {
+          return "coffee 70 baht";
+        }
+      },
+      expenseParser: {
+        async parse() {
+          throw new Error("parser unavailable");
+        }
+      }
+    });
+
+    await bot.handleUpdate({
+      message: {
+        chat: { id: 10 },
+        from: { id: 100, first_name: "M" },
+        voice: { file_id: "voice-file-id", mime_type: "audio/ogg" }
+      }
+    });
+  } finally {
+    console.error = originalError;
+  }
+
+  assert.match(messages.at(-1).text, /I heard: .coffee 70 baht.*couldn.t parse the expense/i);
+  assert.doesNotMatch(messages.at(-1).text, /did not find an amount/i);
+  assert.ok(repo.events.some((event) => event.eventName === "expense_parse_failed" && event.metadata.failureStage === "parser"));
+});
+
+test("voice transcription failure terminalizes its loader without a duplicate generic message", async () => {
+  const calls = [];
+  const repo = fakeRepository();
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: repo,
+    voiceTranscriber: {
+      isConfigured: () => true,
+      async transcribeTelegramVoice() { throw new Error("transcription unavailable"); }
+    },
+    telegramClient: {
+      async sendMessage(message) { calls.push({ method: "sendMessage", ...message }); return { ok: true, result: { message_id: 70 } }; },
+      async editMessageText(message) { calls.push({ method: "editMessageText", ...message }); throw new Error("edit unavailable"); },
+      async deleteMessage(message) { calls.push({ method: "deleteMessage", ...message }); throw new Error("delete unavailable"); }
+    }
+  });
+
+  await bot.handleUpdate({
+    message: { message_id: 71, chat: { id: 10 }, from: { id: 100, first_name: "M" }, voice: { file_id: "voice-fail", mime_type: "audio/ogg" } }
+  });
+
+  assert.equal(calls.filter((call) => call.method === "sendMessage").length, 1);
+  assert.equal(calls.filter((call) => call.method === "editMessageText").length, 2);
+  assert.equal(calls.filter((call) => call.method === "deleteMessage").length, 1);
+  assert.ok(repo.events.some((event) => event.eventName === "voice_transcription_failed"));
 });
 
 test("expense loader terminalization retries a plain edit before deleting or sending another message", async () => {

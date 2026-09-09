@@ -1,4 +1,4 @@
-import { recognizeCurrencyText } from "../../../packages/shared/src/currencies.js";
+import { currencyRecognitionAliases, recognizeCurrencyText } from "../../../packages/shared/src/currencies.js";
 
 const RU_UNITS = new Map([
   ["один", 1], ["одна", 1], ["одно", 1], ["два", 2], ["две", 2], ["три", 3], ["четыре", 4],
@@ -8,9 +8,19 @@ const RU_TENS = new Map([
   ["двадцать", 20], ["тридцать", 30], ["сорок", 40], ["пятьдесят", 50],
   ["шестьдесят", 60], ["семьдесят", 70], ["восемьдесят", 80], ["девяносто", 90]
 ]);
+const RU_JOINABLE_NUMBER_WORDS = new Set([
+  "ноль", "один", "одна", "одно", "два", "две", "три", "четыре", "пять", "шесть", "семь", "семи", "восемь", "девять", "десять",
+  "одиннадцать", "двенадцать", "тринадцать", "четырнадцать", "пятнадцать", "шестнадцать", "семнадцать", "восемнадцать", "девятнадцать",
+  "двадцать", "тридцать", "сорок", "пятьдесят", "шестьдесят", "семьдесят", "восемьдесят", "девяносто", "сто", "двести", "триста",
+  "четыреста", "пятьсот", "шестьсот", "семьсот", "восемьсот", "девятьсот", "тысяча", "тысячи", "тысяч"
+]);
+const JOINABLE_EXACT_CURRENCY_ALIASES = currencyRecognitionAliases()
+  .map((alias) => alias.toLowerCase().replaceAll("ё", "е"))
+  .filter((alias) => /^\p{L}+$/u.test(alias) && recognizeCurrencyText(alias).kind === "exact")
+  .sort((left, right) => right.length - left.length);
 
 export function normalizeVoiceMoneyTranscript(value) {
-  const text = splitJoinedLariToken(String(value ?? "").trim());
+  const text = splitJoinedNumberCurrencyToken(String(value ?? "").trim());
   const currency = recognizeCurrencyText(text);
   if (!text || currency.kind !== "exact") return text;
 
@@ -37,12 +47,23 @@ export function normalizeVoiceMoneyTranscript(value) {
   return text;
 }
 
-function splitJoinedLariToken(text) {
-  const matches = [...text.matchAll(/(?<![\p{L}])(семь|семи)лари(?![\p{L}])/giu)];
-  if (matches.length !== 1) return text;
-  const match = matches[0];
-  const unit = match[1].toLowerCase() === "семи" ? "семь" : match[1];
-  return `${text.slice(0, match.index)}${unit} лари${text.slice(match.index + match[0].length)}`;
+function splitJoinedNumberCurrencyToken(text) {
+  if (numericTokenCount(text) !== 0) return text;
+  const repairs = [];
+  for (const match of text.matchAll(/(?<![\p{L}])\p{L}+(?![\p{L}])/gu)) {
+    const token = match[0].toLowerCase().replaceAll("ё", "е");
+    for (const currencyAlias of JOINABLE_EXACT_CURRENCY_ALIASES) {
+      if (!token.endsWith(currencyAlias) || token === currencyAlias) continue;
+      const numberWord = token.slice(0, -currencyAlias.length);
+      if (RU_JOINABLE_NUMBER_WORDS.has(numberWord)) {
+        repairs.push({ index: match.index, length: match[0].length, value: `${numberWord === "семи" ? "семь" : numberWord} ${currencyAlias}` });
+      }
+      break;
+    }
+  }
+  if (repairs.length !== 1) return text;
+  const repair = repairs[0];
+  return `${text.slice(0, repair.index)}${repair.value}${text.slice(repair.index + repair.length)}`;
 }
 
 function hasAdjacentExactCurrency(text, end, currencyCode) {
