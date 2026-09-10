@@ -10,6 +10,7 @@ import { createRepository } from "../src/repository.js";
 import { createMiniAppQuickCaptureDraft, createShortcutExpenseDraft, createTelegramExpenseDraft } from "../src/expenseDraftService.js";
 import { createExpenseParser } from "../src/expenseParser.js";
 import { createPaidProviderUsageGate } from "../src/paidProviderUsage.js";
+import { createPlannedPaymentReminderService } from "../src/plannedPaymentReminderService.js";
 import { processMiniAppQuickCapture } from "../src/quickCapture.js";
 import { processShortcutCapture } from "../src/shortcutCapture.js";
 import { acceptReviewRecovery, previewSmartSaveRecovery, saveSmartSaveRecovery } from "../src/smartSaveRecovery.js";
@@ -634,6 +635,68 @@ test("recalculates dashboard budget summary from real expense rows", async () =>
   assert.equal(dashboard.snapshot.freeRemaining, 43500);
   assert.equal(dashboard.latestExpenses.length, 2);
   assert.equal(dashboard.topCategories[0].category_slug, "food_groceries");
+});
+
+test("uses the current non-UTC timezone for a planned payment after the user changes it", async () => {
+  const telegramUserId = 990024;
+  const user = await createSmokeUser(telegramUserId);
+  await pool.query(
+    "UPDATE users SET timezone = 'America/Chicago', onboarding_step = 'completed' WHERE id = $1",
+    [user.id]
+  );
+  const planned = await repo.createPlannedExpense(telegramUserId, {
+    amount: 1700,
+    currency: "THB",
+    description: "local rent",
+    category_slug: "home",
+    recurrence: "monthly",
+    due_day: 31
+  }, new Date("2026-09-01T00:30:00.000Z"));
+  await pool.query(
+    "UPDATE users SET timezone = 'America/New_York' WHERE id = $1",
+    [user.id]
+  );
+  const sent = [];
+  const beforeLocalHour = createPlannedPaymentReminderService({
+    repository: repo,
+    sendMessage: async (message) => sent.push(message),
+    globalEnabled: true,
+    sendHour: 21,
+    miniAppUrl: "https://money.example.com",
+    now: () => new Date("2026-09-01T00:59:00.000Z")
+  });
+  const atLocalHour = createPlannedPaymentReminderService({
+    repository: repo,
+    sendMessage: async (message) => {
+      sent.push(message);
+      return { result: { message_id: 91 } };
+    },
+    globalEnabled: true,
+    sendHour: 21,
+    miniAppUrl: "https://money.example.com",
+    now: () => new Date("2026-09-01T01:00:00.000Z")
+  });
+
+  assert.equal((await beforeLocalHour.runOnce()).sent, 0);
+  assert.equal((await atLocalHour.runOnce()).sent, 1);
+  assert.equal(sent.length, 1);
+
+  const paidAt = new Date("2026-09-01T01:05:00.000Z");
+  const paid = await repo.payPlannedExpenseForTelegramUser(
+    planned.id,
+    telegramUserId,
+    paidAt,
+    { occurrenceDate: "2026-08-31" }
+  );
+  const payment = await pool.query(
+    `SELECT occurrence_date::text, paid_month
+     FROM planned_expense_payments
+     WHERE planned_expense_id = $1`,
+    [planned.id]
+  );
+
+  assert.equal(paid.spent_at.toISOString(), paidAt.toISOString());
+  assert.deepEqual(payment.rows, [{ occurrence_date: "2026-08-31", paid_month: "2026-08" }]);
 });
 
 test("archives and recreates a partially paid weekly plan without rewriting history or today's snapshot", async () => {
