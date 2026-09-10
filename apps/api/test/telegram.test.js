@@ -5555,6 +5555,27 @@ test("isMessageNotModified detects the not-modified 400 and rejects other errors
   assert.equal(isMessageNotModified(null), false);
 });
 
+test("sendTelegramMessage composes a finite request deadline with the queue signal", async () => {
+  const originalFetch = globalThis.fetch;
+  const parent = new AbortController();
+  let requestSignal;
+  try {
+    globalThis.fetch = async (_url, options) => {
+      requestSignal = options.signal;
+      parent.abort(new Error("job stopped"));
+      throw requestSignal.reason;
+    };
+    const { sendTelegramMessage } = await import("../src/telegram.js");
+    await assert.rejects(
+      sendTelegramMessage({ token: "test-token", chatId: 1, text: "test", signal: parent.signal, requestTimeoutMs: 10_000 }),
+      /job stopped/
+    );
+    assert.equal(requestSignal.aborted, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("regular draft delivery stores the originating telegram chat and message id", async () => {
   const refs = [];
   const repository = {

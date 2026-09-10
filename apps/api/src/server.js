@@ -137,11 +137,13 @@ const expenseEvidenceImportService = config.expenseEvidenceImportEnabled
       repository,
       analyzer: expenseEvidenceAnalyzer,
       imageDownloader: {
-        download: ({ fileId, declaredMimeType }) => downloadAndSanitizeExpenseEvidenceImage({
+        download: ({ fileId, declaredMimeType, signal }) => downloadAndSanitizeExpenseEvidenceImage({
           telegramBotToken: config.telegramBotToken,
           fileId,
           declaredMimeType,
-          maxBytes: config.expenseEvidenceMaxBytes
+          maxBytes: config.expenseEvidenceMaxBytes,
+          timeoutMs: config.expenseEvidenceTimeoutMs,
+          signal
         })
       },
       hmac: (value) => crypto.createHmac("sha256", config.expenseEvidenceHmacSecret).update(value).digest("hex")

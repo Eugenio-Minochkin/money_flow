@@ -1,4 +1,5 @@
 import { SUPPORTED_CURRENCIES, SUPPORTED_CURRENCY_CODES, fallbackThbRate } from "../../../packages/shared/src/currencies.js";
+import { deadlineSignal } from "./deadlineSignal.js";
 
 const FRANKFURTER_URL = "https://api.frankfurter.dev/v1";
 const OPEN_ER_API_URL = "https://open.er-api.com/v6/latest/USD";
@@ -13,6 +14,7 @@ export function createExchangeRateProvider(options = {}) {
   const pool = options.pool ?? null;
   const logger = options.logger ?? console;
   const manualFallbackEnabled = options.manualFallbackEnabled !== false;
+  const requestTimeoutMs = positiveInteger(options.requestTimeoutMs, 10_000);
   const rateSnapshots = new Map();
 
   return {
@@ -31,7 +33,7 @@ export function createExchangeRateProvider(options = {}) {
       if (exact) return exact;
 
       try {
-        const providerRates = await fetchProviderRates({ fetchImpl, adminAlertService, rateDate });
+        const providerRates = await fetchProviderRates({ fetchImpl, adminAlertService, rateDate, requestTimeoutMs });
         if (pool) await safelySaveDerivedRates({ pool, logger, rateDate, rates: providerRates, baseCurrency, quoteCurrency });
         if (isProviderCoveredPair(providerRates, baseCurrency, quoteCurrency)) {
           return {
@@ -130,19 +132,26 @@ export function createExchangeRateProvider(options = {}) {
       }
     },
 
-    async ratesFor(date) {
+    async ratesFor(date, { signal = null } = {}) {
       const rateDate = toDateString(date);
       if (!rateSnapshots.has(rateDate)) {
-        rateSnapshots.set(rateDate, (async () => {
+        const loadRates = (async () => {
           try {
-            const rates = await fetchProviderRates({ fetchImpl, adminAlertService, rateDate });
+            const rates = await fetchProviderRates({ fetchImpl, adminAlertService, rateDate, requestTimeoutMs, signal });
             if (pool) await safelySaveDerivedRates({ pool, logger, rateDate, rates, baseCurrency: "USD", quoteCurrency: "THB" });
             return rates;
           } catch (error) {
+            if (signal?.aborted) throw error;
             if (!manualFallbackEnabled) throw new ExchangeRateUnavailableError({ rateDate, baseCurrency: "USD", quoteCurrency: "THB", cause: error });
             return fallbackRates(rateDate);
           }
-        })());
+        })();
+        if (!signal) rateSnapshots.set(rateDate, loadRates);
+        else {
+          const rates = await loadRates;
+          rateSnapshots.set(rateDate, Promise.resolve(rates));
+          return rates;
+        }
       }
       return rateSnapshots.get(rateDate);
     }
@@ -160,30 +169,34 @@ export class ExchangeRateUnavailableError extends Error {
   }
 }
 
-async function fetchProviderRates({ fetchImpl, adminAlertService, rateDate }) {
+async function fetchProviderRates({ fetchImpl, adminAlertService, rateDate, requestTimeoutMs, signal }) {
   if (typeof fetchImpl !== "function") {
     throw new Error("exchange rate provider is not configured");
   }
 
   try {
-    const openResponse = await fetchImpl(OPEN_ER_API_URL);
+    const openResponse = await fetchImpl(OPEN_ER_API_URL, { signal: deadlineSignal(signal, requestTimeoutMs) });
     if (openResponse.ok) {
       const data = await openResponse.json();
       const rates = ratesFromUsdMap(data.rates ?? {});
       if (rates) return buildRates(`open-er-api:${toDateString(data.time_last_update_utc ?? rateDate)}`, rates);
     }
   } catch (error) {
+    if (signal?.aborted) throw error;
     await notifyRatesError(adminAlertService, error, "open-er-api");
   }
 
   try {
-    const response = await fetchImpl(`${FRANKFURTER_URL}/${rateDate}?base=USD&symbols=${RATE_CODES.join(",")}`);
+    const response = await fetchImpl(`${FRANKFURTER_URL}/${rateDate}?base=USD&symbols=${RATE_CODES.join(",")}`, {
+      signal: deadlineSignal(signal, requestTimeoutMs)
+    });
     if (response.ok) {
       const data = await response.json();
       const rates = ratesFromUsdMap(data.rates ?? {});
       if (rates) return buildRates(`frankfurter:${data.date ?? rateDate}`, rates);
     }
   } catch (error) {
+    if (signal?.aborted) throw error;
     await notifyRatesError(adminAlertService, error, "frankfurter");
     throw error;
   }
@@ -200,6 +213,11 @@ async function notifyRatesError(adminAlertService, error, operation) {
   } catch {
     // Rate lookup must still fall back to manual rates if alerting itself fails.
   }
+}
+
+function positiveInteger(value, fallback) {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? Math.floor(number) : fallback;
 }
 
 export function fallbackRates(date = new Date()) {

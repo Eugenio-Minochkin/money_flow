@@ -3,6 +3,43 @@ import assert from "node:assert/strict";
 
 import { createExchangeRateProvider } from "../src/exchangeRates.js";
 
+test("passes a finite deadline signal to exchange-rate provider fetches", async () => {
+  const signals = [];
+  const provider = createExchangeRateProvider({
+    requestTimeoutMs: 25,
+    async fetchImpl(_url, options) {
+      signals.push(options?.signal);
+      throw new Error("provider unavailable");
+    }
+  });
+
+  await provider.ratesFor(new Date("2026-06-02T10:00:00+07:00"));
+
+  assert.equal(signals.length, 2);
+  assert.ok(signals.every((signal) => signal instanceof AbortSignal));
+});
+
+test("queue cancellation aborts exchange-rate lookup without trying the fallback provider", async () => {
+  const controller = new AbortController();
+  let fetches = 0;
+  const provider = createExchangeRateProvider({
+    async fetchImpl(_url, options) {
+      fetches += 1;
+      controller.abort(new Error("queue deadline exceeded"));
+      await new Promise((resolve, reject) => {
+        options.signal.addEventListener("abort", () => reject(options.signal.reason), { once: true });
+        if (options.signal.aborted) reject(options.signal.reason);
+      });
+    }
+  });
+
+  await assert.rejects(
+    () => provider.ratesFor(new Date("2026-06-03T10:00:00+07:00"), { signal: controller.signal }),
+    /queue deadline exceeded/
+  );
+  assert.equal(fetches, 1);
+});
+
 test("uses RUB and THB rates from Open ER API when available", async () => {
   const urls = [];
   const provider = createExchangeRateProvider({

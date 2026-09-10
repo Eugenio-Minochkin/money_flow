@@ -8,9 +8,16 @@ import { config } from "./config.js";
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-export const pool = new Pool({
-  connectionString: config.databaseUrl
-});
+export function createPoolOptions(runtimeConfig = config) {
+  return {
+    connectionString: runtimeConfig.databaseUrl,
+    connectionTimeoutMillis: runtimeConfig.databaseConnectionTimeoutMs,
+    statement_timeout: runtimeConfig.databaseStatementTimeoutMs,
+    query_timeout: runtimeConfig.databaseQueryTimeoutMs
+  };
+}
+
+export const pool = new Pool(createPoolOptions());
 
 export async function listMigrationFiles(migrationsDir) {
   const entries = await readdir(migrationsDir);

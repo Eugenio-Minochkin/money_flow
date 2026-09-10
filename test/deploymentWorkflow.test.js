@@ -102,6 +102,22 @@ test('production Telegram user queue limit matches the application burst default
   assert.match(productionEnvExample, new RegExp(`^TELEGRAM_JOB_USER_QUEUE_LIMIT=${expectedLimit}$`, 'm'));
 });
 
+test('production PostgreSQL deadlines match application defaults', () => {
+  const defaults = buildConfig({});
+  const compose = readText('compose.prod.yml');
+  const productionEnvExample = readText('.env.production.example');
+  const limits = {
+    DB_CONNECTION_TIMEOUT_MS: defaults.databaseConnectionTimeoutMs,
+    DB_STATEMENT_TIMEOUT_MS: defaults.databaseStatementTimeoutMs,
+    DB_QUERY_TIMEOUT_MS: defaults.databaseQueryTimeoutMs
+  };
+
+  for (const [name, value] of Object.entries(limits)) {
+    assert.match(compose, new RegExp(`${name}:\\s*\\$\\{${name}:-${value}\\}`));
+    assert.match(productionEnvExample, new RegExp(`^${name}=${value}$`, 'm'));
+  }
+});
+
 test('production compose passes admin alert settings to the API', () => {
   const compose = readText('compose.prod.yml');
 

@@ -91,6 +91,33 @@ test("bounds Telegram image downloads before sanitizing their bytes", async () =
   assert.equal(calls.length, 2);
 });
 
+test("passes the composed job deadline to Telegram image metadata and file fetches", async () => {
+  const parent = new AbortController();
+  const signals = [];
+  await assert.rejects(
+    () => downloadAndSanitizeExpenseEvidenceImage({
+      telegramBotToken: "telegram-token",
+      fileId: "file-id",
+      declaredMimeType: "image/jpeg",
+      maxBytes: 1024,
+      timeoutMs: 10_000,
+      signal: parent.signal,
+      fetchImpl: async (url, options) => {
+        signals.push(options?.signal);
+        if (String(url).includes("/getFile")) {
+          return { ok: true, async json() { return { ok: true, result: { file_path: "images/private.jpg" } }; } };
+        }
+        parent.abort(new Error("job stopped"));
+        throw options.signal.reason;
+      }
+    }),
+    error => error?.code === "image_download_failed"
+  );
+  assert.equal(signals.length, 2);
+  assert.ok(signals.every((signal) => signal instanceof AbortSignal));
+  assert.equal(signals[1].aborted, true);
+});
+
 function png(chunks) {
   return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), ...chunks]);
 }

@@ -67,6 +67,22 @@ test("Telegram job queue supports a normal ten-message user burst by default", (
   assert.equal(buildConfig({ TELEGRAM_JOB_USER_QUEUE_LIMIT: "24" }).telegramJobUserQueueLimit, 24);
 });
 
+test("database waits have finite defaults and accept explicit positive limits", () => {
+  const defaults = buildConfig({});
+  assert.equal(defaults.databaseConnectionTimeoutMs, 10_000);
+  assert.equal(defaults.databaseStatementTimeoutMs, 60_000);
+  assert.equal(defaults.databaseQueryTimeoutMs, 65_000);
+
+  const configured = buildConfig({
+    DB_CONNECTION_TIMEOUT_MS: "5000",
+    DB_STATEMENT_TIMEOUT_MS: "40000",
+    DB_QUERY_TIMEOUT_MS: "45000"
+  });
+  assert.equal(configured.databaseConnectionTimeoutMs, 5_000);
+  assert.equal(configured.databaseStatementTimeoutMs, 40_000);
+  assert.equal(configured.databaseQueryTimeoutMs, 45_000);
+});
+
 test("admin alert config parses explicit safe values", () => {
   const config = buildConfig({
     ADMIN_ALERTS_ENABLED: "true",

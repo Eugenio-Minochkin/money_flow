@@ -19,6 +19,9 @@ const DEFAULT_OPENAI_PARSER_USER_LIMIT = 100;
 const DEFAULT_DEEPGRAM_TRANSCRIPTION_USER_LIMIT = 50;
 const DEFAULT_DEEPGRAM_MAX_AUDIO_DURATION_SEC = 60;
 const DEFAULT_DEEPGRAM_MAX_AUDIO_WINDOW_SEC = 15 * 60;
+const DEFAULT_DB_CONNECTION_TIMEOUT_MS = 10_000;
+const DEFAULT_DB_STATEMENT_TIMEOUT_MS = 60_000;
+const DEFAULT_DB_QUERY_TIMEOUT_MS = 65_000;
 
 export function parseReleaseDigestSendHour(value) {
   const parsed = Number(value ?? DEFAULT_RELEASE_DIGEST_SEND_HOUR);
@@ -48,6 +51,9 @@ export function buildConfig(env) {
     nodeEnv,
     port: Number(env.PORT ?? 3000),
     databaseUrl: env.DATABASE_URL,
+    databaseConnectionTimeoutMs: parseStrictPositiveInteger(env.DB_CONNECTION_TIMEOUT_MS, DEFAULT_DB_CONNECTION_TIMEOUT_MS, "DB_CONNECTION_TIMEOUT_MS", MAX_TIMER_DELAY_MS),
+    databaseStatementTimeoutMs: parseStrictPositiveInteger(env.DB_STATEMENT_TIMEOUT_MS, DEFAULT_DB_STATEMENT_TIMEOUT_MS, "DB_STATEMENT_TIMEOUT_MS", MAX_TIMER_DELAY_MS),
+    databaseQueryTimeoutMs: parseStrictPositiveInteger(env.DB_QUERY_TIMEOUT_MS, DEFAULT_DB_QUERY_TIMEOUT_MS, "DB_QUERY_TIMEOUT_MS", MAX_TIMER_DELAY_MS),
     telegramBotToken: env.TELEGRAM_BOT_TOKEN,
     adminTelegramIds: env.ADMIN_TELEGRAM_IDS ?? "",
     miniAppUrl: env.MINI_APP_URL ?? "http://localhost:3000",
