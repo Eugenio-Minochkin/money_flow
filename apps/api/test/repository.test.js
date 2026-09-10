@@ -4530,6 +4530,66 @@ test("paying a same-day monthly planned expense records the expense at the click
   assert.equal(paymentInsert.params[3], paidAt);
 });
 
+test("planned payment uses the current user timezone across UTC midnight", async () => {
+  const queries = [];
+  const paidAt = new Date("2026-09-01T01:05:00.000Z");
+  const storedPlan = {
+    id: "5",
+    user_id: "1",
+    amount: "17000",
+    currency: "THB",
+    amount_base: "17000",
+    description: "rent",
+    category_slug: "home",
+    tags: [],
+    recurrence: "monthly",
+    due_day: 31,
+    due_days: [31],
+    base_currency: "THB",
+    usd_thb_rate: "32.6"
+  };
+  const repo = createRepository({
+    async connect() {
+      return {
+        async query(sql, params = []) {
+          const query = String(sql);
+          queries.push({ sql: query, params });
+          if (query.includes("SELECT planned_expenses.*, users.base_currency")) {
+            return {
+              rows: [{
+                ...storedPlan,
+                ...(query.includes("users.timezone") ? { timezone: "America/New_York" } : {})
+              }]
+            };
+          }
+          if (query.includes("FROM planned_expense_payments")) return { rows: [] };
+          if (query.includes("INSERT INTO expenses")) return { rows: [{ id: "20", spent_at: params[11] }] };
+          if (query.includes("INSERT INTO planned_expense_payments")) return { rows: [{ id: "9" }] };
+          return { rows: [] };
+        },
+        release() {}
+      };
+    }
+  }, { exchangeRates: fixedRates() });
+
+  const expense = await repo.payPlannedExpenseForTelegramUser(
+    5,
+    100,
+    paidAt,
+    { occurrenceDate: "2026-08-31" }
+  );
+
+  const planReads = queries.filter((query) => query.sql.includes("SELECT planned_expenses.*, users.base_currency"));
+  const expenseInsert = queries.find((query) => query.sql.includes("INSERT INTO expenses"));
+  const paymentInsert = queries.find((query) => query.sql.includes("INSERT INTO planned_expense_payments"));
+  assert.equal(planReads.length, 2);
+  assert.ok(planReads.every((query) => query.sql.includes("users.timezone")));
+  assert.equal(new Date(expense.spent_at).toISOString(), paidAt.toISOString());
+  assert.equal(expenseInsert.params[6], "2026-08-31");
+  assert.equal(paymentInsert.params[2], "2026-08");
+  assert.equal(paymentInsert.params[4], "2026-08-31");
+});
+
 test("paying an overdue twice-monthly planned expense records the expense at local noon", async () => {
   const queries = [];
   const repo = createRepository({

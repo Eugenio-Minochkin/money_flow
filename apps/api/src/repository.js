@@ -4290,7 +4290,7 @@ export function createRepository(pool, options = {}) {
       const client = await pool.connect();
       try {
         const preparedPlanResult = await client.query(
-          `SELECT planned_expenses.*, users.base_currency, users.usd_thb_rate
+          `SELECT planned_expenses.*, users.base_currency, users.usd_thb_rate, users.timezone
            FROM planned_expenses
            JOIN users ON users.id = planned_expenses.user_id
            WHERE planned_expenses.id = $1
@@ -4317,7 +4317,7 @@ export function createRepository(pool, options = {}) {
         const preparedMoneyAmounts = await buildMoneyAmounts(exchangeRates, preparedPlan.amount, preparedPlan.currency, preparedExpenseDate, preparedPlan, options);
         await client.query("BEGIN");
         const plannedResult = await client.query(
-          `SELECT planned_expenses.*, users.base_currency, users.usd_thb_rate
+          `SELECT planned_expenses.*, users.base_currency, users.usd_thb_rate, users.timezone
            FROM planned_expenses
            JOIN users ON users.id = planned_expenses.user_id
            WHERE planned_expenses.id = $1
