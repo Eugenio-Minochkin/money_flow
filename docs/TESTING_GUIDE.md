@@ -6,6 +6,8 @@ Use this guide when changing business logic or UI around the main Money Flow sur
 
 Run focused capture checks with `npm.cmd test -- packages/shared/test/parser.test.js apps/api/test/voiceMoneyNormalization.test.js apps/api/test/voiceTranscriber.test.js apps/api/test/telegram.test.js apps/api/test/repository.test.js apps/api/test/db.test.js`. Cover joined STT number/currency boundaries, spoken decimal wording, true whole-number preservation, Deepgram requests without smart formatting, privacy-minimal voice diagnostics, and loader edit/plain-edit/delete fallback without duplicate terminal messages. PostgreSQL coverage uses only the disposable integration database via `npm.cmd run test:integration:postgres`.
 
+Expense-evidence quota coverage must prove that download/validation failures consume nothing, the internal `users.id` reaches the image-analysis paid-provider gate, quota exhaustion prevents the OpenAI request and candidate creation, and concurrent/replayed Telegram message identity produces one durable reservation. Each distinct image call in a catch-up session consumes one image-analysis unit; CSV export is outside this allowance.
+
 ## Always Consider
 
 - Monthly budget calculation.
