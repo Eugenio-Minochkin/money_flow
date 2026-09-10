@@ -10,7 +10,14 @@ export function createExpenseEvidenceImportService({ repository, analyzer, image
       let image;
       try {
         image = await imageDownloader.download({ fileId, declaredMimeType, signal });
-        const analysis = await analyzer.analyze({ bytes: image.bytes, mimeType: image.mimeType, caption, signal });
+        const analysis = await analyzer.analyze({
+          bytes: image.bytes,
+          mimeType: image.mimeType,
+          caption,
+          usageUserId: user.id,
+          requestKey: `telegram:${user.id}:${chatId}:${messageId}`,
+          signal
+        });
         const existing = await repository.listExpenseEvidenceDuplicateCandidates(user.id);
         const dedupeCandidates = [...existing];
         const candidates = analysis.candidates.map((candidate, ordinal) => {

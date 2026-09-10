@@ -202,6 +202,21 @@ test('production compose passes rate limiter and trusted proxy settings to the A
   assert.match(compose, /TRUSTED_PROXY_IPS:\s*\$\{TRUSTED_PROXY_IPS:-127\.0\.0\.1,::1,172\.18\.0\.1\}/);
 });
 
+test('production configuration keeps image entitlement and paid-provider quota separate', () => {
+  const compose = readText('compose.prod.yml');
+  const env = readText('.env.production.example');
+  const runbook = readText('docs/deployment-runbook.md');
+
+  assert.match(compose, /EXPENSE_EVIDENCE_IMPORT_ENABLED:\s*\$\{EXPENSE_EVIDENCE_IMPORT_ENABLED:-false\}/);
+  assert.match(compose, /OPENAI_IMAGE_ANALYSIS_GLOBAL_ENABLED:\s*\$\{OPENAI_IMAGE_ANALYSIS_GLOBAL_ENABLED:-true\}/);
+  assert.match(compose, /OPENAI_IMAGE_ANALYSIS_USER_LIMIT:\s*\$\{OPENAI_IMAGE_ANALYSIS_USER_LIMIT:-100\}/);
+  assert.match(env, /OPENAI_IMAGE_ANALYSIS_GLOBAL_ENABLED=true/);
+  assert.match(env, /OPENAI_IMAGE_ANALYSIS_USER_LIMIT=100/);
+  assert.match(runbook, /one image-analysis reservation per OpenAI Responses call/i);
+  assert.match(runbook, /internal `users\.id`/i);
+  assert.match(runbook, /CSV export does not consume/i);
+});
+
 test('deployment runbook documents secrets, local flow, deploy, and rollback', () => {
   const runbook = readText('docs/deployment-runbook.md');
 

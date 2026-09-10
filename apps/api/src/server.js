@@ -130,7 +130,14 @@ const expenseEvidenceAnalyzer = createExpenseEvidenceAnalyzer({
   apiKey: config.openAiApiKey,
   model: config.expenseEvidenceModel,
   hmacSecret: config.expenseEvidenceHmacSecret,
-  timeoutMs: config.expenseEvidenceTimeoutMs
+  timeoutMs: config.expenseEvidenceTimeoutMs,
+  consumeAnalysisUsage: createPaidProviderUsageGate({
+    repository,
+    provider: "openai_image_analysis",
+    windowMs: config.paidAiWindowMs,
+    maxRequests: config.openAiImageAnalysisUserLimit,
+    enabled: config.openAiImageAnalysisGlobalEnabled
+  })
 });
 const expenseEvidenceImportService = config.expenseEvidenceImportEnabled
   ? createExpenseEvidenceImportService({

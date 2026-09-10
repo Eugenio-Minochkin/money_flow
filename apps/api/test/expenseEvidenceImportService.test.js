@@ -28,6 +28,120 @@ test("creates canonical reviewable drafts without retaining image data", async (
   assert.deepEqual(forwardedSignals, [controller.signal, controller.signal]);
 });
 
+test("passes internal user identity and durable Telegram request key to image analysis", async () => {
+  let analysisInput;
+  const service = createExpenseEvidenceImportService({
+    analyzer: {
+      async analyze(input) {
+        analysisInput = input;
+        return { evidenceType: "unknown", candidateSetHmac: null, candidates: [] };
+      }
+    },
+    imageDownloader: { async download() { return { bytes: Buffer.from([1, 2]), mimeType: "image/jpeg" }; } },
+    repository: {
+      async claimExpenseEvidenceImport() { return { state: "claimed", claimVersion: 1 }; },
+      async listExpenseEvidenceDuplicateCandidates() { return []; },
+      async completeExpenseEvidenceImport() { return { id: 7 }; },
+      async releaseExpenseEvidenceImport() {}
+    },
+    hmac: () => "bytes-hmac"
+  });
+
+  await service.importImage({ user: { id: 42 }, chatId: 10, messageId: 77, fileId: "file", declaredMimeType: "image/jpeg" });
+
+  assert.equal(analysisInput.usageUserId, 42);
+  assert.equal(analysisInput.requestKey, "telegram:42:10:77");
+});
+
+test("does not analyze or account a replayed or concurrent photo claim", async (t) => {
+  for (const state of ["ready", "completed", "processing"]) {
+    await t.test(state, async () => {
+      let analysisCalls = 0;
+      let downloadCalls = 0;
+      const service = createExpenseEvidenceImportService({
+        analyzer: { async analyze() { analysisCalls += 1; } },
+        imageDownloader: { async download() { downloadCalls += 1; } },
+        repository: { async claimExpenseEvidenceImport() { return { state, id: 7 }; } },
+        hmac: () => "bytes-hmac"
+      });
+
+      const result = await service.importImage({ user: { id: 42 }, chatId: 10, messageId: 77, fileId: "file", declaredMimeType: "image/jpeg" });
+
+      assert.equal(analysisCalls, 0);
+      assert.equal(downloadCalls, 0);
+      assert.equal(result.state, state === "processing" ? "processing" : state);
+    });
+  }
+});
+
+test("releases the durable photo claim without creating drafts when quota rejects analysis", async () => {
+  const quotaError = Object.assign(new Error("paid_provider_limit_reached"), { code: "paid_provider_limit_reached" });
+  let released;
+  let completed = false;
+  const service = createExpenseEvidenceImportService({
+    analyzer: { async analyze() { throw quotaError; } },
+    imageDownloader: { async download() { return { bytes: Buffer.from([1, 2]), mimeType: "image/jpeg" }; } },
+    repository: {
+      async claimExpenseEvidenceImport() { return { state: "claimed", claimVersion: 3 }; },
+      async completeExpenseEvidenceImport() { completed = true; },
+      async releaseExpenseEvidenceImport(...args) { released = args; }
+    },
+    hmac: () => "bytes-hmac"
+  });
+
+  await assert.rejects(
+    () => service.importImage({ user: { id: 42 }, chatId: 10, messageId: 77, fileId: "file", declaredMimeType: "image/jpeg" }),
+    (error) => error === quotaError
+  );
+  assert.deepEqual(released, [42, 10, 77, 3]);
+  assert.equal(completed, false);
+});
+
+test("does not analyze or account when image download fails before the paid request", async () => {
+  let analysisCalls = 0;
+  let released = false;
+  const downloadError = new Error("invalid image");
+  const service = createExpenseEvidenceImportService({
+    analyzer: { async analyze() { analysisCalls += 1; } },
+    imageDownloader: { async download() { throw downloadError; } },
+    repository: {
+      async claimExpenseEvidenceImport() { return { state: "claimed", claimVersion: 2 }; },
+      async releaseExpenseEvidenceImport() { released = true; }
+    },
+    hmac: () => "bytes-hmac"
+  });
+
+  await assert.rejects(
+    () => service.importImage({ user: { id: 42 }, chatId: 10, messageId: 77, fileId: "file", declaredMimeType: "image/jpeg" }),
+    (error) => error === downloadError
+  );
+  assert.equal(analysisCalls, 0);
+  assert.equal(released, true);
+});
+
+test("releases the durable claim without creating drafts after a paid provider failure", async () => {
+  const providerError = Object.assign(new Error("analysis_failed"), { code: "analysis_failed" });
+  let released = false;
+  let completed = false;
+  const service = createExpenseEvidenceImportService({
+    analyzer: { async analyze() { throw providerError; } },
+    imageDownloader: { async download() { return { bytes: Buffer.from([1, 2]), mimeType: "image/jpeg" }; } },
+    repository: {
+      async claimExpenseEvidenceImport() { return { state: "claimed", claimVersion: 4 }; },
+      async completeExpenseEvidenceImport() { completed = true; },
+      async releaseExpenseEvidenceImport() { released = true; }
+    },
+    hmac: () => "bytes-hmac"
+  });
+
+  await assert.rejects(
+    () => service.importImage({ user: { id: 42 }, chatId: 10, messageId: 77, fileId: "file", declaredMimeType: "image/jpeg" }),
+    (error) => error === providerError
+  );
+  assert.equal(released, true);
+  assert.equal(completed, false);
+});
+
 test("classifies image candidates against owned financial facts before completing the import", async () => {
   let completed;
   const service = createExpenseEvidenceImportService({
