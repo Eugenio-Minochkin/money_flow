@@ -19,6 +19,7 @@ import { createExpenseExportService } from "./expenseExportService.js";
 import { createTelegramExpenseDraft, ExpenseTextNotRecognizedError } from "./expenseDraftService.js";
 import { createTelegramJobQueue } from "./telegramJobQueue.js";
 import { createTelegramJobDeliveryState, markTelegramJobTerminalResponse, shouldNotifyTelegramJobFailure } from "./telegramJobOutcome.js";
+import { deadlineSignal } from "./deadlineSignal.js";
 import { normalizeVoiceMoneyTranscript } from "./voiceMoneyNormalization.js";
 import { syncTelegramUserCommandMenu } from "./telegramCommands.js";
 import { renderDraftPreview } from "./draftPreview.js";
@@ -586,7 +587,7 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
     : "not_applicable";
 
   const deliverQueuedResult = async (input) => {
-    const delivered = await deliverResultMessage(input);
+    const delivered = await deliverResultMessage({ ...input, signal });
     markTelegramJobTerminalResponse(deliveryState);
     return delivered;
   };
@@ -617,7 +618,7 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
       return handleOnboardingMessage({ text: onboardingTextInput, user, repository, token, chatId, miniAppUrl, telegramUserId: from.id, telegramClient, now, trace });
     }
 
-    const loader = await sendExpenseProcessingMessage(token, chatId, language, telegramClient, trace, message.message_id);
+    const loader = await sendExpenseProcessingMessage(token, chatId, language, telegramClient, trace, message.message_id, signal);
     let text = rawText;
     try {
       if (!text && hasVoice) {
@@ -658,7 +659,7 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
       if (!text && inputType === "photo") {
         if (expenseEvidenceImportService) {
           const photo = message.photo?.at(-1) ?? message.document;
-          const imported = await expenseEvidenceImportService.importImage({ user, chatId, messageId: message.message_id, fileId: photo?.file_id, fileUniqueId: photo?.file_unique_id, declaredMimeType: message.document?.mime_type ?? "image/jpeg", caption: message.caption ?? "" });
+          const imported = await expenseEvidenceImportService.importImage({ user, chatId, messageId: message.message_id, fileId: photo?.file_id, fileUniqueId: photo?.file_unique_id, declaredMimeType: message.document?.mime_type ?? "image/jpeg", caption: message.caption ?? "", signal });
           processingResult = imported.state === "ready" ? "evidence_ready" : "evidence_processing";
           const candidateCount = imported.candidates?.length ?? 0;
           const ready = imported.state === "ready" && imported.importId != null && imported.evidenceType !== "unsupported";
@@ -866,7 +867,7 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
       });
       if (smartSave.eligible) {
         trace.start("db_save");
-        const saved = await repository.saveDraftAsExpense(draft.id, from.id);
+        const saved = await repository.saveDraftAsExpense(draft.id, from.id, { signal });
         trace.end("db_save");
         const expenses = saved.expenses ?? [];
         const total = expenses.reduce((sum, expense) => sum + Number(expense.amount_base ?? 0), 0);
@@ -896,7 +897,7 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
         token,
         chatId,
         loaderMessageId: loader.messageId,
-        text: await renderDraftPreview({ repository, user, items: draft.items, language }),
+        text: await renderDraftPreview({ repository, user, items: draft.items, language, signal }),
         replyMarkup: draftKeyboard(draft.id, draft.items, miniAppUrl, from.id, language),
         telegramClient,
         trace
@@ -1279,7 +1280,7 @@ async function transcribeVoice(message, voiceTranscriber, trace, user, signal = 
   });
 }
 
-async function sendExpenseProcessingMessage(token, chatId, language, telegramClient, trace, sourceMessageId) {
+async function sendExpenseProcessingMessage(token, chatId, language, telegramClient, trace, sourceMessageId, signal = null) {
   try {
     const replyParameters = sourceMessageId == null ? null : {
       message_id: sourceMessageId,
@@ -1292,43 +1293,44 @@ async function sendExpenseProcessingMessage(token, chatId, language, telegramCli
       null,
       telegramClient,
       null,
-      { replyParameters, retryPlainText: false }
+      { replyParameters, retryPlainText: false, signal }
     ));
     return { messageId: extractMessageId(result) };
   } catch (error) {
+    if (signal?.aborted) throw error;
     console.error("[telegram] failed to send expense processing loader", error.message);
     return { messageId: null };
   }
 }
 
-async function deliverResultMessage({ token, chatId, loaderMessageId, text, replyMarkup, telegramClient, trace }) {
+async function deliverResultMessage({ token, chatId, loaderMessageId, text, replyMarkup, telegramClient, trace, signal = null }) {
   if (loaderMessageId) {
     try {
-      const result = await sendTelegramResponse(trace, () => editMessageText(token, chatId, loaderMessageId, text, replyMarkup, telegramClient));
+      const result = await sendTelegramResponse(trace, () => editMessageText(token, chatId, loaderMessageId, text, replyMarkup, telegramClient, { signal }));
       trace.event("telegram_terminalization", { mode: "edit" });
       return result;
     } catch (error) {
       console.error("[telegram] editing loader into result failed, retrying plain edit", error.message);
       try {
-        const result = await sendTelegramResponse(trace, () => editMessageText(token, chatId, loaderMessageId, stripTelegramHtml(text), replyMarkup, telegramClient));
+        const result = await sendTelegramResponse(trace, () => editMessageText(token, chatId, loaderMessageId, stripTelegramHtml(text), replyMarkup, telegramClient, { signal }));
         trace.event("telegram_terminalization", { mode: "plain_edit_fallback" });
         return result;
       } catch (plainEditError) {
         console.error("[telegram] plain loader edit failed, deleting before sending result", plainEditError.message);
         try {
-          await deleteMessage(token, chatId, loaderMessageId, telegramClient);
+          await deleteMessage(token, chatId, loaderMessageId, telegramClient, { signal });
         } catch (deleteError) {
           trace.event("telegram_terminalization", { mode: "cleanup_failed" });
           console.error("[telegram] failed to delete loader after edit failure", deleteError.message);
           return { ok: false, terminalizationMode: "cleanup_failed" };
         }
-        const result = await sendTelegramResponse(trace, () => sendMessage(token, chatId, text, replyMarkup, telegramClient));
+        const result = await sendTelegramResponse(trace, () => sendMessage(token, chatId, text, replyMarkup, telegramClient, null, { signal }));
         trace.event("telegram_terminalization", { mode: "delete_and_send_fallback" });
         return result;
       }
     }
   }
-  const result = await sendTelegramResponse(trace, () => sendMessage(token, chatId, text, replyMarkup, telegramClient));
+  const result = await sendTelegramResponse(trace, () => sendMessage(token, chatId, text, replyMarkup, telegramClient, null, { signal }));
   trace.event("telegram_terminalization", { mode: "delete_and_send_fallback" });
   return result;
 }
@@ -3199,7 +3201,7 @@ function nextLogMessageId() {
 }
 
 async function sendMessage(token, chatId, text, replyMarkup, telegramClient, plainTextFallback = null, options = {}) {
-  const { replyParameters = null, retryPlainText = true } = options;
+  const { replyParameters = null, retryPlainText = true, signal = null, requestTimeoutMs = 15_000 } = options;
   const clientMessage = {
     chatId,
     text,
@@ -3230,7 +3232,7 @@ async function sendMessage(token, chatId, text, replyMarkup, telegramClient, pla
     reply_markup: replyMarkup
   };
   try {
-    return await telegramRequest(token, "sendMessage", body);
+    return await telegramRequest(token, "sendMessage", body, { signal, requestTimeoutMs });
   } catch (error) {
     if (!retryPlainText || !shouldRetryPlainText(error)) throw error;
     console.error("[telegram] sendMessage HTML rejected, retrying plain text", error.message);
@@ -3238,12 +3240,12 @@ async function sendMessage(token, chatId, text, replyMarkup, telegramClient, pla
       ...body,
       text: plainTextFallback ?? stripTelegramHtml(text),
       parse_mode: undefined
-    });
+    }, { signal, requestTimeoutMs });
   }
 }
 
-export async function sendTelegramMessage({ token, chatId, text, replyMarkup = null, replyParameters = null, telegramClient = null }) {
-  return sendMessage(token, chatId, text, replyMarkup, telegramClient, null, { replyParameters });
+export async function sendTelegramMessage({ token, chatId, text, replyMarkup = null, replyParameters = null, telegramClient = null, signal = null, requestTimeoutMs = 15_000 }) {
+  return sendMessage(token, chatId, text, replyMarkup, telegramClient, null, { replyParameters, signal, requestTimeoutMs });
 }
 
 export async function sendTelegramDocument({ token, telegramClient = null, chatId, filename, content, contentType, caption = null }) {
@@ -3382,7 +3384,7 @@ export function savedSummaryKeyboard(miniAppUrl, telegramUserId, language) {
   return appKeyboard(miniAppUrl, telegramUserId, language);
 }
 
-async function editMessageText(token, chatId, messageId, text, replyMarkup, telegramClient) {
+async function editMessageText(token, chatId, messageId, text, replyMarkup, telegramClient, options = {}) {
   if (telegramClient) {
     return telegramClient.editMessageText({ chatId, messageId, text, replyMarkup });
   }
@@ -3398,7 +3400,7 @@ async function editMessageText(token, chatId, messageId, text, replyMarkup, tele
     reply_markup: replyMarkup
   };
   try {
-    return await telegramRequest(token, "editMessageText", body);
+    return await telegramRequest(token, "editMessageText", body, options);
   } catch (error) {
     if (isMessageNotModified(error)) {
       console.log("[telegram] editMessageText: message is not modified, ignoring");
@@ -3410,7 +3412,7 @@ async function editMessageText(token, chatId, messageId, text, replyMarkup, tele
       ...body,
       text: stripTelegramHtml(text),
       parse_mode: undefined
-    });
+    }, options);
   }
 }
 
@@ -3423,7 +3425,7 @@ async function editMessageReplyMarkup(token, chatId, messageId, replyMarkup, tel
   return telegramRequest(token, "editMessageReplyMarkup", { chat_id: chatId, message_id: messageId, reply_markup: replyMarkup });
 }
 
-async function deleteMessage(token, chatId, messageId, telegramClient) {
+async function deleteMessage(token, chatId, messageId, telegramClient, options = {}) {
   if (telegramClient) {
     return telegramClient.deleteMessage({ chatId, messageId });
   }
@@ -3434,7 +3436,7 @@ async function deleteMessage(token, chatId, messageId, telegramClient) {
   return telegramRequest(token, "deleteMessage", {
     chat_id: chatId,
     message_id: messageId
-  });
+  }, options);
 }
 
 async function answerCallback(token, callbackQueryId, text, telegramClient) {
@@ -3448,12 +3450,13 @@ async function answerCallback(token, callbackQueryId, text, telegramClient) {
   });
 }
 
-async function telegramRequest(token, method, body) {
+async function telegramRequest(token, method, body, options = {}) {
   const isFormData = typeof FormData !== "undefined" && body instanceof FormData;
   const response = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
     method: "POST",
     headers: isFormData ? undefined : { "content-type": "application/json" },
-    body: isFormData ? body : JSON.stringify(cleanTelegramBody(body))
+    body: isFormData ? body : JSON.stringify(cleanTelegramBody(body)),
+    signal: deadlineSignal(options.signal ?? null, options.requestTimeoutMs ?? 15_000)
   });
   if (!response.ok) {
     const responseBody = await response.text();

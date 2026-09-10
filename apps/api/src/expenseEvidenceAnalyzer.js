@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 
 import { CATEGORIES } from "../../../packages/shared/src/categories.js";
 import { SUPPORTED_CURRENCY_CODES } from "../../../packages/shared/src/currencies.js";
+import { deadlineSignal } from "./deadlineSignal.js";
 
 const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
 const EVIDENCE_TYPES = ["bank_transactions", "bank_history", "receipt", "order_confirmation", "payment_confirmation", "bill", "product_price", "purchase_photo", "unknown", "unsupported"];
@@ -18,9 +19,9 @@ export function createExpenseEvidenceAnalyzer({
 } = {}) {
   return {
     model: apiKey ? model : null,
-    async analyze({ bytes, mimeType, caption = "" }) {
+    async analyze({ bytes, mimeType, caption = "", signal = null }) {
       if (!apiKey || !fetchImpl || !hmacSecret) throw analysisError();
-      const response = await requestStructuredAnalysis({ apiKey, model, timeoutMs, fetchImpl, bytes, mimeType, caption });
+      const response = await requestStructuredAnalysis({ apiKey, model, timeoutMs, fetchImpl, bytes, mimeType, caption, signal });
       const result = normalizeAnalysis(response, now());
       return {
         evidenceType: result.evidenceType,
@@ -31,14 +32,12 @@ export function createExpenseEvidenceAnalyzer({
   };
 }
 
-async function requestStructuredAnalysis({ apiKey, model, timeoutMs, fetchImpl, bytes, mimeType, caption }) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+async function requestStructuredAnalysis({ apiKey, model, timeoutMs, fetchImpl, bytes, mimeType, caption, signal }) {
   try {
     const response = await fetchImpl(OPENAI_RESPONSES_URL, {
       method: "POST",
       headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
-      signal: controller.signal,
+      signal: deadlineSignal(signal, timeoutMs),
       body: JSON.stringify({
         model,
         store: false,
@@ -64,8 +63,6 @@ async function requestStructuredAnalysis({ apiKey, model, timeoutMs, fetchImpl, 
   } catch (error) {
     if (error?.code === "analysis_failed") throw error;
     throw analysisError();
-  } finally {
-    clearTimeout(timeout);
   }
 }
 

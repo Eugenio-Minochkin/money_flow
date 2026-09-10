@@ -483,10 +483,13 @@ export function createRepository(pool, options = {}) {
       return normalizeEvidenceCandidateLink(result.rows[0]);
     },
 
-    async resolveExpenseEvidenceCandidate({ userId, importId, candidateId, action }) {
+    async resolveExpenseEvidenceCandidate({ userId, importId, candidateId, action, signal = null }) {
       const client = await pool.connect();
       let reviewingCandidateId = null;
       try {
+        const prefetchedMoneyAmounts = ["save", "add"].includes(action)
+          ? await prefetchEvidenceCandidateMoneyAmounts(client, exchangeRates, { userId, importId, candidateId, signal })
+          : null;
         await client.query("BEGIN");
         const locked = await client.query(
           `SELECT candidates.id AS candidate_id, candidates.status AS candidate_status, candidates.draft_id, users.telegram_user_id
@@ -542,6 +545,8 @@ export function createRepository(pool, options = {}) {
           saved = await this.saveDraftAsExpense(candidate.draft_id, candidate.telegram_user_id, {
             explicitCategoryAcceptance: true,
             client,
+            prefetchedMoneyAmounts,
+            signal,
             beforeSave: async (draft) => {
               if (action === "add") return;
               const current = evidenceCandidateFromDraft(draft);
@@ -3275,9 +3280,23 @@ export function createRepository(pool, options = {}) {
       }
     },
 
-    async confirmPlannedDraft(plannedDraftId, telegramUserId) {
+    async confirmPlannedDraft(plannedDraftId, telegramUserId, options = {}) {
       const client = await pool.connect();
       try {
+        const preparedAt = new Date();
+        const preparedResult = await client.query(
+          `SELECT planned_drafts.*, users.base_currency, users.usd_thb_rate
+           FROM planned_drafts
+           JOIN users ON users.id = planned_drafts.user_id
+           WHERE planned_drafts.id = $1
+             AND users.telegram_user_id = $2`,
+          [plannedDraftId, telegramUserId]
+        );
+        const preparedDraft = normalizePlannedDraft(preparedResult.rows[0] ?? null);
+        if (!preparedDraft) throw new Error("Planned draft not found");
+        if (preparedDraft.status !== "pending") throw new Error("Planned draft is already closed");
+        const preparedPlanned = normalizePlannedExpense(preparedDraft.item);
+        const preparedMoneyAmounts = await buildMoneyAmounts(exchangeRates, preparedPlanned.amount, preparedPlanned.currency, preparedAt, preparedDraft, options);
         await client.query("BEGIN");
         const draftResult = await client.query(
           `SELECT planned_drafts.*, users.base_currency, users.usd_thb_rate
@@ -3291,8 +3310,11 @@ export function createRepository(pool, options = {}) {
         const draft = normalizePlannedDraft(draftResult.rows[0] ?? null);
         if (!draft) throw new Error("Planned draft not found");
         if (draft.status !== "pending") throw new Error("Planned draft is already closed");
+        if (plannedDraftSnapshotSignature(draft) !== plannedDraftSnapshotSignature(preparedDraft)) {
+          throw codedError("Planned draft changed while preparing exchange rates", "draft_changed_retry");
+        }
         const planned = normalizePlannedExpense(draft.item);
-        const moneyAmounts = await buildMoneyAmounts(exchangeRates, planned.amount, planned.currency, new Date(), draft);
+        const moneyAmounts = preparedMoneyAmounts;
         const result = await client.query(
           `INSERT INTO planned_expenses (
              user_id, amount, currency, amount_base, description, category_slug, tags,
@@ -3472,7 +3494,7 @@ export function createRepository(pool, options = {}) {
       return result.expenses;
     },
 
-    async prepareDraftPreview(items, user = {}) {
+    async prepareDraftPreview(items, user = {}, options = {}) {
       const baseCurrency = normalizeCurrency(user.base_currency, "THB");
       try {
         let total = 0;
@@ -3482,7 +3504,8 @@ export function createRepository(pool, options = {}) {
             item.amount,
             item.currency,
             new Date(item.spent_at),
-            { ...user, base_currency: baseCurrency }
+            { ...user, base_currency: baseCurrency },
+            options
           );
           total += moneyAmounts.amountBase;
         }
@@ -3504,9 +3527,9 @@ export function createRepository(pool, options = {}) {
 
     async saveDraftAsExpense(draftId, telegramUserId, options = {}) {
       const ownsTransaction = !options.client;
-      const prefetched = ownsTransaction
-        ? await prefetchDraftMoneyAmounts(pool, exchangeRates, draftId, telegramUserId)
-        : null;
+      const prefetched = options.prefetchedMoneyAmounts ?? (ownsTransaction
+        ? await prefetchDraftMoneyAmounts(pool, exchangeRates, draftId, telegramUserId, options)
+        : null);
       const client = options.client ?? await pool.connect();
       let clientReleased = false;
       const releaseOwnedClient = () => {
@@ -3558,6 +3581,9 @@ export function createRepository(pool, options = {}) {
         if (prefetched && !moneyAmountsByItem) {
           throw codedError("Draft changed while preparing exchange rates", "draft_changed_retry");
         }
+        if (!ownsTransaction && !moneyAmountsByItem && items.some((item) => normalizeCurrency(item.currency, "THB") !== normalizeCurrency(draft.base_currency, "THB"))) {
+          throw codedError("Exchange rates must be prepared before the transaction", "exchange_rate_prefetch_required");
+        }
         if (hasUnresolvedCurrencyAmbiguity(items)) {
           throw codedError("Draft requires an explicit currency selection", "currency_selection_required");
         }
@@ -3588,7 +3614,7 @@ export function createRepository(pool, options = {}) {
         for (const [itemIndex, item] of items.entries()) {
           const spentAt = new Date(item.spent_at);
           const moneyAmounts = moneyAmountsByItem?.[itemIndex]
-            ?? await buildMoneyAmounts(exchangeRates, item.amount, item.currency, spentAt, draft);
+            ?? await buildMoneyAmounts(exchangeRates, item.amount, item.currency, spentAt, draft, options);
           const result = await client.query(
             `INSERT INTO expenses (
                user_id, draft_id, amount_original, currency_original, amount_base, base_currency,
@@ -4263,6 +4289,32 @@ export function createRepository(pool, options = {}) {
     async payPlannedExpenseForTelegramUser(plannedExpenseId, telegramUserId, paidAt = new Date(), options = {}) {
       const client = await pool.connect();
       try {
+        const preparedPlanResult = await client.query(
+          `SELECT planned_expenses.*, users.base_currency, users.usd_thb_rate
+           FROM planned_expenses
+           JOIN users ON users.id = planned_expenses.user_id
+           WHERE planned_expenses.id = $1
+             AND users.telegram_user_id = $2
+             AND planned_expenses.active = true`,
+          [plannedExpenseId, telegramUserId]
+        );
+        const preparedPlan = preparedPlanResult.rows[0];
+        if (!preparedPlan) throw Object.assign(new Error("Planned expense not found"), { code: "not_found" });
+        const preparedTimeZone = userTimezone(preparedPlan);
+        const preparedPaidResult = await client.query(
+          `SELECT pep.occurrence_date::text, pep.paid_key
+           FROM planned_expense_payments pep
+           JOIN expenses e ON e.id = pep.expense_id
+                           AND e.user_id = $3
+           WHERE pep.planned_expense_id = $1
+             AND pep.paid_month = $2
+           ORDER BY pep.occurrence_date`,
+          [preparedPlan.id, monthKey(paidAt, preparedTimeZone), preparedPlan.user_id]
+        );
+        const preparedOccurrence = resolveOccurrenceDate(preparedPlan, paidAt, options.occurrenceDate, preparedPaidResult.rows, preparedTimeZone);
+        if (preparedOccurrence.error) throw Object.assign(new Error(preparedOccurrence.error), { code: preparedOccurrence.code });
+        const preparedExpenseDate = plannedExpenseSpentAt(preparedOccurrence.value, paidAt, preparedTimeZone);
+        const preparedMoneyAmounts = await buildMoneyAmounts(exchangeRates, preparedPlan.amount, preparedPlan.currency, preparedExpenseDate, preparedPlan, options);
         await client.query("BEGIN");
         const plannedResult = await client.query(
           `SELECT planned_expenses.*, users.base_currency, users.usd_thb_rate
@@ -4295,6 +4347,11 @@ export function createRepository(pool, options = {}) {
         }
         const occurrenceDate = requestedOccurrence.value;
 
+        if (plannedPaymentSnapshotSignature(planned) !== plannedPaymentSnapshotSignature(preparedPlan)
+          || occurrenceDate !== preparedOccurrence.value) {
+          throw codedError("Planned expense changed while preparing exchange rates", "planned_expense_changed_retry");
+        }
+
         const paidKey = plannedPaymentKey(planned, occurrenceDate);
         const existingPaidKeys = new Set(paidResult.rows.map((row) => row.paid_key).filter(Boolean));
         if (existingPaidKeys.has(paidKey)) {
@@ -4303,7 +4360,7 @@ export function createRepository(pool, options = {}) {
 
         const expenseDate = plannedExpenseSpentAt(occurrenceDate, paidAt, timeZone);
         const occurrenceMonth = monthKey(expenseDate, timeZone);
-        const moneyAmounts = await buildMoneyAmounts(exchangeRates, planned.amount, planned.currency, expenseDate, planned);
+        const moneyAmounts = preparedMoneyAmounts;
         const expenseResult = await client.query(
           `INSERT INTO expenses (
              user_id, draft_id, amount_original, currency_original, amount_base, base_currency,
@@ -5370,7 +5427,7 @@ function userTimezone(user) {
   return normalizeTimeZone(user?.timezone).timeZone;
 }
 
-async function prefetchDraftMoneyAmounts(pool, exchangeRates, draftId, telegramUserId) {
+async function prefetchDraftMoneyAmounts(pool, exchangeRates, draftId, telegramUserId, options = {}) {
   if (typeof pool.query !== "function") return null;
   const result = await pool.query(
     `SELECT drafts.items, drafts.version, drafts.status, users.base_currency
@@ -5386,9 +5443,23 @@ async function prefetchDraftMoneyAmounts(pool, exchangeRates, draftId, telegramU
     baseCurrency: normalizeCurrency(draft.base_currency, "THB"),
     itemSignature: JSON.stringify(items),
     moneyAmounts: await Promise.all(items.map((item) => buildMoneyAmounts(
-      exchangeRates, item.amount, item.currency, new Date(item.spent_at), draft
+      exchangeRates, item.amount, item.currency, new Date(item.spent_at), draft, options
     )))
   };
+}
+
+async function prefetchEvidenceCandidateMoneyAmounts(client, exchangeRates, { userId, importId, candidateId, signal = null }) {
+  const result = await client.query(
+    `SELECT candidates.draft_id, users.telegram_user_id
+     FROM expense_evidence_candidates AS candidates
+     JOIN expense_evidence_imports AS imports ON imports.id = candidates.import_id
+     JOIN users ON users.id = imports.user_id
+     WHERE candidates.id = $1 AND candidates.import_id = $2 AND imports.user_id = $3`,
+    [candidateId, importId, userId]
+  );
+  const candidate = result.rows[0];
+  if (!candidate?.draft_id) return null;
+  return prefetchDraftMoneyAmounts(client, exchangeRates, candidate.draft_id, candidate.telegram_user_id, { signal });
 }
 
 function matchingPrefetchedMoneyAmounts(prefetched, draft, items) {
@@ -5399,7 +5470,28 @@ function matchingPrefetchedMoneyAmounts(prefetched, draft, items) {
     : null;
 }
 
-async function buildMoneyAmounts(exchangeRates, amount, currency, date, user = {}) {
+function plannedDraftSnapshotSignature(draft) {
+  return JSON.stringify({
+    item: normalizePlannedExpense(draft?.item),
+    baseCurrency: normalizeCurrency(draft?.base_currency, "THB")
+  });
+}
+
+function plannedPaymentSnapshotSignature(planned) {
+  return JSON.stringify({
+    amount: Number(planned?.amount),
+    currency: normalizeCurrency(planned?.currency, "THB"),
+    baseCurrency: normalizeCurrency(planned?.base_currency, "THB"),
+    recurrence: planned?.recurrence ?? null,
+    dueDay: planned?.due_day ?? null,
+    dueDays: planned?.due_days ?? null,
+    weekday: planned?.weekday ?? null,
+    dueDate: planned?.due_date ?? null,
+    timezone: userTimezone(planned)
+  });
+}
+
+async function buildMoneyAmounts(exchangeRates, amount, currency, date, user = {}, { signal = null } = {}) {
   const normalizedCurrency = normalizeCurrency(currency, "THB");
   const baseCurrency = normalizeCurrency(user?.base_currency, "THB");
   if (normalizedCurrency === baseCurrency) {
@@ -5410,7 +5502,7 @@ async function buildMoneyAmounts(exchangeRates, amount, currency, date, user = {
       source: "identity"
     };
   }
-  const rates = await exchangeRates.ratesFor(date);
+  const rates = await exchangeRates.ratesFor(date, { signal });
   const amounts = convertedAmounts(amount, normalizedCurrency, baseCurrency, rates);
   return {
     amountBase: amounts[baseCurrency],

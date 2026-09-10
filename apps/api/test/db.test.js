@@ -4,7 +4,21 @@ import { fileURLToPath } from "node:url";
 import { resolve, dirname, join } from "node:path";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { migrate, runWithRetry, listMigrationFiles } from "../src/db.js";
+import { createPoolOptions, migrate, runWithRetry, listMigrationFiles } from "../src/db.js";
+
+test("PostgreSQL pool applies connection and server/client query deadlines", () => {
+  assert.deepEqual(createPoolOptions({
+    databaseUrl: "postgres://localhost/test",
+    databaseConnectionTimeoutMs: 10_000,
+    databaseStatementTimeoutMs: 60_000,
+    databaseQueryTimeoutMs: 65_000
+  }), {
+    connectionString: "postgres://localhost/test",
+    connectionTimeoutMillis: 10_000,
+    statement_timeout: 60_000,
+    query_timeout: 65_000
+  });
+});
 
 test("retries transient startup failures before succeeding", async () => {
   let attempts = 0;

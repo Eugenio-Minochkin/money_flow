@@ -4,9 +4,11 @@ import { createExpenseEvidenceImportService } from "../src/expenseEvidenceImport
 
 test("creates canonical reviewable drafts without retaining image data", async () => {
   let completed;
+  const controller = new AbortController();
+  const forwardedSignals = [];
   const service = createExpenseEvidenceImportService({
-    analyzer: { async analyze() { return { evidenceType: "receipt", candidateSetHmac: "set-hmac", candidates: [{ amount: 1840, currency: "THB", spentOn: "2026-08-18", spentAt: null, merchant: "big c", description: "Groceries", categorySlug: "groceries", confidence: 0.9, needsReview: false }] }; } },
-    imageDownloader: { async download() { return { bytes: Buffer.from([1, 2]), mimeType: "image/jpeg", sizeBucket: "<=1mb" }; } },
+    analyzer: { async analyze({ signal }) { forwardedSignals.push(signal); return { evidenceType: "receipt", candidateSetHmac: "set-hmac", candidates: [{ amount: 1840, currency: "THB", spentOn: "2026-08-18", spentAt: null, merchant: "big c", description: "Groceries", categorySlug: "groceries", confidence: 0.9, needsReview: false }] }; } },
+    imageDownloader: { async download({ signal }) { forwardedSignals.push(signal); return { bytes: Buffer.from([1, 2]), mimeType: "image/jpeg", sizeBucket: "<=1mb" }; } },
     repository: {
       async claimExpenseEvidenceImport() { return { state: "claimed", claimVersion: 1 }; },
       async listExpenseEvidenceDuplicateCandidates() { return []; },
@@ -16,13 +18,14 @@ test("creates canonical reviewable drafts without retaining image data", async (
     hmac: () => "bytes-hmac"
   });
 
-  const result = await service.importImage({ user: { id: 2 }, chatId: 3, messageId: 4, fileId: "not-persisted", fileUniqueId: "unique", declaredMimeType: "image/jpeg" });
+  const result = await service.importImage({ user: { id: 2 }, chatId: 3, messageId: 4, fileId: "not-persisted", fileUniqueId: "unique", declaredMimeType: "image/jpeg", signal: controller.signal });
   assert.equal(result.state, "ready");
   assert.equal(result.importId, 7);
   assert.equal(completed.imageBytesHmac, "bytes-hmac");
   assert.equal(completed.candidateSetHmac, "set-hmac");
   assert.equal(completed.candidates[0].items[0].needs_review, false);
   assert.doesNotMatch(JSON.stringify(completed), /not-persisted|\[1,2\]/);
+  assert.deepEqual(forwardedSignals, [controller.signal, controller.signal]);
 });
 
 test("classifies image candidates against owned financial facts before completing the import", async () => {

@@ -1,3 +1,5 @@
+import { deadlineSignal } from "./deadlineSignal.js";
+
 const JPEG_MIME_TYPE = "image/jpeg";
 const PNG_MIME_TYPE = "image/png";
 const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
@@ -30,12 +32,16 @@ export async function downloadAndSanitizeExpenseEvidenceImage({
   fileId,
   declaredMimeType,
   maxBytes,
+  timeoutMs = 30_000,
+  signal = null,
   fetchImpl = globalThis.fetch
 }) {
   if (!telegramBotToken || !fileId || !fetchImpl) throw new ExpenseEvidenceImageError("image_download_failed");
   try {
+    const requestSignal = deadlineSignal(signal, timeoutMs);
     const metadataResponse = await fetchImpl(
-      `https://api.telegram.org/bot${telegramBotToken}/getFile?file_id=${encodeURIComponent(fileId)}`
+      `https://api.telegram.org/bot${telegramBotToken}/getFile?file_id=${encodeURIComponent(fileId)}`,
+      { signal: requestSignal }
     );
     const metadata = await metadataResponse.json();
     if (!metadataResponse.ok || !metadata.ok || !metadata.result?.file_path) {
@@ -43,7 +49,9 @@ export async function downloadAndSanitizeExpenseEvidenceImage({
     }
     if (Number(metadata.result.file_size) > maxBytes) throw new ExpenseEvidenceImageError("image_too_large");
 
-    const response = await fetchImpl(`https://api.telegram.org/file/bot${telegramBotToken}/${metadata.result.file_path}`);
+    const response = await fetchImpl(`https://api.telegram.org/file/bot${telegramBotToken}/${metadata.result.file_path}`, {
+      signal: requestSignal
+    });
     if (!response.ok) throw new ExpenseEvidenceImageError("image_download_failed");
     const contentLength = Number(response.headers?.get?.("content-length"));
     if (Number.isFinite(contentLength) && contentLength > maxBytes) throw new ExpenseEvidenceImageError("image_too_large");

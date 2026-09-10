@@ -3,14 +3,14 @@ import { classifyExpenseEvidenceDuplicate } from "./expenseEvidenceDedupe.js";
 export function createExpenseEvidenceImportService({ repository, analyzer, imageDownloader, hmac } = {}) {
   if (typeof hmac !== "function") throw new Error("Expense evidence HMAC must be injected");
   return {
-    async importImage({ user, chatId, messageId, fileId, fileUniqueId, declaredMimeType, caption = "" }) {
+    async importImage({ user, chatId, messageId, fileId, fileUniqueId, declaredMimeType, caption = "", signal = null }) {
       const claim = await repository.claimExpenseEvidenceImport(user.id, chatId, messageId);
       if (claim?.state === "ready" || claim?.state === "completed") return claim;
       if (!claim || claim.state !== "claimed") return { state: "processing" };
       let image;
       try {
-        image = await imageDownloader.download({ fileId, declaredMimeType });
-        const analysis = await analyzer.analyze({ bytes: image.bytes, mimeType: image.mimeType, caption });
+        image = await imageDownloader.download({ fileId, declaredMimeType, signal });
+        const analysis = await analyzer.analyze({ bytes: image.bytes, mimeType: image.mimeType, caption, signal });
         const existing = await repository.listExpenseEvidenceDuplicateCandidates(user.id);
         const dedupeCandidates = [...existing];
         const candidates = analysis.candidates.map((candidate, ordinal) => {

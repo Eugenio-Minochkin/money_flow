@@ -3,6 +3,24 @@ import test from "node:test";
 
 import { createExpenseEvidenceAnalyzer } from "../src/expenseEvidenceAnalyzer.js";
 
+test("composes the image-analysis timeout with the Telegram job signal", async () => {
+  const parent = new AbortController();
+  let requestSignal;
+  const analyzer = createExpenseEvidenceAnalyzer({
+    apiKey: "test-key",
+    hmacSecret: "test-hmac",
+    timeoutMs: 10_000,
+    fetchImpl: async (_url, options) => {
+      requestSignal = options.signal;
+      parent.abort(new Error("job stopped"));
+      throw requestSignal.reason;
+    }
+  });
+
+  await assert.rejects(() => analyzer.analyze({ ...image(), signal: parent.signal }), error => error?.code === "analysis_failed");
+  assert.equal(requestSignal.aborted, true);
+});
+
 test("analyzes a sanitized image through Responses structured output without storage", async () => {
   let requestBody;
   const analyzer = createExpenseEvidenceAnalyzer({

@@ -7,6 +7,126 @@ import { createRepository, effectiveDisplayCurrency, shouldInvalidateExpenseSnap
 import * as repositoryModule from "../src/repository.js";
 import { formatSavedSummary } from "../src/telegramFormat.js";
 
+test("photo candidate resolves cross-currency FX before its atomic transaction begins", async () => {
+  let inTransaction = false;
+  const controller = new AbortController();
+  const draft = {
+    id: "42", user_id: "1", status: "pending", version: "3", base_currency: "THB", timezone: "Asia/Bangkok",
+    items: [{ amount: 10, currency: "USD", description: "coffee", category_slug: "food_cafe", tags: [], spent_at: "2026-06-02T10:00:00.000Z", budget_impact: "regular" }]
+  };
+  const client = {
+    async query(sql) {
+      const text = String(sql);
+      if (text === "BEGIN") { inTransaction = true; return { rows: [] }; }
+      if (text === "COMMIT" || text === "ROLLBACK") { inTransaction = false; return { rows: [] }; }
+      if (text.includes("FROM expense_evidence_candidates") && text.includes("FOR UPDATE")) return { rows: [{ candidate_id: "7", candidate_status: "ready", draft_id: "42", telegram_user_id: "100" }] };
+      if (text.includes("FROM expense_evidence_candidates")) return { rows: [{ candidate_id: "7", candidate_status: "ready", draft_id: "42", telegram_user_id: "100" }] };
+      if (text.includes("FROM drafts JOIN users")) return { rows: [draft] };
+      if (text.includes("SELECT drafts.*")) return { rows: [draft] };
+      if (text.includes("INSERT INTO expenses")) return { rows: [{ id: "90", draft_id: "42" }] };
+      return { rows: [] };
+    },
+    release() {}
+  };
+  const repo = createRepository({ async connect() { return client; }, async query() { return { rows: [] }; } }, {
+    exchangeRates: { async ratesFor(_date, options) { assert.equal(inTransaction, false); assert.equal(options.signal, controller.signal); return fixedRatesMap(); } }
+  });
+
+  const result = await repo.resolveExpenseEvidenceCandidate({ userId: 1, importId: 2, candidateId: 7, action: "add", signal: controller.signal });
+  assert.equal(result.state, "saved");
+});
+
+test("planned draft confirmation resolves cross-currency FX before BEGIN", async () => {
+  let inTransaction = false;
+  const controller = new AbortController();
+  const row = { id: "5", user_id: "1", status: "pending", base_currency: "THB", item: { amount: 10, currency: "USD", description: "rent", category_slug: "housing", tags: [], recurrence: "monthly", due_day: 5 } };
+  const client = {
+    async query(sql) {
+      const text = String(sql);
+      if (text === "BEGIN") { inTransaction = true; return { rows: [] }; }
+      if (text === "COMMIT" || text === "ROLLBACK") { inTransaction = false; return { rows: [] }; }
+      if (text.includes("FROM planned_drafts")) return { rows: [row] };
+      if (text.includes("INSERT INTO planned_expenses")) return { rows: [{ id: "8" }] };
+      return { rows: [] };
+    },
+    release() {}
+  };
+  const repo = createRepository({ async connect() { return client; } }, {
+    exchangeRates: { async ratesFor(_date, options) { assert.equal(inTransaction, false); assert.equal(options.signal, controller.signal); return fixedRatesMap(); } }
+  });
+
+  assert.equal((await repo.confirmPlannedDraft(5, 100, { signal: controller.signal })).id, "8");
+});
+
+test("planned payment resolves cross-currency FX before BEGIN", async () => {
+  let inTransaction = false;
+  const controller = new AbortController();
+  const planned = { id: "5", user_id: "1", amount: 10, currency: "USD", base_currency: "THB", description: "rent", category_slug: "housing", tags: [], recurrence: "monthly", due_day: 5, due_days: [5], timezone: "Asia/Bangkok", active: true };
+  const client = {
+    async query(sql) {
+      const text = String(sql);
+      if (text === "BEGIN") { inTransaction = true; return { rows: [] }; }
+      if (text === "COMMIT" || text === "ROLLBACK") { inTransaction = false; return { rows: [] }; }
+      if (text.includes("FROM planned_expenses")) return { rows: [planned] };
+      if (text.includes("FROM planned_expense_payments")) return { rows: [] };
+      if (text.includes("INSERT INTO expenses")) return { rows: [{ id: "9" }] };
+      return { rows: [] };
+    },
+    release() {}
+  };
+  const repo = createRepository({ async connect() { return client; } }, {
+    exchangeRates: { async ratesFor(_date, options) { assert.equal(inTransaction, false); assert.equal(options.signal, controller.signal); return fixedRatesMap(); } }
+  });
+
+  assert.equal((await repo.payPlannedExpenseForTelegramUser(5, 100, new Date("2026-06-05T10:00:00+07:00"), { signal: controller.signal })).id, "9");
+});
+
+test("planned draft confirmation rejects a snapshot changed after FX prefetch", async () => {
+  let reads = 0;
+  let inserted = false;
+  const base = { id: "5", user_id: "1", status: "pending", base_currency: "THB", item: { amount: 10, currency: "USD", description: "rent", category_slug: "housing", tags: [], recurrence: "monthly", due_day: 5 } };
+  const client = {
+    async query(sql) {
+      const text = String(sql);
+      if (text.includes("FROM planned_drafts")) return { rows: [{ ...base, item: { ...base.item, amount: ++reads === 1 ? 10 : 11 } }] };
+      if (text.includes("INSERT INTO planned_expenses")) { inserted = true; return { rows: [] }; }
+      return { rows: [] };
+    },
+    release() {}
+  };
+  const repo = createRepository({ async connect() { return client; } }, { exchangeRates: { async ratesFor() { return fixedRatesMap(); } } });
+
+  await assert.rejects(() => repo.confirmPlannedDraft(5, 100), error => error?.code === "draft_changed_retry");
+  assert.equal(inserted, false);
+});
+
+test("planned payment rejects a financial snapshot changed after FX prefetch", async () => {
+  let planReads = 0;
+  let inserted = false;
+  const base = { id: "5", user_id: "1", amount: 10, currency: "USD", base_currency: "THB", description: "rent", category_slug: "housing", tags: [], recurrence: "monthly", due_day: 5, due_days: [5], timezone: "Asia/Bangkok", active: true };
+  const client = {
+    async query(sql) {
+      const text = String(sql);
+      if (text.includes("FROM planned_expenses")) return { rows: [{ ...base, amount: ++planReads === 1 ? 10 : 11 }] };
+      if (text.includes("FROM planned_expense_payments")) return { rows: [] };
+      if (text.includes("INSERT INTO expenses")) { inserted = true; return { rows: [] }; }
+      return { rows: [] };
+    },
+    release() {}
+  };
+  const repo = createRepository({ async connect() { return client; } }, { exchangeRates: { async ratesFor() { return fixedRatesMap(); } } });
+
+  await assert.rejects(
+    () => repo.payPlannedExpenseForTelegramUser(5, 100, new Date("2026-06-05T10:00:00+07:00")),
+    error => error?.code === "planned_expense_changed_retry"
+  );
+  assert.equal(inserted, false);
+});
+
+function fixedRatesMap() {
+  return { source: "test", USD: { THB: 32 }, THB: { USD: 1 / 32 } };
+}
+
 test("effective display currency keeps custom preference while follows-base is enabled", () => {
   assert.equal(effectiveDisplayCurrency({ base_currency: "THB", display_currency: "USD", display_currency_follows_base: false }), "USD");
   assert.equal(effectiveDisplayCurrency({ base_currency: "GEL", display_currency: "USD", display_currency_follows_base: true }), "GEL");
@@ -6520,6 +6640,8 @@ test("expense evidence save failure returns a reviewing candidate to ready for r
       if (query.includes("FROM expense_evidence_candidates") && query.includes("FOR UPDATE")) {
         return { rows: [{ candidate_id: 8, candidate_status: status, draft_id: 12, telegram_user_id: 100 }] };
       }
+      if (query.includes("FROM expense_evidence_candidates")) return { rows: [{ draft_id: 12, telegram_user_id: 100 }] };
+      if (query.includes("FROM drafts JOIN users")) return { rows: [{ id: 12, status: "pending", version: 1, base_currency: "THB", items: [{ amount: 10, currency: "THB", spent_at: "2026-08-18T12:00:00.000Z" }] }] };
       if (query.includes("FROM drafts CROSS JOIN") && query.includes("WHERE id = $1")) {
         return { rows: [{ amount: "10", currency: "THB", spentOn: "2026-08-18", spentAt: "12:00", merchant: "shop" }] };
       }
@@ -6574,6 +6696,8 @@ test("evidence add override is accepted by the repository action guard", async (
       const query = String(sql);
       if (["BEGIN", "COMMIT", "ROLLBACK"].includes(query)) return { rows: [] };
       if (query.includes("FROM expense_evidence_candidates") && query.includes("FOR UPDATE")) return { rows: [{ candidate_id: 8, candidate_status: "likely_duplicate", draft_id: 12, telegram_user_id: 100 }] };
+      if (query.includes("FROM expense_evidence_candidates")) return { rows: [{ draft_id: 12, telegram_user_id: 100 }] };
+      if (query.includes("FROM drafts JOIN users")) return { rows: [{ id: 12, status: "pending", version: 1, base_currency: "THB", items: [{ amount: 10, currency: "THB", spent_at: "2026-08-18T12:00:00.000Z" }] }] };
       if (query.startsWith("UPDATE expense_evidence_candidates SET status = 'reviewing'")) return { rows: [] };
       if (query.startsWith("UPDATE expense_evidence_candidates SET status = 'saved'")) return { rows: [] };
       throw new Error(`Unexpected SQL: ${query}`);
