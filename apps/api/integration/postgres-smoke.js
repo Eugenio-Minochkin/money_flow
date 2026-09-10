@@ -196,8 +196,22 @@ test("image import reserves once for the internal user and blocks an exhausted r
       };
     }
   });
+  const quotaImportRepository = {
+    ...repo,
+    async completeExpenseEvidenceImport({ userId, chatId, messageId, claimVersion }) {
+      const completed = await pool.query(
+        `UPDATE expense_evidence_imports
+         SET status = 'ready', lease_expires_at = NULL, completed_at = now(), updated_at = now()
+         WHERE user_id = $1 AND source_chat_id = $2 AND source_message_id = $3
+           AND status = 'processing' AND claim_version = $4
+         RETURNING id`,
+        [userId, chatId, messageId, claimVersion]
+      );
+      return completed.rows[0] ?? null;
+    }
+  };
   const importService = createExpenseEvidenceImportService({
-    repository: repo,
+    repository: quotaImportRepository,
     analyzer,
     imageDownloader: { async download() { return { bytes: Buffer.from([1, 2]), mimeType: "image/jpeg" }; } },
     hmac: () => "smoke-hmac"
