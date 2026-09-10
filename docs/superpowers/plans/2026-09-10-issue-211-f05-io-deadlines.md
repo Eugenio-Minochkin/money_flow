@@ -63,6 +63,8 @@
 **Files:**
 - Modify this plan's checkboxes only as evidence is collected.
 
-- [ ] Run focused tests, then `npm.cmd test`, `npm.cmd run test:integration:postgres`, and `git diff --check`.
-- [ ] Review the exact diff for unrelated changes and verify required GitHub checks on the pushed head.
-- [ ] Commit, push `codex/issue-211-f05-io-deadlines`, and open a separate draft PR into `master`; do not deploy or close issue #211.
+- [x] Run focused tests, then `npm.cmd test`, the PostgreSQL integration smoke, and `git diff --check`.
+- [x] Review the exact diff for unrelated changes and verify required GitHub checks on the pushed head.
+- [x] Commit, push `codex/issue-211-f05-io-deadlines`, and open a separate draft PR into `master`; do not deploy or close issue #211.
+
+Verification evidence: the local full suite passed with 1670 passed, 0 failed, and 6 Windows/POSIX skips. Local PostgreSQL smoke could not start because Docker Desktop was unavailable and no safe `DATABASE_URL` was configured; the required GitHub PostgreSQL integration smoke passed against its disposable database. GitHub Test and Docs Reminder also passed. Production deploy was skipped.
