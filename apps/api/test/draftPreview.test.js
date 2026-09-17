@@ -73,6 +73,25 @@ test("same-currency draft does not request repository conversion", async () => {
   assert.match(text, /<b>Total:<\/b> 150 THB/);
 });
 
+test("draft preview formats the stored instant in the user's timezone", async () => {
+  const text = await renderDraftPreview({
+    repository: {},
+    user: { base_currency: "USD", timezone: "America/New_York" },
+    items: [{
+      amount: 10,
+      currency: "USD",
+      description: "coffee",
+      category_slug: "food_cafe",
+      spent_at: "2026-08-31T23:30:00.000Z",
+      budget_impact: "regular"
+    }],
+    language: "en"
+  });
+
+  assert.match(text, /Aug 31|31 Aug/);
+  assert.doesNotMatch(text, /Sep 01|01 Sep/);
+});
+
 test("same currency with different casing renders one normalized total without conversion", async () => {
   let repositoryCalls = 0;
   const items = [
