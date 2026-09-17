@@ -9,6 +9,8 @@ import { normalizePlannedDateKey } from "../src/plannedOccurrenceDates.js";
 import { createRepository } from "../src/repository.js";
 import { createMiniAppQuickCaptureDraft, createShortcutExpenseDraft, createTelegramExpenseDraft } from "../src/expenseDraftService.js";
 import { createExpenseParser } from "../src/expenseParser.js";
+import { createExpenseEvidenceAnalyzer } from "../src/expenseEvidenceAnalyzer.js";
+import { createExpenseEvidenceImportService } from "../src/expenseEvidenceImportService.js";
 import { createPaidProviderUsageGate } from "../src/paidProviderUsage.js";
 import { createPlannedPaymentReminderService } from "../src/plannedPaymentReminderService.js";
 import { processMiniAppQuickCapture } from "../src/quickCapture.js";
@@ -33,7 +35,7 @@ test.before(async () => {
   const applied = await pool.query("SELECT filename FROM schema_migrations ORDER BY filename");
   assert.deepEqual(
     applied.rows.map((row) => row.filename),
-    ["001_initial.sql", "002_draft_confirm_flow.sql", "003_budget_topups.sql", "004_report_deliveries.sql", "005_exchange_rates.sql", "006_feedback.sql", "007_account_deletion.sql", "008_product_analytics.sql", "009_telegram_expense_editor.sql", "010_telegram_editor_prompt_message.sql", "011_planned_expense_disabled_at.sql", "012_planned_expense_starts_on.sql", "013_planned_payment_reminders.sql", "014_quick_access_tokens.sql", "015_quick_capture_safety.sql", "016_quick_access_token_single_active.sql", "017_telegram_expense_capture_safety.sql", "018_display_currency_follows_base.sql", "019_paid_provider_usage.sql", "020_expense_evidence_imports.sql", "021_expense_evidence_sessions.sql", "022_telegram_capture_inbox.sql", "023_telegram_capture_terminal_failures.sql"]
+    ["001_initial.sql", "002_draft_confirm_flow.sql", "003_budget_topups.sql", "004_report_deliveries.sql", "005_exchange_rates.sql", "006_feedback.sql", "007_account_deletion.sql", "008_product_analytics.sql", "009_telegram_expense_editor.sql", "010_telegram_editor_prompt_message.sql", "011_planned_expense_disabled_at.sql", "012_planned_expense_starts_on.sql", "013_planned_payment_reminders.sql", "014_quick_access_tokens.sql", "015_quick_capture_safety.sql", "016_quick_access_token_single_active.sql", "017_telegram_expense_capture_safety.sql", "018_display_currency_follows_base.sql", "019_paid_provider_usage.sql", "020_expense_evidence_imports.sql", "021_expense_evidence_sessions.sql", "022_telegram_capture_inbox.sql", "023_telegram_capture_terminal_failures.sql", "024_paid_provider_image_analysis.sql"]
   );
 
   const sessions = await pool.query(`
@@ -163,6 +165,98 @@ test("Telegram parsing reserves OpenAI usage for the internal user without chang
     "SELECT user_id, request_count FROM paid_provider_usage_windows WHERE provider = 'openai_parser'"
   );
   assert.deepEqual(stored.rows, [{ user_id: user.id, request_count: 1 }]);
+});
+
+test("image import reserves once for the internal user and blocks an exhausted replay-safe quota", async () => {
+  const telegramUserId = 990203;
+  const user = await createSmokeUser(telegramUserId);
+  let fetchCalls = 0;
+  let releaseFetch;
+  let markFetchStarted;
+  const fetchStarted = new Promise((resolveStarted) => { markFetchStarted = resolveStarted; });
+  const fetchReleased = new Promise((resolveFetch) => { releaseFetch = resolveFetch; });
+  const analyzer = createExpenseEvidenceAnalyzer({
+    apiKey: "test-key",
+    hmacSecret: "test-hmac",
+    consumeAnalysisUsage: createPaidProviderUsageGate({
+      repository: repo,
+      provider: "openai_image_analysis",
+      windowMs: 86_400_000,
+      maxRequests: 1
+    }),
+    fetchImpl: async () => {
+      fetchCalls += 1;
+      markFetchStarted();
+      await fetchReleased;
+      return {
+        ok: true,
+        async text() {
+          return JSON.stringify({ output_text: JSON.stringify({ evidence_type: "unknown", candidates: [] }) });
+        }
+      };
+    }
+  });
+  const quotaImportRepository = {
+    ...repo,
+    async completeExpenseEvidenceImport({ userId, chatId, messageId, claimVersion }) {
+      const completed = await pool.query(
+        `UPDATE expense_evidence_imports
+         SET status = 'ready', lease_expires_at = NULL, completed_at = now(), updated_at = now()
+         WHERE user_id = $1 AND source_chat_id = $2 AND source_message_id = $3
+           AND status = 'processing' AND claim_version = $4
+         RETURNING id`,
+        [userId, chatId, messageId, claimVersion]
+      );
+      return completed.rows[0] ?? null;
+    }
+  };
+  const importService = createExpenseEvidenceImportService({
+    repository: quotaImportRepository,
+    analyzer,
+    imageDownloader: { async download() { return { bytes: Buffer.from([1, 2]), mimeType: "image/jpeg" }; } },
+    hmac: () => "smoke-hmac"
+  });
+  const input = {
+    user,
+    chatId: 880203,
+    messageId: 77,
+    fileId: "not-persisted",
+    declaredMimeType: "image/jpeg"
+  };
+
+  const firstPromise = importService.importImage(input);
+  await fetchStarted;
+  assert.deepEqual(await importService.importImage(input), { state: "processing" });
+  releaseFetch();
+  assert.equal((await firstPromise).state, "ready");
+  assert.equal((await importService.importImage(input)).state, "ready");
+  assert.equal(fetchCalls, 1);
+
+  const usage = await pool.query(
+    `SELECT user_id, request_count
+     FROM paid_provider_usage_windows
+     WHERE provider = 'openai_image_analysis'`
+  );
+  assert.deepEqual(usage.rows, [{ user_id: user.id, request_count: 1 }]);
+  assert.equal((await pool.query(
+    `SELECT COUNT(*)::int AS count
+     FROM paid_provider_usage_reservations
+     WHERE user_id = $1 AND provider = 'openai_image_analysis'`,
+    [user.id]
+  )).rows[0].count, 1);
+
+  await assert.rejects(
+    () => importService.importImage({ ...input, messageId: 78 }),
+    (error) => error?.code === "paid_provider_limit_reached"
+  );
+  assert.equal(fetchCalls, 1);
+  assert.deepEqual((await pool.query(
+    `SELECT status, failure_code
+     FROM expense_evidence_imports
+     WHERE user_id = $1 AND source_message_id = 78`,
+    [user.id]
+  )).rows, [{ status: "failed", failure_code: "analysis_failed" }]);
+  assert.equal((await pool.query("SELECT COUNT(*)::int AS count FROM drafts WHERE user_id = $1", [user.id])).rows[0].count, 0);
 });
 
 test("enforces singleton onboarding events without limiting repeatable events", async () => {

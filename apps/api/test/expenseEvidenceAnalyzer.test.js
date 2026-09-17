@@ -21,6 +21,68 @@ test("composes the image-analysis timeout with the Telegram job signal", async (
   assert.equal(requestSignal.aborted, true);
 });
 
+test("refuses exhausted image-analysis quota before starting the paid request", async () => {
+  let fetchCalls = 0;
+  const quotaError = Object.assign(new Error("paid_provider_limit_reached"), {
+    code: "paid_provider_limit_reached",
+    provider: "openai_image_analysis"
+  });
+  const analyzer = createExpenseEvidenceAnalyzer({
+    apiKey: "test-key",
+    hmacSecret: "test-hmac",
+    consumeAnalysisUsage: async () => { throw quotaError; },
+    fetchImpl: async () => {
+      fetchCalls += 1;
+      return jsonResponse({ output_text: JSON.stringify({ evidence_type: "unknown", candidates: [] }) });
+    }
+  });
+
+  await assert.rejects(
+    () => analyzer.analyze({ ...image(), usageUserId: 42, requestKey: "telegram:42:10:77" }),
+    (error) => error === quotaError
+  );
+  assert.equal(fetchCalls, 0);
+});
+
+test("reserves one image-analysis unit immediately before the paid request", async () => {
+  const events = [];
+  const analyzer = createExpenseEvidenceAnalyzer({
+    apiKey: "test-key",
+    hmacSecret: "test-hmac",
+    consumeAnalysisUsage: async (input) => events.push({ type: "usage", input }),
+    fetchImpl: async () => {
+      events.push({ type: "fetch" });
+      return jsonResponse({ output_text: JSON.stringify({ evidence_type: "unknown", candidates: [] }) });
+    }
+  });
+
+  await analyzer.analyze({ ...image(), usageUserId: 42, requestKey: "telegram:42:10:77" });
+
+  assert.deepEqual(events, [
+    { type: "usage", input: { userId: 42, requestKey: "telegram:42:10:77" } },
+    { type: "fetch" }
+  ]);
+});
+
+test("keeps the image-analysis reservation when the paid request has already started", async () => {
+  const events = [];
+  const analyzer = createExpenseEvidenceAnalyzer({
+    apiKey: "test-key",
+    hmacSecret: "test-hmac",
+    consumeAnalysisUsage: async () => events.push("usage"),
+    fetchImpl: async () => {
+      events.push("fetch");
+      throw new Error("provider unavailable");
+    }
+  });
+
+  await assert.rejects(
+    () => analyzer.analyze({ ...image(), usageUserId: 42, requestKey: "telegram:42:10:77" }),
+    (error) => error?.code === "analysis_failed"
+  );
+  assert.deepEqual(events, ["usage", "fetch"]);
+});
+
 test("analyzes a sanitized image through Responses structured output without storage", async () => {
   let requestBody;
   const analyzer = createExpenseEvidenceAnalyzer({

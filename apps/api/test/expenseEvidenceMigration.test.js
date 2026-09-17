@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import test from "node:test";
 
 test("expense evidence migration persists only workflow metadata and draft links", async () => {
@@ -30,4 +30,15 @@ test("expense evidence session migration persists only ownership, lifecycle, and
   assert.match(sql, /status TEXT NOT NULL CHECK \(status IN \('collecting', 'finalizing', 'ready', 'cancelled', 'expired'\)\)/);
   assert.match(sql, /PRIMARY KEY\(session_id, import_id\)/);
   assert.doesNotMatch(sql, /\b(image_bytes|data_url|file_id|caption|transcript|ocr|merchant|amount|currency|balance|context)\b/i);
+});
+
+test("image analysis has a durable paid-provider accounting category", async () => {
+  const migrationsUrl = new URL("../migrations/", import.meta.url);
+  const files = await readdir(migrationsUrl);
+  assert.ok(files.includes("024_paid_provider_image_analysis.sql"));
+
+  const sql = await readFile(new URL("024_paid_provider_image_analysis.sql", migrationsUrl), "utf8");
+  assert.match(sql, /ALTER TABLE paid_provider_usage_windows/);
+  assert.match(sql, /ALTER TABLE paid_provider_usage_reservations/);
+  assert.match(sql, /openai_image_analysis/g);
 });

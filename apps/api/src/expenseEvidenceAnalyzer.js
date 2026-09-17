@@ -15,12 +15,14 @@ export function createExpenseEvidenceAnalyzer({
   hmacSecret,
   timeoutMs = 30_000,
   fetchImpl = globalThis.fetch,
+  consumeAnalysisUsage = null,
   now = () => new Date()
 } = {}) {
   return {
     model: apiKey ? model : null,
-    async analyze({ bytes, mimeType, caption = "", signal = null }) {
+    async analyze({ bytes, mimeType, caption = "", usageUserId = null, requestKey = null, signal = null }) {
       if (!apiKey || !fetchImpl || !hmacSecret) throw analysisError();
+      await consumeAnalysisUsage?.({ userId: usageUserId, requestKey });
       const response = await requestStructuredAnalysis({ apiKey, model, timeoutMs, fetchImpl, bytes, mimeType, caption, signal });
       const result = normalizeAnalysis(response, now());
       return {

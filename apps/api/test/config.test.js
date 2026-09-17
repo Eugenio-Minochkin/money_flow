@@ -156,14 +156,21 @@ test("paid AI guard defaults are generous and each provider has an independent k
   const config = buildConfig({});
   assert.equal(config.paidAiWindowMs, 86_400_000);
   assert.equal(config.openAiParserUserLimit, 100);
+  assert.equal(config.openAiImageAnalysisUserLimit, 100);
   assert.equal(config.deepgramTranscriptionUserLimit, 50);
   assert.equal(config.deepgramMaxAudioDurationSec, 60);
   assert.equal(config.deepgramMaxAudioWindowSec, 900);
   assert.equal(config.openAiParserGlobalEnabled, true);
+  assert.equal(config.openAiImageAnalysisGlobalEnabled, true);
   assert.equal(config.deepgramTranscriptionGlobalEnabled, true);
 
-  const disabled = buildConfig({ OPENAI_PARSER_GLOBAL_ENABLED: "false", DEEPGRAM_TRANSCRIPTION_GLOBAL_ENABLED: "false" });
+  const disabled = buildConfig({
+    OPENAI_PARSER_GLOBAL_ENABLED: "false",
+    OPENAI_IMAGE_ANALYSIS_GLOBAL_ENABLED: "false",
+    DEEPGRAM_TRANSCRIPTION_GLOBAL_ENABLED: "false"
+  });
   assert.equal(disabled.openAiParserGlobalEnabled, false);
+  assert.equal(disabled.openAiImageAnalysisGlobalEnabled, false);
   assert.equal(disabled.deepgramTranscriptionGlobalEnabled, false);
 });
 
@@ -220,6 +227,15 @@ test("server wires expense parser LLM timeout", async () => {
   const source = await readFile(new URL("../src/server.js", import.meta.url), "utf8");
 
   assert.match(source, /llmTimeoutMs:\s*config\.expenseParserLlmTimeoutMs/);
+});
+
+test("server wires expense evidence through the repository-backed image-analysis gate", async () => {
+  const source = await readFile(new URL("../src/server.js", import.meta.url), "utf8");
+
+  assert.match(source, /provider:\s*"openai_image_analysis"/);
+  assert.match(source, /maxRequests:\s*config\.openAiImageAnalysisUserLimit/);
+  assert.match(source, /enabled:\s*config\.openAiImageAnalysisGlobalEnabled/);
+  assert.match(source, /consumeAnalysisUsage:\s*createPaidProviderUsageGate/);
 });
 
 test("server wires the release digest scheduler with Telegram token gating", async () => {

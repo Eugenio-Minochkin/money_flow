@@ -133,19 +133,21 @@ Do not put Telegram, database, OpenAI, or Deepgram secrets in GitHub Actions. Th
 
 ## Paid AI Usage Guardrails
 
-The general API rate limiter is separate from the paid-provider guard. Before a request reaches OpenAI or Deepgram, Money Flow reserves a per-user allowance in PostgreSQL. The default window is 24 hours: 100 OpenAI parser calls and 50 Deepgram transcriptions per user. Deepgram also rejects a voice message over 60 seconds and caps a user's accepted audio at 900 seconds (15 minutes) per window.
+The general API rate limiter is separate from the paid-provider guard. Before a request reaches OpenAI or Deepgram, Money Flow reserves a per-user allowance in PostgreSQL. The default window is 24 hours: 100 OpenAI parser calls, 100 OpenAI image-analysis calls, and 50 Deepgram transcriptions per user. Every provider uses the internal `users.id`; external Telegram identity is never the accounting key. Deepgram also rejects a voice message over 60 seconds and caps a user's accepted audio at 900 seconds (15 minutes) per window.
 
 ```env
 PAID_AI_USAGE_WINDOW_MS=86400000
 OPENAI_PARSER_GLOBAL_ENABLED=true
 OPENAI_PARSER_USER_LIMIT=100
+OPENAI_IMAGE_ANALYSIS_GLOBAL_ENABLED=true
+OPENAI_IMAGE_ANALYSIS_USER_LIMIT=100
 DEEPGRAM_TRANSCRIPTION_GLOBAL_ENABLED=true
 DEEPGRAM_TRANSCRIPTION_USER_LIMIT=50
 DEEPGRAM_MAX_AUDIO_DURATION_SEC=60
 DEEPGRAM_MAX_AUDIO_WINDOW_SEC=900
 ```
 
-Set `OPENAI_PARSER_GLOBAL_ENABLED=false` or `DEEPGRAM_TRANSCRIPTION_GLOBAL_ENABLED=false` for an emergency stop of the corresponding paid route, then restart through the approved deploy procedure. Local-safe expense parsing remains available when the OpenAI route is unavailable. Do not log expense text, audio, auth headers, tokens, `initData`, or Telegram profile data while investigating limits.
+Set the corresponding provider switch to `false` for an emergency stop, then restart through the approved deploy procedure. Local-safe expense parsing remains available when the parser OpenAI route is unavailable. Do not log expense text, audio, auth headers, tokens, `initData`, or Telegram profile data while investigating limits.
 
 ## Expense Evidence Image Import
 
@@ -160,6 +162,10 @@ EXPENSE_EVIDENCE_HMAC_SECRET=<unique-production-secret>
 ```
 
 Set `EXPENSE_EVIDENCE_IMPORT_ENABLED=true` only through the approved deployment procedure. Production startup requires `EXPENSE_EVIDENCE_HMAC_SECRET` whenever it is enabled; do not place this secret in PR text, logs, or alerts. `EXPENSE_EVIDENCE_MODEL` falls back to `OPENAI_MODEL` when unset.
+
+`EXPENSE_EVIDENCE_IMPORT_ENABLED` is the feature entitlement switch. `OPENAI_IMAGE_ANALYSIS_GLOBAL_ENABLED` controls the paid provider route, while `OPENAI_IMAGE_ANALYSIS_USER_LIMIT` controls its per-user quota. The accounting unit is one image-analysis reservation per OpenAI Responses call, so every image in a catch-up session consumes one unit. A durable request key derived from internal `users.id`, Telegram chat, and message identity makes concurrent delivery, webhook replay, and a reclaimed processing lease reuse the same reservation. A newly sent image has a new message identity and consumes a new unit.
+
+Image download and validation happen before the paid-provider gate and do not consume quota when they fail. Quota exhaustion or a disabled provider prevents the OpenAI call and creates no candidate draft. Once the provider request starts, its reservation is retained even if the response fails because provider billability is then ambiguous; retrying the same durable request does not increment the quota again. CSV export does not consume the image-analysis allowance, and Money Flow has no CSV import path.
 
 Telegram image bytes are downloaded with a size bound, validated as JPEG/PNG using declared type and file bytes, sanitized in memory, and sent to the Responses API as request-scoped data. Every image-analysis request must set `store: false`; this is not a promise of zero retention and must never be documented as one. The route does not upload an OpenAI File and does not send a Telegram URL.
 
