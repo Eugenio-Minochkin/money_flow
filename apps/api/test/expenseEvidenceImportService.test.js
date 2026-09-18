@@ -28,6 +28,58 @@ test("creates canonical reviewable drafts without retaining image data", async (
   assert.deepEqual(forwardedSignals, [controller.signal, controller.signal]);
 });
 
+test("stores a photo timestamp as the user's local date and time instead of UTC wall time", async () => {
+  const fixture = await importPhotoCandidate({
+    timeZone: "Asia/Bangkok",
+    candidate: { spentOn: "2026-08-31", spentAt: "23:30" }
+  });
+
+  assert.equal(fixture.analysisInput.timeZone, "Asia/Bangkok");
+  assert.deepEqual(fixture.duplicateOptions, { timeZone: "Asia/Bangkok" });
+  assert.equal(fixture.item.spent_at, "2026-08-31T16:30:00.000Z");
+  assert.equal(fixture.item.needs_review, false);
+});
+
+test("keeps date-only photo evidence on the user's local calendar date", async () => {
+  const fixture = await importPhotoCandidate({
+    timeZone: "Asia/Bangkok",
+    candidate: { spentOn: "2026-08-31", spentAt: null }
+  });
+
+  assert.equal(fixture.item.spent_at, "2026-08-31T05:00:00.000Z");
+  assert.equal(fixture.item.needs_review, false);
+});
+
+test("keeps a nonexistent DST photo time in review without inventing an instant", async () => {
+  const fixture = await importPhotoCandidate({
+    timeZone: "America/New_York",
+    candidate: { spentOn: "2026-03-08", spentAt: "02:30" }
+  });
+
+  assert.equal(fixture.item.spent_at, null);
+  assert.equal(fixture.item.needs_review, true);
+});
+
+test("keeps an ambiguous DST photo time in review without choosing an offset", async () => {
+  const fixture = await importPhotoCandidate({
+    timeZone: "America/New_York",
+    candidate: { spentOn: "2026-11-01", spentAt: "01:30" }
+  });
+
+  assert.equal(fixture.item.spent_at, null);
+  assert.equal(fixture.item.needs_review, true);
+});
+
+test("does not replace an explicitly invalid photo time with local noon", async () => {
+  const fixture = await importPhotoCandidate({
+    timeZone: "Asia/Bangkok",
+    candidate: { spentOn: "2026-08-31", spentAt: null, invalidLocalDateTime: true }
+  });
+
+  assert.equal(fixture.item.spent_at, null);
+  assert.equal(fixture.item.needs_review, true);
+});
+
 test("passes internal user identity and durable Telegram request key to image analysis", async () => {
   let analysisInput;
   const service = createExpenseEvidenceImportService({
@@ -229,3 +281,47 @@ test("forwards an explicit add override to the canonical candidate resolver", as
 
   assert.deepEqual(received, { userId: 2, importId: 7, candidateId: 8, action: "add" });
 });
+
+async function importPhotoCandidate({ timeZone, candidate }) {
+  let completed;
+  let analysisInput;
+  let duplicateOptions;
+  const service = createExpenseEvidenceImportService({
+    analyzer: {
+      async analyze(input) {
+        analysisInput = input;
+        return {
+          evidenceType: "receipt",
+          candidateSetHmac: "set-hmac",
+          candidates: [{
+            amount: 1840,
+            currency: "THB",
+            merchant: "big c",
+            description: "Groceries",
+            categorySlug: "groceries",
+            confidence: 0.9,
+            needsReview: false,
+            ...candidate
+          }]
+        };
+      }
+    },
+    imageDownloader: { async download() { return { bytes: Buffer.from([1, 2]), mimeType: "image/jpeg" }; } },
+    repository: {
+      async claimExpenseEvidenceImport() { return { state: "claimed", claimVersion: 1 }; },
+      async listExpenseEvidenceDuplicateCandidates(_userId, options) { duplicateOptions = options; return []; },
+      async completeExpenseEvidenceImport(value) { completed = value; return { id: 7 }; },
+      async releaseExpenseEvidenceImport() {}
+    },
+    hmac: () => "bytes-hmac"
+  });
+
+  await service.importImage({
+    user: { id: 2, timezone: timeZone },
+    chatId: 3,
+    messageId: 4,
+    fileId: "file",
+    declaredMimeType: "image/jpeg"
+  });
+  return { analysisInput, duplicateOptions, item: completed.candidates[0].items[0] };
+}

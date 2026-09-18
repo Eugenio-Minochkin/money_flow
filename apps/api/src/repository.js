@@ -413,10 +413,11 @@ export function createRepository(pool, options = {}) {
       }));
     },
 
-    async listExpenseEvidenceDuplicateCandidates(userId, client = pool, excludedDraftId = null) {
+    async listExpenseEvidenceDuplicateCandidates(userId, { client = pool, excludedDraftId = null, timeZone = null } = {}) {
+      const normalizedTimeZone = normalizeTimeZone(timeZone).timeZone;
       const result = await client.query(
         `SELECT expenses.amount_original AS amount, expenses.currency_original AS currency,
-                to_char(expenses.spent_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS "spentOn", to_char(expenses.spent_at AT TIME ZONE 'UTC', 'HH24:MI') AS "spentAt",
+                to_char(expenses.spent_at AT TIME ZONE $3, 'YYYY-MM-DD') AS "spentOn", to_char(expenses.spent_at AT TIME ZONE $3, 'HH24:MI') AS "spentAt",
                 item->>'merchant' AS merchant
          FROM expenses
          LEFT JOIN drafts ON drafts.id = expenses.draft_id
@@ -424,11 +425,12 @@ export function createRepository(pool, options = {}) {
          WHERE expenses.user_id = $1
          UNION ALL
          SELECT (item->>'amount')::numeric AS amount, item->>'currency' AS currency,
-                substring(item->>'spent_at', 1, 10) AS "spentOn", substring(item->>'spent_at', 12, 5) AS "spentAt",
+                to_char(NULLIF(item->>'spent_at', '')::timestamptz AT TIME ZONE $3, 'YYYY-MM-DD') AS "spentOn",
+                to_char(NULLIF(item->>'spent_at', '')::timestamptz AT TIME ZONE $3, 'HH24:MI') AS "spentAt",
                 item->>'description' AS merchant
          FROM drafts CROSS JOIN LATERAL jsonb_array_elements(items) AS item
          WHERE drafts.user_id = $1 AND drafts.status IN ('pending', 'inbox') AND ($2::bigint IS NULL OR drafts.id <> $2)`,
-        [userId, excludedDraftId]
+        [userId, excludedDraftId, normalizedTimeZone]
       );
       return result.rows;
     },
@@ -492,7 +494,7 @@ export function createRepository(pool, options = {}) {
           : null;
         await client.query("BEGIN");
         const locked = await client.query(
-          `SELECT candidates.id AS candidate_id, candidates.status AS candidate_status, candidates.draft_id, users.telegram_user_id
+          `SELECT candidates.id AS candidate_id, candidates.status AS candidate_status, candidates.draft_id, users.telegram_user_id, users.timezone
            FROM expense_evidence_candidates AS candidates
            JOIN expense_evidence_imports AS imports ON imports.id = candidates.import_id
            JOIN users ON users.id = imports.user_id
@@ -549,8 +551,9 @@ export function createRepository(pool, options = {}) {
             signal,
             beforeSave: async (draft) => {
               if (action === "add") return;
-              const current = evidenceCandidateFromDraft(draft);
-              const existing = await this.listExpenseEvidenceDuplicateCandidates(userId, client, candidate.draft_id);
+              const timeZone = normalizeTimeZone(candidate.timezone).timeZone;
+              const current = evidenceCandidateFromDraft(draft, timeZone);
+              const existing = await this.listExpenseEvidenceDuplicateCandidates(userId, { client, excludedDraftId: candidate.draft_id, timeZone });
               const duplicate = current && classifyExpenseEvidenceDuplicate(current, existing);
               if (duplicate?.classification === "likely_duplicate") throw evidenceDuplicateError(duplicate.reasonCode);
             }
@@ -5357,16 +5360,29 @@ function normalizeDraftItem(item) {
   };
 }
 
-function evidenceCandidateFromDraft(draft) {
+function evidenceCandidateFromDraft(draft, timeZone) {
   const item = (Array.isArray(draft.items) ? draft.items : JSON.parse(draft.items))[0];
   if (!item) return null;
+  const spentAt = new Date(item.spent_at);
+  const validSpentAt = !Number.isNaN(spentAt.getTime());
   return {
     amount: item.amount,
     currency: item.currency,
-    spentOn: String(item.spent_at ?? "").slice(0, 10),
-    spentAt: String(item.spent_at ?? "").slice(11, 16),
+    spentOn: validSpentAt ? sharedLocalDateKey(spentAt, timeZone) : null,
+    spentAt: validSpentAt ? localTimeKey(spentAt, timeZone) : null,
     merchant: item.merchant
   };
+}
+
+function localTimeKey(date, timeZone) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23"
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.hour}:${values.minute}`;
 }
 
 function normalizeEvidenceCandidateLink(row) {

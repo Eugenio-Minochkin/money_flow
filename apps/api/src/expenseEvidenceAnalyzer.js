@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 
 import { CATEGORIES } from "../../../packages/shared/src/categories.js";
 import { SUPPORTED_CURRENCY_CODES } from "../../../packages/shared/src/currencies.js";
+import { localDateKey, normalizeTimeZone } from "../../../packages/shared/src/time.js";
 import { deadlineSignal } from "./deadlineSignal.js";
 
 const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
@@ -20,11 +21,12 @@ export function createExpenseEvidenceAnalyzer({
 } = {}) {
   return {
     model: apiKey ? model : null,
-    async analyze({ bytes, mimeType, caption = "", usageUserId = null, requestKey = null, signal = null }) {
+    async analyze({ bytes, mimeType, caption = "", timeZone = null, usageUserId = null, requestKey = null, signal = null }) {
       if (!apiKey || !fetchImpl || !hmacSecret) throw analysisError();
+      const normalizedTimeZone = normalizeTimeZone(timeZone).timeZone;
       await consumeAnalysisUsage?.({ userId: usageUserId, requestKey });
       const response = await requestStructuredAnalysis({ apiKey, model, timeoutMs, fetchImpl, bytes, mimeType, caption, signal });
-      const result = normalizeAnalysis(response, now());
+      const result = normalizeAnalysis(response, now(), normalizedTimeZone);
       return {
         evidenceType: result.evidenceType,
         candidates: result.candidates,
@@ -68,14 +70,14 @@ async function requestStructuredAnalysis({ apiKey, model, timeoutMs, fetchImpl, 
   }
 }
 
-function normalizeAnalysis(value, now) {
+function normalizeAnalysis(value, now, timeZone) {
   const evidenceType = EVIDENCE_TYPES.includes(value?.evidence_type) ? value.evidence_type : "unsupported";
   if (evidenceType === "unsupported" || !Array.isArray(value?.candidates)) return { evidenceType: "unsupported", candidates: [] };
   if (["product_price", "unknown"].includes(evidenceType)) return { evidenceType, candidates: [] };
   if (evidenceType === "purchase_photo") {
     const candidates = value.candidates
       .filter((candidate) => candidate?.paid_purchase_evidence === true)
-      .map((candidate) => normalizeCandidate(candidate, now))
+      .map((candidate) => normalizeCandidate(candidate, now, timeZone))
       .filter(Boolean)
       .slice(0, 1)
       .map(asPurchaseReviewCandidate);
@@ -84,11 +86,11 @@ function normalizeAnalysis(value, now) {
   const rawCandidates = ["bank_transactions", "bank_history"].includes(evidenceType)
     ? value.candidates.filter((candidate) => candidate?.transaction_kind === "debit")
     : value.candidates;
-  const candidates = rawCandidates.map((candidate) => normalizeCandidate(candidate, now)).filter(Boolean);
+  const candidates = rawCandidates.map((candidate) => normalizeCandidate(candidate, now, timeZone)).filter(Boolean);
   if (["receipt", "bill"].includes(evidenceType)) {
     const finalTotals = value.candidates
       .filter((candidate) => candidate?.is_final_total === true)
-      .map((candidate) => normalizeCandidate(candidate, now))
+      .map((candidate) => normalizeCandidate(candidate, now, timeZone))
       .filter(Boolean);
     return { evidenceType, candidates: finalTotals.slice(0, 1) };
   }
@@ -96,21 +98,24 @@ function normalizeAnalysis(value, now) {
   return { evidenceType, candidates };
 }
 
-function normalizeCandidate(value, now) {
+function normalizeCandidate(value, now, timeZone) {
   const amount = Number(value?.amount);
   const currency = String(value?.currency ?? "").toUpperCase();
   if (!Number.isFinite(amount) || amount <= 0 || !CURRENCIES.has(currency)) return null;
-  const spentOn = normalizeDate(value.spent_on, now);
+  const spentOn = normalizeDate(value.spent_on, now, timeZone);
   const categorySlug = CATEGORIES_BY_SLUG.has(value.category_slug) ? value.category_slug : "other";
   const confidence = clamp(Number(value.confidence));
   const description = String(value.description ?? "").trim() || "Expense";
   const merchant = normalizeMerchant(value.merchant);
-  const needsReview = Boolean(value.needs_review) || Boolean(value.uncertain) || !spentOn || categorySlug === "other" || confidence < 0.7;
+  const spentAt = normalizeTime(value.spent_at);
+  const invalidLocalDateTime = String(value.spent_at ?? "").trim() !== "" && !spentAt;
+  const needsReview = Boolean(value.needs_review) || Boolean(value.uncertain) || !spentOn || invalidLocalDateTime || categorySlug === "other" || confidence < 0.7;
   return {
     amount,
     currency,
     spentOn,
-    spentAt: normalizeTime(value.spent_at),
+    spentAt,
+    ...(invalidLocalDateTime ? { invalidLocalDateTime: true } : {}),
     merchant,
     description,
     categorySlug,
@@ -123,22 +128,37 @@ function asPurchaseReviewCandidate(candidate) {
   return { ...candidate, needsReview: true };
 }
 
-function normalizeDate(value, now) {
+function normalizeDate(value, now, timeZone) {
   const text = String(value ?? "");
-  if (/^\d{4}-\d{2}-\d{2}$/.test(text) && !Number.isNaN(new Date(`${text}T00:00:00Z`).getTime())) return text;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return isValidDateKey(text) ? text : null;
   if (!/^\d{2}-\d{2}$/.test(text)) return null;
   const [month, day] = text.split("-").map(Number);
-  const current = new Date(now);
-  const candidate = new Date(Date.UTC(current.getUTCFullYear(), month - 1, day));
-  if (candidate > current) candidate.setUTCFullYear(candidate.getUTCFullYear() - 1);
-  const ageDays = (current.getTime() - candidate.getTime()) / 86_400_000;
-  if (ageDays < 0 || ageDays > 45 || candidate.getUTCMonth() !== month - 1 || candidate.getUTCDate() !== day) return null;
-  return candidate.toISOString().slice(0, 10);
+  const currentKey = localDateKey(new Date(now), timeZone);
+  let year = Number(currentKey.slice(0, 4));
+  let candidateKey = `${year}-${pad2(month)}-${pad2(day)}`;
+  if (!isValidDateKey(candidateKey)) return null;
+  if (candidateKey > currentKey) {
+    year -= 1;
+    candidateKey = `${year}-${pad2(month)}-${pad2(day)}`;
+  }
+  const ageDays = (Date.parse(`${currentKey}T00:00:00Z`) - Date.parse(`${candidateKey}T00:00:00Z`)) / 86_400_000;
+  return ageDays >= 0 && ageDays <= 45 ? candidateKey : null;
 }
 
 function normalizeTime(value) {
   const text = String(value ?? "");
-  return /^\d{2}:\d{2}$/.test(text) ? text : null;
+  if (!/^\d{2}:\d{2}$/.test(text)) return null;
+  const [hour, minute] = text.split(":").map(Number);
+  return hour <= 23 && minute <= 59 ? text : null;
+}
+
+function isValidDateKey(value) {
+  const [year, month, day] = value.split("-").map(Number);
+  return month >= 1 && month <= 12 && day >= 1 && new Date(Date.UTC(year, month, 0)).getUTCDate() >= day;
+}
+
+function pad2(value) {
+  return String(value).padStart(2, "0");
 }
 
 function normalizeMerchant(value) {

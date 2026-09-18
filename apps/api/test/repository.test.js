@@ -6734,20 +6734,24 @@ test("expense evidence save failure returns a reviewing candidate to ready for r
   assert.equal(status, "saved");
 });
 
-test("evidence duplicate rows use linked merchant metadata and UTC timestamps, not expense descriptions", async () => {
+test("evidence duplicate rows use linked merchant metadata and the photo interpretation timezone", async () => {
   let statement;
-  const repo = createRepository(fakePool((sql) => {
+  let parameters;
+  const repo = createRepository(fakePool((sql, params) => {
     statement = String(sql);
+    parameters = params;
     return { rows: [{ amount: "1840", currency: "THB", spentOn: "2026-08-18", spentAt: "12:00", merchant: "Big C" }] };
   }));
 
-  const rows = await repo.listExpenseEvidenceDuplicateCandidates(2);
+  const rows = await repo.listExpenseEvidenceDuplicateCandidates(2, { timeZone: "Asia/Bangkok" });
 
   assert.equal(rows[0].merchant, "Big C");
   assert.match(statement, /item->>'merchant' AS merchant/);
   assert.match(statement, /item->>'description' = expenses\.description/);
   assert.doesNotMatch(statement, /description AS merchant/);
-  assert.match(statement, /spent_at AT TIME ZONE 'UTC'/);
+  assert.match(statement, /spent_at AT TIME ZONE \$3/);
+  assert.match(statement, /item->>'spent_at'.+timestamptz AT TIME ZONE \$3/s);
+  assert.deepEqual(parameters, [2, null, "Asia/Bangkok"]);
 });
 
 test("evidence add override is accepted by the repository action guard", async () => {

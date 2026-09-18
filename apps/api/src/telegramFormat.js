@@ -10,7 +10,7 @@ export function formatDraft(expenses, options = {}) {
     ? (currencies[0] ?? options.baseCurrency ?? "THB")
     : (options.baseCurrency ?? "THB");
   let lines = expenses.map((expense, index) =>
-    `${index + 1}. <b>${escapeHtml(categoryName(expense.category_slug))}</b>\n   🗓 ${formatSpentAt(expense.spent_at, language)}\n   ${escapeHtml(expense.description)} · <b>${formatDraftItemMoney(expense, language)}</b>`
+    `${index + 1}. <b>${escapeHtml(categoryName(expense.category_slug))}</b>\n   🗓 ${formatSpentAt(expense.spent_at, language, options.timeZone)}\n   ${escapeHtml(expense.description)} · <b>${formatDraftItemMoney(expense, language)}</b>`
   );
   lines = lines.map((line, index) => line.replace("</b>", `</b>${formatBudgetImpactMarker(expenses[index]?.budget_impact, language)}`));
   const convertedPreview = isConvertedDraftPreview(options.preview, totalCurrency);
@@ -545,15 +545,22 @@ function safeMoneyNumber(value) {
   return Number.isFinite(numeric) ? numeric : 0;
 }
 
-function formatSpentAt(value, language) {
+function formatSpentAt(value, language, timeZone = "Asia/Bangkok") {
   if (!value) return t(language, "noDate");
-  return new Intl.DateTimeFormat(language === "ru" ? "ru-RU" : "en-US", {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return t(language, "noDate");
+  const format = (zone) => new Intl.DateTimeFormat(language === "ru" ? "ru-RU" : "en-US", {
     day: "2-digit",
     month: "short",
     hour: "2-digit",
     minute: "2-digit",
-    timeZone: "Asia/Bangkok"
-  }).format(new Date(value));
+    timeZone: zone
+  }).format(date);
+  try {
+    return format(timeZone ?? "Asia/Bangkok");
+  } catch {
+    return format("Asia/Bangkok");
+  }
 }
 
 function escapeHtml(value) {

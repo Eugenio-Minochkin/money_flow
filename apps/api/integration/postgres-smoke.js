@@ -259,6 +259,33 @@ test("image import reserves once for the internal user and blocks an exhausted r
   assert.equal((await pool.query("SELECT COUNT(*)::int AS count FROM drafts WHERE user_id = $1", [user.id])).rows[0].count, 0);
 });
 
+test("image evidence duplicate rows use one user timezone across stored expenses and drafts", async () => {
+  const telegramUserId = 990204;
+  const user = await createSmokeUser(telegramUserId);
+  await saveExpense(user.id, telegramUserId, {
+    amount: 321,
+    description: "confirmed boundary",
+    spent_at: "2026-08-31T16:30:00.000Z"
+  });
+  await repo.createDraft(user.id, "pending boundary", [expenseItem({
+    amount: 322,
+    description: "pending boundary",
+    spent_at: "2026-08-31T16:30:00.000Z"
+  })]);
+
+  const rows = await repo.listExpenseEvidenceDuplicateCandidates(user.id, { timeZone: "Asia/Bangkok" });
+  const boundaryRows = rows.filter((row) => [321, 322].includes(Number(row.amount)));
+
+  assert.deepEqual(boundaryRows.map((row) => ({
+    amount: Number(row.amount),
+    spentOn: row.spentOn,
+    spentAt: row.spentAt
+  })).sort((left, right) => left.amount - right.amount), [
+    { amount: 321, spentOn: "2026-08-31", spentAt: "23:30" },
+    { amount: 322, spentOn: "2026-08-31", spentAt: "23:30" }
+  ]);
+});
+
 test("enforces singleton onboarding events without limiting repeatable events", async () => {
   const user = await createSmokeUser(990010);
 

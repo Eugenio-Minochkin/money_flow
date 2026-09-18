@@ -1,4 +1,5 @@
 import { classifyExpenseEvidenceDuplicate } from "./expenseEvidenceDedupe.js";
+import { localDateKey, localDateTimeToUtc, normalizeTimeZone } from "../../../packages/shared/src/time.js";
 
 export function createExpenseEvidenceImportService({ repository, analyzer, imageDownloader, hmac } = {}) {
   if (typeof hmac !== "function") throw new Error("Expense evidence HMAC must be injected");
@@ -7,6 +8,7 @@ export function createExpenseEvidenceImportService({ repository, analyzer, image
       const claim = await repository.claimExpenseEvidenceImport(user.id, chatId, messageId);
       if (claim?.state === "ready" || claim?.state === "completed") return claim;
       if (!claim || claim.state !== "claimed") return { state: "processing" };
+      const timeZone = normalizeTimeZone(user?.timezone).timeZone;
       let image;
       try {
         image = await imageDownloader.download({ fileId, declaredMimeType, signal });
@@ -14,11 +16,12 @@ export function createExpenseEvidenceImportService({ repository, analyzer, image
           bytes: image.bytes,
           mimeType: image.mimeType,
           caption,
+          timeZone,
           usageUserId: user.id,
           requestKey: `telegram:${user.id}:${chatId}:${messageId}`,
           signal
         });
-        const existing = await repository.listExpenseEvidenceDuplicateCandidates(user.id);
+        const existing = await repository.listExpenseEvidenceDuplicateCandidates(user.id, { timeZone });
         const dedupeCandidates = [...existing];
         const candidates = analysis.candidates.map((candidate, ordinal) => {
           const dedupe = classifyExpenseEvidenceDuplicate(candidate, dedupeCandidates);
@@ -26,7 +29,7 @@ export function createExpenseEvidenceImportService({ repository, analyzer, image
           return {
             ordinal,
             evidenceType: analysis.evidenceType,
-            items: [draftItem(candidate)],
+            items: [draftItem(candidate, timeZone)],
             dedupeClassification: dedupe.classification,
             dedupeReasonCode: dedupe.reasonCode
           };
@@ -71,8 +74,8 @@ export function createExpenseEvidenceImportService({ repository, analyzer, image
     }
   };
 }
-function draftItem(candidate) {
-  const spentAt = candidate.spentOn ? `${candidate.spentOn}T${candidate.spentAt ?? "12:00"}:00.000Z` : null;
+function draftItem(candidate, timeZone) {
+  const spentAt = photoSpentAt(candidate, timeZone);
   return {
     amount: candidate.amount,
     currency: candidate.currency,
@@ -86,4 +89,36 @@ function draftItem(candidate) {
     confidence: candidate.confidence,
     needs_review: Boolean(candidate.needsReview) || !spentAt
   };
+}
+
+function photoSpentAt(candidate, timeZone) {
+  if (!candidate.spentOn || candidate.invalidLocalDateTime) return null;
+  const [year, month, day] = candidate.spentOn.split("-").map(Number);
+  const localTime = candidate.spentAt ?? "12:00";
+  const [hour, minute] = localTime.split(":").map(Number);
+  try {
+    const instant = localDateTimeToUtc({ year, month, day, hour, minute }, timeZone);
+    if (hasAlternativeInstant(instant, candidate.spentOn, localTime, timeZone)) return null;
+    return instant.toISOString();
+  } catch {
+    return null;
+  }
+}
+
+function hasAlternativeInstant(instant, localDate, localTime, timeZone) {
+  return [-120, -90, -60, -30, 30, 60, 90, 120].some((offsetMinutes) => {
+    const alternative = new Date(instant.getTime() + offsetMinutes * 60_000);
+    return localDateKey(alternative, timeZone) === localDate && localTimeKey(alternative, timeZone) === localTime;
+  });
+}
+
+function localTimeKey(date, timeZone) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23"
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.hour}:${values.minute}`;
 }

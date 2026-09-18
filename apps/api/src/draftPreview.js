@@ -16,7 +16,7 @@ export async function renderDraftPreview({ repository, user, items = [], languag
     currency: normalizeDraftCurrency(item?.currency)
   }));
 
-  return formatDraft(normalizedItems, { language, baseCurrency, preview });
+  return formatDraft(normalizedItems, { language, baseCurrency, preview, timeZone: user?.timezone });
 }
 
 function normalizeDraftCurrency(currency) {

@@ -116,7 +116,8 @@ test("analyzes a sanitized image through Responses structured output without sto
   const result = await analyzer.analyze({
     bytes: Buffer.from([0xff, 0xd8, 0xff, 0xd9]),
     mimeType: "image/jpeg",
-    caption: "private caption must not be persisted"
+    caption: "private caption must not be persisted",
+    timeZone: "Asia/Bangkok"
   });
 
   assert.equal(requestBody.model, "gpt-test");
@@ -268,6 +269,55 @@ test("uses only the final total from a bill", async () => {
 
   const result = await analyzer.analyze(image());
   assert.deepEqual(result.candidates.map(({ amount }) => amount), [107]);
+});
+
+test("rejects an impossible full calendar date from image analysis", async () => {
+  const analyzer = createExpenseEvidenceAnalyzer({
+    apiKey: "test-key",
+    hmacSecret: "test-hmac",
+    fetchImpl: async () => jsonResponse({ output_text: JSON.stringify({
+      evidence_type: "receipt",
+      candidates: [{ ...candidate("Shop", 100), spent_on: "2026-02-30", spent_at: "12:00" }]
+    }) })
+  });
+
+  const result = await analyzer.analyze({ ...image(), timeZone: "Asia/Bangkok" });
+
+  assert.equal(result.candidates[0].spentOn, null);
+  assert.equal(result.candidates[0].needsReview, true);
+});
+
+test("marks an explicitly invalid image time instead of treating it as missing", async () => {
+  const analyzer = createExpenseEvidenceAnalyzer({
+    apiKey: "test-key",
+    hmacSecret: "test-hmac",
+    fetchImpl: async () => jsonResponse({ output_text: JSON.stringify({
+      evidence_type: "receipt",
+      candidates: [{ ...candidate("Shop", 100), spent_on: "2026-08-20", spent_at: "25:00" }]
+    }) })
+  });
+
+  const result = await analyzer.analyze({ ...image(), timeZone: "Asia/Bangkok" });
+
+  assert.equal(result.candidates[0].spentAt, null);
+  assert.equal(result.candidates[0].invalidLocalDateTime, true);
+  assert.equal(result.candidates[0].needsReview, true);
+});
+
+test("resolves a yearless image date from the user's local calendar", async () => {
+  const analyzer = createExpenseEvidenceAnalyzer({
+    apiKey: "test-key",
+    hmacSecret: "test-hmac",
+    now: () => new Date("2026-12-31T23:30:00.000Z"),
+    fetchImpl: async () => jsonResponse({ output_text: JSON.stringify({
+      evidence_type: "receipt",
+      candidates: [{ ...candidate("Shop", 100), spent_on: "01-01", spent_at: "09:00" }]
+    }) })
+  });
+
+  const result = await analyzer.analyze({ ...image(), timeZone: "Asia/Bangkok" });
+
+  assert.equal(result.candidates[0].spentOn, "2027-01-01");
 });
 
 function candidate(merchant, amount) {
