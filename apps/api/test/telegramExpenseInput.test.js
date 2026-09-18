@@ -21,6 +21,15 @@ test("parses a strict positive amount with an optional supported currency", () =
   assert.throws(() => parseAmountInput("120 BTC"), hasCode("expense_invalid_currency"));
 });
 
+test("parses decimal amount edits with ISO codes and localized currency aliases", () => {
+  for (const input of ["6.55", "6,55"]) {
+    assert.deepEqual(parseAmountInput(input, { currentCurrency: "GEL" }), { amount: 6.55, currency: "GEL" }, input);
+  }
+  for (const input of ["6.55 GEL", "6,55 GEL", "6.55 gel", "6.55 лари", "6,55 лари"]) {
+    assert.deepEqual(parseAmountInput(input, { currentCurrency: "THB" }), { amount: 6.55, currency: "GEL" }, input);
+  }
+});
+
 test("normalizes description and tags without accepting invalid values", () => {
   assert.equal(parseDescriptionInput("  coffee with milk  "), "coffee with milk");
   assert.throws(() => parseDescriptionInput("   "), hasCode("expense_invalid_description"));

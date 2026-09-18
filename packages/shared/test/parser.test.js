@@ -212,6 +212,14 @@ test("parses amount before English description", () => {
   assert.equal(result.expenses[0].category_slug, "transport");
 });
 
+test("preserves dot and comma decimal separators for GEL amounts", () => {
+  for (const input of ["мороженое 6.55 лари", "мороженое 6,55 лари"]) {
+    const result = parseExpenseText(input, { defaultCurrency: "THB", timeZone: "Asia/Tbilisi" });
+    assert.equal(result.expenses[0].amount, 6.55, input);
+    assert.equal(result.expenses[0].currency, "GEL", input);
+  }
+});
+
 test("parses English relative dates and category keywords", () => {
   const result = parseExpenseText("yesterday groceries 900", {
     now: new Date("2026-06-03T12:00:00+07:00")
