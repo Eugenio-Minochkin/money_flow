@@ -118,7 +118,7 @@ Run: `git diff --check` and `git diff --stat`.
 
 Expected: no whitespace errors and only scoped files.
 
-- [ ] **Step 4: Commit and publish a Draft PR**
+- [x] **Step 4: Commit and publish a Draft PR**
 
 Run: `git add <scoped files>`, `git commit -m "fix: stabilize expense queue and decimal handling"`, `git push -u origin codex/fix-expense-queue-latency-amounts`, `gh pr create --draft --base master --head codex/fix-expense-queue-latency-amounts`.
 
