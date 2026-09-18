@@ -1380,6 +1380,8 @@ test("completed text message app event includes parser metadata", async () => {
   assert.equal(completed.metadata.localEvaluateMs, 1);
   assert.equal(completed.metadata.parserTotalMs, 4);
   assert.equal(Number.isFinite(completed.metadata.processingTotalMs), true);
+  assert.equal(completed.metadata.activeProcessingMs, completed.metadata.processingTotalMs);
+  assert.equal(completed.metadata.endToEndTotalMs, completed.metadata.activeProcessingMs + completed.metadata.queueWaitMs);
 });
 
 test("completed voice message app event includes parser metadata and transcript size", async () => {
@@ -1703,6 +1705,39 @@ test("regular draft confirmation acknowledges before saving, delivers before bac
   ]);
   assert.equal(diagnostic.metadata.outcome, "success");
   assert.equal(diagnostic.metadata.expenseCount, 1);
+});
+
+test("slow callback acknowledgement does not gate draft saving", async () => {
+  const order = [];
+  const repo = fakeRepository();
+  repo.saveDraftAsExpense = async () => {
+    order.push("save");
+    return { expenses: [{ id: 71, amount_base: 75 }], dashboardSnapshot: null, alreadySaved: false };
+  };
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: repo,
+    telegramClient: {
+      async answerCallbackQuery() {
+        order.push("ack-start");
+        await new Promise((resolve) => setImmediate(resolve));
+        order.push("ack-end");
+        return { ok: true };
+      },
+      async editMessageText() { order.push("terminal"); return { ok: true }; },
+      async sendMessage() { return { ok: true }; },
+      async deleteMessage() { return { ok: true }; }
+    }
+  });
+
+  await bot.handleUpdate({ callback_query: {
+    id: "callback-nonblocking", data: "confirm:42", from: { id: 100 }, message: { chat: { id: 10 }, message_id: 55 }
+  } });
+
+  assert.ok(order.indexOf("save") > order.indexOf("ack-start"));
+  assert.ok(order.indexOf("save") < order.indexOf("ack-end"));
+  assert.ok(order.indexOf("terminal") > order.indexOf("save"));
 });
 
 test("regular draft confirmation preserves the card for retryable persistence failures", async () => {
@@ -4456,6 +4491,48 @@ test("queued second message uses localized text for ru and en users", async () =
   }
 });
 
+test("queued status becomes the processing loader and terminal result for the same request", async () => {
+  const calls = [];
+  let nextMessageId = 700;
+  const parser = controlledExpenseParser();
+  const repo = fakeRepository();
+  repo.user = { id: 1, interface_language: "ru", base_currency: "THB", onboarding_step: "completed", timezone: "Asia/Tbilisi" };
+  const telegramClient = {
+    async sendMessage(message) {
+      const result = { ok: true, result: { message_id: ++nextMessageId } };
+      calls.push({ method: "sendMessage", ...message, resultMessageId: result.result.message_id });
+      return result;
+    },
+    async editMessageText(message) { calls.push({ method: "editMessageText", ...message }); return { ok: true }; },
+    async deleteMessage(message) { calls.push({ method: "deleteMessage", ...message }); return { ok: true }; }
+  };
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: repo,
+    expenseParser: parser,
+    telegramClient,
+    awaitQueuedJobs: false,
+    telegramJobQueueOptions: { globalConcurrency: 1, userQueueLimit: 2, jobTimeoutMs: 10_000 },
+    perfLogger: () => {}
+  });
+
+  await bot.handleUpdate({ message: { ...textUpdate("first expense", 100).message, message_id: 101 } });
+  await bot.handleUpdate({ message: { ...textUpdate("second expense", 100).message, message_id: 102 } });
+  const queuedCall = calls.find((call) => call.method === "sendMessage" && call.text.includes("Сначала закончу"));
+  assert.ok(queuedCall);
+
+  parser.resolveNext();
+  await parser.waitForCalls(2);
+  parser.resolveNext();
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const secondLifecycle = calls.filter((call) => call.messageId === queuedCall.resultMessageId);
+  assert.ok(secondLifecycle.some((call) => call.method === "editMessageText" && call.text.includes("Заношу расход")));
+  assert.ok(secondLifecycle.some((call) => call.method === "editMessageText" && call.text.includes("Записал")));
+  assert.equal(calls.filter((call) => call.method === "sendMessage" && call.replyParameters?.message_id === 102).length, 0);
+});
+
 test("full user queue uses localized text for ru and en users", async () => {
   const cases = [
     {
@@ -5792,6 +5869,70 @@ test("expense loader terminalization retries a plain edit before deleting or sen
     assert.equal(calls.filter((call) => call.method === "editMessageText").length, scenario.expectedEdits, scenario.name);
     assert.equal(calls.filter((call) => call.method === "sendMessage").length, scenario.expectedSends, scenario.name);
   }
+});
+
+test("expense loader terminal fallbacks share one operation deadline", async () => {
+  const signals = [];
+  let editAttempts = 0;
+  await processQueuedMessage({
+    message: { chat: { id: 5 }, message_id: 321 },
+    from: { id: 100 },
+    user: { id: 1, interface_language: "ru", base_currency: "THB", onboarding_step: "completed", timezone: "Asia/Bangkok" },
+    rawText: "переведи 1000",
+    inputType: "text",
+    repository: { async recordAppEvent() {} },
+    token: null,
+    miniAppUrl: "http://x",
+    expenseParser: { async parse() { throw new Error("expense parser should not be called"); } },
+    telegramClient: {
+      async sendMessage() { return { ok: true, result: { message_id: 777 } }; },
+      async editMessageText(message) {
+        signals.push(message.signal);
+        editAttempts += 1;
+        if (editAttempts <= 2) throw new Error("edit failed");
+        return { ok: true };
+      },
+      async deleteMessage(message) { signals.push(message.signal); return { ok: true }; }
+    },
+    now: () => new Date("2026-06-30T10:00:00Z"),
+    trace: stubTrace()
+  });
+
+  assert.equal(signals.length, 3);
+  assert.ok(signals[0]);
+  assert.equal(new Set(signals).size, 1);
+});
+
+test("queued-status edit failure does not break expense terminalization", async () => {
+  const calls = [];
+  let editAttempts = 0;
+  await processQueuedMessage({
+    message: { chat: { id: 5 }, message_id: 321 },
+    from: { id: 100 },
+    user: { id: 1, interface_language: "ru", base_currency: "THB", onboarding_step: "completed", timezone: "Asia/Bangkok" },
+    rawText: "переведи 1000",
+    inputType: "text",
+    repository: { async recordAppEvent() {} },
+    token: null,
+    miniAppUrl: "http://x",
+    expenseParser: { async parse() { throw new Error("expense parser should not be called"); } },
+    telegramClient: {
+      async editMessageText(message) {
+        calls.push(message);
+        editAttempts += 1;
+        if (editAttempts === 1) throw new Error("temporary edit failure");
+        return { ok: true };
+      }
+    },
+    queuedStatusMessageId: 777,
+    now: () => new Date("2026-06-30T10:00:00Z"),
+    trace: stubTrace()
+  });
+
+  assert.equal(calls.length, 2);
+  assert.ok(calls[0].text.includes("Заношу расход"));
+  assert.ok(calls[1].text.includes("не обычный расход"));
+  assert.deepEqual(calls.map((call) => call.messageId), [777, 777]);
 });
 
 test("processQueuedMessage creates budget top-up draft before expense parser", async () => {

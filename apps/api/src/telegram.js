@@ -449,9 +449,11 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
   renewCaptureLease?.unref?.();
 
   const deliveryState = createTelegramJobDeliveryState();
+  let resolveQueuedStatusMessageId;
+  const queuedStatusMessageId = new Promise((resolve) => { resolveQueuedStatusMessageId = resolve; });
   const queued = telegramJobQueue.enqueue({
     userId: from.id,
-    run: ({ signal }) => processQueuedMessage({ message, from, user, rawText, hasVoice, inputType: trackExpenseMessage ? inputType : null, repository, token, miniAppUrl, expenseParser, voiceTranscriber, expenseEvidenceImportService, expenseEvidenceSessionService, activeEvidenceSessions, telegramClient, adminTelegramIds, adminAlertService, now, trace, deliveryState, expenseCaptureClaim, signal }),
+    run: async ({ signal }) => processQueuedMessage({ message, from, user, rawText, hasVoice, inputType: trackExpenseMessage ? inputType : null, repository, token, miniAppUrl, expenseParser, voiceTranscriber, expenseEvidenceImportService, expenseEvidenceSessionService, activeEvidenceSessions, telegramClient, adminTelegramIds, adminAlertService, now, trace, deliveryState, expenseCaptureClaim, signal, queuedStatusMessageId: await queuedStatusMessageId }),
     onStart: (metadata) => trace.event("queue_job_start", metadata),
     onFinish: (metadata) => {
       clearInterval(renewCaptureLease);
@@ -468,16 +470,29 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
   }, queued.accepted);
 
   if (!queued.accepted) {
+    resolveQueuedStatusMessageId(null);
     clearInterval(renewCaptureLease);
     const key = queued.status === "globalQueueFull" ? "globalQueueFull" : "userQueueFull";
     return sendTelegramResponse(trace, () => sendMessage(token, chatId, botText(language, key), null, telegramClient));
   }
 
   if (queued.status === "queuedBehindPrevious") {
-    await sendTelegramResponse(trace, () => sendMessage(token, chatId, botText(language, "queuedBehindPrevious"), null, telegramClient));
+    try {
+      const result = await sendTelegramResponse(trace, () => sendMessage(token, chatId, botText(language, "queuedBehindPrevious"), null, telegramClient));
+      resolveQueuedStatusMessageId(extractMessageId(result));
+    } catch (error) {
+      resolveQueuedStatusMessageId(null);
+      console.error("[telegram] failed to send queued status", error.message);
+    }
   } else if (queued.status === "globalQueueDelayed") {
-    await sendTelegramResponse(trace, () => sendMessage(token, chatId, botText(language, "globalQueueDelayed"), null, telegramClient));
-  }
+    try {
+      const result = await sendTelegramResponse(trace, () => sendMessage(token, chatId, botText(language, "globalQueueDelayed"), null, telegramClient));
+      resolveQueuedStatusMessageId(extractMessageId(result));
+    } catch (error) {
+      resolveQueuedStatusMessageId(null);
+      console.error("[telegram] failed to send delayed queue status", error.message);
+    }
+  } else resolveQueuedStatusMessageId(null);
 
   if (awaitQueuedJobs) {
     try {
@@ -571,7 +586,7 @@ function pruneExpiredPendingFeedback(currentTime) {
   }
 }
 
-export async function processQueuedMessage({ message, from, user, rawText, hasVoice, inputType, repository, token, miniAppUrl, expenseParser, voiceTranscriber, expenseEvidenceImportService, expenseEvidenceSessionService, activeEvidenceSessions, telegramClient, adminTelegramIds = new Set(), adminAlertService, now = () => new Date(), trace, deliveryState = createTelegramJobDeliveryState(), expenseCaptureClaim = null, signal = null }) {
+export async function processQueuedMessage({ message, from, user, rawText, hasVoice, inputType, repository, token, miniAppUrl, expenseParser, voiceTranscriber, expenseEvidenceImportService, expenseEvidenceSessionService, activeEvidenceSessions, telegramClient, adminTelegramIds = new Set(), adminAlertService, now = () => new Date(), trace, deliveryState = createTelegramJobDeliveryState(), expenseCaptureClaim = null, signal = null, queuedStatusMessageId = null }) {
   const processingStartedAt = performance.now();
   const language = user.interface_language ?? "en";
   const chatId = message.chat.id;
@@ -618,7 +633,7 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
       return handleOnboardingMessage({ text: onboardingTextInput, user, repository, token, chatId, miniAppUrl, telegramUserId: from.id, telegramClient, now, trace });
     }
 
-    const loader = await sendExpenseProcessingMessage(token, chatId, language, telegramClient, trace, message.message_id, signal);
+    const loader = await sendExpenseProcessingMessage(token, chatId, language, telegramClient, trace, message.message_id, signal, queuedStatusMessageId);
     let text = rawText;
     try {
       if (!text && hasVoice) {
@@ -946,13 +961,17 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
     if (inputType) {
       const stageDurations = trace.getDurations();
       const traceMetadata = trace.getMetadata();
+      const activeProcessingMs = Math.max(0, Math.round(performance.now() - processingStartedAt));
+      const queueWaitMs = Number.isFinite(Number(traceMetadata.queueWaitMs)) ? Number(traceMetadata.queueWaitMs) : null;
       const recordProcessingCompleted = safeRecordAppEvent(repository, user.id, "message_processing_completed", {
         inputType,
         result: processingResult,
         status: processingResult,
         draftType: processingDraftType,
-        processingTotalMs: Math.max(0, Math.round(performance.now() - processingStartedAt)),
-        queueWaitMs: traceMetadata.queueWaitMs,
+        processingTotalMs: activeProcessingMs,
+        activeProcessingMs,
+        endToEndTotalMs: queueWaitMs == null ? activeProcessingMs : activeProcessingMs + queueWaitMs,
+        queueWaitMs,
         telegramResponseMs: stageDurations.telegram_response,
         llmParseMs: stageDurations.llm_parse,
         dbSaveMs: stageDurations.db_save,
@@ -1280,7 +1299,16 @@ async function transcribeVoice(message, voiceTranscriber, trace, user, signal = 
   });
 }
 
-async function sendExpenseProcessingMessage(token, chatId, language, telegramClient, trace, sourceMessageId, signal = null) {
+async function sendExpenseProcessingMessage(token, chatId, language, telegramClient, trace, sourceMessageId, signal = null, queuedStatusMessageId = null) {
+  const text = botText(language, "expenseProcessing");
+  if (queuedStatusMessageId) {
+    try {
+      await sendTelegramResponse(trace, () => editMessageText(token, chatId, queuedStatusMessageId, text, null, telegramClient, { signal }));
+    } catch (error) {
+      console.error("[telegram] failed to transition queued status to processing", error.message);
+    }
+    return { messageId: queuedStatusMessageId };
+  }
   try {
     const replyParameters = sourceMessageId == null ? null : {
       message_id: sourceMessageId,
@@ -1289,7 +1317,7 @@ async function sendExpenseProcessingMessage(token, chatId, language, telegramCli
     const result = await sendTelegramResponse(trace, () => sendMessage(
       token,
       chatId,
-      botText(language, "expenseProcessing"),
+      text,
       null,
       telegramClient,
       null,
@@ -1304,33 +1332,34 @@ async function sendExpenseProcessingMessage(token, chatId, language, telegramCli
 }
 
 async function deliverResultMessage({ token, chatId, loaderMessageId, text, replyMarkup, telegramClient, trace, signal = null }) {
+  const deliverySignal = deadlineSignal(signal, 15_000);
   if (loaderMessageId) {
     try {
-      const result = await sendTelegramResponse(trace, () => editMessageText(token, chatId, loaderMessageId, text, replyMarkup, telegramClient, { signal }));
+      const result = await sendTelegramResponse(trace, () => editMessageText(token, chatId, loaderMessageId, text, replyMarkup, telegramClient, { signal: deliverySignal }));
       trace.event("telegram_terminalization", { mode: "edit" });
       return result;
     } catch (error) {
       console.error("[telegram] editing loader into result failed, retrying plain edit", error.message);
       try {
-        const result = await sendTelegramResponse(trace, () => editMessageText(token, chatId, loaderMessageId, stripTelegramHtml(text), replyMarkup, telegramClient, { signal }));
+        const result = await sendTelegramResponse(trace, () => editMessageText(token, chatId, loaderMessageId, stripTelegramHtml(text), replyMarkup, telegramClient, { signal: deliverySignal }));
         trace.event("telegram_terminalization", { mode: "plain_edit_fallback" });
         return result;
       } catch (plainEditError) {
         console.error("[telegram] plain loader edit failed, deleting before sending result", plainEditError.message);
         try {
-          await deleteMessage(token, chatId, loaderMessageId, telegramClient, { signal });
+          await deleteMessage(token, chatId, loaderMessageId, telegramClient, { signal: deliverySignal });
         } catch (deleteError) {
           trace.event("telegram_terminalization", { mode: "cleanup_failed" });
           console.error("[telegram] failed to delete loader after edit failure", deleteError.message);
           return { ok: false, terminalizationMode: "cleanup_failed" };
         }
-        const result = await sendTelegramResponse(trace, () => sendMessage(token, chatId, text, replyMarkup, telegramClient, null, { signal }));
+        const result = await sendTelegramResponse(trace, () => sendMessage(token, chatId, text, replyMarkup, telegramClient, null, { signal: deliverySignal }));
         trace.event("telegram_terminalization", { mode: "delete_and_send_fallback" });
         return result;
       }
     }
   }
-  const result = await sendTelegramResponse(trace, () => sendMessage(token, chatId, text, replyMarkup, telegramClient, null, { signal }));
+  const result = await sendTelegramResponse(trace, () => sendMessage(token, chatId, text, replyMarkup, telegramClient, null, { signal: deliverySignal }));
   trace.event("telegram_terminalization", { mode: "delete_and_send_fallback" });
   return result;
 }
@@ -2513,13 +2542,12 @@ async function handleConfirmDraft(trace, token, telegramClient, callback, draftI
   const chatId = callback.message?.chat?.id;
   const messageId = callback.message?.message_id;
   let callbackAckSucceeded = false;
-  try {
-    await answerCallback(token, callback.id, botText(language, "draftSavingCallback"), telegramClient);
-    callbackAckSucceeded = true;
-  } catch (error) {
-    console.error("[telegram] confirming draft callback acknowledgement failed", error.message);
-  }
-  const callbackAckMs = elapsedSince(startedAt);
+  let callbackAckMs = null;
+  const callbackAckStartedAt = performance.now();
+  const callbackAckPromise = answerCallback(token, callback.id, botText(language, "draftSavingCallback"), telegramClient, { requestTimeoutMs: 2_000 })
+    .then(() => { callbackAckSucceeded = true; })
+    .catch((error) => console.error("[telegram] confirming draft callback acknowledgement failed", error.message))
+    .finally(() => { callbackAckMs = elapsedSince(callbackAckStartedAt); });
 
   trace.start("db_save");
   let result;
@@ -2598,6 +2626,7 @@ async function handleConfirmDraft(trace, token, telegramClient, callback, draftI
     trace, outcome, token, telegramClient, chatId, messageId, text, replyMarkup
   });
   const userResultMs = elapsedSince(startedAt);
+  await callbackAckPromise;
 
   let cleanupMs = null;
   const backgroundTasks = [];
@@ -3206,7 +3235,8 @@ async function sendMessage(token, chatId, text, replyMarkup, telegramClient, pla
     chatId,
     text,
     replyMarkup,
-    ...(replyParameters ? { replyParameters } : {})
+    ...(replyParameters ? { replyParameters } : {}),
+    ...(signal ? { signal } : {})
   };
   if (telegramClient) {
     try {
@@ -3386,7 +3416,7 @@ export function savedSummaryKeyboard(miniAppUrl, telegramUserId, language) {
 
 async function editMessageText(token, chatId, messageId, text, replyMarkup, telegramClient, options = {}) {
   if (telegramClient) {
-    return telegramClient.editMessageText({ chatId, messageId, text, replyMarkup });
+    return telegramClient.editMessageText({ chatId, messageId, text, replyMarkup, ...(options.signal ? { signal: options.signal } : {}) });
   }
   if (!token) {
     console.log("[telegram:editMessageText]", { chatId, messageId, text, replyMarkup });
@@ -3427,7 +3457,7 @@ async function editMessageReplyMarkup(token, chatId, messageId, replyMarkup, tel
 
 async function deleteMessage(token, chatId, messageId, telegramClient, options = {}) {
   if (telegramClient) {
-    return telegramClient.deleteMessage({ chatId, messageId });
+    return telegramClient.deleteMessage({ chatId, messageId, ...(options.signal ? { signal: options.signal } : {}) });
   }
   if (!token) {
     console.log("[telegram:deleteMessage]", { chatId, messageId });
@@ -3439,15 +3469,39 @@ async function deleteMessage(token, chatId, messageId, telegramClient, options =
   }, options);
 }
 
-async function answerCallback(token, callbackQueryId, text, telegramClient) {
+async function answerCallback(token, callbackQueryId, text, telegramClient, options = {}) {
   if (telegramClient) {
-    return telegramClient.answerCallbackQuery({ callbackQueryId, text });
+    let request;
+    try {
+      request = telegramClient.answerCallbackQuery({ callbackQueryId, text });
+    } catch (error) {
+      request = Promise.reject(error);
+    }
+    return withPromiseTimeout(
+      request,
+      options.requestTimeoutMs ?? 15_000,
+      "Telegram answerCallbackQuery timed out"
+    );
   }
   if (!token) return { ok: true };
   return telegramRequest(token, "answerCallbackQuery", {
     callback_query_id: callbackQueryId,
     text
-  });
+  }, options);
+}
+
+async function withPromiseTimeout(promise, timeoutMs, message) {
+  let timeoutId;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error(message)), timeoutMs);
+      })
+    ]);
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 async function telegramRequest(token, method, body, options = {}) {

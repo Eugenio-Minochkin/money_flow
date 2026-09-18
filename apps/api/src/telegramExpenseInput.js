@@ -1,4 +1,4 @@
-import { SUPPORTED_CURRENCY_CODES } from "../../../packages/shared/src/currencies.js";
+import { SUPPORTED_CURRENCY_CODES, recognizeCurrencyText } from "../../../packages/shared/src/currencies.js";
 import { localDateTimeToUtc } from "../../../packages/shared/src/time.js";
 
 const MAX_AMOUNT = 1_000_000;
@@ -21,7 +21,7 @@ const EN_MONTHS = new Map([
 ]);
 
 export function parseAmountInput(text, { currentCurrency = "THB" } = {}) {
-  const match = /^(\d+(?:[.,]\d{1,2})?)\s*([a-z]{3})?$/iu.exec(String(text ?? "").trim());
+  const match = /^(\d+(?:[.,]\d{1,2})?)(?:\s+(.+))?$/iu.exec(String(text ?? "").trim());
   if (!match) throw codedError("expense_invalid_amount");
 
   const amount = Number(match[1].replace(",", "."));
@@ -29,7 +29,10 @@ export function parseAmountInput(text, { currentCurrency = "THB" } = {}) {
     throw codedError("expense_invalid_amount");
   }
 
-  const currency = String(match[2] ?? currentCurrency).toUpperCase();
+  const recognizedCurrency = match[2] ? recognizeCurrencyText(match[2]) : null;
+  const currency = match[2]
+    ? (recognizedCurrency.kind === "exact" ? recognizedCurrency.code : null)
+    : String(currentCurrency).toUpperCase();
   if (!SUPPORTED_CURRENCY_CODES.includes(currency)) throw codedError("expense_invalid_currency");
   return { amount, currency };
 }

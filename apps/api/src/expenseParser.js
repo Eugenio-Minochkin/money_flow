@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 
 import { parseExpenseText } from "../../../packages/shared/src/parser.js";
-import { SUPPORTED_CURRENCY_CODES, normalizeCurrency } from "../../../packages/shared/src/currencies.js";
+import { SUPPORTED_CURRENCY_CODES, normalizeCurrency, recognizeCurrencyText } from "../../../packages/shared/src/currencies.js";
 import { CATEGORIES } from "../../../packages/shared/src/categories.js";
 import { localDateKey } from "../../../packages/shared/src/time.js";
 import { normalizeRolloutPercent } from "./parserRollout.js";
@@ -42,6 +42,7 @@ export function createExpenseParser(options = {}) {
       const defaultCurrency = normalizeCurrency(parseOptions.defaultCurrency, "THB");
       const timeZone = parseOptions.timeZone ?? "Asia/Bangkok";
       const shouldRunLocalFastPath = fastPathMode === "enabled" || fastPathMode === "shadow";
+      const shouldGuardExplicitDecimal = hasExplicitDecimalAmount(text);
       const inRollout = fastPathMode === "enabled"
         ? isInLocalFirstRollout({
             userId: parseOptions.rolloutUserId ?? parseOptions.userId,
@@ -66,7 +67,7 @@ export function createExpenseParser(options = {}) {
         ...(Number.isFinite(localEvaluateMs) ? { localEvaluateMs } : {}),
         parserTotalMs: elapsedMs(performanceNow, parserStartedAt)
       });
-      if (shouldRunLocalFastPath || !apiKey || !fetchImpl) {
+      if (shouldRunLocalFastPath || shouldGuardExplicitDecimal || !apiKey || !fetchImpl) {
         const localParseStartedAt = performanceNow();
         try {
           localResult = localParser(text, { now: now(), defaultCurrency, timeZone, maxLocalAmount });
@@ -159,6 +160,7 @@ export function createExpenseParser(options = {}) {
             requestKey: parseOptions.requestKey ?? null
           }) : null
         });
+        parsed.result = preserveExplicitDecimalAmount(text, localResult, localFastPath, parsed.result);
         const parserRoute = resolveLlmParserRoute({ fastPathMode, inRollout, localFastPath, localParserError });
         const shouldCompareShadow = (fastPathMode === "shadow" || parserRoute === "rollout_excluded")
           && isLocalShadowEligible(localFastPath.localAcceptanceLevel);
@@ -528,6 +530,25 @@ function elapsedMs(performanceNow, startedAt) {
 
 function hasLocalCandidate(result) {
   return Array.isArray(result?.expenses) && result.expenses.length > 0;
+}
+
+function preserveExplicitDecimalAmount(text, localResult, localFastPath, llmResult) {
+  const localExpense = localResult?.expenses?.length === 1 ? localResult.expenses[0] : null;
+  const llmExpense = llmResult?.expenses?.length === 1 ? llmResult.expenses[0] : null;
+  const locallySafe = isLocalFallbackAcceptance(localFastPath?.localAcceptanceLevel)
+    || recognizeCurrencyText(text).kind === "exact";
+  if (!hasExplicitDecimalAmount(text)
+    || !locallySafe
+    || !localExpense
+    || !llmExpense) return llmResult;
+  return {
+    ...llmResult,
+    expenses: [{ ...llmExpense, amount: localExpense.amount, currency: localExpense.currency }]
+  };
+}
+
+function hasExplicitDecimalAmount(text) {
+  return (String(text ?? "").match(/(?<!\d)\d+[.,]\d{1,2}(?!\d)/gu) ?? []).length === 1;
 }
 
 function localEvaluationTraceMetadata({ localEvaluationCompleted, localFastPath, localResult }) {

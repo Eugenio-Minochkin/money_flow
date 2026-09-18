@@ -1180,6 +1180,38 @@ test("internal parser timing separates LLM HTTP from decode and normalization", 
   }
 });
 
+test("explicit decimal input cannot be inflated when the LLM drops the separator", async () => {
+  for (const fastPathMode of ["off", "shadow"]) {
+    const parser = createExpenseParser({
+      apiKey: "test-key",
+      fastPathMode,
+      now: () => new Date("2026-09-18T10:00:00+04:00"),
+      fetchImpl: async () => jsonResponse({
+        output_text: JSON.stringify({
+          expenses: [{
+            amount: 655,
+            currency: "GEL",
+            description: "мороженое",
+            category_slug: "food_groceries",
+            tags: [],
+            spent_at: "2026-09-18T10:00:00.000+04:00",
+            budget_impact: "regular",
+            confidence: 0.9,
+            needs_review: false
+          }],
+          notes: []
+        })
+      })
+    });
+
+    for (const input of ["мороженое 6.55 лари", "мороженое 6,55 лари"]) {
+      const parsed = await parser.parse(input, { defaultCurrency: "THB", timeZone: "Asia/Tbilisi" });
+      assert.equal(parsed.expenses[0].amount, 6.55, `${fastPathMode}: ${input}`);
+      assert.equal(parsed.expenses[0].currency, "GEL", `${fastPathMode}: ${input}`);
+    }
+  }
+});
+
 test("OpenAI error returns accepted local result with explicit fallback route", async () => {
   const originalError = console.error;
   console.error = () => {};
