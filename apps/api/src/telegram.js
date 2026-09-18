@@ -1997,7 +1997,7 @@ function parseExpenseEvidenceSessionCallback(data) {
   return { id: parts[1], action: parts[2] };
 }
 
-async function handleExpenseEvidenceSessionCallback({ callback, parsed, repository, expenseEvidenceSessionService, activeEvidenceSessions, token, telegramClient, language, user, trace, now }) {
+async function handleExpenseEvidenceSessionCallback({ callback, parsed, repository, expenseEvidenceSessionService, activeEvidenceSessions, token, telegramClient, language, user, telegramUserId, trace, now }) {
   const chatId = callback.message?.chat?.id;
   if (!expenseEvidenceSessionService || !user || chatId == null) {
     return answerCallback(token, callback.id, evidenceText(language, "unavailable"), telegramClient);
@@ -2042,21 +2042,12 @@ async function handleExpenseEvidenceSessionCallback({ callback, parsed, reposito
   }
   const candidates = await repository.getExpenseEvidenceSessionCandidates?.({ userId: user.id, sessionId: Number(parsed.id) }) ?? [];
   const unresolved = candidates.filter((candidate) => ["ready", "likely_duplicate"].includes(candidate.status));
-  if (parsed.action === "save") {
-    if (!unresolved.length) return answerCallback(token, callback.id, evidenceText(language, "complete"), telegramClient);
-    await expenseEvidenceSessionService.resolve({ userId: user.id, sessionId: Number(parsed.id), actions: unresolved.map((candidate) => ({ candidateId: candidate.candidateId, action: "save" })) });
-    activeEvidenceSessions.delete(evidenceSessionKey(user.id, chatId));
-    return sendTelegramResponse(trace, async () => {
-      await answerCallback(token, callback.id, evidenceText(language, "complete"), telegramClient);
-      return editMessageText(token, chatId, callback.message.message_id, evidenceText(language, "complete"), { inline_keyboard: [] }, telegramClient);
-    });
-  }
-  if (parsed.action === "review") {
+  if (["save", "review"].includes(parsed.action)) {
     const candidate = unresolved[0];
     const imported = candidate && await repository.getExpenseEvidenceImport?.(user.id, candidate.importId);
     if (!imported) return answerCallback(token, callback.id, evidenceText(language, "complete"), telegramClient);
     const importedCandidate = imported.candidates.find((item) => String(item.id) === String(candidate.candidateId));
-    return showExpenseEvidenceCandidate({ callback, imported, candidate: importedCandidate, token, telegramClient, language, trace });
+    return showExpenseEvidenceCandidate({ callback, imported, candidate: importedCandidate, repository, user, telegramUserId, token, telegramClient, language, trace });
   }
   return answerCallback(token, callback.id, evidenceText(language, "unavailable"), telegramClient);
 }
@@ -2076,13 +2067,14 @@ async function handleExpenseEvidenceCallback({ callback, parsed, repository, exp
   }
 
   const ready = imported.candidates.filter((candidate) => candidate.status === "ready");
-  if (parsed.action === "review") return showExpenseEvidenceCandidate({ callback, imported, candidate: ready[0], token, telegramClient, language, trace });
+  const reviewable = imported.candidates.filter((candidate) => ["ready", "likely_duplicate"].includes(candidate.status));
+  if (["save", "review"].includes(parsed.action)) return showExpenseEvidenceCandidate({ callback, imported, candidate: reviewable[0], repository, user, telegramUserId, token, telegramClient, language, trace });
   if (parsed.candidateId && !imported.candidates.some((candidate) => String(candidate.id) === parsed.candidateId && ["ready", "likely_duplicate"].includes(candidate.status))) {
     return answerCallback(token, callback.id, evidenceText(language, "complete"), telegramClient);
   }
 
-  const actions = parsed.action === "save" || parsed.action === "cancel"
-    ? ready.map((candidate) => ({ candidateId: candidate.id, action: parsed.action === "cancel" ? "cancel" : "save" }))
+  const actions = parsed.action === "cancel"
+    ? ready.map((candidate) => ({ candidateId: candidate.id, action: "cancel" }))
     : [{ candidateId: Number(parsed.candidateId), action: parsed.action === "accounted" ? "already_accounted" : "add" }];
   if (!actions.length) return answerCallback(token, callback.id, evidenceText(language, "complete"), telegramClient);
   const result = await expenseEvidenceImportService.resolveImportCandidates({ userId: user.id, importId: parsed.importId, actions });
@@ -2090,7 +2082,7 @@ async function handleExpenseEvidenceCallback({ callback, parsed, repository, exp
   if (parsed.candidateId || !terminal) {
     const refreshed = await repository.getExpenseEvidenceImport(user.id, parsed.importId);
     const candidate = refreshed?.candidates.find((item) => ["ready", "likely_duplicate"].includes(item.status));
-    if (candidate) return showExpenseEvidenceCandidate({ callback, imported: refreshed, candidate, token, telegramClient, language, trace });
+    if (candidate) return showExpenseEvidenceCandidate({ callback, imported: refreshed, candidate, repository, user, telegramUserId, token, telegramClient, language, trace });
   }
   return sendTelegramResponse(trace, async () => {
     await answerCallback(token, callback.id, evidenceText(language, "complete"), telegramClient);
@@ -2098,12 +2090,42 @@ async function handleExpenseEvidenceCallback({ callback, parsed, repository, exp
   });
 }
 
-async function showExpenseEvidenceCandidate({ callback, imported, candidate, token, telegramClient, language, trace }) {
+async function showExpenseEvidenceCandidate({ callback, imported, candidate, repository, user, telegramUserId, token, telegramClient, language, trace }) {
   if (!candidate) return answerCallback(token, callback.id, evidenceText(language, "complete"), telegramClient);
+  const review = await renderExpenseEvidenceCandidateReview({ imported, candidate, repository, user, telegramUserId, language });
+  if (!review) {
+    return sendTelegramResponse(trace, async () => {
+      await answerCallback(token, callback.id, evidenceText(language, "unavailable"), telegramClient);
+      return editMessageText(token, callback.message.chat.id, callback.message.message_id, evidenceText(language, "unavailable"), { inline_keyboard: [] }, telegramClient);
+    });
+  }
   return sendTelegramResponse(trace, async () => {
     await answerCallback(token, callback.id, evidenceText(language, "review"), telegramClient);
-    return editMessageText(token, callback.message.chat.id, callback.message.message_id, evidenceText(language, "candidate"), expenseEvidenceCandidateKeyboard(imported.id, candidate.id, language), telegramClient);
+    return editMessageText(token, callback.message.chat.id, callback.message.message_id, review.text, review.replyMarkup, telegramClient);
   });
+}
+
+async function renderExpenseEvidenceCandidateReview({ imported, candidate, repository, user, telegramUserId, language }) {
+  const draft = candidate.draftId && await repository.getDraftForTelegramUser?.(candidate.draftId, telegramUserId);
+  if (!draft?.items?.length || !["pending", "inbox"].includes(draft.status)) return null;
+  const preview = await renderDraftPreview({ repository, user, items: draft.items, language });
+  const reason = evidenceCandidateReviewReason(candidate, language);
+  return {
+    text: reason ? `${reason}\n\n${preview}` : preview,
+    replyMarkup: expenseEvidenceCandidateKeyboard(imported.id, candidate.id, language)
+  };
+}
+
+function evidenceCandidateReviewReason(candidate, language) {
+  if (!candidate?.dedupeClassification || candidate.dedupeClassification === "new") return "";
+  if (candidate.dedupeClassification === "likely_duplicate") {
+    return language === "ru"
+      ? "⚠️ Похожий расход уже найден. Проверьте, не был ли он учтён."
+      : "⚠️ A matching expense already exists. Check whether it was already accounted for.";
+  }
+  return language === "ru"
+    ? "⚠️ Возможный дубликат. Сверьте сумму, дату и описание."
+    : "⚠️ Possible duplicate. Check the amount, date, and description.";
 }
 
 function evidenceText(language, key) {
@@ -2111,8 +2133,7 @@ function evidenceText(language, key) {
   return ({
     unavailable: ru ? "Импорт недоступен." : "This import is unavailable.",
     complete: ru ? "Импорт обработан." : "Import processed.",
-    review: ru ? "Проверьте расход." : "Review this expense.",
-    candidate: ru ? "Проверьте расход перед сохранением." : "Review this expense before saving."
+    review: ru ? "Проверьте расход." : "Review this expense."
   })[key];
 }
 
@@ -2138,7 +2159,7 @@ export async function handleCallback({ update, repository, token, miniAppUrl, ex
   if (evidenceSessionCallback) {
     return handleExpenseEvidenceSessionCallback({
       callback, parsed: evidenceSessionCallback, repository, expenseEvidenceSessionService, activeEvidenceSessions,
-      token, telegramClient, language, user, trace, now
+      token, telegramClient, language, user, telegramUserId, trace, now
     });
   }
 
@@ -2562,8 +2583,9 @@ async function handleConfirmDraft(trace, token, telegramClient, callback, draftI
       const imported = await repository.getExpenseEvidenceImport?.(user.id, evidenceCandidate.importId);
       const nextCandidate = imported?.candidates.find((candidate) => ["ready", "likely_duplicate"].includes(candidate.status));
       if (nextCandidate) {
-        text = evidenceText(language, "candidate");
-        replyMarkup = expenseEvidenceCandidateKeyboard(imported.id, nextCandidate.id, language);
+        const review = await renderExpenseEvidenceCandidateReview({ imported, candidate: nextCandidate, repository, user, telegramUserId, language });
+        text = review?.text ?? evidenceText(language, "unavailable");
+        replyMarkup = review?.replyMarkup ?? { inline_keyboard: [] };
       } else {
         text = evidenceText(language, "complete");
         replyMarkup = { inline_keyboard: [] };
