@@ -42,7 +42,7 @@ export function createVoiceTranscriber(options = {}) {
       });
       await consumeVoiceUsage?.({
         userId: options.userId,
-        audioDurationSec: Number(voice?.duration) || 0,
+        audioSeconds: Number(voice?.duration) || 0,
         requestKey: options.requestKey ?? null
       });
       return transcribeWithDeepgram({

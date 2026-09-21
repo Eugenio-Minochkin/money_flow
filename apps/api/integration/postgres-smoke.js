@@ -16,6 +16,7 @@ import { createPlannedPaymentReminderService } from "../src/plannedPaymentRemind
 import { processMiniAppQuickCapture } from "../src/quickCapture.js";
 import { processShortcutCapture } from "../src/shortcutCapture.js";
 import { acceptReviewRecovery, previewSmartSaveRecovery, saveSmartSaveRecovery } from "../src/smartSaveRecovery.js";
+import { createVoiceTranscriber } from "../src/voiceTranscriber.js";
 
 const { Pool } = pg;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -112,6 +113,57 @@ test("reserves paid-provider usage once for the same durable request key", async
     [user.id, input.provider]
   );
   assert.deepEqual(stored.rows, [{ request_count: 1, audio_seconds: 42 }]);
+});
+
+test("voice transcription accumulates Telegram duration and blocks Deepgram at the audio limit", async () => {
+  const user = await createSmokeUser(990207);
+  let deepgramCalls = 0;
+  const transcriber = createVoiceTranscriber({
+    telegramBotToken: "telegram-token",
+    deepgramApiKey: "deepgram-key",
+    consumeVoiceUsage: createPaidProviderUsageGate({
+      repository: repo,
+      provider: "deepgram_transcription",
+      windowMs: 86_400_000,
+      maxRequests: 50,
+      maxAudioSeconds: 90
+    }),
+    fetchImpl: async (url) => {
+      const requestUrl = String(url);
+      if (requestUrl.includes("/getFile")) {
+        return smokeJsonResponse({ ok: true, result: { file_path: "voice/file.oga" } });
+      }
+      if (requestUrl.includes("/file/bot")) {
+        return {
+          ok: true,
+          status: 200,
+          async arrayBuffer() { return new Uint8Array([1]).buffer; },
+          async text() { return ""; }
+        };
+      }
+      deepgramCalls += 1;
+      return smokeJsonResponse({ results: { channels: [{ alternatives: [{ transcript: "coffee 70" }] }] } });
+    }
+  });
+
+  assert.equal(await transcriber.transcribeTelegramVoice(
+    { file_id: "voice-1", duration: 60 },
+    { userId: user.id, requestKey: "telegram:990207:880207:1" }
+  ), "coffee 70");
+  await assert.rejects(
+    () => transcriber.transcribeTelegramVoice(
+      { file_id: "voice-2", duration: 31 },
+      { userId: user.id, requestKey: "telegram:990207:880207:2" }
+    ),
+    { code: "paid_provider_limit_reached", provider: "deepgram_transcription" }
+  );
+
+  const stored = await pool.query(
+    "SELECT request_count, audio_seconds FROM paid_provider_usage_windows WHERE user_id = $1 AND provider = 'deepgram_transcription'",
+    [user.id]
+  );
+  assert.deepEqual(stored.rows, [{ request_count: 1, audio_seconds: 60 }]);
+  assert.equal(deepgramCalls, 1);
 });
 
 test("Telegram parsing reserves OpenAI usage for the internal user without changing rollout identity", async () => {
@@ -1365,6 +1417,15 @@ function expenseItem(overrides = {}) {
     tags: overrides.tags ?? [],
     spent_at: overrides.spent_at ?? "2026-06-24T05:00:00.000Z",
     budget_impact: overrides.budget_impact ?? "regular"
+  };
+}
+
+function smokeJsonResponse(body) {
+  return {
+    ok: true,
+    status: 200,
+    async json() { return body; },
+    async text() { return JSON.stringify(body); }
   };
 }
 
