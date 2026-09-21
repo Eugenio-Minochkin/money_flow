@@ -3098,25 +3098,29 @@ test("claims Telegram expense capture by owned chat and message identity", async
   const queries = [];
   const repo = createRepository(fakePool((sql, params) => {
     queries.push({ sql: String(sql), params });
-    return { rows: [{ claim_version: 1 }] };
+    return { rows: [{ capture_id: "36", claim_version: 1, attempt_count: 0 }] };
   }));
 
   const claim = await repo.claimTelegramExpenseCapture(7, 10, 55);
 
-  assert.deepEqual(claim, { state: "claimed", claimVersion: 1 });
+  assert.deepEqual(claim, { state: "claimed", claimVersion: 1, captureId: "36", attemptNumber: 1 });
   assert.match(queries[0].sql, /INSERT INTO telegram_expense_captures/);
+  assert.match(queries[0].sql, /attempt_count = captures\.attempt_count \+ 1/);
   assert.deepEqual(queries[0].params, [7, 10, 55]);
 });
 
 test("reads a completed Telegram capture from request status rather than confirmed draft status", async () => {
   const repo = createRepository(fakePool((sql) => {
     assert.match(String(sql), /telegram_expense_captures/);
-    return { rows: [{ request_status: "completed", id: 42, status: "confirmed", items: "[]" }] };
+    assert.match(String(sql), /captures\.id AS capture_id/);
+    return { rows: [{ request_status: "completed", capture_id: "36", attempt_count: 1, id: 42, status: "confirmed", items: "[]" }] };
   }));
 
   const result = await repo.readTelegramExpenseCapture(7, 10, 55);
 
   assert.equal(result.state, "completed");
+  assert.equal(result.captureId, "36");
+  assert.equal(result.attemptNumber, 2);
   assert.equal(result.draft.id, 42);
   assert.equal(result.draft.status, "confirmed");
 });
@@ -7438,12 +7442,26 @@ test("saveDraftAsExpense rejects a draft changed after prefetch before inserting
 test("reads a terminal Telegram capture failure without making it runnable again", async () => {
   const repo = createRepository(fakePool((sql) => {
     assert.match(String(sql), /last_error_code/);
-    return { rows: [{ request_status: "failed", last_error_code: "telegram_job_timeout" }] };
+    return { rows: [{ request_status: "failed", capture_id: "36", attempt_count: 1, last_error_code: "telegram_job_timeout" }] };
   }));
 
   assert.deepEqual(await repo.readTelegramExpenseCapture(7, 10, 55), {
     state: "failed",
-    errorCode: "telegram_job_timeout"
+    errorCode: "telegram_job_timeout",
+    captureId: "36",
+    attemptNumber: 2
+  });
+});
+
+test("reads an in-flight Telegram capture with the current correlation attempt", async () => {
+  const repo = createRepository(fakePool(() => ({
+    rows: [{ request_status: "processing", capture_id: "36", attempt_count: 2 }]
+  })));
+
+  assert.deepEqual(await repo.readTelegramExpenseCapture(7, 10, 55), {
+    state: "processing",
+    captureId: "36",
+    attemptNumber: 3
   });
 });
 

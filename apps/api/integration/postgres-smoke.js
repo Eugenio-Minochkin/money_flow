@@ -557,6 +557,49 @@ test("Mini App Quick Capture keeps one durable draft and expense across concurre
   assert.equal(reviewReplay.draft.items[0].category_source, "parser");
 });
 
+test("Telegram capture correlation survives a concurrent stale reclaim", async () => {
+  const user = await createSmokeUser(990219);
+  const chatId = 880219;
+  const messageId = 79;
+  const payload = { text: "coffee 70" };
+
+  const initial = await repo.claimTelegramExpenseCapture(user.id, chatId, messageId, payload);
+  assert.equal(initial.state, "claimed");
+  assert.equal(initial.attemptNumber, 1);
+  await pool.query(
+    `UPDATE telegram_expense_captures
+     SET lease_expires_at = now() - interval '1 second'
+     WHERE user_id = $1 AND chat_id = $2 AND message_id = $3`,
+    [user.id, chatId, messageId]
+  );
+
+  const reclaimed = await Promise.all([
+    repo.claimTelegramExpenseCapture(user.id, chatId, messageId, payload),
+    repo.claimTelegramExpenseCapture(user.id, chatId, messageId, payload)
+  ]);
+  const claimed = reclaimed.find((capture) => capture.state === "claimed");
+  const processing = reclaimed.find((capture) => capture.state === "processing");
+
+  assert.ok(claimed);
+  assert.ok(processing);
+  assert.equal(claimed.captureId, initial.captureId);
+  assert.equal(processing.captureId, initial.captureId);
+  assert.equal(claimed.attemptNumber, 2);
+  assert.equal(processing.attemptNumber, 2);
+  const stored = await pool.query(
+    `SELECT attempt_count FROM telegram_expense_captures
+     WHERE user_id = $1 AND chat_id = $2 AND message_id = $3`,
+    [user.id, chatId, messageId]
+  );
+  assert.equal(stored.rows[0].attempt_count, 1);
+
+  await repo.failTelegramExpenseCapture(user.id, chatId, messageId, claimed.claimVersion, "smoke_terminal_failure");
+  const failed = await repo.readTelegramExpenseCapture(user.id, chatId, messageId);
+  assert.equal(failed.state, "failed");
+  assert.equal(failed.captureId, initial.captureId);
+  assert.equal(failed.attemptNumber, 2);
+});
+
 test("Smart Save replays Telegram delivery and safely recovers every unresolved draft", async () => {
   const telegramUserId = 990018;
   const user = await createSmokeUser(telegramUserId);
