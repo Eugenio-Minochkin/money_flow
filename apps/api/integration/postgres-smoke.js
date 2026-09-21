@@ -11,11 +11,13 @@ import { createMiniAppQuickCaptureDraft, createShortcutExpenseDraft, createTeleg
 import { createExpenseParser } from "../src/expenseParser.js";
 import { createExpenseEvidenceAnalyzer } from "../src/expenseEvidenceAnalyzer.js";
 import { createExpenseEvidenceImportService } from "../src/expenseEvidenceImportService.js";
+import { createExpenseEvidenceSessionService } from "../src/expenseEvidenceSessionService.js";
 import { createPaidProviderUsageGate } from "../src/paidProviderUsage.js";
 import { createPlannedPaymentReminderService } from "../src/plannedPaymentReminderService.js";
 import { processMiniAppQuickCapture } from "../src/quickCapture.js";
 import { processShortcutCapture } from "../src/shortcutCapture.js";
 import { acceptReviewRecovery, previewSmartSaveRecovery, saveSmartSaveRecovery } from "../src/smartSaveRecovery.js";
+import { createTelegramBot } from "../src/telegram.js";
 import { createVoiceTranscriber } from "../src/voiceTranscriber.js";
 
 const { Pool } = pg;
@@ -309,6 +311,56 @@ test("image import reserves once for the internal user and blocks an exhausted r
     [user.id]
   )).rows, [{ status: "failed", failure_code: "analysis_failed" }]);
   assert.equal((await pool.query("SELECT COUNT(*)::int AS count FROM drafts WHERE user_id = $1", [user.id])).rows[0].count, 0);
+});
+
+test("Telegram catch-up start links a ready import through the session service and PostgreSQL repository", async () => {
+  const telegramUserId = 990205;
+  const chatId = 880205;
+  const user = await createSmokeUser(telegramUserId);
+  const draft = await repo.createDraft(user.id, "catch-up coffee", [expenseItem({ description: "catch-up coffee", needs_review: true })]);
+  const imported = (await pool.query(
+    `INSERT INTO expense_evidence_imports
+       (user_id, source_chat_id, source_message_id, image_bytes_hmac, telegram_file_hmac, candidate_set_hmac, status, completed_at)
+     VALUES ($1, $2, 77, 'catch-up-image', 'catch-up-file', 'catch-up-candidates', 'ready', now())
+     RETURNING id`,
+    [user.id, chatId]
+  )).rows[0];
+  await pool.query(
+    `INSERT INTO expense_evidence_candidates
+       (import_id, ordinal, evidence_type, draft_id, status, dedupe_classification)
+     VALUES ($1, 0, 'receipt', $2, 'ready', 'new')`,
+    [imported.id, draft.id]
+  );
+  const messages = [];
+  const telegramClient = {
+    async answerCallbackQuery() { return { ok: true }; },
+    async editMessageText(message) { messages.push(message); return { ok: true }; }
+  };
+  const importService = {};
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: repo,
+    expenseEvidenceImportService: importService,
+    expenseEvidenceSessionService: createExpenseEvidenceSessionService({ repository: repo, importService }),
+    telegramClient,
+    now: () => new Date("2026-09-05T12:00:00.000Z")
+  });
+
+  await bot.handleUpdate({ callback_query: {
+    id: "catch-up-start",
+    data: `es:${imported.id}:start`,
+    from: { id: telegramUserId },
+    message: { chat: { id: chatId, type: "private" }, message_id: 21 }
+  } });
+
+  assert.equal(messages.at(-1).text, "Add photos, then tap Finish.");
+  const linked = await pool.query(
+    `SELECT sessions.user_id, sessions.source_chat_id, links.import_id
+     FROM expense_evidence_sessions AS sessions
+     JOIN expense_evidence_session_imports AS links ON links.session_id = sessions.id`
+  );
+  assert.deepEqual(linked.rows, [{ user_id: user.id, source_chat_id: String(chatId), import_id: imported.id }]);
 });
 
 test("image evidence duplicate rows use one user timezone across stored expenses and drafts", async () => {
