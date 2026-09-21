@@ -231,12 +231,13 @@ test("stale report delivery retries once and terminalizes an exhausted unknown o
   });
   const summary = await service.runDueReports();
 
-  assert.equal(summary.sent, 1);
-  assert.equal(sends, 1);
   const stored = await pool.query(
     `SELECT user_id, status, attempt_count, error_code, telegram_message_id
      FROM report_deliveries ORDER BY user_id`
   );
+  const diagnostic = JSON.stringify({ summary, sends, rows: stored.rows });
+  assert.equal(summary.sent, 1, diagnostic);
+  assert.equal(sends, 1, diagnostic);
   assert.deepEqual(stored.rows, [
     { user_id: retryUser.id, status: "sent", attempt_count: 2, error_code: null, telegram_message_id: "701" },
     { user_id: exhaustedUser.id, status: "failed", attempt_count: 2, error_code: "delivery_outcome_unknown", telegram_message_id: null }
