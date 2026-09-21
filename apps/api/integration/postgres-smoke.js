@@ -14,6 +14,7 @@ import { createExpenseEvidenceImportService } from "../src/expenseEvidenceImport
 import { createPaidProviderUsageGate } from "../src/paidProviderUsage.js";
 import { createPlannedPaymentReminderService } from "../src/plannedPaymentReminderService.js";
 import { processMiniAppQuickCapture } from "../src/quickCapture.js";
+import { createReportService } from "../src/reportService.js";
 import { processShortcutCapture } from "../src/shortcutCapture.js";
 import { acceptReviewRecovery, previewSmartSaveRecovery, saveSmartSaveRecovery } from "../src/smartSaveRecovery.js";
 import { createVoiceTranscriber } from "../src/voiceTranscriber.js";
@@ -36,7 +37,7 @@ test.before(async () => {
   const applied = await pool.query("SELECT filename FROM schema_migrations ORDER BY filename");
   assert.deepEqual(
     applied.rows.map((row) => row.filename),
-    ["001_initial.sql", "002_draft_confirm_flow.sql", "003_budget_topups.sql", "004_report_deliveries.sql", "005_exchange_rates.sql", "006_feedback.sql", "007_account_deletion.sql", "008_product_analytics.sql", "009_telegram_expense_editor.sql", "010_telegram_editor_prompt_message.sql", "011_planned_expense_disabled_at.sql", "012_planned_expense_starts_on.sql", "013_planned_payment_reminders.sql", "014_quick_access_tokens.sql", "015_quick_capture_safety.sql", "016_quick_access_token_single_active.sql", "017_telegram_expense_capture_safety.sql", "018_display_currency_follows_base.sql", "019_paid_provider_usage.sql", "020_expense_evidence_imports.sql", "021_expense_evidence_sessions.sql", "022_telegram_capture_inbox.sql", "023_telegram_capture_terminal_failures.sql", "024_paid_provider_image_analysis.sql"]
+    ["001_initial.sql", "002_draft_confirm_flow.sql", "003_budget_topups.sql", "004_report_deliveries.sql", "005_exchange_rates.sql", "006_feedback.sql", "007_account_deletion.sql", "008_product_analytics.sql", "009_telegram_expense_editor.sql", "010_telegram_editor_prompt_message.sql", "011_planned_expense_disabled_at.sql", "012_planned_expense_starts_on.sql", "013_planned_payment_reminders.sql", "014_quick_access_tokens.sql", "015_quick_capture_safety.sql", "016_quick_access_token_single_active.sql", "017_telegram_expense_capture_safety.sql", "018_display_currency_follows_base.sql", "019_paid_provider_usage.sql", "020_expense_evidence_imports.sql", "021_expense_evidence_sessions.sql", "022_telegram_capture_inbox.sql", "023_telegram_capture_terminal_failures.sql", "024_paid_provider_image_analysis.sql", "025_report_delivery_recovery.sql"]
   );
 
   const sessions = await pool.query(`
@@ -164,6 +165,64 @@ test("voice transcription accumulates Telegram duration and blocks Deepgram at t
   );
   assert.deepEqual(stored.rows, [{ request_count: 1, audio_seconds: 60 }]);
   assert.equal(deepgramCalls, 1);
+});
+
+test("stale report delivery retries once and terminalizes an exhausted unknown outcome", async () => {
+  const current = new Date("2026-07-07T02:30:00Z");
+  const retryUser = await createSmokeUser(990208);
+  await saveExpense(retryUser.id, 990208, { spent_at: "2026-07-01T05:00:00Z" });
+  const period = {
+    periodKey: "2026-W27",
+    periodStartUtc: new Date("2026-06-28T17:00:00Z"),
+    periodEndUtc: new Date("2026-07-05T17:00:00Z"),
+    timezoneUsed: "Asia/Bangkok"
+  };
+  await repo.createReportDelivery({
+    userId: retryUser.id,
+    reportType: "weekly",
+    ...period,
+    status: "pending",
+    generatedAt: new Date("2026-07-06T02:30:00Z")
+  });
+  await pool.query(
+    "UPDATE report_deliveries SET updated_at = $2 WHERE user_id = $1",
+    [retryUser.id, new Date(current.getTime() - 20 * 60_000)]
+  );
+
+  const exhaustedUser = await createSmokeUser(990209);
+  await repo.createReportDelivery({
+    userId: exhaustedUser.id,
+    reportType: "weekly",
+    ...period,
+    status: "pending",
+    generatedAt: new Date("2026-07-06T02:30:00Z")
+  });
+  await pool.query(
+    "UPDATE report_deliveries SET attempt_count = 2, updated_at = $2 WHERE user_id = $1",
+    [exhaustedUser.id, new Date(current.getTime() - 20 * 60_000)]
+  );
+
+  let sends = 0;
+  const service = createReportService({
+    repository: repo,
+    now: () => current,
+    sendMessage: async () => {
+      sends += 1;
+      return { message_id: 700 + sends };
+    }
+  });
+  const summary = await service.runDueReports();
+
+  assert.equal(summary.sent, 1);
+  assert.equal(sends, 1);
+  const stored = await pool.query(
+    `SELECT user_id, status, attempt_count, error_code, telegram_message_id
+     FROM report_deliveries ORDER BY user_id`
+  );
+  assert.deepEqual(stored.rows, [
+    { user_id: retryUser.id, status: "sent", attempt_count: 2, error_code: null, telegram_message_id: "701" },
+    { user_id: exhaustedUser.id, status: "failed", attempt_count: 2, error_code: "delivery_outcome_unknown", telegram_message_id: null }
+  ]);
 });
 
 test("Telegram parsing reserves OpenAI usage for the internal user without changing rollout identity", async () => {
