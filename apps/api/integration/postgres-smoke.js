@@ -265,23 +265,20 @@ test("Telegram catch-up start links a ready import through the session service a
   const telegramUserId = 990205;
   const chatId = 880205;
   const user = await createSmokeUser(telegramUserId);
-  const claim = await repo.claimExpenseEvidenceImport(user.id, chatId, 77);
-  const imported = await repo.completeExpenseEvidenceImport({
-    userId: user.id,
-    chatId,
-    messageId: 77,
-    claimVersion: claim.claimVersion,
-    imageBytesHmac: "catch-up-image",
-    telegramFileHmac: "catch-up-file",
-    candidateSetHmac: "catch-up-candidates",
-    candidates: [{
-      ordinal: 0,
-      evidenceType: "receipt",
-      dedupeClassification: "new",
-      dedupeReasonCode: null,
-      items: [expenseItem({ description: "catch-up coffee", needs_review: true })]
-    }]
-  });
+  const draft = await repo.createDraft(user.id, "catch-up coffee", [expenseItem({ description: "catch-up coffee", needs_review: true })]);
+  const imported = (await pool.query(
+    `INSERT INTO expense_evidence_imports
+       (user_id, source_chat_id, source_message_id, image_bytes_hmac, telegram_file_hmac, candidate_set_hmac, status, completed_at)
+     VALUES ($1, $2, 77, 'catch-up-image', 'catch-up-file', 'catch-up-candidates', 'ready', now())
+     RETURNING id`,
+    [user.id, chatId]
+  )).rows[0];
+  await pool.query(
+    `INSERT INTO expense_evidence_candidates
+       (import_id, ordinal, evidence_type, draft_id, status, dedupe_classification)
+     VALUES ($1, 0, 'receipt', $2, 'ready', 'new')`,
+    [imported.id, draft.id]
+  );
   const messages = [];
   const telegramClient = {
     async answerCallbackQuery() { return { ok: true }; },
