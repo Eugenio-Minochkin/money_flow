@@ -125,6 +125,15 @@ test("report delivery migration creates universal delivery ledger", async () => 
   assert.match(sql, /UNIQUE\(user_id, report_type, period_key\)/i);
 });
 
+test("report delivery recovery migration adds a bounded attempt counter", async () => {
+  const dir = resolve(dirname(fileURLToPath(import.meta.url)), "..", "migrations");
+  const sql = await readFile(resolve(dir, "025_report_delivery_recovery.sql"), "utf8");
+
+  assert.match(sql, /ADD COLUMN IF NOT EXISTS attempt_count INTEGER NOT NULL DEFAULT 1/i);
+  assert.match(sql, /CHECK \(attempt_count >= 0\)/i);
+  assert.doesNotMatch(sql, /UPDATE report_deliveries/i);
+});
+
 test("exchange rate migration creates persistent pair-date cache", async () => {
   const dir = resolve(dirname(fileURLToPath(import.meta.url)), "..", "migrations");
   const sql = await readFile(resolve(dir, "005_exchange_rates.sql"), "utf8");

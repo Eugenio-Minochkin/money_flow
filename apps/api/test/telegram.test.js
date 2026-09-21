@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 
 import { parseAdminTelegramIds } from "../src/adminAccess.js";
 import { createExpenseParser } from "../src/expenseParser.js";
+import { createExpenseEvidenceSessionService } from "../src/expenseEvidenceSessionService.js";
 import { createTelegramBot, processQueuedMessage, sendTelegramMessage, sendWeeklyReports } from "../src/telegram.js";
 import { buildTelegramCommandMenu } from "../src/telegramCommands.js";
 import { CategoryRequiredError, DraftCanceledError } from "../src/repository.js";
@@ -2851,29 +2852,109 @@ test("starting a catch-up session links the Phase 1 import and collects the next
   repo.getExpenseEvidenceImport = async (userId, importId) => userId === 1 && importId === "77"
     ? { id: 77, candidates: [{ id: 5, status: "ready", draftId: 44 }] }
     : null;
+  repo.startOrResumeExpenseEvidenceSession = async (input) => {
+    assert.deepEqual(input, { userId: 1, chatId: 10, ttlMs: 900_000 });
+    return { state: "started", id: 41, expiresAt: new Date("2026-09-05T12:15:00.000Z") };
+  };
+  repo.linkExpenseEvidenceImportToSession = async (input) => {
+    linked.push(input);
+    return { state: "linked" };
+  };
+  const expenseEvidenceImportService = {
+    async importImage(input) { imports.push(input); return { state: "ready", importId: 78, evidenceType: "receipt", candidates: [{ ordinal: 0 }] }; }
+  };
   const bot = createTelegramBot({
     token: "test-token", miniAppUrl: "http://localhost:3000", repository: repo,
     telegramClient: captureTelegramClient(messages),
-    expenseEvidenceImportService: {
-      async importImage(input) { imports.push(input); return { state: "ready", importId: 78, evidenceType: "receipt", candidates: [{ ordinal: 0 }] }; }
-    },
-    expenseEvidenceSessionService: {
-      async startOrResume(input) { assert.deepEqual(input, { userId: 1, chatId: 10 }); return { state: "started", id: 41, expiresAt: new Date("2026-09-05T12:15:00.000Z") }; },
-      async linkCompletedImport(input) { linked.push(input); return { state: "linked" }; }
-    },
+    expenseEvidenceImportService,
+    expenseEvidenceSessionService: createExpenseEvidenceSessionService({ repository: repo, importService: expenseEvidenceImportService }),
     now: () => new Date("2026-09-05T12:00:00.000Z")
   });
 
   await bot.handleUpdate({ callback_query: { id: "session-start", data: "es:77:start", from: { id: 100 }, message: { chat: { id: 10 }, message_id: 21 } } });
-  assert.deepEqual(linked, [{ userId: 1, chatId: 10, sessionId: 41, imported: { id: 77, state: "ready" } }]);
+  assert.deepEqual(linked, [{ userId: 1, chatId: 10, sessionId: 41, importId: 77 }]);
   assert.equal(messages.at(-1).text, "Добавьте фото, затем нажмите «Готово».");
   assert.deepEqual(messages.at(-1).replyMarkup.inline_keyboard.flat().map((button) => button.callback_data), ["es:41:add", "es:41:finish", "es:41:cancel"]);
 
   await bot.handleUpdate({ message: { chat: { id: 10 }, from: { id: 100, first_name: "M" }, message_id: 22, photo: [{ file_id: "next-photo" }] } });
   assert.equal(imports.length, 1);
-  assert.deepEqual(linked.at(-1), { userId: 1, chatId: 10, sessionId: 41, imported: { state: "ready", importId: 78, evidenceType: "receipt", candidates: [{ ordinal: 0 }] } });
+  assert.deepEqual(linked.at(-1), { userId: 1, chatId: 10, sessionId: 41, importId: 78 });
   assert.equal(messages.at(-1).text, "Фото добавлено. Добавьте ещё или нажмите «Готово».");
   assert.deepEqual(messages.at(-1).replyMarkup.inline_keyboard.flat().map((button) => button.callback_data), ["es:41:add", "es:41:finish", "es:41:cancel"]);
+});
+
+test("catch-up review advances across linked imports instead of hiding unresolved candidates", async () => {
+  const repo = fakeRepository();
+  const messages = [];
+  const linkedImportIds = [];
+  const imports = new Map([
+    [77, { id: 77, candidates: [{ id: 5, status: "ready", draftId: 44 }] }],
+    [78, { id: 78, candidates: [{ id: 6, status: "ready", draftId: 45 }] }]
+  ]);
+  repo.getExpenseEvidenceImport = async (userId, importId) => userId === 1 ? imports.get(Number(importId)) ?? null : null;
+  repo.getDraftForTelegramUser = async (draftId) => ({
+    id: draftId,
+    status: "pending",
+    items: [{ amount: draftId === 44 ? 70 : 125, currency: "THB", description: draftId === 44 ? "coffee" : "next lunch", category_slug: "food_cafe", spent_at: "2026-08-14T12:00:00.000Z", needs_review: true }]
+  });
+  repo.startOrResumeExpenseEvidenceSession = async () => ({ state: "started", id: 41, expiresAt: new Date("2026-09-05T12:15:00.000Z") });
+  repo.linkExpenseEvidenceImportToSession = async ({ importId }) => {
+    linkedImportIds.push(importId);
+    return { state: "linked" };
+  };
+  repo.finishExpenseEvidenceSession = async () => ({ state: "ready", id: 41 });
+  repo.getExpenseEvidenceSessionCandidates = async () => linkedImportIds.flatMap((importId, importOrdinal) =>
+    imports.get(importId).candidates.map((candidate, candidateOrdinal) => ({
+      sessionId: 41,
+      importId,
+      importOrdinal,
+      candidateId: candidate.id,
+      candidateOrdinal,
+      draftId: candidate.draftId,
+      status: candidate.status
+    }))
+  );
+  let failFirstResolution = true;
+  const expenseEvidenceImportService = {
+    async importImage() { return { state: "ready", importId: 78, evidenceType: "receipt", candidates: [{ ordinal: 0 }] }; },
+    async resolveImportCandidates({ importId, actions }) {
+      const imported = imports.get(Number(importId));
+      const candidate = imported.candidates.find((item) => item.id === actions[0].candidateId);
+      if (failFirstResolution) {
+        failFirstResolution = false;
+        return { outcomes: [{ candidateId: candidate.id, state: "failed" }] };
+      }
+      candidate.status = "saved";
+      return { outcomes: [{ candidateId: candidate.id, state: "saved" }] };
+    }
+  };
+  const bot = createTelegramBot({
+    token: "test-token", miniAppUrl: "http://localhost:3000", repository: repo,
+    telegramClient: captureTelegramClient(messages), expenseEvidenceImportService,
+    expenseEvidenceSessionService: createExpenseEvidenceSessionService({ repository: repo, importService: expenseEvidenceImportService }),
+    now: () => new Date("2026-09-05T12:00:00.000Z")
+  });
+  const callback = (id, data) => bot.handleUpdate({ callback_query: { id, data, from: { id: 100 }, message: { chat: { id: 10 }, message_id: 21 } } });
+
+  await callback("start", "es:77:start");
+  await bot.handleUpdate({ message: { chat: { id: 10 }, from: { id: 100, first_name: "M" }, message_id: 22, photo: [{ file_id: "next-photo" }] } });
+  await callback("finish", "es:41:finish");
+  await callback("review", "es:41:review");
+  await callback("add-first", "ei:77:5:add");
+
+  assert.match(messages.at(-1).text, /coffee/);
+  assert.equal(messages.at(-1).replyMarkup.inline_keyboard[0][1].callback_data, "ei:77:5:add");
+
+  await callback("retry-first", "ei:77:5:add");
+
+  assert.match(messages.at(-1).text, /next lunch/);
+  assert.deepEqual(messages.at(-1).replyMarkup.inline_keyboard.flat().map((button) => button.callback_data), [
+    "ei:78:6:accounted", "ei:78:6:add", "ei:78:6:edit"
+  ]);
+
+  await callback("add-second", "ei:78:6:add");
+  assert.equal(messages.at(-1).text, "Импорт обработан.");
+  assert.deepEqual(messages.at(-1).replyMarkup, { inline_keyboard: [] });
 });
 
 test("catch-up finish shows aggregate-only preview and a legacy batch-save callback opens visible review", async () => {

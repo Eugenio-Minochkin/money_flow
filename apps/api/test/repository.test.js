@@ -19,6 +19,7 @@ test("photo candidate resolves cross-currency FX before its atomic transaction b
       const text = String(sql);
       if (text === "BEGIN") { inTransaction = true; return { rows: [] }; }
       if (text === "COMMIT" || text === "ROLLBACK") { inTransaction = false; return { rows: [] }; }
+      if (text.includes("SELECT drafts.items")) return { rows: [draft] };
       if (text.includes("FROM expense_evidence_candidates") && text.includes("FOR UPDATE")) return { rows: [{ candidate_id: "7", candidate_status: "ready", draft_id: "42", telegram_user_id: "100" }] };
       if (text.includes("FROM expense_evidence_candidates")) return { rows: [{ candidate_id: "7", candidate_status: "ready", draft_id: "42", telegram_user_id: "100" }] };
       if (text.includes("FROM drafts JOIN users")) return { rows: [draft] };
@@ -2114,7 +2115,8 @@ test("creates report deliveries idempotently with JSON metadata", async () => {
     null,
     null,
     null,
-    JSON.stringify({ total_spent: 100 })
+    JSON.stringify({ total_spent: 100 }),
+    1
   ]);
 });
 
@@ -2142,8 +2144,11 @@ test("claims report delivery by inserting or updating retryable rows to pending"
   assert.deepEqual(delivery.metadata, { total_spent: 100 });
   assert.match(queries[0].sql, /INSERT INTO report_deliveries/);
   assert.match(queries[0].sql, /ON CONFLICT \(user_id, report_type, period_key\) DO UPDATE/);
-  assert.match(queries[0].sql, /WHERE report_deliveries.status = 'failed' OR \$9 = true/);
-  assert.equal(queries[0].params[8], false);
+  assert.match(queries[0].sql, /attempt_count = report_deliveries\.attempt_count \+ 1/);
+  assert.match(queries[0].sql, /report_deliveries\.updated_at <= \$9/);
+  assert.match(queries[0].sql, /report_deliveries\.attempt_count < \$11/);
+  assert.equal(queries[0].params[9], false);
+  assert.equal(queries[0].params[10], 2);
 });
 
 test("force claim can update any existing report delivery to pending", async () => {
@@ -2165,8 +2170,43 @@ test("force claim can update any existing report delivery to pending", async () 
     metadata: {}
   });
 
-  assert.match(queries[0].sql, /WHERE report_deliveries.status = 'failed' OR \$9 = true/);
-  assert.equal(queries[0].params[8], true);
+  assert.match(queries[0].sql, /WHERE \$10 = true/);
+  assert.equal(queries[0].params[9], true);
+});
+
+test("lists retryable stale report deliveries and terminalizes exhausted unknown outcomes", async () => {
+  const queries = [];
+  const staleBefore = new Date("2026-07-07T02:15:00Z");
+  const repo = createRepository(fakePool((sql, params) => {
+    const query = String(sql);
+    queries.push({ sql: query, params });
+    if (query.startsWith("UPDATE report_deliveries")) return { rows: [] };
+    if (query.includes("to_jsonb(users) AS report_user")) {
+      return { rows: [{
+        report_type: "weekly",
+        period_key: "2026-W27",
+        period_start_utc: new Date("2026-06-29T00:00:00Z"),
+        period_end_utc: new Date("2026-07-06T00:00:00Z"),
+        timezone_used: "UTC",
+        report_user: { id: 1, telegram_user_id: 100, timezone: "UTC" }
+      }] };
+    }
+    return { rows: [] };
+  }));
+
+  const deliveries = await repo.listStalePendingReportDeliveries({ staleBefore, maxAttempts: 2, limit: 100 });
+
+  assert.equal(deliveries.length, 1);
+  assert.equal(deliveries[0].reportType, "weekly");
+  assert.equal(deliveries[0].period.periodKey, "2026-W27");
+  assert.equal(deliveries[0].user.id, 1);
+  assert.match(queries[0].sql, /status = 'failed'/);
+  assert.match(queries[0].sql, /error_code = 'delivery_outcome_unknown'/);
+  assert.match(queries[0].sql, /attempt_count >= \$2/);
+  assert.match(queries[1].sql, /status = 'pending'/);
+  assert.match(queries[1].sql, /attempt_count < \$2/);
+  assert.match(queries[1].sql, /LIMIT \$3/);
+  assert.deepEqual(queries[1].params, [staleBefore, 2, 100]);
 });
 
 test("updates report deliveries as sent failed and skipped", async () => {
@@ -3125,7 +3165,7 @@ test("reads a completed Telegram capture from request status rather than confirm
   assert.equal(result.draft.status, "confirmed");
 });
 
-test("lists every unresolved pending and inbox draft without a recovery limit", async () => {
+test("lists unresolved drafts without evidence already marked as accounted", async () => {
   const queries = [];
   const repo = createRepository(fakePool((sql, params) => {
     queries.push({ sql: String(sql), params });
@@ -3139,6 +3179,7 @@ test("lists every unresolved pending and inbox draft without a recovery limit", 
 
   assert.deepEqual(drafts.map((draft) => draft.status), ["pending", "inbox"]);
   assert.match(queries[0].sql, /drafts\.status IN \('pending', 'inbox'\)/);
+  assert.match(queries[0].sql, /NOT EXISTS[\s\S]*expense_evidence_candidates[\s\S]*already_accounted/);
   assert.doesNotMatch(queries[0].sql, /LIMIT/);
   assert.deepEqual(queries[0].params, [100]);
 });
@@ -6679,6 +6720,7 @@ test("expense evidence resolve locks the owned candidate and marks it already ac
       if (query.includes("FROM expense_evidence_candidates") && query.includes("FOR UPDATE")) {
         return { rows: [{ candidate_id: 8, candidate_status: "ready", draft_id: 12 }] };
       }
+      if (query.startsWith("UPDATE drafts SET status = 'cancelled'")) return { rowCount: 1, rows: [{ id: 12 }] };
       if (query.startsWith("UPDATE expense_evidence_candidates")) return { rows: [{ id: 8 }] };
       throw new Error(`Unexpected SQL: ${query}`);
     },
@@ -6691,7 +6733,38 @@ test("expense evidence resolve locks the owned candidate and marks it already ac
 
   assert.deepEqual(result, { state: "already_accounted", draftId: 12 });
   assert.ok(statements.some(({ query }) => query.includes("FOR UPDATE")));
+  assert.ok(statements.some(({ query }) => query.startsWith("UPDATE drafts SET status = 'cancelled'")));
   assert.ok(statements.some(({ query }) => query.startsWith("UPDATE expense_evidence_candidates")));
+  assert.ok(
+    statements.findIndex(({ query }) => query.includes("FROM expense_evidence_candidates") && query.includes("FOR UPDATE"))
+      < statements.findIndex(({ query }) => query.startsWith("UPDATE drafts SET status = 'cancelled'"))
+  );
+});
+
+test("already-accounted resolution reconciles to saved when a concurrent draft confirmation won", async () => {
+  const statements = [];
+  const client = {
+    async query(sql) {
+      const query = String(sql);
+      statements.push(query);
+      if (["BEGIN", "COMMIT", "ROLLBACK"].includes(query)) return { rows: [] };
+      if (query.includes("FROM expense_evidence_candidates") && query.includes("FOR UPDATE")) {
+        return { rows: [{ candidate_id: 8, candidate_status: "ready", draft_id: 12 }] };
+      }
+      if (query.startsWith("UPDATE drafts SET status = 'cancelled'")) return { rowCount: 0, rows: [] };
+      if (query.startsWith("SELECT status FROM drafts")) return { rows: [{ status: "confirmed" }] };
+      if (query.startsWith("UPDATE expense_evidence_candidates SET status = 'saved'")) return { rows: [{ id: 8 }] };
+      throw new Error(`Unexpected SQL: ${query}`);
+    },
+    release() {}
+  };
+  const repo = createRepository({ async connect() { return client; } });
+
+  const result = await repo.resolveExpenseEvidenceCandidate({ userId: 2, importId: 7, candidateId: 8, action: "already_accounted" });
+
+  assert.deepEqual(result, { state: "saved", draftId: 12, alreadySaved: true });
+  assert.ok(statements.some((query) => query.startsWith("UPDATE expense_evidence_candidates SET status = 'saved'")));
+  assert.equal(statements.at(-1), "COMMIT");
 });
 
 test("expense evidence save failure returns a reviewing candidate to ready for retry", async () => {
@@ -7631,6 +7704,42 @@ test("saveDraftAsExpense throws DraftCanceledError on a cancelled draft", async 
   repo.dashboard = async () => ({ snapshot: {} });
 
   await assert.rejects(() => repo.saveDraftAsExpense(7, 100), (err) => err instanceof DraftCanceledError);
+});
+
+test("saveDraftAsExpense blocks a legacy open draft whose evidence is already accounted", async () => {
+  const draftRow = {
+    id: 7,
+    user_id: 1,
+    status: "pending",
+    base_currency: "THB",
+    items: [{ amount: 80, currency: "THB", description: "coffee", category_slug: "food_cafe", needs_review: false, category_source: "parser", spent_at: "2026-06-25T10:00:00Z" }]
+  };
+  const queries = [];
+  const client = {
+    async query(sql) {
+      const query = String(sql);
+      queries.push(query);
+      if (["BEGIN", "COMMIT", "ROLLBACK"].includes(query)) return { rows: [] };
+      if (query.includes("FROM drafts") && query.includes("FOR UPDATE")) return { rows: [draftRow] };
+      if (query.includes("FROM expense_evidence_candidates")) return { rows: [{ candidate_status: "already_accounted" }] };
+      if (query.includes("INSERT INTO expenses")) return { rows: [{ id: 100 }] };
+      return { rows: [] };
+    },
+    release() {}
+  };
+  const repo = createRepository({ ...fakePool(() => ({ rows: [] })), async connect() { return client; } });
+
+  await assert.rejects(
+    () => repo.saveDraftAsExpense(7, 100),
+    (error) => error instanceof repositoryModule.DraftCanceledError
+  );
+
+  assert.equal(queries.some((query) => query.includes("INSERT INTO expenses")), false);
+  assert.ok(queries.includes("ROLLBACK"));
+  const candidateLockIndex = queries.findIndex((query) => query.includes("FROM expense_evidence_candidates") && query.includes("FOR UPDATE OF candidates"));
+  const draftLockIndex = queries.findIndex((query) => query.includes("FROM drafts") && query.includes("FOR UPDATE"));
+  assert.ok(candidateLockIndex >= 0);
+  assert.equal(draftLockIndex, -1);
 });
 
 test("saveDraftAsExpense blocks parser-provided other even if needs_review is accidentally false", async () => {

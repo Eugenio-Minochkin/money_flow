@@ -10,6 +10,8 @@ Capture-correlation coverage must prove that the durable capture row keeps one o
 
 Expense-evidence quota coverage must prove that download/validation failures consume nothing, the internal `users.id` reaches the image-analysis paid-provider gate, quota exhaustion prevents the OpenAI request and candidate creation, and concurrent/replayed Telegram message identity produces one durable reservation. Each distinct image call in a catch-up session consumes one image-analysis unit; CSV export is outside this allowance.
 
+CSV export coverage must prove that untrusted text beginning with `=`, `+`, `-`, or `@`, including after leading whitespace or control characters, is emitted as text rather than a spreadsheet formula while ordinary amounts, dates, quoting, and delimiters remain unchanged.
+
 Expense-evidence time coverage must prove that a recognized local date/time is converted with the user's IANA timezone before draft persistence, date-only evidence stays on its local calendar day, invalid or DST-gap/overlap values remain reviewable without an invented instant, previews render in the user's timezone, and duplicate checks use the same timezone for both saved expenses and unresolved drafts.
 
 Expense-evidence review coverage must prove that aggregate photo/session summaries have no save action, legacy summary-save callbacks open visible review without saving, candidate financial actions are shown only with the rendered owned unresolved draft, duplicate reasons are visible, and missing or terminal drafts clear the keyboard instead of leaving a stale confirmation path.
@@ -41,7 +43,7 @@ Expense-evidence review coverage must prove that aggregate photo/session summari
 - Currency rounding and display currencies.
 - Budget top-up confirm/undo idempotency, current-day snapshot invalidation, and reserve budget synchronization.
 - Budget top-up month boundaries: current-month confirmation is allowed, previous-month button confirmation is rejected, and no leftover/top-up rolls over automatically.
-- Weekly and monthly report period boundaries, delivery idempotency, dry-run backfill, and blocked-bot behavior.
+- Weekly and monthly report period boundaries, delivery idempotency, dry-run backfill, blocked-bot behavior, and stale-`pending` recovery: no reclaim before 15 minutes, one automatic retry outside the normal send window, atomic concurrent claims, and terminal `delivery_outcome_unknown` after two attempts.
 - Report accounting: paid planned actual linked amounts, budget top-ups as capacity, large one-offs inside total but outside daily projection, and hidden outside-budget block unless an existing model supplies it.
 - Weekly report presentation: localized category names (no internal keys leaked in RU or EN), top-3 categories with percentages, up to five largest expenses, week-over-week comparison only when the previous week had spending, first-week handling, threshold-gated "what changed", needs-attention from unpaid planned payments (with stronger overdue wording), and a data-grounded takeaway that hides when unsupported.
 

@@ -2043,7 +2043,7 @@ async function handleExpenseEvidenceSessionCallback({ callback, parsed, reposito
     if (!imported) return answerCallback(token, callback.id, evidenceText(language, "unavailable"), telegramClient);
     const started = await expenseEvidenceSessionService.startOrResume({ userId: user.id, chatId });
     if (!started?.id) return answerCallback(token, callback.id, evidenceText(language, "unavailable"), telegramClient);
-    const linked = await expenseEvidenceSessionService.linkCompletedImport({ userId: user.id, chatId, sessionId: started.id, imported: { id: imported.id, state: "ready" } });
+    const linked = await expenseEvidenceSessionService.linkCompletedImport({ userId: user.id, chatId, sessionId: started.id, imported: { importId: imported.id, state: "ready" } });
     if (linked?.state !== "linked") return answerCallback(token, callback.id, evidenceText(language, "unavailable"), telegramClient);
     activeEvidenceSessions.set(evidenceSessionKey(user.id, chatId), {
       sessionId: started.id,
@@ -2088,7 +2088,7 @@ async function handleExpenseEvidenceSessionCallback({ callback, parsed, reposito
   return answerCallback(token, callback.id, evidenceText(language, "unavailable"), telegramClient);
 }
 
-async function handleExpenseEvidenceCallback({ callback, parsed, repository, expenseEvidenceImportService, token, miniAppUrl, telegramClient, language, user, telegramUserId, trace, now }) {
+async function handleExpenseEvidenceCallback({ callback, parsed, repository, expenseEvidenceImportService, activeEvidenceSessions, token, miniAppUrl, telegramClient, language, user, telegramUserId, trace, now }) {
   if (!expenseEvidenceImportService || typeof repository.getExpenseEvidenceImport !== "function") {
     return answerCallback(token, callback.id, evidenceText(language, "unavailable"), telegramClient);
   }
@@ -2115,6 +2115,20 @@ async function handleExpenseEvidenceCallback({ callback, parsed, repository, exp
   if (!actions.length) return answerCallback(token, callback.id, evidenceText(language, "complete"), telegramClient);
   const result = await expenseEvidenceImportService.resolveImportCandidates({ userId: user.id, importId: parsed.importId, actions });
   const terminal = result.outcomes.every((outcome) => ["saved", "already_accounted", "cancelled"].includes(outcome.state));
+  const chatId = callback.message?.chat?.id;
+  const activeSession = chatId == null ? null : getActiveEvidenceSession(activeEvidenceSessions, user.id, chatId, now());
+  if (activeSession?.ready) {
+    const sessionCandidates = await repository.getExpenseEvidenceSessionCandidates?.({ userId: user.id, sessionId: activeSession.sessionId }) ?? [];
+    const nextSessionCandidate = sessionCandidates.find((candidate) => ["ready", "likely_duplicate"].includes(candidate.status));
+    if (nextSessionCandidate) {
+      const nextImport = await repository.getExpenseEvidenceImport(user.id, nextSessionCandidate.importId);
+      const nextImportCandidate = nextImport?.candidates.find((candidate) => String(candidate.id) === String(nextSessionCandidate.candidateId));
+      if (!nextImport || !nextImportCandidate) return answerCallback(token, callback.id, evidenceText(language, "unavailable"), telegramClient);
+      return showExpenseEvidenceCandidate({ callback, imported: nextImport, candidate: nextImportCandidate, repository, user, telegramUserId, token, telegramClient, language, trace });
+    } else {
+      activeEvidenceSessions.delete(evidenceSessionKey(user.id, chatId));
+    }
+  }
   if (parsed.candidateId || !terminal) {
     const refreshed = await repository.getExpenseEvidenceImport(user.id, parsed.importId);
     const candidate = refreshed?.candidates.find((item) => ["ready", "likely_duplicate"].includes(item.status));
@@ -2202,7 +2216,7 @@ export async function handleCallback({ update, repository, token, miniAppUrl, ex
   const evidenceCallback = parseExpenseEvidenceCallback(callback.data);
   if (evidenceCallback) {
     return handleExpenseEvidenceCallback({
-      callback, parsed: evidenceCallback, repository, expenseEvidenceImportService, token, miniAppUrl,
+      callback, parsed: evidenceCallback, repository, expenseEvidenceImportService, activeEvidenceSessions, token, miniAppUrl,
       telegramClient, language, user, telegramUserId, trace, now
     });
   }

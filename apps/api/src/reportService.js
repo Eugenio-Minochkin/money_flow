@@ -6,10 +6,13 @@ import {
   shouldSendWeeklyReportForUser,
   weeklyPeriodForSend
 } from "./reportPeriods.js";
-import { localMonthKey, normalizeTimeZone, timeZoneMonthBounds } from "../../../packages/shared/src/time.js";
+import { localDateKey, localMonthKey, normalizeTimeZone, timeZoneMonthBounds } from "../../../packages/shared/src/time.js";
 import { reportDeliveryErrorType } from "./productAnalytics.js";
 
 const ZERO_DECIMAL_DISPLAY_CURRENCIES = new Set(["THB", "RUB", "IDR", "BYN"]);
+const REPORT_DELIVERY_STALE_MS = 15 * 60_000;
+const REPORT_DELIVERY_MAX_ATTEMPTS = 2;
+const REPORT_DELIVERY_RECOVERY_LIMIT = 100;
 
 export function buildReportMetrics(input = {}) {
   const currency = input.currency ?? "THB";
@@ -115,6 +118,7 @@ export function createReportService(options = {}) {
       const dryRun = input.dryRun === true;
       const users = await repository.listReportCandidates();
       const summary = { checked: 0, eligible: 0, willSend: 0, sent: 0, failed: 0, skipped: 0 };
+      const recoveredKeys = dryRun ? new Set() : await recoverStaleDeliveries(current, summary);
 
       for (const user of users) {
         summary.checked += 1;
@@ -123,6 +127,7 @@ export function createReportService(options = {}) {
         summary.eligible += 1;
 
         for (const due of dueReports) {
+          if (recoveredKeys.has(reportDeliveryKey(user.id, due.reportType, due.period.periodKey))) continue;
           const outcome = await deliverReportForUser(user, due.reportType, due.period, { dryRun, current });
           summary[outcome] = (summary[outcome] ?? 0) + 1;
         }
@@ -151,24 +156,31 @@ export function createReportService(options = {}) {
   async function deliverReportForUser(user, reportType, period, input = {}) {
     const existing = await repository.getReportDelivery(user.id, reportType, period.periodKey);
     if (existing && input.force !== true) {
-      if (["sent", "skipped", "pending"].includes(existing.status)) return "skipped";
+      if (["sent", "skipped"].includes(existing.status)) return "skipped";
+      if (existing.status === "pending" && input.recoverStale !== true) return "skipped";
+      if (existing.status === "failed" && Number(existing.attempt_count ?? 1) >= REPORT_DELIVERY_MAX_ATTEMPTS) return "skipped";
     }
 
     const report = await buildReportForDelivery(user, reportType, period, input.current);
     if (isNoActivityReport(report)) {
       if (input.dryRun === true) return "skipped";
-      const delivery = await repository.createReportDelivery({
+      const skippedInput = {
         userId: user.id,
         reportType,
         periodKey: period.periodKey,
-        periodStartUtc: period.periodStartUtc,
-        periodEndUtc: period.periodEndUtc,
-        timezoneUsed: period.timezoneUsed,
-        status: "skipped",
-        generatedAt: report.generatedAt ?? input.current,
         skipReason: "no_activity",
         metadata: deliveryMetadata(report)
-      });
+      };
+      const delivery = existing && input.recoverStale === true
+        ? await repository.markReportDeliverySkipped(skippedInput)
+        : await repository.createReportDelivery({
+            ...skippedInput,
+            periodStartUtc: period.periodStartUtc,
+            periodEndUtc: period.periodEndUtc,
+            timezoneUsed: period.timezoneUsed,
+            status: "skipped",
+            generatedAt: report.generatedAt ?? input.current
+          });
       if (!delivery) return "skipped";
       await safeRecordAppEvent(repository, user.id, `${reportType}_report_skipped`, { ...deliveryMetadata(report), skip_reason: "no_activity" });
       return "skipped";
@@ -184,6 +196,9 @@ export function createReportService(options = {}) {
       status: "pending",
       generatedAt: report.generatedAt ?? input.current,
       force: input.force === true,
+      recoverStale: input.recoverStale === true,
+      staleBefore: new Date(input.current.getTime() - REPORT_DELIVERY_STALE_MS),
+      maxAttempts: REPORT_DELIVERY_MAX_ATTEMPTS,
       metadata: deliveryMetadata(report)
     });
     if (!delivery) return "skipped";
@@ -246,6 +261,28 @@ export function createReportService(options = {}) {
     return repository.createReportDelivery(input);
   }
 
+  async function recoverStaleDeliveries(current, summary) {
+    if (typeof repository.listStalePendingReportDeliveries !== "function") return new Set();
+    const recoveries = await repository.listStalePendingReportDeliveries({
+      staleBefore: new Date(current.getTime() - REPORT_DELIVERY_STALE_MS),
+      maxAttempts: REPORT_DELIVERY_MAX_ATTEMPTS,
+      limit: REPORT_DELIVERY_RECOVERY_LIMIT
+    });
+    const recoveredKeys = new Set();
+    for (const recovery of recoveries) {
+      const period = recoveryPeriod(recovery);
+      const key = reportDeliveryKey(recovery.user.id, recovery.reportType, period.periodKey);
+      recoveredKeys.add(key);
+      summary.eligible += 1;
+      const outcome = await deliverReportForUser(recovery.user, recovery.reportType, period, {
+        current,
+        recoverStale: true
+      });
+      summary[outcome] = (summary[outcome] ?? 0) + 1;
+    }
+    return recoveredKeys;
+  }
+
   async function buildReportForDelivery(user, reportType, period, current) {
     if (typeof repository.buildReportDataForDelivery === "function") {
       return repository.buildReportDataForDelivery(user, reportType, period, current);
@@ -264,6 +301,24 @@ export function createReportService(options = {}) {
       generatedAt: current
     };
   }
+}
+
+function recoveryPeriod(recovery) {
+  const timeZone = normalizeTimeZone(recovery.period.timezoneUsed).timeZone;
+  const start = new Date(recovery.period.periodStartUtc);
+  const end = new Date(recovery.period.periodEndUtc);
+  return {
+    ...recovery.period,
+    periodStartUtc: start,
+    periodEndUtc: end,
+    timezoneUsed: timeZone,
+    localStartDate: localDateKey(start, timeZone),
+    localEndDate: localDateKey(new Date(end.getTime() - 1), timeZone)
+  };
+}
+
+function reportDeliveryKey(userId, reportType, periodKey) {
+  return `${userId}:${reportType}:${periodKey}`;
 }
 
 async function safeRecordAppEvent(repository, userId, eventName, metadata) {
