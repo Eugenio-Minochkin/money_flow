@@ -302,7 +302,7 @@ test("Telegram catch-up start links a ready import through the session service a
     message: { chat: { id: chatId, type: "private" }, message_id: 21 }
   } });
 
-  assert.equal(messages.at(-1).text, "Add photos, then tap Done.");
+  assert.equal(messages.at(-1).text, "Add photos, then tap Finish.");
   const linked = await pool.query(
     `SELECT sessions.user_id, sessions.source_chat_id, links.import_id
      FROM expense_evidence_sessions AS sessions
