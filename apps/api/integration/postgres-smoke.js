@@ -223,6 +223,7 @@ test("stale report delivery retries once and terminalizes an exhausted unknown o
   let sends = 0;
   const service = createReportService({
     repository: repo,
+    miniAppUrl: "http://localhost:3000",
     now: () => current,
     sendMessage: async () => {
       sends += 1;
