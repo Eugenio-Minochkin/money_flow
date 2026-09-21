@@ -190,6 +190,10 @@ test("stale report delivery retries once and terminalizes an exhausted unknown o
   );
 
   const exhaustedUser = await createSmokeUser(990209);
+  await pool.query(
+    "UPDATE users SET onboarding_step = 'completed' WHERE id = ANY($1::bigint[])",
+    [[retryUser.id, exhaustedUser.id]]
+  );
   await repo.createReportDelivery({
     userId: exhaustedUser.id,
     reportType: "weekly",
