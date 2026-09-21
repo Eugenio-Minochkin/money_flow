@@ -499,7 +499,7 @@ export function createRepository(pool, options = {}) {
            JOIN expense_evidence_imports AS imports ON imports.id = candidates.import_id
            JOIN users ON users.id = imports.user_id
            WHERE candidates.id = $1 AND candidates.import_id = $2 AND imports.user_id = $3
-           FOR UPDATE`,
+           FOR UPDATE OF candidates`,
           [candidateId, importId, userId]
         );
         const candidate = locked.rows[0];
@@ -509,6 +509,27 @@ export function createRepository(pool, options = {}) {
           return { state: candidate.candidate_status, draftId: candidate.draft_id };
         }
         if (action === "already_accounted") {
+          if (candidate.draft_id) {
+            const cancelledDraft = await client.query(
+              `UPDATE drafts SET status = 'cancelled', cancelled_at = now(), version = version + 1
+               WHERE id = $1 AND status IN ('pending', 'inbox')
+               RETURNING id`,
+              [candidate.draft_id]
+            );
+            if (!cancelledDraft.rows[0]) {
+              const draftState = await client.query("SELECT status FROM drafts WHERE id = $1", [candidate.draft_id]);
+              if (draftState.rows[0]?.status === "confirmed") {
+                await client.query(
+                  `UPDATE expense_evidence_candidates SET status = 'saved', resolved_at = now(), updated_at = now() WHERE id = $1`,
+                  [candidate.candidate_id]
+                );
+                await client.query("COMMIT");
+                return { state: "saved", draftId: candidate.draft_id, alreadySaved: true };
+              }
+              await client.query("ROLLBACK");
+              return { state: "invalid_action" };
+            }
+          }
           await client.query(
             `UPDATE expense_evidence_candidates SET status = 'already_accounted', resolved_at = now(), updated_at = now() WHERE id = $1`,
             [candidate.candidate_id]
@@ -3459,6 +3480,11 @@ export function createRepository(pool, options = {}) {
          JOIN users ON users.id = drafts.user_id
          WHERE users.telegram_user_id = $1
            AND drafts.status = $2
+           AND NOT EXISTS (
+             SELECT 1 FROM expense_evidence_candidates
+             WHERE expense_evidence_candidates.draft_id = drafts.id
+               AND expense_evidence_candidates.status = 'already_accounted'
+           )
          ORDER BY drafts.created_at DESC
          LIMIT 20`,
         [telegramUserId, status]
@@ -3473,6 +3499,11 @@ export function createRepository(pool, options = {}) {
          JOIN users ON users.id = drafts.user_id
          WHERE users.telegram_user_id = $1
            AND drafts.status IN ('pending', 'inbox')
+           AND NOT EXISTS (
+             SELECT 1 FROM expense_evidence_candidates
+             WHERE expense_evidence_candidates.draft_id = drafts.id
+               AND expense_evidence_candidates.status = 'already_accounted'
+           )
          ORDER BY drafts.created_at DESC, drafts.id DESC`,
         [telegramUserId]
       );
@@ -3550,6 +3581,20 @@ export function createRepository(pool, options = {}) {
       };
       try {
         if (ownsTransaction) await client.query("BEGIN");
+        const evidenceCandidates = await client.query(
+          `SELECT candidates.status AS candidate_status
+           FROM expense_evidence_candidates AS candidates
+           JOIN expense_evidence_imports AS imports ON imports.id = candidates.import_id
+           JOIN users ON users.id = imports.user_id
+           WHERE candidates.draft_id = $1 AND users.telegram_user_id = $2
+           ORDER BY candidates.id
+           FOR UPDATE OF candidates`,
+          [draftId, telegramUserId]
+        );
+        if (evidenceCandidates.rows.some((candidate) => candidate.candidate_status === "already_accounted")) {
+          if (ownsTransaction) await client.query("ROLLBACK");
+          throw new DraftCanceledError();
+        }
         const draftResult = await client.query(
           `SELECT drafts.*, users.base_currency, users.usd_thb_rate, users.timezone
            FROM drafts
@@ -5448,7 +5493,12 @@ async function prefetchDraftMoneyAmounts(pool, exchangeRates, draftId, telegramU
   const result = await pool.query(
     `SELECT drafts.items, drafts.version, drafts.status, users.base_currency
      FROM drafts JOIN users ON users.id = drafts.user_id
-     WHERE drafts.id = $1 AND users.telegram_user_id = $2`,
+     WHERE drafts.id = $1 AND users.telegram_user_id = $2
+       AND NOT EXISTS (
+         SELECT 1 FROM expense_evidence_candidates
+         WHERE expense_evidence_candidates.draft_id = drafts.id
+           AND expense_evidence_candidates.status = 'already_accounted'
+       )`,
     [draftId, telegramUserId]
   );
   const draft = result.rows[0];
