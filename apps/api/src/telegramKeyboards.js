@@ -197,7 +197,6 @@ export function expenseEvidenceImportKeyboard(importId, language = "ru") {
   return {
     inline_keyboard: [
       [
-        { text: ru ? "✅ Сохранить" : "✅ Save", callback_data: `ei:${importId}:save`, style: "success" },
         { text: ru ? "🔎 Разобрать" : "🔎 Review", callback_data: `ei:${importId}:review` },
         { text: ru ? "🗑 Отменить" : "🗑 Cancel", callback_data: `ei:${importId}:cancel` }
       ],
@@ -221,7 +220,6 @@ export function expenseEvidenceSessionPreviewKeyboard(sessionId, language = "ru"
   const ru = language === "ru";
   return {
     inline_keyboard: [[
-      { text: ru ? "✅ Сохранить" : "✅ Save", callback_data: `es:${sessionId}:save`, style: "success" },
       { text: ru ? "🔎 Разобрать" : "🔎 Review", callback_data: `es:${sessionId}:review` },
       { text: ru ? "🗑 Отменить" : "🗑 Cancel", callback_data: `es:${sessionId}:cancel` }
     ]]

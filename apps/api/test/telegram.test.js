@@ -2718,7 +2718,7 @@ test("enabled evidence import routes a photo to the import service and keeps its
   assert.doesNotMatch(messages.at(-1).text, /private supermarket receipt/);
   assert.equal(messages.at(-1).text, "Готово к проверке: 1 расход.");
   assert.deepEqual(messages.at(-1).replyMarkup.inline_keyboard.flat().map((button) => button.callback_data), [
-    "ei:77:save", "ei:77:review", "ei:77:cancel", "es:77:start"
+    "ei:77:review", "ei:77:cancel", "es:77:start"
   ]);
 });
 
@@ -2755,7 +2755,7 @@ test("starting a catch-up session links the Phase 1 import and collects the next
   assert.deepEqual(messages.at(-1).replyMarkup.inline_keyboard.flat().map((button) => button.callback_data), ["es:41:add", "es:41:finish", "es:41:cancel"]);
 });
 
-test("catch-up finish shows aggregate-only preview and batch save stays scoped to its chat session", async () => {
+test("catch-up finish shows aggregate-only preview and a legacy batch-save callback opens visible review", async () => {
   const repo = fakeRepository();
   const messages = [];
   const resolved = [];
@@ -2779,12 +2779,16 @@ test("catch-up finish shows aggregate-only preview and batch save stays scoped t
   await callback("finish", "es:41:finish");
   assert.equal(messages.at(-1).text, "Готово: 2 изображения, 2 расхода к проверке.");
   assert.doesNotMatch(messages.at(-1).text, /receipt|draftId|44/i);
-  assert.deepEqual(messages.at(-1).replyMarkup.inline_keyboard.flat().map((button) => button.callback_data), ["es:41:save", "es:41:review", "es:41:cancel"]);
+  assert.deepEqual(messages.at(-1).replyMarkup.inline_keyboard.flat().map((button) => button.callback_data), ["es:41:review", "es:41:cancel"]);
 
   await callback("other-chat", "es:41:save", 11);
   assert.equal(resolved.length, 0);
   await callback("save", "es:41:save");
-  assert.deepEqual(resolved, [{ userId: 1, sessionId: 41, actions: [{ candidateId: 5, action: "save" }] }]);
+  assert.equal(resolved.length, 0);
+  assert.match(messages.at(-1).text, /coffee/);
+  assert.deepEqual(messages.at(-1).replyMarkup.inline_keyboard.flat().map((button) => button.callback_data), [
+    "ei:77:5:accounted", "ei:77:5:add", "ei:77:5:edit"
+  ]);
 });
 
 test("catch-up preview cancel delegates unresolved resolution and closes the ready session", async () => {
@@ -2837,7 +2841,7 @@ test("expired request-scoped catch-up session leaves the next image as a standal
 
   assert.equal(linked.length, 1);
   assert.equal(messages.at(-1).text, "Готово к проверке: 1 расход.");
-  assert.deepEqual(messages.at(-1).replyMarkup.inline_keyboard.flat().map((button) => button.callback_data), ["ei:78:save", "ei:78:review", "ei:78:cancel", "es:78:start"]);
+  assert.deepEqual(messages.at(-1).replyMarkup.inline_keyboard.flat().map((button) => button.callback_data), ["ei:78:review", "ei:78:cancel", "es:78:start"]);
 });
 
 test("active catch-up session links a PNG document without exposing its caption", async () => {
@@ -2873,7 +2877,7 @@ test("English evidence summary and actions are localized", async () => {
   await bot.handleUpdate({ message: { chat: { id: 10 }, from: { id: 100, first_name: "M" }, message_id: 9, photo: [{ file_id: "photo" }] } });
   assert.equal(messages.at(-1).text, "Ready to review: 1 expense.");
   assert.doesNotMatch(messages.at(-1).text, /Готово|расход/);
-  assert.deepEqual(messages.at(-1).replyMarkup.inline_keyboard.flat().map((button) => button.text), ["✅ Save", "🔎 Review", "🗑 Cancel", "➕ Add another photo"]);
+  assert.deepEqual(messages.at(-1).replyMarkup.inline_keyboard.flat().map((button) => button.text), ["🔎 Review", "🗑 Cancel", "➕ Add another photo"]);
 });
 
 test("confirming an edited evidence draft marks it once and advances to the next candidate", async () => {
@@ -2881,6 +2885,15 @@ test("confirming an edited evidence draft marks it once and advances to the next
   const calls = [];
   repo.confirmDraftWithExplicitAcceptance = async () => ({ expenses: [{ id: 71, amount_base: 75, amount_original: 75, currency_original: "THB", category_slug: "food_cafe", description: "breakfast" }], dashboardSnapshot: null, alreadySaved: false });
   repo.getExpenseEvidenceImport = async () => ({ id: 77, candidates: [{ id: 5, status: "saved", draftId: 42 }, { id: 6, status: "ready", draftId: 43 }] });
+  repo.getDraftForTelegramUser = async (draftId, telegramUserId) => {
+    assert.equal(draftId, 43);
+    assert.equal(telegramUserId, 100);
+    return {
+      id: 43,
+      status: "pending",
+      items: [{ amount: 125, currency: "THB", description: "next coffee", category_slug: "food_cafe", spent_at: "2026-08-15T05:00:00.000Z", needs_review: true }]
+    };
+  };
   const marked = [];
   const bot = createTelegramBot({ token: "test-token", miniAppUrl: "http://localhost:3000", repository: repo, telegramClient: capturingClient(calls), expenseEvidenceImportService: {
     async getActiveCandidateForDraft(input) { return input.draftId === "42" ? { importId: 77, candidateId: 5, draftId: 42, status: "ready" } : null; },
@@ -2891,7 +2904,8 @@ test("confirming an edited evidence draft marks it once and advances to the next
 
   assert.deepEqual(marked, [{ userId: 1, draftId: "42" }]);
   const edited = calls.find((call) => call.method === "editMessageText");
-  assert.equal(edited.text, "Проверьте расход перед сохранением.");
+  assert.match(edited.text, /next coffee/);
+  assert.match(edited.text, /125.*THB/);
   assert.equal(edited.replyMarkup.inline_keyboard[0][0].callback_data, "ei:77:6:accounted");
 });
 
@@ -2941,7 +2955,7 @@ test("non-image document stays unsupported when evidence import is enabled", asy
   assert.match(messages.at(-1).text, /только текстовые и голосовые|only text and voice/i);
 });
 
-test("evidence save callback resolves only the owner's ready candidates", async () => {
+test("legacy evidence save callback opens the owned candidate review without resolving", async () => {
   const repo = fakeRepository();
   const messages = [];
   const actions = [];
@@ -2960,10 +2974,12 @@ test("evidence save callback resolves only the owner's ready candidates", async 
 
   await bot.handleUpdate({ callback_query: { id: "evidence-save", data: "ei:77:save", from: { id: 100 }, message: { chat: { id: 10 }, message_id: 21 } } });
 
-  assert.deepEqual(actions, [{ userId: 1, importId: "77", actions: [{ candidateId: 5, action: "save" }] }]);
+  assert.deepEqual(actions, []);
   const edited = messages.find((message) => message.messageId === 21);
-  assert.equal(edited?.text, "Импорт обработан.");
-  assert.deepEqual(edited?.replyMarkup, { inline_keyboard: [] });
+  assert.match(edited?.text, /coffee/);
+  assert.deepEqual(edited?.replyMarkup.inline_keyboard.flat().map((button) => button.callback_data), [
+    "ei:77:5:accounted", "ei:77:5:add", "ei:77:5:edit"
+  ]);
 });
 
 test("evidence callback rejects imports outside the Telegram user's ownership", async () => {
@@ -3009,6 +3025,115 @@ test("stale evidence candidate callback does not resolve a candidate twice", asy
   await callback("fresh");
   await callback("stale");
   assert.equal(calls, 1);
+});
+
+test("evidence review renders the owned draft before showing financial actions", async () => {
+  const repo = fakeRepository();
+  const messages = [];
+  const draftCalls = [];
+  repo.user = { ...repo.user, timezone: "Asia/Bangkok", base_currency: "THB" };
+  repo.getExpenseEvidenceImport = async () => ({
+    id: 77,
+    candidates: [{ id: 5, status: "ready", draftId: 44, dedupeClassification: "possible_duplicate", dedupeReasonCode: "same_amount_day" }]
+  });
+  repo.getDraftForTelegramUser = async (...args) => {
+    draftCalls.push(args);
+    return {
+      id: 44,
+      status: "pending",
+      items: [{
+        amount: 1840,
+        currency: "THB",
+        description: "Big C",
+        category_slug: "groceries",
+        spent_at: "2026-08-18T05:10:00.000Z",
+        budget_impact: "regular",
+        needs_review: true
+      }]
+    };
+  };
+  const bot = createTelegramBot({
+    token: "test-token", miniAppUrl: "http://localhost:3000", repository: repo,
+    telegramClient: captureTelegramClient(messages), expenseEvidenceImportService: {}
+  });
+
+  await bot.handleUpdate({ callback_query: { id: "review-visible", data: "ei:77:review", from: { id: 100 }, message: { chat: { id: 10 }, message_id: 21 } } });
+
+  assert.deepEqual(draftCalls, [[44, 100]]);
+  const edited = messages.at(-1);
+  assert.match(edited.text, /Возможный дубликат/);
+  assert.match(edited.text, /Big C/);
+  assert.match(edited.text, /1[\s\u00a0]?840.*THB/);
+  assert.match(edited.text, /18/);
+  assert.deepEqual(edited.replyMarkup.inline_keyboard.flat().map((button) => button.callback_data), [
+    "ei:77:5:accounted", "ei:77:5:add", "ei:77:5:edit"
+  ]);
+});
+
+test("evidence review shows a likely duplicate with its review reason", async () => {
+  const repo = fakeRepository();
+  const messages = [];
+  repo.user = { ...repo.user, timezone: "Asia/Bangkok", base_currency: "THB" };
+  repo.getExpenseEvidenceImport = async () => ({
+    id: 77,
+    candidates: [{ id: 5, status: "likely_duplicate", draftId: 44, dedupeClassification: "likely_duplicate", dedupeReasonCode: "same_amount_time_merchant" }]
+  });
+  repo.getDraftForTelegramUser = async () => ({
+    id: 44,
+    status: "pending",
+    items: [{ amount: 1840, currency: "THB", description: "Big C", category_slug: "groceries", spent_at: "2026-08-18T05:10:00.000Z", needs_review: true }]
+  });
+  const bot = createTelegramBot({
+    token: "test-token", miniAppUrl: "http://localhost:3000", repository: repo,
+    telegramClient: captureTelegramClient(messages), expenseEvidenceImportService: {}
+  });
+
+  await bot.handleUpdate({ callback_query: { id: "review-duplicate", data: "ei:77:review", from: { id: 100 }, message: { chat: { id: 10 }, message_id: 21 } } });
+
+  const edited = messages.at(-1);
+  assert.match(edited.text, /Похожий расход уже найден/);
+  assert.match(edited.text, /Big C/);
+  assert.deepEqual(edited.replyMarkup.inline_keyboard.flat().map((button) => button.callback_data), [
+    "ei:77:5:accounted", "ei:77:5:add", "ei:77:5:edit"
+  ]);
+});
+
+test("evidence review removes financial actions when the candidate draft is unavailable", async () => {
+  const repo = fakeRepository();
+  const messages = [];
+  repo.getExpenseEvidenceImport = async () => ({ id: 77, candidates: [{ id: 5, status: "ready", draftId: 44 }] });
+  repo.getDraftForTelegramUser = async () => null;
+  const bot = createTelegramBot({
+    token: "test-token", miniAppUrl: "http://localhost:3000", repository: repo,
+    telegramClient: captureTelegramClient(messages), expenseEvidenceImportService: {}
+  });
+
+  await bot.handleUpdate({ callback_query: { id: "review-missing", data: "ei:77:review", from: { id: 100 }, message: { chat: { id: 10 }, message_id: 21 } } });
+
+  const edited = messages.at(-1);
+  assert.equal(edited.text, "Импорт недоступен.");
+  assert.deepEqual(edited.replyMarkup, { inline_keyboard: [] });
+});
+
+test("evidence review removes financial actions when the candidate draft is no longer unresolved", async () => {
+  const repo = fakeRepository();
+  const messages = [];
+  repo.getExpenseEvidenceImport = async () => ({ id: 77, candidates: [{ id: 5, status: "ready", draftId: 44 }] });
+  repo.getDraftForTelegramUser = async () => ({
+    id: 44,
+    status: "confirmed",
+    items: [{ amount: 70, currency: "THB", description: "coffee", category_slug: "food_cafe", spent_at: "2026-08-14T12:00:00.000Z" }]
+  });
+  const bot = createTelegramBot({
+    token: "test-token", miniAppUrl: "http://localhost:3000", repository: repo,
+    telegramClient: captureTelegramClient(messages), expenseEvidenceImportService: {}
+  });
+
+  await bot.handleUpdate({ callback_query: { id: "review-terminal", data: "ei:77:review", from: { id: 100 }, message: { chat: { id: 10 }, message_id: 21 } } });
+
+  const edited = messages.at(-1);
+  assert.equal(edited.text, "Импорт недоступен.");
+  assert.deepEqual(edited.replyMarkup, { inline_keyboard: [] });
 });
 
 test("evidence review advances to the next candidate after accounted or add", async (t) => {

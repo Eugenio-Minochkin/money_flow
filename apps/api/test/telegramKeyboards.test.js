@@ -20,14 +20,14 @@ import {
   savedExpenseKeyboard
 } from "../src/telegramKeyboards.js";
 
-test("expense evidence keyboards use compact localized callbacks", () => {
-  for (const [language, labels] of [["ru", ["✅ Сохранить", "🔎 Разобрать", "🗑 Отменить", "✅ Учесть", "➕ Добавить", "✏️ Изменить"]], ["en", ["✅ Save", "🔎 Review", "🗑 Cancel", "✅ Accounted", "➕ Add", "✏️ Edit"]]]) {
+test("expense evidence keyboards expose financial actions only for a visible candidate", () => {
+  for (const [language, labels] of [["ru", ["🔎 Разобрать", "🗑 Отменить", "✅ Учесть", "➕ Добавить", "✏️ Изменить"]], ["en", ["🔎 Review", "🗑 Cancel", "✅ Accounted", "➕ Add", "✏️ Edit"]]]) {
     const summary = expenseEvidenceImportKeyboard("import-42", language).inline_keyboard.flat();
-    assert.deepEqual(summary.map((button) => button.callback_data), ["ei:import-42:save", "ei:import-42:review", "ei:import-42:cancel", "es:import-42:start"]);
-    assert.deepEqual(summary.map((button) => button.text), [...labels.slice(0, 3), language === "ru" ? "➕ Добавить ещё фото" : "➕ Add another photo"]);
+    assert.deepEqual(summary.map((button) => button.callback_data), ["ei:import-42:review", "ei:import-42:cancel", "es:import-42:start"]);
+    assert.deepEqual(summary.map((button) => button.text), [...labels.slice(0, 2), language === "ru" ? "➕ Добавить ещё фото" : "➕ Add another photo"]);
     const candidate = expenseEvidenceCandidateKeyboard("import-42", "candidate-7", language).inline_keyboard.flat();
     assert.deepEqual(candidate.map((button) => button.callback_data), ["ei:import-42:candidate-7:accounted", "ei:import-42:candidate-7:add", "ei:import-42:candidate-7:edit"]);
-    assert.deepEqual(candidate.map((button) => button.text), labels.slice(3));
+    assert.deepEqual(candidate.map((button) => button.text), labels.slice(2));
   }
 });
 
@@ -38,8 +38,8 @@ test("expense evidence session keyboards use scoped compact callbacks in both la
     assert.deepEqual(collecting.map((button) => button.text), labels.slice(0, 3));
 
     const preview = expenseEvidenceSessionPreviewKeyboard(41, language).inline_keyboard.flat();
-    assert.deepEqual(preview.map((button) => button.callback_data), ["es:41:save", "es:41:review", "es:41:cancel"]);
-    assert.deepEqual(preview.map((button) => button.text), [labels[3], labels[4], labels[2]]);
+    assert.deepEqual(preview.map((button) => button.callback_data), ["es:41:review", "es:41:cancel"]);
+    assert.deepEqual(preview.map((button) => button.text), [labels[4], labels[2]]);
   }
 });
 
