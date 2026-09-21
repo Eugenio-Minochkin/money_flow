@@ -2793,11 +2793,16 @@ test("catch-up review advances across linked imports instead of hiding unresolve
       status: candidate.status
     }))
   );
+  let failFirstResolution = true;
   const expenseEvidenceImportService = {
     async importImage() { return { state: "ready", importId: 78, evidenceType: "receipt", candidates: [{ ordinal: 0 }] }; },
     async resolveImportCandidates({ importId, actions }) {
       const imported = imports.get(Number(importId));
       const candidate = imported.candidates.find((item) => item.id === actions[0].candidateId);
+      if (failFirstResolution) {
+        failFirstResolution = false;
+        return { outcomes: [{ candidateId: candidate.id, state: "failed" }] };
+      }
       candidate.status = "saved";
       return { outcomes: [{ candidateId: candidate.id, state: "saved" }] };
     }
@@ -2815,6 +2820,11 @@ test("catch-up review advances across linked imports instead of hiding unresolve
   await callback("finish", "es:41:finish");
   await callback("review", "es:41:review");
   await callback("add-first", "ei:77:5:add");
+
+  assert.match(messages.at(-1).text, /coffee/);
+  assert.equal(messages.at(-1).replyMarkup.inline_keyboard[0][1].callback_data, "ei:77:5:add");
+
+  await callback("retry-first", "ei:77:5:add");
 
   assert.match(messages.at(-1).text, /next lunch/);
   assert.deepEqual(messages.at(-1).replyMarkup.inline_keyboard.flat().map((button) => button.callback_data), [
