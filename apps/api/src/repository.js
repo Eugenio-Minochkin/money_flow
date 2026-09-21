@@ -770,12 +770,17 @@ export function createRepository(pool, options = {}) {
          VALUES ($1, $2, $3, 'processing', 1, now() + interval '2 minutes'${hasPayload ? ", $4, 0" : ""})
          ON CONFLICT (user_id, chat_id, message_id) DO UPDATE
            SET claim_version = captures.claim_version + 1,
-               lease_expires_at = now() + interval '2 minutes'${hasPayload ? ", payload = COALESCE(captures.payload, EXCLUDED.payload), attempt_count = captures.attempt_count + 1" : ""}
+               lease_expires_at = now() + interval '2 minutes',
+               attempt_count = captures.attempt_count + 1${hasPayload ? ", payload = COALESCE(captures.payload, EXCLUDED.payload)" : ""}
          WHERE captures.status = 'processing' AND captures.lease_expires_at <= now()
-         RETURNING claim_version`,
+         RETURNING id AS capture_id, claim_version, attempt_count`,
         hasPayload ? [userId, chatId, messageId, JSON.stringify(payload)] : [userId, chatId, messageId]
       );
-      if (claimed.rows[0]) return { state: "claimed", claimVersion: claimed.rows[0].claim_version };
+      if (claimed.rows[0]) return {
+        state: "claimed",
+        claimVersion: claimed.rows[0].claim_version,
+        ...telegramCaptureIdentity(claimed.rows[0])
+      };
       return this.readTelegramExpenseCapture(userId, chatId, messageId);
     },
 
@@ -808,7 +813,8 @@ export function createRepository(pool, options = {}) {
 
     async readTelegramExpenseCapture(userId, chatId, messageId) {
       const result = await pool.query(
-        `SELECT captures.status AS request_status, captures.last_error_code, drafts.*
+        `SELECT captures.status AS request_status, captures.id AS capture_id,
+                captures.attempt_count, captures.last_error_code, drafts.*
          FROM telegram_expense_captures captures
          LEFT JOIN drafts ON drafts.id = captures.draft_id
          WHERE captures.user_id = $1 AND captures.chat_id = $2 AND captures.message_id = $3`,
@@ -816,11 +822,12 @@ export function createRepository(pool, options = {}) {
       );
       const row = result.rows[0] ?? null;
       if (!row) return null;
+      const identity = telegramCaptureIdentity(row);
       return row.request_status === "completed"
-        ? { state: "completed", draft: normalizeDraft(row) }
+        ? { state: "completed", draft: normalizeDraft(row), ...identity }
         : row.request_status === "failed"
-          ? { state: "failed", errorCode: row.last_error_code ?? null }
-          : { state: "processing" };
+          ? { state: "failed", errorCode: row.last_error_code ?? null, ...identity }
+          : { state: "processing", ...identity };
     },
 
     async waitForTelegramExpenseCapture(userId, chatId, messageId) {
@@ -5135,6 +5142,14 @@ function normalizeDraft(draft) {
     ...draft,
     items: Array.isArray(draft.items) ? draft.items : JSON.parse(draft.items)
   };
+}
+
+function telegramCaptureIdentity(row) {
+  const identity = {};
+  if (row.capture_id != null) identity.captureId = String(row.capture_id);
+  const attemptCount = Number(row.attempt_count);
+  if (Number.isInteger(attemptCount) && attemptCount >= 0) identity.attemptNumber = attemptCount + 1;
+  return identity;
 }
 
 function expenseFinancialInputsChanged(before, after) {

@@ -410,6 +410,119 @@ test("normal text message records received draft and processing events", async (
   assert.equal(Number.isFinite(repo.events[3].metadata.processingTotalMs), true);
 });
 
+test("durable capture correlation links perf stages and terminal outcome without exposing message identity", async () => {
+  const repo = fakeRepository();
+  const perfLines = [];
+  const telegramCalls = [];
+  const captureId = "9007199254740993";
+  const captureKey = `tgc_${BigInt(captureId).toString(36)}`;
+  repo.claimTelegramExpenseCapture = async () => ({
+    state: "claimed",
+    claimVersion: 1,
+    captureId,
+    attemptNumber: 1
+  });
+  repo.completeTelegramExpenseCapture = async ({ items }) => {
+    repo.draftItems = items;
+    return { draft: { id: 42, status: "pending", items } };
+  };
+  repo.releaseTelegramExpenseCapture = async () => {};
+
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: repo,
+    expenseParser: {
+      async parse() {
+        return { expenses: [{
+          amount: 70,
+          currency: "THB",
+          description: "coffee",
+          category_slug: "food_cafe",
+          category_source: "parser",
+          needs_review: false,
+          spent_at: "2026-08-14T08:00:00.000Z",
+          budget_impact: "regular"
+        }] };
+      }
+    },
+    telegramClient: capturingClient(telegramCalls),
+    perfLogger: (line) => perfLines.push(line)
+  });
+
+  await bot.handleUpdate({
+    message: { message_id: 777, chat: { id: 10 }, from: { id: 100, first_name: "M" }, text: "coffee 70" }
+  });
+
+  const linked = perfLines.find((line) => /stage=capture_linked/.test(line));
+  assert.match(linked ?? "", new RegExp(`captureKey=${captureKey}`));
+  assert.match(linked ?? "", /captureAttempt=1/);
+  const summary = perfLines.find((line) => line.startsWith("[perf]"));
+  assert.match(summary ?? "", new RegExp(`captureKey=${captureKey}`));
+  assert.match(summary ?? "", /captureAttempt=1/);
+  const completed = repo.events.find((event) => event.eventName === "message_processing_completed");
+  assert.equal(completed.metadata.captureKey, captureKey);
+  assert.equal(completed.metadata.captureAttempt, 1);
+  assert.equal(completed.metadata.terminalDeliveryOutcome, "delivered");
+  assert.equal(completed.metadata.durableCaptureState, "claimed");
+  assert.doesNotMatch(perfLines.join("\n"), /telegramUserId=|chatId=|messageId=|coffee 70|9007199254740993/);
+});
+
+test("restart recovery records the reclaimed capture attempt instead of the runnable-list snapshot", async () => {
+  const repo = fakeRepository();
+  const perfLines = [];
+  repo.listRunnableTelegramExpenseCaptures = async () => [{
+    user_id: 1,
+    chat_id: 10,
+    message_id: 778,
+    telegram_user_id: 100,
+    first_name: "M",
+    payload: { text: "coffee 70" },
+    capture_id: "36",
+    attempt_count: 0
+  }];
+  repo.claimTelegramExpenseCapture = async () => ({
+    state: "claimed",
+    claimVersion: 2,
+    captureId: "36",
+    attemptNumber: 2
+  });
+  repo.completeTelegramExpenseCapture = async ({ items }) => {
+    repo.draftItems = items;
+    return { draft: { id: 43, status: "pending", items } };
+  };
+  repo.releaseTelegramExpenseCapture = async () => {};
+
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: repo,
+    expenseParser: {
+      async parse() {
+        return { expenses: [{
+          amount: 70,
+          currency: "THB",
+          description: "coffee",
+          category_slug: "food_cafe",
+          category_source: "parser",
+          needs_review: false,
+          spent_at: "2026-08-14T08:00:00.000Z",
+          budget_impact: "regular"
+        }] };
+      }
+    },
+    telegramClient: captureTelegramClient([]),
+    perfLogger: (line) => perfLines.push(line)
+  });
+
+  await bot.resumePendingCaptures();
+
+  const completed = repo.events.find((event) => event.eventName === "message_processing_completed");
+  assert.equal(completed.metadata.captureKey, "tgc_10");
+  assert.equal(completed.metadata.captureAttempt, 2);
+  assert.ok(perfLines.some((line) => /stage=capture_linked/.test(line) && /captureKey=tgc_10/.test(line) && /captureAttempt=2/.test(line)));
+});
+
 test("message processing completed event includes stage performance metadata", async () => {
   const repo = fakeRepository();
   const originalLog = console.log;
@@ -2581,7 +2694,12 @@ test("unhandled Telegram update failures notify admins and still reject", async 
 
 test("voice transcription failure records an event and returns an error response", async () => {
   const repo = fakeRepository();
-  repo.claimTelegramExpenseCapture = async () => ({ state: "claimed", claimVersion: 1 });
+  repo.claimTelegramExpenseCapture = async () => ({
+    state: "claimed",
+    claimVersion: 1,
+    captureId: "37",
+    attemptNumber: 3
+  });
   repo.failTelegramExpenseCapture = async () => {};
   const messages = [];
   const originalError = console.error;
@@ -2619,6 +2737,9 @@ test("voice transcription failure records an event and returns an error response
   assert.equal(completed.metadata.normalizationChanged, false);
   assert.equal(completed.metadata.currencyRecognition, "unavailable");
   assert.equal(completed.metadata.durableCaptureState, "failed");
+  assert.equal(completed.metadata.captureKey, "tgc_11");
+  assert.equal(completed.metadata.captureAttempt, 3);
+  assert.equal(completed.metadata.terminalDeliveryOutcome, "delivered");
 });
 
 test("voice amount-not-found response includes the escaped transcript", async () => {
@@ -6029,6 +6150,8 @@ test("voice transcription failure terminalizes its loader without a duplicate ge
   assert.equal(calls.filter((call) => call.method === "editMessageText").length, 2);
   assert.equal(calls.filter((call) => call.method === "deleteMessage").length, 1);
   assert.ok(repo.events.some((event) => event.eventName === "voice_transcription_failed"));
+  const completed = repo.events.find((event) => event.eventName === "message_processing_completed");
+  assert.equal(completed.metadata.terminalDeliveryOutcome, "not_delivered");
 });
 
 test("expense loader terminalization retries a plain edit before deleting or sending another message", async () => {

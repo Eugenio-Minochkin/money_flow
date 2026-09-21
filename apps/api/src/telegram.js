@@ -429,11 +429,14 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
       telegramJobQueue.releaseReservation?.(queueReservation?.token);
       throw error;
     }
+    trace.linkCapture?.(expenseCaptureClaim);
     if (expenseCaptureClaim?.state === "processing") {
+      trace.event("capture_replay_ignored", { captureState: "processing" });
       telegramJobQueue.releaseReservation?.(queueReservation?.token);
       return { ok: true, replayed: true };
     }
     if (expenseCaptureClaim?.state === "failed") {
+      trace.event("capture_replay_ignored", { captureState: "failed" });
       telegramJobQueue.releaseReservation?.(queueReservation?.token);
       return { ok: true, replayed: true };
     }
@@ -597,13 +600,13 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
   let normalizationChanged = false;
   let currencyRecognition = inputType === "voice" ? "unavailable" : "not_applicable";
   let voiceCaptureClaim = expenseCaptureClaim;
-  let durableCaptureState = inputType === "voice"
+  let durableCaptureState = inputType === "voice" || inputType === "text"
     ? (voiceCaptureClaim?.state ?? (typeof repository.claimTelegramExpenseCapture === "function" ? "not_claimed" : "unavailable"))
     : "not_applicable";
 
   const deliverQueuedResult = async (input) => {
     const delivered = await deliverResultMessage({ ...input, signal });
-    markTelegramJobTerminalResponse(deliveryState);
+    if (delivered?.ok !== false) markTelegramJobTerminalResponse(deliveryState);
     return delivered;
   };
 
@@ -640,6 +643,7 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
         if (!voiceCaptureClaim && typeof repository.claimTelegramExpenseCapture === "function") {
           voiceCaptureClaim = await repository.claimTelegramExpenseCapture(user.id, chatId, message.message_id);
           durableCaptureState = voiceCaptureClaim?.state ?? "unavailable";
+          trace.linkCapture?.(voiceCaptureClaim);
         }
         if (voiceCaptureClaim?.state === "completed" || voiceCaptureClaim?.state === "processing" || voiceCaptureClaim?.state === "failed") {
           const completed = voiceCaptureClaim.state === "completed"
@@ -682,7 +686,7 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
           if (ready && activeSession && expenseEvidenceSessionService) {
             const linked = await expenseEvidenceSessionService.linkCompletedImport({ userId: user.id, chatId, sessionId: activeSession.sessionId, imported });
             if (linked?.state === "linked") {
-              return deliverQueuedResult({
+              return await deliverQueuedResult({
                 token,
                 chatId,
                 loaderMessageId: loader.messageId,
@@ -694,7 +698,7 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
             }
             activeEvidenceSessions?.delete(evidenceSessionKey(user.id, chatId));
           }
-          return deliverQueuedResult({
+          return await deliverQueuedResult({
             token,
             chatId,
             loaderMessageId: loader.messageId,
@@ -706,7 +710,7 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
         }
         processingResult = "unsupported_photo";
         await safeRecordAppEvent(repository, user.id, "unsupported_photo_input", { inputType: "photo" });
-        return deliverQueuedResult({
+        return await deliverQueuedResult({
           token,
           chatId,
           loaderMessageId: loader.messageId,
@@ -728,7 +732,7 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
       if (topupParsed.state === "failed") {
         processingResult = "budget_topup_parse_failed";
         await safeRecordAppEvent(repository, user.id, "budget_topup_parse_failed", { inputType });
-        return deliverQueuedResult({
+        return await deliverQueuedResult({
           token,
           chatId,
           loaderMessageId: loader.messageId,
@@ -754,7 +758,7 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
         });
         processingResult = "budget_topup_draft_created";
         processingDraftType = "budget_topup";
-        return deliverQueuedResult({
+        return await deliverQueuedResult({
           token,
           chatId,
           loaderMessageId: loader.messageId,
@@ -789,7 +793,7 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
         await safeRecordAppEvent(repository, user.id, "expense_draft_created", { inputType, draftType: "planned" });
         processingResult = "planned_draft_created";
         processingDraftType = "planned";
-        return deliverQueuedResult({
+        return await deliverQueuedResult({
           token,
           chatId,
           loaderMessageId: loader.messageId,
@@ -803,7 +807,7 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
       if (looksLikeNonExpenseIntent(text)) {
         processingResult = "unsupported_intent_message";
         processingParserRoute = "non_expense_guard";
-        return deliverQueuedResult({
+        return await deliverQueuedResult({
           token,
           chatId,
           loaderMessageId: loader.messageId,
@@ -838,7 +842,7 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
         if (error instanceof ExpenseTextNotRecognizedError) {
           processingResult = "amount_not_found";
           await safeRecordAppEvent(repository, user.id, "expense_parse_failed", { inputType, failureStage: "amount" });
-          return deliverQueuedResult({ token, chatId, loaderMessageId: loader.messageId,
+          return await deliverQueuedResult({ token, chatId, loaderMessageId: loader.messageId,
             text: inputType === "voice" && text ? botText(language, "amountNotFoundWithTranscript", { transcript: text }) : botText(language, "amountNotFound"),
             replyMarkup: null, telegramClient, trace });
         }
@@ -932,14 +936,14 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
       }
       if (["paid_provider_limit_reached", "paid_provider_disabled", "voice_message_too_long"].includes(error?.code)) {
         processingResult = error.code;
-        return deliverQueuedResult({
+        return await deliverQueuedResult({
           token, chatId, loaderMessageId: loader.messageId,
           text: botText(language, error.code), replyMarkup: null, telegramClient, trace
         });
       }
       trace.failActive(["telegram_file_download", "transcription", "llm_parse", "db_save"], error);
       console.error("[telegram] expense processing failed", error.message);
-      return deliverQueuedResult({
+      return await deliverQueuedResult({
         token,
         chatId,
         loaderMessageId: loader.messageId,
@@ -1004,6 +1008,9 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
         normalizationChanged: inputType === "voice" ? normalizationChanged : undefined,
         currencyRecognition,
         durableCaptureState,
+        captureKey: traceMetadata.captureKey,
+        captureAttempt: traceMetadata.captureAttempt,
+        terminalDeliveryOutcome: deliveryState.terminalResponseDelivered ? "delivered" : "not_delivered",
         audioDurationSec: inputType === "voice" ? traceMetadata.audioDurationSec : undefined
       });
       if (deliveryState.terminalResponseDelivered) {
@@ -3615,6 +3622,8 @@ function createPerfTrace({ update, logger }) {
   const durations = new Map();
   let queueWaitMs = null;
   let llmParseMetadata = {};
+  let captureKey = null;
+  let captureAttempt = null;
   let finished = false;
 
   const trace = {
@@ -3633,6 +3642,16 @@ function createPerfTrace({ update, logger }) {
 
     event(stage, metadata = {}, success = true, error = null) {
       logStage(stage, 0, success, metadata, error);
+    },
+
+    linkCapture(capture) {
+      const key = telegramCaptureKey(capture?.captureId);
+      if (!key) return;
+      captureKey = key;
+      captureAttempt = Number.isInteger(Number(capture?.attemptNumber)) && Number(capture.attemptNumber) > 0
+        ? Number(capture.attemptNumber)
+        : null;
+      trace.event("capture_linked", { captureState: capture?.state });
     },
 
     elapsed() {
@@ -3663,6 +3682,8 @@ function createPerfTrace({ update, logger }) {
       return {
         queueWaitMs,
         llmParse: { ...llmParseMetadata },
+        captureKey,
+        captureAttempt,
         audioDurationSec: initialMessageMetadata.audioDurationSec
       };
     }
@@ -3687,6 +3708,8 @@ function createPerfTrace({ update, logger }) {
       success,
       ...metadata
     };
+    if (captureKey) payload.captureKey = captureKey;
+    if (captureAttempt != null) payload.captureAttempt = captureAttempt;
     if (error) payload.error = error.message;
     logger(formatPerfStage(payload));
   }
@@ -3698,6 +3721,8 @@ function createPerfTrace({ update, logger }) {
       `type=${messageType}`,
       `total=${elapsedSince(startedAt)}ms`
     ];
+    if (captureKey) parts.push(`captureKey=${captureKey}`);
+    if (captureAttempt != null) parts.push(`captureAttempt=${captureAttempt}`);
     appendDuration(parts, "download", durations.get("telegram_file_download"));
     appendDuration(parts, "transcription", durations.get("transcription"));
     appendDuration(parts, "llm", durations.get("llm_parse"));
@@ -3765,6 +3790,16 @@ function messageMetadata(update, messageType) {
 
 function createTraceId() {
   return `tg_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function telegramCaptureKey(captureId) {
+  if (captureId == null) return null;
+  try {
+    const id = BigInt(String(captureId));
+    return id > 0n ? `tgc_${id.toString(36)}` : null;
+  } catch {
+    return null;
+  }
 }
 
 function elapsedSince(startedAt) {
