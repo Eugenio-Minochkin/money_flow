@@ -9,6 +9,9 @@ export function writeCsv(rows, headers) {
 function csvCell(value) {
   if (value == null) return "";
   const text = String(value);
-  if (!/[",\r\n]/.test(text)) return text;
-  return `"${text.replaceAll('"', '""')}"`;
+  const safeText = typeof value === "string" && /^[\s\u0000-\u001f\u007f]*[=+\-@]/u.test(text)
+    ? `'${text}`
+    : text;
+  if (!/[",\r\n]/.test(safeText)) return safeText;
+  return `"${safeText.replaceAll('"', '""')}"`;
 }
