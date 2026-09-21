@@ -206,6 +206,20 @@ test("stale report delivery retries once and terminalizes an exhausted unknown o
     [exhaustedUser.id, new Date(current.getTime() - 20 * 60_000)]
   );
 
+  const recoverable = await repo.listStalePendingReportDeliveries({
+    staleBefore: new Date(current.getTime() - 15 * 60_000),
+    maxAttempts: 2,
+    limit: 100
+  });
+  assert.equal(recoverable.length, 1);
+  assert.equal(String(recoverable[0].user.id), String(retryUser.id));
+  const reportData = await repo.buildReportDataForDelivery(retryUser, "weekly", {
+    ...period,
+    localStartDate: "2026-06-29",
+    localEndDate: "2026-07-05"
+  }, current);
+  assert.ok(reportData.metrics.totalSpent > 0);
+
   let sends = 0;
   const service = createReportService({
     repository: repo,
