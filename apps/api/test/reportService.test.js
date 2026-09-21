@@ -272,6 +272,95 @@ test("failed delivery is claimed back to pending and retried", async () => {
   assert.equal(repo.sent[0].telegramMessageId, 77);
 });
 
+test("stale pending delivery is recovered once outside the ordinary send window", async () => {
+  const period = {
+    periodKey: "2026-W27",
+    periodStartUtc: new Date("2026-06-29T00:00:00Z"),
+    periodEndUtc: new Date("2026-07-06T00:00:00Z"),
+    timezoneUsed: "UTC",
+    localStartDate: "2026-06-29",
+    localEndDate: "2026-07-05"
+  };
+  const repo = reportRepo({
+    now: new Date("2026-07-07T02:30:00Z"),
+    existingDelivery: { status: "pending", attempt_count: 1 },
+    staleDeliveries: [{ user: null, reportType: "weekly", period }],
+    claimDeliveryResult: { id: 9, status: "pending", attempt_count: 2 }
+  });
+  repo.staleDeliveries[0].user = repo.candidate;
+  let sends = 0;
+  const service = createReportService({
+    repository: repo,
+    miniAppUrl: "http://localhost:3000",
+    now: () => new Date("2026-07-07T02:30:00Z"),
+    sendMessage: async () => {
+      sends += 1;
+      return { message_id: 77 };
+    }
+  });
+
+  const summary = await service.runDueReports();
+
+  assert.equal(summary.sent, 1);
+  assert.equal(sends, 1);
+  assert.equal(repo.claimed[0].recoverStale, true);
+  assert.equal(repo.claimed[0].maxAttempts, 2);
+  assert.equal(repo.staleQueries.length, 1);
+  assert.equal(repo.staleQueries[0].maxAttempts, 2);
+  assert.equal(repo.staleQueries[0].staleBefore.toISOString(), "2026-07-07T02:15:00.000Z");
+});
+
+test("fresh pending delivery remains protected from a concurrent resend", async () => {
+  const repo = reportRepo({
+    now: new Date("2026-07-06T02:30:00Z"),
+    existingDelivery: { status: "pending", attempt_count: 1 },
+    staleDeliveries: []
+  });
+  let sends = 0;
+  const service = createReportService({
+    repository: repo,
+    miniAppUrl: "http://localhost:3000",
+    now: () => new Date("2026-07-06T02:30:00Z"),
+    sendMessage: async () => { sends += 1; }
+  });
+
+  const summary = await service.runDueReports();
+
+  assert.equal(summary.skipped, 1);
+  assert.equal(sends, 0);
+  assert.equal(repo.claimed.length, 0);
+});
+
+test("stale pending recovery terminalizes a report that became empty", async () => {
+  const period = {
+    periodKey: "2026-W27",
+    periodStartUtc: new Date("2026-06-29T00:00:00Z"),
+    periodEndUtc: new Date("2026-07-06T00:00:00Z"),
+    timezoneUsed: "UTC"
+  };
+  const repo = reportRepo({
+    now: new Date("2026-07-07T02:30:00Z"),
+    existingDelivery: { status: "pending", attempt_count: 1 },
+    staleDeliveries: [{ user: null, reportType: "weekly", period }],
+    reportData: {
+      metrics: { totalSpent: 0, budgetTopupsTotal: 0 },
+      plannedPayments: [],
+      largeExpenses: [],
+      budgetTopups: [],
+      topCategories: []
+    }
+  });
+  repo.staleDeliveries[0].user = repo.candidate;
+  const service = createReportService({ repository: repo, now: () => new Date("2026-07-07T02:30:00Z") });
+
+  const summary = await service.runDueReports();
+
+  assert.equal(summary.skipped, 1);
+  assert.equal(repo.created.length, 0);
+  assert.equal(repo.skipped.length, 1);
+  assert.equal(repo.skipped[0].skipReason, "no_activity");
+});
+
 test("analytics failure after a sent delivery does not retry Telegram send", async () => {
   const repo = reportRepo({ now: new Date("2026-07-06T02:30:00Z") });
   const originalRecord = repo.recordAppEvent.bind(repo);
@@ -469,6 +558,8 @@ function reportRepo(options = {}) {
     sent: [],
     failed: [],
     skipped: [],
+    staleQueries: [],
+    staleDeliveries: options.staleDeliveries ?? [],
     blockedUsers: [],
     events: [],
     async listReportCandidates() {
@@ -476,6 +567,10 @@ function reportRepo(options = {}) {
     },
     async getReportDelivery() {
       return options.existingDelivery ?? null;
+    },
+    async listStalePendingReportDeliveries(input) {
+      this.staleQueries.push(input);
+      return this.staleDeliveries;
     },
     async createReportDelivery(input) {
       this.created.push(input);

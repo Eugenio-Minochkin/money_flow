@@ -2115,7 +2115,8 @@ test("creates report deliveries idempotently with JSON metadata", async () => {
     null,
     null,
     null,
-    JSON.stringify({ total_spent: 100 })
+    JSON.stringify({ total_spent: 100 }),
+    1
   ]);
 });
 
@@ -2143,8 +2144,11 @@ test("claims report delivery by inserting or updating retryable rows to pending"
   assert.deepEqual(delivery.metadata, { total_spent: 100 });
   assert.match(queries[0].sql, /INSERT INTO report_deliveries/);
   assert.match(queries[0].sql, /ON CONFLICT \(user_id, report_type, period_key\) DO UPDATE/);
-  assert.match(queries[0].sql, /WHERE report_deliveries.status = 'failed' OR \$9 = true/);
-  assert.equal(queries[0].params[8], false);
+  assert.match(queries[0].sql, /attempt_count = report_deliveries\.attempt_count \+ 1/);
+  assert.match(queries[0].sql, /report_deliveries\.updated_at <= \$9/);
+  assert.match(queries[0].sql, /report_deliveries\.attempt_count < \$11/);
+  assert.equal(queries[0].params[9], false);
+  assert.equal(queries[0].params[10], 2);
 });
 
 test("force claim can update any existing report delivery to pending", async () => {
@@ -2166,8 +2170,43 @@ test("force claim can update any existing report delivery to pending", async () 
     metadata: {}
   });
 
-  assert.match(queries[0].sql, /WHERE report_deliveries.status = 'failed' OR \$9 = true/);
-  assert.equal(queries[0].params[8], true);
+  assert.match(queries[0].sql, /WHERE \$10 = true/);
+  assert.equal(queries[0].params[9], true);
+});
+
+test("lists retryable stale report deliveries and terminalizes exhausted unknown outcomes", async () => {
+  const queries = [];
+  const staleBefore = new Date("2026-07-07T02:15:00Z");
+  const repo = createRepository(fakePool((sql, params) => {
+    const query = String(sql);
+    queries.push({ sql: query, params });
+    if (query.startsWith("UPDATE report_deliveries")) return { rows: [] };
+    if (query.includes("to_jsonb(users) AS report_user")) {
+      return { rows: [{
+        report_type: "weekly",
+        period_key: "2026-W27",
+        period_start_utc: new Date("2026-06-29T00:00:00Z"),
+        period_end_utc: new Date("2026-07-06T00:00:00Z"),
+        timezone_used: "UTC",
+        report_user: { id: 1, telegram_user_id: 100, timezone: "UTC" }
+      }] };
+    }
+    return { rows: [] };
+  }));
+
+  const deliveries = await repo.listStalePendingReportDeliveries({ staleBefore, maxAttempts: 2, limit: 100 });
+
+  assert.equal(deliveries.length, 1);
+  assert.equal(deliveries[0].reportType, "weekly");
+  assert.equal(deliveries[0].period.periodKey, "2026-W27");
+  assert.equal(deliveries[0].user.id, 1);
+  assert.match(queries[0].sql, /status = 'failed'/);
+  assert.match(queries[0].sql, /error_code = 'delivery_outcome_unknown'/);
+  assert.match(queries[0].sql, /attempt_count >= \$2/);
+  assert.match(queries[1].sql, /status = 'pending'/);
+  assert.match(queries[1].sql, /attempt_count < \$2/);
+  assert.match(queries[1].sql, /LIMIT \$3/);
+  assert.deepEqual(queries[1].params, [staleBefore, 2, 100]);
 });
 
 test("updates report deliveries as sent failed and skipped", async () => {
