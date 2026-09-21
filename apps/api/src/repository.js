@@ -499,7 +499,7 @@ export function createRepository(pool, options = {}) {
            JOIN expense_evidence_imports AS imports ON imports.id = candidates.import_id
            JOIN users ON users.id = imports.user_id
            WHERE candidates.id = $1 AND candidates.import_id = $2 AND imports.user_id = $3
-           FOR UPDATE`,
+           FOR UPDATE OF candidates`,
           [candidateId, importId, userId]
         );
         const candidate = locked.rows[0];
@@ -509,6 +509,27 @@ export function createRepository(pool, options = {}) {
           return { state: candidate.candidate_status, draftId: candidate.draft_id };
         }
         if (action === "already_accounted") {
+          if (candidate.draft_id) {
+            const cancelledDraft = await client.query(
+              `UPDATE drafts SET status = 'cancelled', cancelled_at = now(), version = version + 1
+               WHERE id = $1 AND status IN ('pending', 'inbox')
+               RETURNING id`,
+              [candidate.draft_id]
+            );
+            if (!cancelledDraft.rows[0]) {
+              const draftState = await client.query("SELECT status FROM drafts WHERE id = $1", [candidate.draft_id]);
+              if (draftState.rows[0]?.status === "confirmed") {
+                await client.query(
+                  `UPDATE expense_evidence_candidates SET status = 'saved', resolved_at = now(), updated_at = now() WHERE id = $1`,
+                  [candidate.candidate_id]
+                );
+                await client.query("COMMIT");
+                return { state: "saved", draftId: candidate.draft_id, alreadySaved: true };
+              }
+              await client.query("ROLLBACK");
+              return { state: "invalid_action" };
+            }
+          }
           await client.query(
             `UPDATE expense_evidence_candidates SET status = 'already_accounted', resolved_at = now(), updated_at = now() WHERE id = $1`,
             [candidate.candidate_id]
@@ -2347,9 +2368,9 @@ export function createRepository(pool, options = {}) {
         `INSERT INTO report_deliveries (
            user_id, report_type, period_key, period_start_utc, period_end_utc,
            timezone_used, status, generated_at, error_code, error_message,
-           skip_reason, metadata
+           skip_reason, metadata, attempt_count
          )
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13)
          ON CONFLICT (user_id, report_type, period_key) DO NOTHING
          RETURNING *`,
         [
@@ -2364,7 +2385,8 @@ export function createRepository(pool, options = {}) {
           input.errorCode ?? null,
           input.errorMessage ?? null,
           input.skipReason ?? null,
-          JSON.stringify(input.metadata ?? {})
+          JSON.stringify(input.metadata ?? {}),
+          input.attemptCount ?? (input.status === "pending" ? 1 : 0)
         ]
       );
       return result.rows[0] ?? null;
@@ -2375,9 +2397,9 @@ export function createRepository(pool, options = {}) {
         `INSERT INTO report_deliveries (
            user_id, report_type, period_key, period_start_utc, period_end_utc,
            timezone_used, status, generated_at, error_code, error_message,
-           skip_reason, metadata
+           skip_reason, metadata, attempt_count
          )
-         VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, NULL, NULL, NULL, $8::jsonb)
+         VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, NULL, NULL, NULL, $8::jsonb, 1)
          ON CONFLICT (user_id, report_type, period_key) DO UPDATE
          SET status = 'pending',
              period_start_utc = EXCLUDED.period_start_utc,
@@ -2390,8 +2412,20 @@ export function createRepository(pool, options = {}) {
              error_message = NULL,
              skip_reason = NULL,
              metadata = EXCLUDED.metadata,
+             attempt_count = report_deliveries.attempt_count + 1,
              updated_at = now()
-         WHERE report_deliveries.status = 'failed' OR $9 = true
+         WHERE $10 = true
+            OR (
+              report_deliveries.attempt_count < $11
+              AND (
+                report_deliveries.status = 'failed'
+                OR (
+                  report_deliveries.status = 'pending'
+                  AND $9::timestamptz IS NOT NULL
+                  AND report_deliveries.updated_at <= $9
+                )
+              )
+            )
          RETURNING *`,
         [
           input.userId,
@@ -2402,10 +2436,53 @@ export function createRepository(pool, options = {}) {
           input.timezoneUsed,
           input.generatedAt ?? new Date(),
           JSON.stringify(input.metadata ?? {}),
-          input.force === true
+          input.staleBefore ?? null,
+          input.force === true,
+          input.maxAttempts ?? 2
         ]
       );
       return result.rows[0] ?? null;
+    },
+
+    async listStalePendingReportDeliveries(input) {
+      const staleBefore = input.staleBefore;
+      const maxAttempts = input.maxAttempts ?? 2;
+      const limit = input.limit ?? 100;
+      await pool.query(
+        `UPDATE report_deliveries
+         SET status = 'failed',
+             error_code = 'delivery_outcome_unknown',
+             error_message = NULL,
+             updated_at = now()
+         WHERE status = 'pending'
+           AND updated_at <= $1
+           AND attempt_count >= $2`,
+        [staleBefore, maxAttempts]
+      );
+      const result = await pool.query(
+        `SELECT deliveries.*, to_jsonb(users) AS report_user
+         FROM report_deliveries AS deliveries
+         JOIN users ON users.id = deliveries.user_id
+         WHERE deliveries.status = 'pending'
+           AND deliveries.updated_at <= $1
+           AND deliveries.attempt_count < $2
+           AND users.telegram_user_id IS NOT NULL
+           AND users.onboarding_step = 'completed'
+           AND users.bot_blocked = false
+         ORDER BY deliveries.updated_at ASC, deliveries.id ASC
+         LIMIT $3`,
+        [staleBefore, maxAttempts, limit]
+      );
+      return result.rows.map((row) => ({
+        user: row.report_user,
+        reportType: row.report_type,
+        period: {
+          periodKey: row.period_key,
+          periodStartUtc: row.period_start_utc,
+          periodEndUtc: row.period_end_utc,
+          timezoneUsed: row.timezone_used
+        }
+      }));
     },
 
     async markReportDeliverySent(input) {
@@ -3459,6 +3536,11 @@ export function createRepository(pool, options = {}) {
          JOIN users ON users.id = drafts.user_id
          WHERE users.telegram_user_id = $1
            AND drafts.status = $2
+           AND NOT EXISTS (
+             SELECT 1 FROM expense_evidence_candidates
+             WHERE expense_evidence_candidates.draft_id = drafts.id
+               AND expense_evidence_candidates.status = 'already_accounted'
+           )
          ORDER BY drafts.created_at DESC
          LIMIT 20`,
         [telegramUserId, status]
@@ -3473,6 +3555,11 @@ export function createRepository(pool, options = {}) {
          JOIN users ON users.id = drafts.user_id
          WHERE users.telegram_user_id = $1
            AND drafts.status IN ('pending', 'inbox')
+           AND NOT EXISTS (
+             SELECT 1 FROM expense_evidence_candidates
+             WHERE expense_evidence_candidates.draft_id = drafts.id
+               AND expense_evidence_candidates.status = 'already_accounted'
+           )
          ORDER BY drafts.created_at DESC, drafts.id DESC`,
         [telegramUserId]
       );
@@ -3550,6 +3637,20 @@ export function createRepository(pool, options = {}) {
       };
       try {
         if (ownsTransaction) await client.query("BEGIN");
+        const evidenceCandidates = await client.query(
+          `SELECT candidates.status AS candidate_status
+           FROM expense_evidence_candidates AS candidates
+           JOIN expense_evidence_imports AS imports ON imports.id = candidates.import_id
+           JOIN users ON users.id = imports.user_id
+           WHERE candidates.draft_id = $1 AND users.telegram_user_id = $2
+           ORDER BY candidates.id
+           FOR UPDATE OF candidates`,
+          [draftId, telegramUserId]
+        );
+        if (evidenceCandidates.rows.some((candidate) => candidate.candidate_status === "already_accounted")) {
+          if (ownsTransaction) await client.query("ROLLBACK");
+          throw new DraftCanceledError();
+        }
         const draftResult = await client.query(
           `SELECT drafts.*, users.base_currency, users.usd_thb_rate, users.timezone
            FROM drafts
@@ -5448,7 +5549,12 @@ async function prefetchDraftMoneyAmounts(pool, exchangeRates, draftId, telegramU
   const result = await pool.query(
     `SELECT drafts.items, drafts.version, drafts.status, users.base_currency
      FROM drafts JOIN users ON users.id = drafts.user_id
-     WHERE drafts.id = $1 AND users.telegram_user_id = $2`,
+     WHERE drafts.id = $1 AND users.telegram_user_id = $2
+       AND NOT EXISTS (
+         SELECT 1 FROM expense_evidence_candidates
+         WHERE expense_evidence_candidates.draft_id = drafts.id
+           AND expense_evidence_candidates.status = 'already_accounted'
+       )`,
     [draftId, telegramUserId]
   );
   const draft = result.rows[0];

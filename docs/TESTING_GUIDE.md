@@ -41,7 +41,7 @@ Expense-evidence review coverage must prove that aggregate photo/session summari
 - Currency rounding and display currencies.
 - Budget top-up confirm/undo idempotency, current-day snapshot invalidation, and reserve budget synchronization.
 - Budget top-up month boundaries: current-month confirmation is allowed, previous-month button confirmation is rejected, and no leftover/top-up rolls over automatically.
-- Weekly and monthly report period boundaries, delivery idempotency, dry-run backfill, and blocked-bot behavior.
+- Weekly and monthly report period boundaries, delivery idempotency, dry-run backfill, blocked-bot behavior, and stale-`pending` recovery: no reclaim before 15 minutes, one automatic retry outside the normal send window, atomic concurrent claims, and terminal `delivery_outcome_unknown` after two attempts.
 - Report accounting: paid planned actual linked amounts, budget top-ups as capacity, large one-offs inside total but outside daily projection, and hidden outside-budget block unless an existing model supplies it.
 - Weekly report presentation: localized category names (no internal keys leaked in RU or EN), top-3 categories with percentages, up to five largest expenses, week-over-week comparison only when the previous week had spending, first-week handling, threshold-gated "what changed", needs-attention from unpaid planned payments (with stronger overdue wording), and a data-grounded takeaway that hides when unsupported.
 
