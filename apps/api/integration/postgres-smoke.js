@@ -6,17 +6,19 @@ import pg from "pg";
 
 import { migrate } from "../src/db.js";
 import { normalizePlannedDateKey } from "../src/plannedOccurrenceDates.js";
-import { createRepository } from "../src/repository.js";
+import { createRepository, DraftCanceledError } from "../src/repository.js";
 import { createMiniAppQuickCaptureDraft, createShortcutExpenseDraft, createTelegramExpenseDraft } from "../src/expenseDraftService.js";
 import { createExpenseParser } from "../src/expenseParser.js";
 import { createExpenseEvidenceAnalyzer } from "../src/expenseEvidenceAnalyzer.js";
 import { createExpenseEvidenceImportService } from "../src/expenseEvidenceImportService.js";
+import { createExpenseEvidenceSessionService } from "../src/expenseEvidenceSessionService.js";
 import { createPaidProviderUsageGate } from "../src/paidProviderUsage.js";
 import { createPlannedPaymentReminderService } from "../src/plannedPaymentReminderService.js";
 import { processMiniAppQuickCapture } from "../src/quickCapture.js";
 import { createReportService } from "../src/reportService.js";
 import { processShortcutCapture } from "../src/shortcutCapture.js";
 import { acceptReviewRecovery, previewSmartSaveRecovery, saveSmartSaveRecovery } from "../src/smartSaveRecovery.js";
+import { createTelegramBot } from "../src/telegram.js";
 import { createVoiceTranscriber } from "../src/voiceTranscriber.js";
 
 const { Pool } = pg;
@@ -388,6 +390,190 @@ test("image import reserves once for the internal user and blocks an exhausted r
     [user.id]
   )).rows, [{ status: "failed", failure_code: "analysis_failed" }]);
   assert.equal((await pool.query("SELECT COUNT(*)::int AS count FROM drafts WHERE user_id = $1", [user.id])).rows[0].count, 0);
+});
+
+test("already-accounted evidence closes its draft and legacy rows cannot reenter recovery", async () => {
+  const telegramUserId = 990205;
+  const user = await createSmokeUser(telegramUserId);
+  const currentDraft = await repo.createDraft(user.id, "accounted receipt", [expenseItem({ description: "accounted receipt", needs_review: true })]);
+  const currentImport = (await pool.query(
+    `INSERT INTO expense_evidence_imports
+       (user_id, source_chat_id, source_message_id, image_bytes_hmac, status, completed_at)
+     VALUES ($1, 880205, 77, 'accounted-current', 'ready', now())
+     RETURNING id`,
+    [user.id]
+  )).rows[0];
+  const currentCandidate = (await pool.query(
+    `INSERT INTO expense_evidence_candidates
+       (import_id, ordinal, evidence_type, draft_id, status, dedupe_classification)
+     VALUES ($1, 0, 'receipt', $2, 'ready', 'likely_duplicate')
+     RETURNING id`,
+    [currentImport.id, currentDraft.id]
+  )).rows[0];
+
+  const resolved = await repo.resolveExpenseEvidenceCandidate({
+    userId: user.id,
+    importId: currentImport.id,
+    candidateId: currentCandidate.id,
+    action: "already_accounted"
+  });
+  assert.equal(resolved.state, "already_accounted");
+  const currentState = await pool.query(
+    `SELECT candidates.status AS candidate_status, drafts.status AS draft_status, drafts.version
+     FROM expense_evidence_candidates AS candidates
+     JOIN drafts ON drafts.id = candidates.draft_id
+     WHERE candidates.id = $1`,
+    [currentCandidate.id]
+  );
+  assert.deepEqual(currentState.rows[0], { candidate_status: "already_accounted", draft_status: "cancelled", version: 2 });
+  assert.equal((await repo.resolveExpenseEvidenceCandidate({
+    userId: user.id,
+    importId: currentImport.id,
+    candidateId: currentCandidate.id,
+    action: "already_accounted"
+  })).state, "already_accounted");
+  assert.equal((await pool.query("SELECT version FROM drafts WHERE id = $1", [currentDraft.id])).rows[0].version, 2);
+
+  const legacyDraft = await repo.createDraft(user.id, "legacy accounted receipt", [expenseItem({ description: "legacy accounted receipt", needs_review: true })]);
+  const legacyImport = (await pool.query(
+    `INSERT INTO expense_evidence_imports
+       (user_id, source_chat_id, source_message_id, image_bytes_hmac, status, completed_at)
+     VALUES ($1, 880205, 78, 'accounted-legacy', 'ready', now())
+     RETURNING id`,
+    [user.id]
+  )).rows[0];
+  await pool.query(
+    `INSERT INTO expense_evidence_candidates
+       (import_id, ordinal, evidence_type, draft_id, status, dedupe_classification, resolved_at)
+     VALUES ($1, 0, 'receipt', $2, 'already_accounted', 'likely_duplicate', now())`,
+    [legacyImport.id, legacyDraft.id]
+  );
+
+  const preview = await previewSmartSaveRecovery({ telegramUserId, repository: repo });
+  assert.equal(preview.draftCount, 0);
+  await assert.rejects(
+    () => repo.confirmDraftWithExplicitAcceptance(legacyDraft.id, telegramUserId),
+    (error) => error instanceof DraftCanceledError
+  );
+  const recovery = await acceptReviewRecovery({ telegramUserId, draftIds: [legacyDraft.id], repository: repo });
+  assert.deepEqual(recovery.results, [{ draftId: Number(legacyDraft.id), state: "not_found" }]);
+  assert.equal((await pool.query("SELECT COUNT(*)::int AS count FROM expenses WHERE user_id = $1", [user.id])).rows[0].count, 0);
+});
+
+test("concurrent draft confirmation wins safely over already-accounted resolution", { timeout: 10_000 }, async () => {
+  const telegramUserId = 990206;
+  const user = await createSmokeUser(telegramUserId);
+  const draft = await repo.createDraft(user.id, "concurrent receipt", [
+    expenseItem({ description: "concurrent receipt", needs_review: false })
+  ]);
+  const evidenceImport = (await pool.query(
+    `INSERT INTO expense_evidence_imports
+       (user_id, source_chat_id, source_message_id, image_bytes_hmac, status, completed_at)
+     VALUES ($1, 880206, 77, 'accounted-race', 'ready', now())
+     RETURNING id`,
+    [user.id]
+  )).rows[0];
+  const candidate = (await pool.query(
+    `INSERT INTO expense_evidence_candidates
+       (import_id, ordinal, evidence_type, draft_id, status, dedupe_classification)
+     VALUES ($1, 0, 'receipt', $2, 'ready', 'likely_duplicate')
+     RETURNING id`,
+    [evidenceImport.id, draft.id]
+  )).rows[0];
+
+  let releaseConfirmation;
+  let markConfirmationLocked;
+  const confirmationLocked = new Promise((resolveLocked) => { markConfirmationLocked = resolveLocked; });
+  const confirmationReleased = new Promise((resolveRelease) => { releaseConfirmation = resolveRelease; });
+  const confirmation = repo.saveDraftAsExpense(draft.id, telegramUserId, {
+    beforeSave: async () => {
+      markConfirmationLocked();
+      await confirmationReleased;
+    }
+  });
+  await confirmationLocked;
+
+  let resolutionSettled = false;
+  const resolution = repo.resolveExpenseEvidenceCandidate({
+    userId: user.id,
+    importId: evidenceImport.id,
+    candidateId: candidate.id,
+    action: "already_accounted"
+  }).finally(() => { resolutionSettled = true; });
+  await new Promise((resolveImmediate) => setImmediate(resolveImmediate));
+  assert.equal(resolutionSettled, false);
+
+  releaseConfirmation();
+  const [saved, resolved] = await Promise.all([confirmation, resolution]);
+  assert.equal(saved.alreadySaved, false);
+  assert.deepEqual(resolved, { state: "saved", draftId: draft.id, alreadySaved: true });
+
+  const state = await pool.query(
+    `SELECT candidates.status AS candidate_status, drafts.status AS draft_status
+     FROM expense_evidence_candidates AS candidates
+     JOIN drafts ON drafts.id = candidates.draft_id
+     WHERE candidates.id = $1`,
+    [candidate.id]
+  );
+  assert.deepEqual(state.rows[0], { candidate_status: "saved", draft_status: "confirmed" });
+  assert.equal((await pool.query("SELECT COUNT(*)::int AS count FROM expenses WHERE draft_id = $1", [draft.id])).rows[0].count, 1);
+  assert.equal((await repo.resolveExpenseEvidenceCandidate({
+    userId: user.id,
+    importId: evidenceImport.id,
+    candidateId: candidate.id,
+    action: "already_accounted"
+  })).state, "saved");
+  assert.equal((await pool.query("SELECT COUNT(*)::int AS count FROM expenses WHERE draft_id = $1", [draft.id])).rows[0].count, 1);
+});
+
+test("Telegram catch-up start links a ready import through the session service and PostgreSQL repository", async () => {
+  const telegramUserId = 990207;
+  const chatId = 880207;
+  const user = await createSmokeUser(telegramUserId);
+  const draft = await repo.createDraft(user.id, "catch-up coffee", [expenseItem({ description: "catch-up coffee", needs_review: true })]);
+  const imported = (await pool.query(
+    `INSERT INTO expense_evidence_imports
+       (user_id, source_chat_id, source_message_id, image_bytes_hmac, telegram_file_hmac, candidate_set_hmac, status, completed_at)
+     VALUES ($1, $2, 77, 'catch-up-image', 'catch-up-file', 'catch-up-candidates', 'ready', now())
+     RETURNING id`,
+    [user.id, chatId]
+  )).rows[0];
+  await pool.query(
+    `INSERT INTO expense_evidence_candidates
+       (import_id, ordinal, evidence_type, draft_id, status, dedupe_classification)
+     VALUES ($1, 0, 'receipt', $2, 'ready', 'new')`,
+    [imported.id, draft.id]
+  );
+  const messages = [];
+  const telegramClient = {
+    async answerCallbackQuery() { return { ok: true }; },
+    async editMessageText(message) { messages.push(message); return { ok: true }; }
+  };
+  const importService = {};
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: repo,
+    expenseEvidenceImportService: importService,
+    expenseEvidenceSessionService: createExpenseEvidenceSessionService({ repository: repo, importService }),
+    telegramClient,
+    now: () => new Date("2026-09-05T12:00:00.000Z")
+  });
+
+  await bot.handleUpdate({ callback_query: {
+    id: "catch-up-start",
+    data: `es:${imported.id}:start`,
+    from: { id: telegramUserId },
+    message: { chat: { id: chatId, type: "private" }, message_id: 21 }
+  } });
+
+  assert.equal(messages.at(-1).text, "Add photos, then tap Finish.");
+  const linked = await pool.query(
+    `SELECT sessions.user_id, sessions.source_chat_id, links.import_id
+     FROM expense_evidence_sessions AS sessions
+     JOIN expense_evidence_session_imports AS links ON links.session_id = sessions.id`
+  );
+  assert.deepEqual(linked.rows, [{ user_id: user.id, source_chat_id: String(chatId), import_id: imported.id }]);
 });
 
 test("image evidence duplicate rows use one user timezone across stored expenses and drafts", async () => {
