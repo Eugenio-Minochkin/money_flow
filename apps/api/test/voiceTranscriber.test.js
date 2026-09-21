@@ -132,11 +132,12 @@ test("rejects a voice message over the configured duration before downloading it
 
 test("reserves the Deepgram allowance after download and before the paid request", async () => {
   const stages = [];
+  let reservation;
   const transcriber = createVoiceTranscriber({
     telegramBotToken: "telegram-token",
     deepgramApiKey: "deepgram-key",
-    consumeVoiceUsage: async ({ audioDurationSec }) => {
-      assert.equal(audioDurationSec, 7);
+    consumeVoiceUsage: async (input) => {
+      reservation = input;
       stages.push("allowance");
     },
     fetchImpl: async (url) => {
@@ -155,6 +156,11 @@ test("reserves the Deepgram allowance after download and before the paid request
 
   await transcriber.transcribeTelegramVoice({ file_id: "voice-id", duration: 7 });
 
+  assert.deepEqual(reservation, {
+    userId: undefined,
+    audioSeconds: 7,
+    requestKey: null
+  });
   assert.deepEqual(stages, ["metadata", "download", "allowance", "deepgram"]);
 });
 
