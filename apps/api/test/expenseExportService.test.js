@@ -70,6 +70,24 @@ test("requestExport formats CSV dates and month filename in the user timezone", 
   assert.match(documents[0].content.toString("utf8"), /2026-07-08,10,THB,0.31,USD,food_cafe,coffee,expense,2026-07-08 00:31:05/);
 });
 
+test("requestExport neutralizes a formula-like expense note", async () => {
+  const documents = [];
+  const service = createExpenseExportService({
+    repository: pagedRepository([[
+      {
+        ...row("2026-07-07T21:30:00Z"),
+        description: "=HYPERLINK(\"https://example.test\")"
+      }
+    ]]),
+    sendDocument: async (document) => documents.push(document)
+  });
+
+  const result = await service.requestExport({ telegramUserId: 100, chatId: 500, period: "month", language: "en" });
+
+  assert.equal(result.status, "sent");
+  assert.match(documents[0].content.toString("utf8"), /,"'=HYPERLINK\(""https:\/\/example\.test""\)",expense,/);
+});
+
 test("requestExport paginates all rows and uses all-time filename", async () => {
   const seen = [];
   const documents = [];

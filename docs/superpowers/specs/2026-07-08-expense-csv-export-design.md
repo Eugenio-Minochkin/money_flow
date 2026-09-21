@@ -34,7 +34,7 @@ Add a shared backend export flow used by both Telegram callbacks and a Mini App 
 
 The repository fetches export rows by internal `users.id`, not request parameters. Current month uses `users.timezone` to compute local month UTC bounds. All time has no date upper/lower bound beyond the user's own rows. Rows are ordered oldest to newest.
 
-CSV generation lives in a focused writer module. It emits UTF-8 BOM, uses the required headers, formats local expense dates as `YYYY-MM-DD`, formats creation timestamps as `YYYY-MM-DD HH:mm:ss`, and escapes quotes, commas, line breaks, and non-ASCII text correctly.
+CSV generation lives in a focused writer module. It emits UTF-8 BOM, uses the required headers, formats local expense dates as `YYYY-MM-DD`, formats creation timestamps as `YYYY-MM-DD HH:mm:ss`, and escapes quotes, commas, line breaks, and non-ASCII text correctly. Formula-like cells beginning with `=`, `+`, `-`, or `@`, including after leading whitespace or control characters, are exported as text by prefixing an apostrophe before ordinary CSV quoting.
 
 Telegram delivery uses `sendDocument`; no public download links and no persistent storage. The MVP can send an in-memory `Buffer` through the Telegram client. If the real Telegram API path needs multipart upload support, implement that inside the Telegram adapter without changing export domain behavior.
 
@@ -48,7 +48,7 @@ Use paginated repository reads for all-time exports. Do not silently truncate. I
 
 Use red-first tests for:
 
-- CSV headers, BOM, escaping, dates, number formatting, and Russian text.
+- CSV headers, BOM, escaping, formula neutralization, dates, number formatting, and Russian text.
 - Repository scoping by internal `users.id`, oldest-to-newest ordering, current-month bounds from `users.timezone`, and no draft/entity leakage.
 - Telegram `/export` period picker, current-month/all-time document delivery, empty state, throttling, and normal parser flow unaffected.
 - Mini App endpoint ignores user identifiers from request body/query and uses initData auth.

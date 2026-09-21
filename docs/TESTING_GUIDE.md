@@ -8,6 +8,8 @@ Run focused capture checks with `npm.cmd test -- packages/shared/test/parser.tes
 
 Expense-evidence quota coverage must prove that download/validation failures consume nothing, the internal `users.id` reaches the image-analysis paid-provider gate, quota exhaustion prevents the OpenAI request and candidate creation, and concurrent/replayed Telegram message identity produces one durable reservation. Each distinct image call in a catch-up session consumes one image-analysis unit; CSV export is outside this allowance.
 
+CSV export coverage must prove that untrusted text beginning with `=`, `+`, `-`, or `@`, including after leading whitespace or control characters, is emitted as text rather than a spreadsheet formula while ordinary amounts, dates, quoting, and delimiters remain unchanged.
+
 Expense-evidence time coverage must prove that a recognized local date/time is converted with the user's IANA timezone before draft persistence, date-only evidence stays on its local calendar day, invalid or DST-gap/overlap values remain reviewable without an invented instant, previews render in the user's timezone, and duplicate checks use the same timezone for both saved expenses and unresolved drafts.
 
 Expense-evidence review coverage must prove that aggregate photo/session summaries have no save action, legacy summary-save callbacks open visible review without saving, candidate financial actions are shown only with the rendered owned unresolved draft, duplicate reasons are visible, and missing or terminal drafts clear the keyboard instead of leaving a stale confirmation path.
