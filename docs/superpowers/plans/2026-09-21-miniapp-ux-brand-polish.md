@@ -67,6 +67,6 @@
 - Modify: this plan, checking completed steps and recording material visual decisions.
 
 - [x] Review the final diff for unrelated changes and secrets.
-- [ ] Commit the scoped files on `codex/miniapp-ux-brand-polish`, push the branch, and open a draft PR into `master`.
-- [ ] Include summary, changed areas, docs checked, exact tests, no DB/API/production impact, synthetic before/after artifacts, limitations, and the required `## User Release Notes` block.
-- [ ] Verify the PR head SHA and CI for the exact final commit. Stop before merge or deploy and present the PR plus visible result to the user.
+- [x] Commit the scoped files on `codex/miniapp-ux-brand-polish`, push the branch, and open draft PR #230 into `master`.
+- [x] Include summary, changed areas, docs checked, exact tests, no DB/API/production impact, local before/after artifacts, limitations, and the required `## User Release Notes` block.
+- [x] Verify the PR head SHA and CI for the exact final commit. Stop before merge or deploy and present the PR plus visible result to the user.
