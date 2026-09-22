@@ -622,6 +622,17 @@ document.querySelector("#settingsForm")?.addEventListener("submit", (event) => e
 for (const selector of ["#baseCurrencyInput", "#displayCurrencyInput", "#displayCurrencyFollowsBaseInput", "#dailyReminderInput", "#timezoneInput"]) {
   document.querySelector(selector)?.addEventListener("change", scheduleSettingsAutosave);
 }
+for (const picker of document.querySelectorAll(".currency-picker")) {
+  picker.addEventListener("toggle", () => {
+    if (picker.open) return;
+    const field = picker.querySelector("select");
+    const search = picker.querySelector('input[type="search"]');
+    if (!field || !search) return;
+    search.value = "";
+    field.innerHTML = currencyOptions(field.value, option);
+    updateCurrencyPickerSummaries();
+  });
+}
 document.querySelector("#displayCurrencyFollowsBaseInput")?.addEventListener("change", applyDisplayCurrencyFollowsBase);
 for (const [searchSelector, selectSelector] of [["#baseCurrencySearch", "#baseCurrencyInput"], ["#displayCurrencySearch", "#displayCurrencyInput"]]) {
   document.querySelector(searchSelector)?.addEventListener("input", (event) => {
@@ -1652,6 +1663,7 @@ function renderSettingsControls(user) {
   displayCurrencyInput.innerHTML = currencyOptions(user.display_currency ?? "USD", option, document.querySelector("#displayCurrencySearch")?.value);
   baseCurrencyInput.value = user.base_currency ?? "THB";
   displayCurrencyInput.value = user.display_currency ?? "USD";
+  updateCurrencyPickerSummaries();
   document.querySelector("#displayCurrencyFollowsBaseInput").checked = user.display_currency_follows_base === true;
   applyDisplayCurrencyFollowsBase();
   document.querySelector("#interfaceLanguageInput").value = currentLanguage;
@@ -2500,7 +2512,7 @@ function bindPlannedActions(container, items) {
       if (button.disabled) return;
       const originalLabel = button.textContent;
       button.disabled = true;
-      button.textContent = currentLanguage === "ru" ? "Оплачиваю…" : "Paying…";
+      button.textContent = t("actions.payPending");
       try {
         const body = { telegramUserId };
         if (button.dataset.occurrenceDate) body.occurrenceDate = button.dataset.occurrenceDate;
@@ -2742,6 +2754,7 @@ async function saveMonthlyBudget() {
 
 function scheduleSettingsAutosave() {
   if (accountDeleted) return Promise.resolve();
+  updateCurrencyPickerSummaries();
   return settingsSaveQueue.enqueue(collectAutosaveSettingsState());
 }
 
@@ -3178,6 +3191,7 @@ function restoreAutosaveControls(settings) {
   if (!settings) return;
   document.querySelector("#baseCurrencyInput").value = settings.baseCurrency;
   document.querySelector("#displayCurrencyInput").value = settings.displayCurrency;
+  updateCurrencyPickerSummaries();
   document.querySelector("#displayCurrencyFollowsBaseInput").checked = settings.displayCurrencyFollowsBase === true;
   applyDisplayCurrencyFollowsBase();
   document.querySelector("#dailyReminderInput").checked = settings.dailyEntryReminderEnabled;
@@ -3194,6 +3208,14 @@ function applyDisplayCurrencyFollowsBase() {
   controls?.classList.toggle("hidden", followsBase);
   document.querySelector("#displayCurrencySearch").disabled = followsBase;
   document.querySelector("#displayCurrencyInput").disabled = followsBase;
+  updateCurrencyPickerSummaries();
+}
+
+function updateCurrencyPickerSummaries() {
+  const baseSummary = document.querySelector("#baseCurrencySummary");
+  const displaySummary = document.querySelector("#displayCurrencySummary");
+  if (baseSummary) baseSummary.textContent = document.querySelector("#baseCurrencyInput")?.value ?? "";
+  if (displaySummary) displaySummary.textContent = document.querySelector("#displayCurrencyInput")?.value ?? "";
 }
 
 function option(value, selected, label = value) {

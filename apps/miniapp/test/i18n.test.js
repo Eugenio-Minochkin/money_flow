@@ -266,10 +266,20 @@ test("dashboard tooltip translations are short hints without numeric formulas", 
 });
 
 test("translator falls back to English and formats count labels", () => {
-  assert.equal(createTranslator("ru")("actions.pay"), "Оплатить");
-  assert.equal(createTranslator("en")("actions.pay"), "Pay");
-  assert.equal(createTranslator("unknown")("actions.pay"), "Pay");
+  assert.equal(createTranslator("ru")("actions.pay"), "Отметить оплату");
+  assert.equal(createTranslator("en")("actions.pay"), "Mark paid");
+  assert.equal(createTranslator("unknown")("actions.pay"), "Mark paid");
+  assert.equal(createTranslator("ru")("actions.payPending"), "Сохраняю оплату…");
+  assert.equal(createTranslator("en")("actions.payPending"), "Saving payment…");
   assert.equal(createTranslator("en")("history.inboxCount", { count: 2 }), "Needs review: 2");
+});
+
+test("data and privacy copy describes export without positional wording", () => {
+  for (const language of ["ru", "en"]) {
+    const copy = createTranslator(language)("settings.dataPrivacyActions");
+    assert.doesNotMatch(copy, /above|below|выше|ниже/i);
+    assert.match(copy, /CSV/i);
+  }
 });
 
 test("translations cover budget reserve states and actions", () => {

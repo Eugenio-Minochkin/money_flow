@@ -578,8 +578,8 @@ test("dashboard metric display currency uses the purple accent", async () => {
 
   assert.match(html, /id="dashboardCards"/);
   assert.match(css, /\.dashboard-card__display\s*{[^}]*color:\s*var\(--usd\)/s);
-  assert.match(css, /\.dashboard-card__label\s*{[^}]*color:\s*#6f6258/s);
-  assert.match(css, /\.dashboard-card__value\s*{[^}]*color:\s*#11100f/s);
+  assert.match(css, /\.dashboard-card__label\s*{[^}]*color:\s*var\(--muted\)/s);
+  assert.match(css, /\.dashboard-card__value\s*{[^}]*color:\s*var\(--ink\)/s);
 });
 
 test("dashboard cards render through the shared renderer", async () => {
@@ -668,9 +668,9 @@ test("dashboard uses compact header, inbox before month plan, and bottom navigat
 
   assert.ok(heroIndex < inboxIndex);
   assert.ok(inboxIndex < plannedIndex);
-  assert.ok(plannedIndex < forecastIndex);
+  assert.ok(plannedIndex < latestIndex);
+  assert.ok(latestIndex < forecastIndex);
   assert.ok(forecastIndex < budgetIndex);
-  assert.ok(budgetIndex < latestIndex);
   assert.ok(latestIndex < categoriesIndex);
   assert.ok(categoriesIndex < activityIndex);
   assert.match(html, /<details class="dashboard-disclosure monthly-forecast" id="monthlyForecast">/);
@@ -873,6 +873,17 @@ test("dashboard light theme uses the approved warm surface system", async () => 
   assert.match(lightTheme, /--line:\s*#e8e2da/);
   assert.match(lightTheme, /--ink:\s*#1d2530/);
   assert.match(lightTheme, /--muted:\s*#6f6a63/);
+  assert.match(lightTheme, /--accent:\s*#52775d/);
+  assert.match(lightTheme, /--accent-button:\s*#426d4e/);
+  assert.match(lightTheme, /--gold:\s*#c4a05b/);
+  const darkTheme = css.match(/body\[data-theme="dark"\]\s*{[^}]*}/s)?.[0] ?? "";
+  assert.match(darkTheme, /--accent:\s*#92bd9b/);
+  assert.match(darkTheme, /--accent-button:\s*#365f41/);
+  assert.match(css, /button\s*{[^}]*background:\s*var\(--accent-button\);[^}]*color:\s*var\(--accent-on\)/s);
+  assert.match(css, /font-family:\s*ui-sans-serif, system-ui, -apple-system/);
+  assert.doesNotMatch(css, /font-family:[^;]*Inter/);
+  assert.match(css, /\.dashboard-card__line\s*{[^}]*gap:\s*4px;\s*font-size:\s*11px/s);
+  assert.match(css, /\.dashboard-card__reserve\s*{[^}]*font-size:\s*12px;\s*line-height/s);
   assert.match(css, /\.dashboard-disclosure,[^]*\.latest-expenses\s*{[^}]*border-radius:\s*18px/s);
 });
 
@@ -1000,14 +1011,20 @@ test("settings are grouped into focused sections with quick access and evening r
   const settingsHtml = html.slice(settingsStart, settingsEnd);
 
   assert.equal((settingsHtml.match(/class="settings-section"/g) ?? []).length, 5);
-  assert.match(settingsHtml, /id="quickAccessBlock"/);
+  const budgetIndex = settingsHtml.indexOf('data-i18n="settings.sectionBudget"');
+  const currenciesIndex = settingsHtml.indexOf('data-i18n="settings.sectionCurrencies"');
+  const quickAccessIndex = settingsHtml.indexOf('id="quickAccessBlock"');
+  const notificationsIndex = settingsHtml.indexOf('data-i18n="settings.sectionNotifications"');
+  const interfaceIndex = settingsHtml.indexOf('data-i18n="settings.sectionInterface"');
+  assert.ok(budgetIndex < currenciesIndex && currenciesIndex < quickAccessIndex);
+  assert.ok(quickAccessIndex < notificationsIndex && notificationsIndex < interfaceIndex);
   assert.match(settingsHtml, /id="openShortcutSetupButton"/);
-  assert.match(settingsHtml, /data-i18n="settings.sectionBudget"/);
-  assert.match(settingsHtml, /data-i18n="settings.sectionCurrencies"/);
-  assert.match(settingsHtml, /data-i18n="settings.sectionNotifications"/);
-  assert.match(settingsHtml, /data-i18n="settings.sectionInterface"/);
   assert.match(settingsHtml, /id="dailyReminderInput"[^>]+name="dailyEntryReminderEnabled"/);
   assert.doesNotMatch(settingsHtml, /budgetAdviceInput/);
+  const privacyIndex = settingsHtml.indexOf('id="dataPrivacySection"');
+  const exportIndex = settingsHtml.indexOf('id="expenseExportBlock"');
+  assert.ok(privacyIndex >= 0 && exportIndex > privacyIndex);
+  assert.ok(exportIndex < settingsHtml.indexOf('id="deleteAccountSection"'));
 });
 
 test("reserve settings live in Plan instead of Settings", async () => {
@@ -1031,9 +1048,11 @@ test("currency selectors use native option labels without overlay markers", asyn
 
   assert.doesNotMatch(html, /id="baseCurrencyMark"/);
   assert.doesNotMatch(html, /id="displayCurrencyMark"/);
-  assert.match(html, /id="baseCurrencySearch" type="search"/);
-  assert.match(html, /id="baseCurrencyInput" name="baseCurrency"><\/select>/);
+  assert.match(html, /<details class="currency-picker" id="baseCurrencyPicker"[^]*<summary[^]*<strong id="baseCurrencySummary"[^]*<\/summary>[^]*id="baseCurrencySearch" type="search"[^]*id="baseCurrencyInput" name="baseCurrency"><\/select>/);
+  assert.match(html, /<details class="currency-picker" id="displayCurrencyPicker"[^]*<summary[^]*<strong id="displayCurrencySummary"[^]*<\/summary>[^]*id="displayCurrencySearch" type="search"[^]*id="displayCurrencyInput" name="displayCurrency"><\/select>/);
   assert.match(app, /currencyOptions\(user\.base_currency/);
+  assert.match(app, /for \(const picker of document\.querySelectorAll\("\.currency-picker"\)\)[^]*picker\.addEventListener\("toggle"[^]*search\.value = ""[^]*updateCurrencyPickerSummaries\(\)/s);
+  assert.match(app, /function updateCurrencyPickerSummaries\(\)/);
   assert.doesNotMatch(html, /interfaceLanguageFlag/);
   assert.doesNotMatch(html, /flag-icon/);
   assert.doesNotMatch(html, /data-currency/);
@@ -1057,6 +1076,22 @@ test("settings exposes expense export actions that send only period", async () =
   assert.match(app, /\/api\/exports\/expenses/);
   assert.match(app, /body:\s*\{\s*period\s*\}/);
   assert.doesNotMatch(app, /body:\s*\{\s*telegramUserId,\s*period\s*\}/);
+  assert.match(html, /settings\.dataPrivacyActions/);
+});
+
+test("dashboard dark theme keeps the hero on the dark surface system", async () => {
+  const css = await readFile(join(miniAppRoot, "styles.css"), "utf8");
+
+  assert.match(css, /body\[data-theme="dark"\] \.hero-metric\s*{[^}]*border-color:\s*var\(--line\)[^}]*background:\s*linear-gradient/s);
+  assert.match(css, /body\[data-theme="dark"\] \.hero-metric__facts\s*{[^}]*background:\s*color-mix\(in srgb, var\(--panel\)/s);
+  assert.match(css, /body\[data-theme="dark"\] \.hero-metric__details-toggle\s*{[^}]*color:\s*var\(--accent\)/s);
+});
+
+test("planned payment actions use explicit paid wording and localized pending copy", async () => {
+  const app = await readFile(join(miniAppRoot, "app.js"), "utf8");
+  assert.match(app, /t\("actions\.payPending"\)/);
+  assert.doesNotMatch(app, /Оплачиваю…|Paying…/);
+  assert.match(app, /t\("actions\.pay"\)/);
 });
 
 test("Quick Entry is a five-slot navigation action and is unavailable during onboarding", async () => {

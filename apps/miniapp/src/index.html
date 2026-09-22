@@ -117,6 +117,14 @@
 
         <section class="notice hidden" id="plannedNotice"></section>
 
+        <section class="section latest-expenses" id="latestExpensesSection">
+          <div class="section-heading compact-heading">
+            <h2 data-i18n="history.latestExpenses">Последние расходы</h2>
+            <button type="button" class="ghost-button section-heading__action" id="openAllHistoryButton" data-i18n="actions.showAll">Показать все</button>
+          </div>
+          <div class="expense-list" id="latestExpenses"></div>
+        </section>
+
         <details class="dashboard-disclosure monthly-forecast" id="monthlyForecast">
           <summary class="dashboard-disclosure__summary">
             <span class="dashboard-disclosure__icon" aria-hidden="true">
@@ -177,14 +185,6 @@
             <section class="budget-topup-shell hidden" id="budgetTopupBreakdown"></section>
           </div>
         </details>
-
-        <section class="section latest-expenses" id="latestExpensesSection">
-          <div class="section-heading compact-heading">
-            <h2 data-i18n="history.latestExpenses">Последние расходы</h2>
-            <button type="button" class="ghost-button section-heading__action" id="openAllHistoryButton" data-i18n="actions.showAll">Показать все</button>
-          </div>
-          <div class="expense-list" id="latestExpenses"></div>
-        </section>
 
         <details class="dashboard-disclosure analytics-disclosure" id="categoriesDisclosure">
           <summary class="dashboard-disclosure__summary">
@@ -377,25 +377,6 @@
           </div>
           <form class="settings-page" id="settingsForm">
             <section class="settings-section">
-              <h3 class="settings-section-title" data-i18n="quickAccess.title">⚡ Quick access</h3>
-              <div class="settings-card" id="quickAccessBlock">
-                <div class="settings-row settings-row--stacked hidden" id="homeScreenBlock">
-                  <strong data-i18n="quickAccess.homeTitle">Add Money Flow to Home Screen</strong>
-                  <button type="button" class="ghost-button" id="addToHomeScreenButton" data-i18n="quickAccess.homeAdd">Add to Home Screen</button>
-                  <p class="settings-hint hidden" id="homeScreenAddedState" data-i18n="quickAccess.homeAdded">✓ Added to Home Screen</p>
-                </div>
-                <div class="settings-row settings-row--stacked">
-                  <button type="button" class="quick-access-entry" id="openShortcutSetupButton">
-                    <span class="quick-access-entry__copy"><strong data-i18n="quickAccess.shortcutTitle">Quick entry with Siri</strong><span data-i18n="quickAccess.shortcutHint">Add expenses by voice without opening Telegram.</span></span>
-                    <span class="quick-access-entry__chevron" aria-hidden="true">›</span>
-                  </button>
-                  <p class="settings-hint hidden" id="quickAccessConfiguredBadge" data-i18n="quickAccess.entryReady">✓ Shortcut is ready</p>
-                  <p class="settings-hint hidden" id="quickAccessUnavailableState" data-i18n="quickAccess.unavailable">Siri setup is temporarily unavailable. Try again later or contact support.</p>
-                  <button type="button" class="ghost-button hidden" id="retryShortcutSetupConfigButton" data-i18n="quickAccess.retry">Retry</button>
-                </div>
-              </div>
-            </section>
-            <section class="settings-section">
               <h3 class="settings-section-title" data-i18n="settings.sectionBudget">Budget</h3>
               <div class="settings-card">
                 <label class="settings-row">
@@ -418,21 +399,46 @@
               <h3 class="settings-section-title" data-i18n="settings.sectionCurrencies">Currencies</h3>
               <div class="settings-card">
                 <p class="settings-hint" data-i18n="settings.currencyHint">Accounting is what expenses are calculated in. Display is what amounts are shown in.</p>
-                <label class="settings-row">
-                  <span data-i18n="settings.baseCurrency">Base currency</span>
-                  <input id="baseCurrencySearch" type="search" placeholder="Search currency" autocomplete="off" />
-                  <select id="baseCurrencyInput" name="baseCurrency"></select>
-                </label>
+                <details class="currency-picker" id="baseCurrencyPicker">
+                  <summary class="currency-picker__summary"><span data-i18n="settings.baseCurrency">Base currency</span><strong id="baseCurrencySummary"></strong></summary>
+                  <label class="settings-row currency-picker__controls">
+                    <span data-i18n="settings.baseCurrency">Base currency</span>
+                    <input id="baseCurrencySearch" type="search" placeholder="Search currency" autocomplete="off" />
+                    <select id="baseCurrencyInput" name="baseCurrency"></select>
+                  </label>
+                </details>
                 <label class="toggle-setting settings-toggle">
                   <span id="displayCurrencyFollowsBaseLabel" data-i18n="settings.displayCurrencyFollowsBase">Same as base currency</span>
                   <input id="displayCurrencyFollowsBaseInput" name="displayCurrencyFollowsBase" type="checkbox" />
                 </label>
                 <div id="customDisplayCurrencyControls">
-                  <label class="settings-row">
-                    <span data-i18n="settings.displayCurrency">Display currency</span>
-                    <input id="displayCurrencySearch" type="search" placeholder="Search currency" autocomplete="off" />
-                    <select id="displayCurrencyInput" name="displayCurrency"></select>
-                  </label>
+                  <details class="currency-picker" id="displayCurrencyPicker">
+                    <summary class="currency-picker__summary"><span data-i18n="settings.displayCurrency">Display currency</span><strong id="displayCurrencySummary"></strong></summary>
+                    <label class="settings-row currency-picker__controls">
+                      <span data-i18n="settings.displayCurrency">Display currency</span>
+                      <input id="displayCurrencySearch" type="search" placeholder="Search currency" autocomplete="off" />
+                      <select id="displayCurrencyInput" name="displayCurrency"></select>
+                    </label>
+                  </details>
+                </div>
+              </div>
+            </section>
+            <section class="settings-section">
+              <h3 class="settings-section-title" data-i18n="quickAccess.title">⚡ Quick access</h3>
+              <div class="settings-card" id="quickAccessBlock">
+                <div class="settings-row settings-row--stacked hidden" id="homeScreenBlock">
+                  <strong data-i18n="quickAccess.homeTitle">Add Money Flow to Home Screen</strong>
+                  <button type="button" class="ghost-button" id="addToHomeScreenButton" data-i18n="quickAccess.homeAdd">Add to Home Screen</button>
+                  <p class="settings-hint hidden" id="homeScreenAddedState" data-i18n="quickAccess.homeAdded">✓ Added to Home Screen</p>
+                </div>
+                <div class="settings-row settings-row--stacked">
+                  <button type="button" class="quick-access-entry" id="openShortcutSetupButton">
+                    <span class="quick-access-entry__copy"><strong data-i18n="quickAccess.shortcutTitle">Quick entry with Siri</strong><span data-i18n="quickAccess.shortcutHint">Add expenses by voice without opening Telegram.</span></span>
+                    <span class="quick-access-entry__chevron" aria-hidden="true">›</span>
+                  </button>
+                  <p class="settings-hint hidden" id="quickAccessConfiguredBadge" data-i18n="quickAccess.entryReady">✓ Shortcut is ready</p>
+                  <p class="settings-hint hidden" id="quickAccessUnavailableState" data-i18n="quickAccess.unavailable">Siri setup is temporarily unavailable. Try again later or contact support.</p>
+                  <button type="button" class="ghost-button hidden" id="retryShortcutSetupConfigButton" data-i18n="quickAccess.retry">Retry</button>
                 </div>
               </div>
             </section>
@@ -446,14 +452,6 @@
                   </span>
                   <input id="dailyReminderInput" name="dailyEntryReminderEnabled" type="checkbox" />
                 </label>
-                <div class="settings-export" id="expenseExportBlock">
-                  <strong data-i18n="settings.sectionExport">Export data</strong>
-                  <p class="settings-hint" data-i18n="settings.exportHint">CSV will be sent to you in Telegram.</p>
-                  <div class="button-row">
-                    <button type="button" class="ghost-button" data-export-period="month" data-i18n="settings.exportMonth">Current month</button>
-                    <button type="button" class="ghost-button" data-export-period="all" data-i18n="settings.exportAll">All time</button>
-                  </div>
-                </div>
               </div>
             </section>
             <section class="settings-section">
@@ -496,7 +494,15 @@
               <p data-i18n="settings.dataPrivacyStorage">Money Flow хранит финансовые записи и настройки, нужные для работы сервиса.</p>
               <p data-i18n="settings.dataPrivacyProviders">Текст и голосовые сообщения из Telegram могут передаваться в настроенные внешние сервисы AI и расшифровки, когда это требуется текущей обработкой.</p>
               <p data-i18n="settings.dataPrivacyAnalytics">Аналитика содержит только технические метаданные: без текста расходов, сумм, токенов и Telegram initData.</p>
-              <p data-i18n="settings.dataPrivacyActions">Вы можете экспортировать данные выше или удалить аккаунт ниже. Сырые секреты и ключи Quick Access не хранятся в PostgreSQL.</p>
+              <p data-i18n="settings.dataPrivacyActions">Сырые секреты и ключи Quick Access не хранятся в PostgreSQL.</p>
+            </div>
+            <div class="settings-export" id="expenseExportBlock">
+              <strong data-i18n="settings.sectionExport">Экспорт данных</strong>
+              <p class="settings-hint" data-i18n="settings.exportHint">CSV придет сообщением в Telegram.</p>
+              <div class="button-row">
+                <button type="button" class="ghost-button" data-export-period="month" data-i18n="settings.exportMonth">Текущий месяц</button>
+                <button type="button" class="ghost-button" data-export-period="all" data-i18n="settings.exportAll">За все время</button>
+              </div>
             </div>
           </details>
 
