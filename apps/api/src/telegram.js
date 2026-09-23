@@ -963,7 +963,7 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
       }
       return delivered;
     } catch (error) {
-      if (error instanceof TelegramTerminalDeliveryError) {
+      if (error instanceof TelegramTerminalDeliveryError && processingDraftType === "regular") {
         throw error;
       }
       if (deliveryState.financialResultCommitted) {
@@ -978,6 +978,7 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
           if (typeof repository.failTelegramExpenseCapture === "function") durableCaptureState = "failed";
         } catch {}
       }
+      if (error instanceof TelegramTerminalDeliveryError) throw error;
       if (["paid_provider_limit_reached", "paid_provider_disabled", "voice_message_too_long"].includes(error?.code)) {
         processingResult = error.code;
         return await deliverQueuedResult({

@@ -4532,6 +4532,106 @@ test("new user onboarding after the 5th asks for a current month budget", async 
   assert.equal(repo.currentMonthBudget.isPartialMonth, true);
 });
 
+for (const [kind, text] of [
+  ["topup", "bonus 10000"],
+  ["planned", "every Tuesday psychologist 5000 rub"]
+]) {
+  test(`terminal delivery failure closes ${kind} capture before webhook replay or recovery`, async () => {
+    const repo = fakeRepository();
+    let capture = null;
+    let payload = null;
+    let drafts = 0;
+    let failures = 0;
+    let parserCalls = 0;
+    let saves = 0;
+    const update = { message: { message_id: 901, chat: { id: 10 }, from: { id: 100 }, text } };
+    repo.user = { id: 1, interface_language: "en", base_currency: "THB", onboarding_step: "completed", timezone: "Asia/Bangkok" };
+    repo.claimTelegramExpenseCapture = async (_userId, _chatId, _messageId, nextPayload) => {
+      if (capture === "failed") return { state: "failed" };
+      capture = "processing";
+      payload = nextPayload;
+      return { state: "claimed", claimVersion: 1 };
+    };
+    repo.failTelegramExpenseCapture = async (userId, chatId, messageId, version, code) => {
+      assert.deepEqual([userId, chatId, messageId, version, code], [1, 10, 901, 1, "telegram_terminal_delivery_failed"]);
+      failures += 1;
+      capture = "failed";
+      payload = null;
+    };
+    repo.listRunnableTelegramExpenseCaptures = async () => capture === "processing" && payload
+      ? [{ user_id: 1, telegram_user_id: 100, chat_id: 10, message_id: 901, payload }]
+      : [];
+    repo.previewBudgetTopup = async () => ({ amountBase: 10000, baseBudget: 48000, large: false });
+    repo.createBudgetTopupDraft = repo.createPlannedDraft = async () => ({ id: ++drafts });
+    repo.saveDraftAsExpense = async () => { saves += 1; throw new Error("must not save"); };
+    let sends = 0;
+    const bot = createTelegramBot({
+      repository: repo, token: "synthetic", miniAppUrl: "https://example.invalid", perfLogger: () => {},
+      expenseParser: { async parse() { parserCalls += 1; return { expenses: [] }; } },
+      telegramClient: {
+        async sendMessage() {
+          if (++sends === 1) return { ok: true, result: { message_id: 501 } };
+          throw new Error("injected terminal send failure");
+        },
+        async editMessageText() { throw new Error("injected edit failure"); },
+        async deleteMessage() { return { ok: true }; }
+      },
+      now: () => new Date("2026-09-23T12:00:00Z")
+    });
+    await bot.handleUpdate(update);
+    await bot.resumePendingCaptures();
+    await bot.handleUpdate(update);
+    assert.equal(drafts, 1, "recovery and replay must not create another draft");
+    assert.equal(failures, 1);
+    assert.equal(capture, "failed");
+    assert.equal(payload, null);
+    assert.equal(parserCalls, 0);
+    assert.equal(saves, 0);
+    assert.equal(repo.events.find((event) => event.eventName === "message_processing_completed").metadata.durableCaptureState, "failed");
+  });
+}
+
+for (const smartSave of [false, true]) {
+  test(`terminal delivery failure preserves completed regular capture with Smart Save ${smartSave}`, async () => {
+    const repo = fakeRepository();
+    let captureState = "processing";
+    let failures = 0;
+    let saved = 0;
+    repo.claimTelegramExpenseCapture = async () => ({ state: "claimed", claimVersion: 1 });
+    repo.completeTelegramExpenseCapture = async ({ items }) => {
+      captureState = "completed";
+      return { draft: { id: 42, status: "pending", items } };
+    };
+    repo.failTelegramExpenseCapture = async () => { failures += 1; };
+    repo.listClosedReserveMonthsForTelegramUser = async () => [];
+    repo.saveDraftAsExpense = async () => {
+      saved += 1;
+      return { expenses: [{ id: 71, amount_base: 70, amount_original: 70, currency_original: "THB", category_slug: "food_cafe", description: "coffee" }], dashboardSnapshot: null };
+    };
+    let sends = 0;
+    await assert.rejects(processQueuedMessage({
+      message: { message_id: 902, chat: { id: 10 } }, from: { id: 100 },
+      user: { id: 1, interface_language: "en", base_currency: "THB", onboarding_step: "completed", timezone: "Asia/Bangkok" },
+      rawText: "coffee 70", inputType: "text", repository: repo,
+      expenseCaptureClaim: { state: "claimed", claimVersion: 1 },
+      expenseParser: { async parse() { return { expenses: [{ amount: 70, currency: "THB", category_slug: smartSave ? "food_cafe" : "other", description: "coffee", needs_review: !smartSave, category_source: "parser", budget_impact: "regular", spent_at: "2026-09-23T10:00:00Z" }] }; } },
+      telegramClient: {
+        async sendMessage() {
+          if (++sends === 1) return { ok: true, result: { message_id: 502 } };
+          throw new Error("injected terminal send failure");
+        },
+        async editMessageText() { throw new Error("injected edit failure"); },
+        async deleteMessage() { return { ok: true }; }
+      },
+      trace: stubTrace(), miniAppUrl: "https://example.invalid",
+      now: () => new Date("2026-09-23T12:00:00Z")
+    }), { code: "telegram_terminal_delivery_failed" });
+    assert.equal(captureState, "completed");
+    assert.equal(failures, 0);
+    assert.equal(saved, smartSave ? 1 : 0);
+  });
+}
+
 test("recurring planned text creates a planned draft before saving", async () => {
   const calls = [];
   const repo = fakeRepository();
