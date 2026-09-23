@@ -7576,4 +7576,3 @@ test("a three-message local-safe burst does not wait for the injected slow LLM",
   assert.ok(completed.every((event) => event.metadata.localAcceptanceLevel === "local_safe"));
   assert.equal(calls.filter((call) => /Записал/.test(call.text)).length, 3);
 });
-
