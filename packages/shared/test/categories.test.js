@@ -38,6 +38,15 @@ test("recognizes conservative Russian and English aliases", () => {
   }
 });
 
+test("matches router aliases exactly and preserves existing cross-category precedence", () => {
+  assert.equal(inferCategory("роутер"), "gear");
+  assert.equal(inferCategory("router"), "gear");
+  assert.equal(inferCategory("роутерный"), "other");
+  assert.equal(inferCategory("роутера"), "other");
+  assert.equal(inferCategory("routering"), "other");
+  assert.equal(inferCategory("router кофе"), "food_cafe");
+});
+
 test("keeps deliberately ambiguous words as other", () => {
   assert.equal(inferCategory("tea"), "other");
   assert.equal(inferCategory("water"), "other");
