@@ -2,6 +2,8 @@
 
 Money Flow UI should feel light and direct. Favor quick comprehension over dense configuration.
 
+Telegram capture replies must reflect the saved financial state: a delivery failure after saving retries the saved result and must not invite the user to resend an already saved expense.
+
 ## Dashboard
 
 - Keep the dashboard compact.

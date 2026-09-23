@@ -18,7 +18,7 @@ import { formatTechnicalStatsSections } from "./technicalStatsService.js";
 import { createExpenseExportService } from "./expenseExportService.js";
 import { createTelegramExpenseDraft, ExpenseTextNotRecognizedError } from "./expenseDraftService.js";
 import { createTelegramJobQueue } from "./telegramJobQueue.js";
-import { createTelegramJobDeliveryState, markTelegramJobTerminalResponse, shouldNotifyTelegramJobFailure } from "./telegramJobOutcome.js";
+import { createTelegramJobDeliveryState, markTelegramJobFinancialResultCommitted, markTelegramJobTerminalResponse, retainTelegramJobCommittedResult, shouldNotifyTelegramJobFailure } from "./telegramJobOutcome.js";
 import { deadlineSignal } from "./deadlineSignal.js";
 import { normalizeVoiceMoneyTranscript } from "./voiceMoneyNormalization.js";
 import { syncTelegramUserCommandMenu } from "./telegramCommands.js";
@@ -72,6 +72,15 @@ const MIN_FEEDBACK_MESSAGE_LENGTH = 3;
 const EXPENSE_PROCESSING_CUSTOM_EMOJI_ID = "6003518287214808258";
 const pendingFeedbackByTelegramUser = new Map();
 const ACCOUNT_DELETION_SOURCE_TELEGRAM = "telegram";
+const TERMINAL_DELIVERY_FALLBACK_TIMEOUT_MS = 3_000;
+
+class TelegramTerminalDeliveryError extends Error {
+  constructor() {
+    super("Telegram terminal delivery failed");
+    this.name = "TelegramTerminalDeliveryError";
+    this.code = "telegram_terminal_delivery_failed";
+  }
+}
 
 export function createTelegramBot({
   repository,
@@ -534,8 +543,27 @@ async function sendQueuedJobFailure({ error, token, chatId, language, telegramCl
     });
     return;
   }
+  if (deliveryState?.financialResultCommitted) {
+    if (!(error instanceof TelegramTerminalDeliveryError)) {
+      try {
+        if (!deliveryState.committedResult) return;
+        const result = await sendMessage(token, chatId, deliveryState.committedResult.text, deliveryState.committedResult.replyMarkup, telegramClient, null, {
+          signal: deadlineSignal(null, TERMINAL_DELIVERY_FALLBACK_TIMEOUT_MS),
+          requestTimeoutMs: TERMINAL_DELIVERY_FALLBACK_TIMEOUT_MS
+        });
+        if (result?.ok === true) markTelegramJobTerminalResponse(deliveryState);
+      } catch (sendError) {
+        console.error("[telegram] failed to deliver committed result", sendError.message);
+      }
+    }
+    return;
+  }
   try {
-    await sendTelegramResponse(trace, () => sendMessage(token, chatId, botText(language, "jobProcessingFailed"), null, telegramClient));
+    const delivered = await sendTelegramResponse(trace, () => sendMessage(token, chatId, botText(language, "jobProcessingFailed"), null, telegramClient, null, {
+      signal: deadlineSignal(null, TERMINAL_DELIVERY_FALLBACK_TIMEOUT_MS),
+      requestTimeoutMs: TERMINAL_DELIVERY_FALLBACK_TIMEOUT_MS
+    }));
+    if (delivered?.ok === true) markTelegramJobTerminalResponse(deliveryState);
   } catch (sendError) {
     console.error("[telegram] failed to send queued job failure message", sendError.message);
   }
@@ -606,7 +634,8 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
 
   const deliverQueuedResult = async (input) => {
     const delivered = await deliverResultMessage({ ...input, signal });
-    if (delivered?.ok !== false) markTelegramJobTerminalResponse(deliveryState);
+    if (delivered?.ok !== true) throw new TelegramTerminalDeliveryError();
+    markTelegramJobTerminalResponse(deliveryState);
     return delivered;
   };
 
@@ -887,9 +916,18 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
       if (smartSave.eligible) {
         trace.start("db_save");
         const saved = await repository.saveDraftAsExpense(draft.id, from.id, { signal });
+        processingResult = "expense_saved";
+        markTelegramJobFinancialResultCommitted(deliveryState);
         trace.end("db_save");
         const expenses = saved.expenses ?? [];
         const total = expenses.reduce((sum, expense) => sum + Number(expense.amount_base ?? 0), 0);
+        const savedResult = {
+          text: formatSavedSummary(total, saved.dashboardSnapshot, { language, expenses }),
+          replyMarkup: expenses.length === 1
+            ? savedExpenseKeyboard(expenses[0].id, miniAppUrl, from.id, language)
+            : appKeyboard(miniAppUrl, from.id, language)
+        };
+        retainTelegramJobCommittedResult(deliveryState, savedResult);
         if (!saved.alreadySaved) {
           await Promise.all(expenses.map(() => safeRecordAppEvent(repository, user.id, "expense_saved", { draftType: "regular" })));
         }
@@ -898,10 +936,7 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
           token,
           chatId,
           loaderMessageId: loader.messageId,
-          text: formatSavedSummary(total, saved.dashboardSnapshot, { language, expenses }),
-          replyMarkup: expenses.length === 1
-            ? savedExpenseKeyboard(expenses[0].id, miniAppUrl, from.id, language)
-            : appKeyboard(miniAppUrl, from.id, language),
+          ...savedResult,
           telegramClient,
           trace
         });
@@ -928,12 +963,22 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
       }
       return delivered;
     } catch (error) {
+      if (error instanceof TelegramTerminalDeliveryError && processingDraftType === "regular") {
+        throw error;
+      }
+      if (deliveryState.financialResultCommitted) {
+        processingResult = "expense_saved";
+        trace.failActive(["telegram_file_download", "transcription", "llm_parse", "db_save"], error);
+        console.error("[telegram] post-save processing failed", error.message);
+        throw error;
+      }
       if (voiceCaptureClaim?.state === "claimed") {
         try {
           await repository.failTelegramExpenseCapture?.(user.id, chatId, message.message_id, voiceCaptureClaim.claimVersion, error?.code ?? "telegram_expense_capture_failed");
           if (typeof repository.failTelegramExpenseCapture === "function") durableCaptureState = "failed";
         } catch {}
       }
+      if (error instanceof TelegramTerminalDeliveryError) throw error;
       if (["paid_provider_limit_reached", "paid_provider_disabled", "voice_message_too_long"].includes(error?.code)) {
         processingResult = error.code;
         return await deliverQueuedResult({
@@ -1340,35 +1385,52 @@ async function sendExpenseProcessingMessage(token, chatId, language, telegramCli
 
 async function deliverResultMessage({ token, chatId, loaderMessageId, text, replyMarkup, telegramClient, trace, signal = null }) {
   const deliverySignal = deadlineSignal(signal, 15_000);
+  const sendConfirmed = async (run) => {
+    const result = await sendTelegramResponse(trace, run);
+    if (result?.ok !== true) throw new Error("Telegram did not confirm terminal delivery");
+    return result;
+  };
   if (loaderMessageId) {
     try {
-      const result = await sendTelegramResponse(trace, () => editMessageText(token, chatId, loaderMessageId, text, replyMarkup, telegramClient, { signal: deliverySignal }));
+      const result = await sendConfirmed(() => editMessageText(token, chatId, loaderMessageId, text, replyMarkup, telegramClient, { signal: deliverySignal }));
       trace.event("telegram_terminalization", { mode: "edit" });
       return result;
-    } catch (error) {
-      console.error("[telegram] editing loader into result failed, retrying plain edit", error.message);
+    } catch {
       try {
-        const result = await sendTelegramResponse(trace, () => editMessageText(token, chatId, loaderMessageId, stripTelegramHtml(text), replyMarkup, telegramClient, { signal: deliverySignal }));
+        const result = await sendConfirmed(() => editMessageText(token, chatId, loaderMessageId, stripTelegramHtml(text), replyMarkup, telegramClient, { signal: deliverySignal }));
         trace.event("telegram_terminalization", { mode: "plain_edit_fallback" });
         return result;
-      } catch (plainEditError) {
-        console.error("[telegram] plain loader edit failed, deleting before sending result", plainEditError.message);
-        try {
-          await deleteMessage(token, chatId, loaderMessageId, telegramClient, { signal: deliverySignal });
-        } catch (deleteError) {
-          trace.event("telegram_terminalization", { mode: "cleanup_failed" });
-          console.error("[telegram] failed to delete loader after edit failure", deleteError.message);
-          return { ok: false, terminalizationMode: "cleanup_failed" };
-        }
-        const result = await sendTelegramResponse(trace, () => sendMessage(token, chatId, text, replyMarkup, telegramClient, null, { signal: deliverySignal }));
+      } catch {}
+      let loaderRemoved = false;
+      try {
+        await sendConfirmed(() => deleteMessage(token, chatId, loaderMessageId, telegramClient, { signal: deliverySignal }));
+        loaderRemoved = true;
+        const result = await sendConfirmed(() => sendMessage(token, chatId, text, replyMarkup, telegramClient, null, { signal: deliverySignal }));
         trace.event("telegram_terminalization", { mode: "delete_and_send_fallback" });
         return result;
+      } catch {
+        if (!loaderRemoved) trace.event("telegram_terminalization", { mode: "cleanup_failed" });
       }
     }
+  } else {
+    try {
+      const result = await sendConfirmed(() => sendMessage(token, chatId, text, replyMarkup, telegramClient, null, { signal: deliverySignal }));
+      trace.event("telegram_terminalization", { mode: "delete_and_send_fallback" });
+      return result;
+    } catch {}
   }
-  const result = await sendTelegramResponse(trace, () => sendMessage(token, chatId, text, replyMarkup, telegramClient, null, { signal: deliverySignal }));
-  trace.event("telegram_terminalization", { mode: "delete_and_send_fallback" });
-  return result;
+  try {
+    const timeoutSignal = deadlineSignal(null, TERMINAL_DELIVERY_FALLBACK_TIMEOUT_MS);
+    const result = await sendConfirmed(() => sendMessage(token, chatId, text, replyMarkup, telegramClient, null, {
+      signal: timeoutSignal,
+      requestTimeoutMs: TERMINAL_DELIVERY_FALLBACK_TIMEOUT_MS
+    }));
+    trace.event("telegram_terminalization", { mode: "standalone_send_fallback" });
+    return result;
+  } catch {
+    trace.event("telegram_terminalization", { mode: "delivery_failed" });
+    throw new TelegramTerminalDeliveryError();
+  }
 }
 
 function extractMessageId(sendResult) {

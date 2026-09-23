@@ -6,6 +6,7 @@ The product should feel simple, fast, and light: a user records expenses in the 
 ## Product Promise
 
 - Help a person understand where their money is going without turning tracking into a chore.
+- Keep Telegram delivery failures separate from financial processing: retry the existing result without parsing or saving again, and never describe an already saved expense as unprocessed.
 - Make expense capture quick through text, voice, and optional image evidence: a single bank-history screenshot, receipt, completed payment confirmation, or a short multi-image catch-up session that remains review-first.
 - Use confirmation before saving parsed expenses so the user stays in control.
 - Keep the Mini App dashboard focused on budget state, recent movement, and immediate next actions.

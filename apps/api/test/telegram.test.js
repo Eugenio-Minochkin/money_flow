@@ -171,6 +171,226 @@ test("safe text message is saved immediately with edit and delete actions", asyn
   assert.equal(repo.events.filter((event) => event.eventName === "expense_saved").length, 1);
 });
 
+test("saved Telegram result falls back to a fresh standalone send after terminal cleanup fails", async () => {
+  const calls = [];
+  const perfLines = [];
+  const repo = fakeRepository();
+  let saveCalls = 0;
+  let editCalls = 0;
+  let messageCalls = 0;
+  repo.listClosedReserveMonthsForTelegramUser = async () => [];
+  repo.saveDraftAsExpense = async (draftId) => {
+    saveCalls += 1;
+    return {
+      expenses: [{ id: 91, draft_id: draftId, amount_base: 70, amount_original: 70, currency_original: "THB", description: "кофе", category_slug: "food_cafe" }],
+      dashboardSnapshot: null,
+      alreadySaved: false
+    };
+  };
+  const telegramClient = {
+    async sendMessage(message) {
+      messageCalls += 1;
+      calls.push({ method: "sendMessage", ...message });
+      return { ok: true, result: { message_id: 800 } };
+    },
+    async editMessageText(message) {
+      editCalls += 1;
+      calls.push({ method: "editMessageText", ...message });
+      return editCalls === 1 ? { ok: false } : undefined;
+    },
+    async deleteMessage(message) {
+      calls.push({ method: "deleteMessage", ...message });
+      return undefined;
+    }
+  };
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: repo,
+    expenseParser: { async parse() { return { expenses: [{ amount: 70, currency: "THB", description: "кофе", category_slug: "food_cafe", category_source: "parser", needs_review: false, spent_at: "2026-08-14T08:00:00.000Z", budget_impact: "regular" }] }; } },
+    telegramClient,
+    perfLogger: (line) => perfLines.push(line)
+  });
+
+  await bot.handleUpdate({ message: { message_id: 55, chat: { id: 10 }, from: { id: 100, first_name: "M" }, text: "кофе 70 бат" } });
+
+  assert.equal(saveCalls, 1);
+  assert.deepEqual(calls.map((call) => call.method), ["sendMessage", "editMessageText", "editMessageText", "deleteMessage", "sendMessage"]);
+  assert.equal(messageCalls, 2);
+  assert.match(calls.at(-1).text, /Записал/);
+  assert.ok(calls.at(-1).signal);
+  assert.notEqual(calls.at(-1).signal, calls[1].signal);
+  assert.equal(repo.events.find((event) => event.eventName === "message_processing_completed").metadata.terminalDeliveryOutcome, "delivered");
+  assert.ok(perfLines.some((line) => line.includes("mode=standalone_send_fallback")));
+});
+
+test("terminal saved-result fallback uses a live signal after the job delivery signal aborts", async () => {
+  const calls = [];
+  const controller = new AbortController();
+  const repo = fakeRepository();
+  repo.listClosedReserveMonthsForTelegramUser = async () => [];
+  repo.saveDraftAsExpense = async (draftId) => ({
+    expenses: [{ id: 92, draft_id: draftId, amount_base: 70, amount_original: 70, currency_original: "THB", description: "кофе", category_slug: "food_cafe" }],
+    dashboardSnapshot: null,
+    alreadySaved: false
+  });
+  const telegramClient = {
+    async sendMessage(message) {
+      calls.push({ method: "sendMessage", ...message });
+      return { ok: true, result: { message_id: 810 } };
+    },
+    async editMessageText(message) {
+      calls.push({ method: "editMessageText", ...message });
+      controller.abort();
+      throw new Error("job signal aborted during terminal edit");
+    },
+    async deleteMessage(message) {
+      calls.push({ method: "deleteMessage", ...message });
+      throw new Error("job signal aborted before cleanup");
+    }
+  };
+  const trace = stubTrace();
+
+  await processQueuedMessage({
+    message: { chat: { id: 10 }, message_id: 57 },
+    from: { id: 100 },
+    user: { id: 1, interface_language: "ru", base_currency: "THB", onboarding_step: "completed", timezone: "Asia/Tbilisi" },
+    rawText: "кофе 70 бат",
+    hasVoice: false,
+    inputType: "text",
+    repository: repo,
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    expenseParser: { async parse() { return { expenses: [{ amount: 70, currency: "THB", description: "кофе", category_slug: "food_cafe", category_source: "parser", needs_review: false, spent_at: "2026-08-14T08:00:00.000Z", budget_impact: "regular" }] }; } },
+    telegramClient,
+    now: () => new Date("2026-09-01T10:00:00Z"),
+    trace,
+    signal: controller.signal
+  });
+
+  const fallback = calls.at(-1);
+  assert.equal(fallback.method, "sendMessage");
+  assert.equal(controller.signal.aborted, true);
+  assert.equal(fallback.signal.aborted, false);
+  assert.notEqual(fallback.signal, controller.signal);
+  assert.ok(trace.events.some((event) => event.name === "telegram_terminalization" && event.metadata.mode === "standalone_send_fallback"));
+});
+
+test("saved Telegram delivery exhaustion reaches queue failure handling without generic copy or another save", async () => {
+  const calls = [];
+  const alerts = [];
+  const parser = controlledExpenseParser();
+  const repo = fakeRepository();
+  let saveCalls = 0;
+  let nextMessageId = 900;
+  repo.user = { id: 1, interface_language: "ru", base_currency: "THB", onboarding_step: "completed", timezone: "Asia/Tbilisi" };
+  repo.listClosedReserveMonthsForTelegramUser = async () => [];
+  repo.saveDraftAsExpense = async (draftId) => {
+    saveCalls += 1;
+    return {
+      expenses: [{ id: 90 + saveCalls, draft_id: draftId, amount_base: 70, amount_original: 70, currency_original: "THB", description: "кофе", category_slug: "food_cafe" }],
+      dashboardSnapshot: null,
+      alreadySaved: false
+    };
+  };
+  const telegramClient = {
+    async sendMessage(message) {
+      calls.push({ method: "sendMessage", ...message });
+      if (message.text.includes("Записал") && !message.replyParameters) throw new Error("standalone unavailable");
+      return { ok: true, result: { message_id: ++nextMessageId } };
+    },
+    async editMessageText(message) {
+      calls.push({ method: "editMessageText", ...message });
+      if (message.messageId === 901) throw new Error("edit unavailable");
+      return { ok: true };
+    },
+    async deleteMessage(message) {
+      calls.push({ method: "deleteMessage", ...message });
+      throw new Error("delete unavailable");
+    }
+  };
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: repo,
+    expenseParser: parser,
+    telegramClient,
+    awaitQueuedJobs: false,
+    adminAlertService: { async notifyAdminError(error, context) { alerts.push({ error, context }); } },
+    telegramJobQueueOptions: { globalConcurrency: 1, userQueueLimit: 2, jobTimeoutMs: 10_000 },
+    perfLogger: () => {}
+  });
+
+  await bot.handleUpdate({ message: { ...textUpdate("first expense", 100).message, message_id: 101 } });
+  await parser.waitForCalls(1);
+  await bot.handleUpdate({ message: { ...textUpdate("second expense", 100).message, message_id: 102 } });
+  parser.resolveNext();
+  await parser.waitForCalls(2);
+  parser.resolveNext();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  assert.equal(parser.callCount(), 2);
+  assert.equal(saveCalls, 2);
+  assert.equal(alerts.length, 1);
+  assert.equal(alerts[0].error.name, "TelegramTerminalDeliveryError");
+  assert.equal(alerts[0].error.message, "Telegram terminal delivery failed");
+  assert.equal(calls.some((call) => /Не получилось обработать/.test(call.text)), false);
+  assert.equal(repo.events.find((event) => event.eventName === "message_processing_completed").metadata.result, "expense_saved");
+  assert.ok(calls.some((call) => call.method === "editMessageText" && call.messageId === 902 && call.text.includes("Записал")));
+});
+
+test("unsaved terminal delivery exhaustion reports a typed queue error with a fresh bounded failure signal", async () => {
+  const calls = [];
+  const alerts = [];
+  const perfLines = [];
+  const repo = fakeRepository();
+  let sends = 0;
+  repo.user = { id: 1, interface_language: "ru", base_currency: "THB", onboarding_step: "completed", timezone: "Asia/Tbilisi" };
+  const telegramClient = {
+    async sendMessage(message) {
+      calls.push({ method: "sendMessage", ...message });
+      sends += 1;
+      if (sends === 2) throw new Error("canonical send unavailable");
+      return { ok: true, result: { message_id: 710 + sends } };
+    },
+    async editMessageText(message) {
+      calls.push({ method: "editMessageText", ...message });
+      return undefined;
+    },
+    async deleteMessage(message) {
+      calls.push({ method: "deleteMessage", ...message });
+      return undefined;
+    }
+  };
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: repo,
+    expenseParser: { async parse() { return { expenses: [{ amount: 70, currency: "THB", description: "кофе", category_slug: "other", category_source: "parser", needs_review: true, spent_at: "2026-08-14T08:00:00.000Z", budget_impact: "regular" }] }; } },
+    telegramClient,
+    adminAlertService: { async notifyAdminError(error, context) { alerts.push({ error, context }); } },
+    perfLogger: (line) => perfLines.push(line)
+  });
+
+  await bot.handleUpdate({ message: { message_id: 56, chat: { id: 10 }, from: { id: 100, first_name: "M" }, text: "кофе 70 бат" } });
+
+  assert.equal(alerts.length, 1);
+  assert.equal(alerts[0].error.name, "TelegramTerminalDeliveryError");
+  assert.equal(calls.filter((call) => call.method === "sendMessage").length, 3);
+  assert.ok(perfLines.some((line) => line.includes("mode=delivery_failed")));
+  const [, canonicalFallback, failureNotice] = calls.filter((call) => call.method === "sendMessage");
+  const [richEdit, plainEdit] = calls.filter((call) => call.method === "editMessageText");
+  const deletion = calls.find((call) => call.method === "deleteMessage");
+  assert.ok(richEdit.signal);
+  assert.equal(richEdit.signal, plainEdit.signal);
+  assert.equal(richEdit.signal, deletion.signal);
+  assert.notEqual(canonicalFallback.signal, richEdit.signal);
+  assert.notEqual(failureNotice.signal, canonicalFallback.signal);
+  assert.ok(failureNotice.signal);
+  assert.equal(failureNotice.replyMarkup, null);
+  assert.equal(repo.events.find((event) => event.eventName === "message_processing_completed").metadata.terminalDeliveryOutcome, "not_delivered");
+});
+
 test("safe voice message is saved immediately", async () => {
   const calls = [];
   const parsedTexts = [];
@@ -4312,6 +4532,106 @@ test("new user onboarding after the 5th asks for a current month budget", async 
   assert.equal(repo.currentMonthBudget.isPartialMonth, true);
 });
 
+for (const [kind, text] of [
+  ["topup", "bonus 10000"],
+  ["planned", "every Tuesday psychologist 5000 rub"]
+]) {
+  test(`terminal delivery failure closes ${kind} capture before webhook replay or recovery`, async () => {
+    const repo = fakeRepository();
+    let capture = null;
+    let payload = null;
+    let drafts = 0;
+    let failures = 0;
+    let parserCalls = 0;
+    let saves = 0;
+    const update = { message: { message_id: 901, chat: { id: 10 }, from: { id: 100 }, text } };
+    repo.user = { id: 1, interface_language: "en", base_currency: "THB", onboarding_step: "completed", timezone: "Asia/Bangkok" };
+    repo.claimTelegramExpenseCapture = async (_userId, _chatId, _messageId, nextPayload) => {
+      if (capture === "failed") return { state: "failed" };
+      capture = "processing";
+      payload = nextPayload;
+      return { state: "claimed", claimVersion: 1 };
+    };
+    repo.failTelegramExpenseCapture = async (userId, chatId, messageId, version, code) => {
+      assert.deepEqual([userId, chatId, messageId, version, code], [1, 10, 901, 1, "telegram_terminal_delivery_failed"]);
+      failures += 1;
+      capture = "failed";
+      payload = null;
+    };
+    repo.listRunnableTelegramExpenseCaptures = async () => capture === "processing" && payload
+      ? [{ user_id: 1, telegram_user_id: 100, chat_id: 10, message_id: 901, payload }]
+      : [];
+    repo.previewBudgetTopup = async () => ({ amountBase: 10000, baseBudget: 48000, large: false });
+    repo.createBudgetTopupDraft = repo.createPlannedDraft = async () => ({ id: ++drafts });
+    repo.saveDraftAsExpense = async () => { saves += 1; throw new Error("must not save"); };
+    let sends = 0;
+    const bot = createTelegramBot({
+      repository: repo, token: "synthetic", miniAppUrl: "https://example.invalid", perfLogger: () => {},
+      expenseParser: { async parse() { parserCalls += 1; return { expenses: [] }; } },
+      telegramClient: {
+        async sendMessage() {
+          if (++sends === 1) return { ok: true, result: { message_id: 501 } };
+          throw new Error("injected terminal send failure");
+        },
+        async editMessageText() { throw new Error("injected edit failure"); },
+        async deleteMessage() { return { ok: true }; }
+      },
+      now: () => new Date("2026-09-23T12:00:00Z")
+    });
+    await bot.handleUpdate(update);
+    await bot.resumePendingCaptures();
+    await bot.handleUpdate(update);
+    assert.equal(drafts, 1, "recovery and replay must not create another draft");
+    assert.equal(failures, 1);
+    assert.equal(capture, "failed");
+    assert.equal(payload, null);
+    assert.equal(parserCalls, 0);
+    assert.equal(saves, 0);
+    assert.equal(repo.events.find((event) => event.eventName === "message_processing_completed").metadata.durableCaptureState, "failed");
+  });
+}
+
+for (const smartSave of [false, true]) {
+  test(`terminal delivery failure preserves completed regular capture with Smart Save ${smartSave}`, async () => {
+    const repo = fakeRepository();
+    let captureState = "processing";
+    let failures = 0;
+    let saved = 0;
+    repo.claimTelegramExpenseCapture = async () => ({ state: "claimed", claimVersion: 1 });
+    repo.completeTelegramExpenseCapture = async ({ items }) => {
+      captureState = "completed";
+      return { draft: { id: 42, status: "pending", items } };
+    };
+    repo.failTelegramExpenseCapture = async () => { failures += 1; };
+    repo.listClosedReserveMonthsForTelegramUser = async () => [];
+    repo.saveDraftAsExpense = async () => {
+      saved += 1;
+      return { expenses: [{ id: 71, amount_base: 70, amount_original: 70, currency_original: "THB", category_slug: "food_cafe", description: "coffee" }], dashboardSnapshot: null };
+    };
+    let sends = 0;
+    await assert.rejects(processQueuedMessage({
+      message: { message_id: 902, chat: { id: 10 } }, from: { id: 100 },
+      user: { id: 1, interface_language: "en", base_currency: "THB", onboarding_step: "completed", timezone: "Asia/Bangkok" },
+      rawText: "coffee 70", inputType: "text", repository: repo,
+      expenseCaptureClaim: { state: "claimed", claimVersion: 1 },
+      expenseParser: { async parse() { return { expenses: [{ amount: 70, currency: "THB", category_slug: smartSave ? "food_cafe" : "other", description: "coffee", needs_review: !smartSave, category_source: "parser", budget_impact: "regular", spent_at: "2026-09-23T10:00:00Z" }] }; } },
+      telegramClient: {
+        async sendMessage() {
+          if (++sends === 1) return { ok: true, result: { message_id: 502 } };
+          throw new Error("injected terminal send failure");
+        },
+        async editMessageText() { throw new Error("injected edit failure"); },
+        async deleteMessage() { return { ok: true }; }
+      },
+      trace: stubTrace(), miniAppUrl: "https://example.invalid",
+      now: () => new Date("2026-09-23T12:00:00Z")
+    }), { code: "telegram_terminal_delivery_failed" });
+    assert.equal(captureState, "completed");
+    assert.equal(failures, 0);
+    assert.equal(saved, smartSave ? 1 : 0);
+  });
+}
+
 test("recurring planned text creates a planned draft before saving", async () => {
   const calls = [];
   const repo = fakeRepository();
@@ -6124,7 +6444,7 @@ test("voice parser failure keeps its transcript but does not claim that the amou
   assert.ok(repo.events.some((event) => event.eventName === "expense_parse_failed" && event.metadata.failureStage === "parser"));
 });
 
-test("voice transcription failure terminalizes its loader without a duplicate generic message", async () => {
+test("voice transcription failure uses standalone fallback without sending a duplicate generic message", async () => {
   const calls = [];
   const repo = fakeRepository();
   const bot = createTelegramBot({
@@ -6146,19 +6466,19 @@ test("voice transcription failure terminalizes its loader without a duplicate ge
     message: { message_id: 71, chat: { id: 10 }, from: { id: 100, first_name: "M" }, voice: { file_id: "voice-fail", mime_type: "audio/ogg" } }
   });
 
-  assert.equal(calls.filter((call) => call.method === "sendMessage").length, 1);
+  assert.equal(calls.filter((call) => call.method === "sendMessage").length, 2);
   assert.equal(calls.filter((call) => call.method === "editMessageText").length, 2);
   assert.equal(calls.filter((call) => call.method === "deleteMessage").length, 1);
   assert.ok(repo.events.some((event) => event.eventName === "voice_transcription_failed"));
   const completed = repo.events.find((event) => event.eventName === "message_processing_completed");
-  assert.equal(completed.metadata.terminalDeliveryOutcome, "not_delivered");
+  assert.equal(completed.metadata.terminalDeliveryOutcome, "delivered");
 });
 
-test("expense loader terminalization retries a plain edit before deleting or sending another message", async () => {
+test("expense loader terminalization falls back to a fresh send when cleanup fails", async () => {
   const cases = [
     { name: "plain edit fallback", editFailures: 1, deleteFails: false, expectedEdits: 2, expectedSends: 1 },
     { name: "delete and send fallback", editFailures: 2, deleteFails: false, expectedEdits: 2, expectedSends: 2 },
-    { name: "cleanup failure does not send a duplicate terminal message", editFailures: 2, deleteFails: true, expectedEdits: 2, expectedSends: 1 }
+    { name: "cleanup failure uses standalone delivery fallback", editFailures: 2, deleteFails: true, expectedEdits: 2, expectedSends: 2 }
   ];
 
   for (const scenario of cases) {
@@ -7239,7 +7559,16 @@ test("draftCanceledMessageText and savedSummaryKeyboard are localized", async ()
 });
 
 function stubTrace() {
-  return { start() {}, end() {}, event() {}, failActive() {}, getDurations() { return {}; }, getMetadata() { return {}; } };
+  const events = [];
+  return {
+    events,
+    start() {},
+    end() {},
+    event(name, metadata) { events.push({ name, metadata }); },
+    failActive() {},
+    getDurations() { return {}; },
+    getMetadata() { return {}; }
+  };
 }
 
 test("legacy confirm:42 callback still confirms via the shared handler", async () => {
