@@ -67,7 +67,7 @@ export const CATEGORIES = [
     keywords: [
       "одежда", "clothes", "clothing", "кроссовки", "sneakers", "shoes", "футболка", "t-shirt",
       "экипировка", "gear", "headphones", "наушники", "speaker", "колонка", "backpack", "рюкзак",
-      "laptop", "ноутбук", "camera", "камера", "charger", "зарядка", "power bank", "powerbank",
+      "laptop", "ноутбук", "camera", "камера", "router", "роутер", "charger", "зарядка", "power bank", "powerbank",
       "пауэрбанк", "helmet", "шлем"
     ]
   },

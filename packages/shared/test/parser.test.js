@@ -180,6 +180,30 @@ test("parses added currency aliases and education category", () => {
   assert.equal(result.expenses[0].category_slug, "education");
 });
 
+test("parses exact router aliases into gear without broad inflection matching", () => {
+  for (const [text, amount, currency] of [
+    ["роутер 1594 рубля", 1594, "RUB"],
+    ["router 1594 RUB", 1594, "RUB"]
+  ]) {
+    const result = parseExpenseText(text, { now: new Date("2026-06-01T10:00:00Z") });
+    assert.equal(result.expenses.length, 1, text);
+    assert.equal(result.expenses[0].description, text.startsWith("роутер") ? "роутер" : "router", text);
+    assert.equal(result.expenses[0].amount, amount, text);
+    assert.equal(result.expenses[0].currency, currency, text);
+    assert.equal(result.expenses[0].category_slug, "gear", text);
+    assert.equal(result.expenses[0].needs_review, false, text);
+  }
+
+  for (const text of ["роутерный 1594 рубля", "роутера 1594 рубля", "routering 1594 RUB"]) {
+    const result = parseExpenseText(text, { now: new Date("2026-06-01T10:00:00Z") });
+    assert.equal(result.expenses[0].category_slug, "other", text);
+    assert.equal(result.expenses[0].needs_review, true, text);
+  }
+
+  const conflicting = parseExpenseText("router кофе 1594 RUB", { now: new Date("2026-06-01T10:00:00Z") });
+  assert.equal(conflicting.expenses[0].category_slug, "food_cafe");
+});
+
 test("parses unambiguous public transport terms without matching electricity", () => {
   for (const text of [
     "электричка 61 руб",

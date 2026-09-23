@@ -7825,3 +7825,83 @@ function capturingClient(calls) {
     async deleteMessage(message) { calls.push({ method: "deleteMessage", ...message }); return { ok: true }; }
   };
 }
+
+test("a three-message local-safe burst does not wait for the injected slow LLM", async () => {
+  let openAiCalls = 0;
+  let resolveSlowLlmEntered;
+  let releaseSlowLlm;
+  const slowLlmEntered = new Promise((resolve) => { resolveSlowLlmEntered = resolve; });
+  const slowLlmGate = new Promise((resolve) => { releaseSlowLlm = resolve; });
+  const parser = createExpenseParser({
+    apiKey: "test-key",
+    fastPathMode: "enabled",
+    localFirstRolloutPercent: 100,
+    parserTextHashSecret: "burst-test-secret",
+    now: () => new Date("2026-09-01T10:00:00+03:00"),
+    fetchImpl: async () => {
+      openAiCalls += 1;
+      resolveSlowLlmEntered();
+      await slowLlmGate;
+      throw new Error("released injected slow OpenAI failure");
+    }
+  });
+  const calls = [];
+  const repo = fakeRepository();
+  repo.user = { id: 1, interface_language: "ru", base_currency: "THB", onboarding_step: "completed", timezone: "Asia/Tbilisi" };
+  const saved = [];
+  repo.saveDraftAsExpense = async (draftId) => {
+    const item = repo.draftItems[0];
+    saved.push({ amount: item.amount, currency: item.currency, category: item.category_slug });
+    return {
+      expenses: [{ id: saved.length, draft_id: draftId, amount_base: item.amount, amount_original: item.amount, currency_original: item.currency, description: item.description, category_slug: item.category_slug }],
+      dashboardSnapshot: null,
+      alreadySaved: false
+    };
+  };
+  let completedCount = 0;
+  let resolveAllCompleted;
+  const allCompleted = new Promise((resolve) => { resolveAllCompleted = resolve; });
+  const recordEvent = repo.recordAppEvent.bind(repo);
+  repo.recordAppEvent = async (userId, eventName, metadata) => {
+    await recordEvent(userId, eventName, metadata);
+    if (eventName === "message_processing_completed" && ++completedCount === 3) resolveAllCompleted();
+  };
+  const bot = createTelegramBot({
+    token: "test-token",
+    miniAppUrl: "http://localhost:3000",
+    repository: repo,
+    expenseParser: parser,
+    telegramClient: captureTelegramClient(calls),
+    awaitQueuedJobs: false,
+    telegramJobQueueOptions: { globalConcurrency: 1, userQueueLimit: 4, jobTimeoutMs: 2_500 },
+    now: () => new Date("2026-09-01T10:00:00+03:00"),
+    perfLogger: () => {}
+  });
+
+  const messages = ["роутер 1594 рубля", "кофейня 15 лари", "обед 31,10 лари"];
+  for (const [index, text] of messages.entries()) {
+    await bot.handleUpdate({ message: { message_id: 610 + index, chat: { id: 10 }, from: { id: 100, first_name: "M" }, text } });
+  }
+  let safetyTimer;
+  const routeRace = await Promise.race([
+    allCompleted.then(() => "completed"),
+    slowLlmEntered.then(() => "llm_started"),
+    new Promise((resolve) => { safetyTimer = setTimeout(() => resolve("timeout"), 5_000); })
+  ]);
+  clearTimeout(safetyTimer);
+  releaseSlowLlm();
+  if (routeRace !== "completed") await allCompleted;
+
+  assert.equal(routeRace, "completed", "the queued burst should finish before the slow LLM request starts");
+  assert.equal(openAiCalls, 0);
+  assert.deepEqual(saved, [
+    { amount: 1594, currency: "RUB", category: "gear" },
+    { amount: 15, currency: "GEL", category: "food_cafe" },
+    { amount: 31.1, currency: "GEL", category: "food_cafe" }
+  ]);
+  const completed = repo.events.filter((event) => event.eventName === "message_processing_completed");
+  assert.equal(completed.length, 3);
+  assert.ok(completed.every((event) => event.metadata.parserRoute === "local_primary"));
+  assert.ok(completed.every((event) => event.metadata.localAcceptanceLevel === "local_safe"));
+  assert.equal(calls.filter((call) => /Записал/.test(call.text)).length, 3);
+});

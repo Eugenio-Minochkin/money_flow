@@ -305,6 +305,35 @@ test("local-safe parsing does not reserve an LLM allowance", async () => {
   assert.equal(allowanceCalls, 0);
 });
 
+test("router aliases are local-safe inside rollout and never reach the injected slow LLM", async () => {
+  let openAiCalls = 0;
+  const parser = createExpenseParser({
+    apiKey: "test-key",
+    fastPathMode: "enabled",
+    localFirstRolloutPercent: 100,
+    parserTextHashSecret: "test-secret",
+    now: () => new Date("2026-09-01T10:00:00+03:00"),
+    fetchImpl: async () => {
+      openAiCalls += 1;
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      throw new Error("injected slow LLM failure");
+    }
+  });
+
+  for (const [text, expectedDescription] of [["роутер 1594 рубля", "роутер"], ["router 1594 RUB", "router"]]) {
+    let trace;
+    const result = await parser.parse(text, { userId: 42, onLlmTrace(metadata) { trace = metadata; } });
+    assert.equal(result.expenses[0].description, expectedDescription);
+    assert.equal(result.expenses[0].category_slug, "gear");
+    assert.equal(result.expenses[0].needs_review, false);
+    assert.equal(trace.localAcceptanceLevel, "local_safe");
+    assert.equal(trace.parserRoute, "local_primary");
+    assert.equal(trace.llmSkipped, true);
+  }
+
+  assert.equal(openAiCalls, 0);
+});
+
 test("OpenAI parser accepts budget impact for large one-off expenses", async () => {
   const parser = createExpenseParser({
     apiKey: "test-key",
