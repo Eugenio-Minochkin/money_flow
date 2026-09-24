@@ -53,6 +53,8 @@ Run `node --test apps/api/test/exchangeRates.test.js` for provider coverage and 
 
 ## Practical Test Pointers
 
+- History feedback: verify search button and keyboard submission, loading/success/error/retry transitions, queued filter changes, empty results, and language changes during loading/error. Previous rows and totals must remain hidden until the final queued response completes, while errors stay in History. Use `node --test apps/miniapp/test/historyLoad.test.js apps/miniapp/test/history.test.js apps/miniapp/test/smokeAssets.test.js apps/miniapp/test/i18n.test.js` and mobile browser checks with synthetic responses.
+
 - Budget and pace logic lives primarily in `packages/shared/src/budget.js` and `packages/shared/test/budget.test.js`.
 - Currency support lives in `packages/shared/src/currencies.js`, Mini App currency helpers, and their tests. Cover mandatory ISO codes, exact aliases, unresolved ambiguous families, strict settings validation, and the no-fabricated-rate path for expanded currencies.
 - Planned payment behavior is spread across shared parsing, API repository logic, Telegram callbacks, Mini App planned UI, and related tests. Lifecycle changes need canonical occurrence tests, repository and budget/reserve coverage, server archive/recreate/DELETE/PATCH contract coverage, pure Mini App interaction tests in RU and EN, and narrow-width visual verification of archive and recreate states.

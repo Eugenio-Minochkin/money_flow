@@ -128,7 +128,8 @@ let preserveSettingsControlsDuringRefresh = false;
 let accountDeleted = false;
 let cancelTabPager = () => {};
 const plannedArchiveState = createPlannedArchiveState();
-const historyLoader = createHistoryLoader(performHistoryLoad);
+const historyLoader = createHistoryLoader(performHistoryLoad, setHistoryLoadState);
+let historyLoadState = "idle";
 
 const deleteAccountStartButton = document.getElementById("deleteAccountStartButton");
 const deleteAccountAdvanceButton = document.getElementById("deleteAccountAdvanceButton");
@@ -587,7 +588,10 @@ document.querySelector("#reserveRecurringInput")?.addEventListener("change", ren
 document.querySelector("#saveCurrentMonthBudgetButton")?.addEventListener("click", saveCurrentMonthBudget);
 document.querySelector("#historySearchForm").addEventListener("submit", (event) => {
   event.preventDefault();
-  loadHistory();
+  loadHistory().catch(() => {});
+});
+document.querySelector("#historyLoadStatus")?.addEventListener("click", (event) => {
+  if (event.target.closest("[data-history-retry]")) loadHistory().catch(() => {});
 });
 document.querySelector("#historySearch")?.addEventListener("input", updateHistorySearchClear);
 document.querySelector("#historySearchClear")?.addEventListener("click", () => {
@@ -595,7 +599,7 @@ document.querySelector("#historySearchClear")?.addEventListener("click", () => {
   search.value = "";
   updateHistorySearchClear();
   search.focus();
-  loadHistory().catch(showError);
+  loadHistory().catch(() => {});
 });
 document.querySelector("#togglePlannedForm").addEventListener("click", () => {
   const form = document.querySelector("#plannedForm");
@@ -755,7 +759,6 @@ async function load() {
   const startupTimings = finishStartup();
   void reportStartupTimings(startupTimings);
   if (params.get("view") === "history") {
-    await ensureHistoryLoaded();
     switchTab("history");
   } else {
     requestAnimationFrame(() => {
@@ -978,6 +981,19 @@ function loadHistory() {
   return historyLoader.refresh();
 }
 
+function setHistoryLoadState(state) {
+  historyLoadState = state;
+  document.querySelector("#historyTab")?.setAttribute("data-history-load-state", state);
+  const status = document.querySelector("#historyLoadStatus");
+  if (!status) return;
+  status.classList.toggle("hidden", state === "loaded" || state === "idle");
+  if (state === "loading") status.textContent = t("history.loading");
+  if (state === "error") {
+    status.innerHTML = `${escapeHtml(t("history.loadError"))} <button type="button" class="ghost-button" data-history-retry>${escapeHtml(t("history.retry"))}</button>`;
+  }
+  if (state === "loaded") status.textContent = "";
+}
+
 async function loadDashboardInbox() {
   if (accountDeleted) return;
   const inbox = await api(`/api/drafts/recovery-preview?telegramUserId=${encodeURIComponent(telegramUserId)}`);
@@ -1071,7 +1087,7 @@ async function performHistoryLoad() {
 function selectHistoryPeriod(period) {
   historyFilterState = { period, monthKey: "", fromDate: "", toDate: "" };
   updateHistoryFilterChips();
-  loadHistory().catch(showError);
+  loadHistory().catch(() => {});
 }
 
 function applyHistoryCustomRange() {
@@ -1083,14 +1099,14 @@ function applyHistoryCustomRange() {
   historyFilterState = { period: "custom", monthKey: "", fromDate, toDate };
   closeHistoryDatePicker();
   updateHistoryFilterChips();
-  loadHistory().catch(showError);
+  loadHistory().catch(() => {});
 }
 
 function resetHistoryPeriod() {
   historyFilterState = { period: "month", monthKey: "", fromDate: "", toDate: "" };
   closeHistoryDatePicker();
   updateHistoryFilterChips();
-  loadHistory().catch(showError);
+  loadHistory().catch(() => {});
 }
 
 function updateHistoryFilterChips() {
@@ -1316,7 +1332,7 @@ function switchTab(tab, { fromPager = false } = {}) {
   document.querySelectorAll("[data-tab]").forEach((button) => {
     button.classList.toggle("active", button.dataset.tab === tab);
   });
-  if (tab === "history") void ensureHistoryLoaded().catch(showError);
+  if (tab === "history") void ensureHistoryLoaded().catch(() => {});
 }
 
 function isTabSwipeBlocked() {
@@ -3260,6 +3276,7 @@ function applyLanguage(language) {
   renderHistory(historyState);
   renderHistoryPeriodSummary(historyState);
   renderHistoryAnalytics(historyState);
+  setHistoryLoadState(historyLoadState);
   renderPlannedArchive();
   rerenderDashboardLanguageState();
 }
