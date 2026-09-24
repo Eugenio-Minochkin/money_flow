@@ -8,6 +8,8 @@ import { migrate } from "../src/db.js";
 import { normalizePlannedDateKey } from "../src/plannedOccurrenceDates.js";
 import { createRepository, DraftCanceledError } from "../src/repository.js";
 import { createMiniAppQuickCaptureDraft, createShortcutExpenseDraft, createTelegramExpenseDraft } from "../src/expenseDraftService.js";
+import { createExchangeRateProvider } from "../src/exchangeRates.js";
+import { SUPPORTED_CURRENCY_CODES } from "../../../packages/shared/src/currencies.js";
 import { createExpenseParser } from "../src/expenseParser.js";
 import { createExpenseEvidenceAnalyzer } from "../src/expenseEvidenceAnalyzer.js";
 import { createExpenseEvidenceImportService } from "../src/expenseEvidenceImportService.js";
@@ -75,6 +77,54 @@ test.beforeEach(async () => {
 
 test.after(async () => {
   await pool.end();
+});
+
+test("bulk FX cache preserves all provider pairs, refreshes conflicts, and serves offline fallback", async () => {
+  const usdRates = Object.fromEntries(SUPPORTED_CURRENCY_CODES.map((code, index) => [code, 1 + index / 10]));
+  usdRates.USD = 1;
+  usdRates.THB = 35;
+  let providerDate = "2026-06-01";
+  const fetchImpl = async () => smokeJsonResponse({
+    time_last_update_utc: providerDate,
+    rates: usdRates
+  });
+  const refresh = () => createExchangeRateProvider({ pool, fetchImpl, logger: quietLogger }).ratesFor("2026-06-02");
+  const expectedCount = SUPPORTED_CURRENCY_CODES.length * (SUPPORTED_CURRENCY_CODES.length - 1);
+
+  const verifyRows = async () => {
+    const stored = await pool.query("SELECT rate_date::text AS rate_date, base_currency, quote_currency, rate, provider FROM exchange_rates WHERE rate_date = $1", ["2026-06-02"]);
+    assert.equal(stored.rowCount, expectedCount);
+    for (const row of stored.rows) {
+      assert.equal(row.rate_date, "2026-06-02");
+      assert.notEqual(row.base_currency, row.quote_currency);
+      assert.equal(Number(row.rate), Number((usdRates[row.quote_currency] / usdRates[row.base_currency]).toFixed(8)));
+      assert.equal(row.provider, "open-er-api:" + providerDate);
+    }
+  };
+
+  await refresh();
+  await verifyRows();
+  usdRates.THB = 36;
+  providerDate = "2026-06-02";
+  await refresh();
+  await verifyRows();
+
+  let fetches = 0;
+  const offline = createExchangeRateProvider({
+    pool,
+    logger: quietLogger,
+    manualFallbackEnabled: false,
+    fetchImpl: async () => { fetches += 1; throw new Error("synthetic provider outage"); }
+  });
+  const exact = await offline.getExchangeRate({ date: "2026-06-02", baseCurrency: "USD", quoteCurrency: "THB" });
+  assert.equal(exact.rate, 36);
+  assert.equal(exact.source, "exchange-rate-cache:open-er-api:2026-06-02");
+  assert.equal(fetches, 0);
+  const fallback = await offline.getExchangeRate({ date: "2026-06-03", baseCurrency: "USD", quoteCurrency: "THB" });
+  assert.equal(fallback.rate, 36);
+  assert.equal(fallback.rateDate, exact.rateDate);
+  assert.equal(fallback.source, "exchange-rate-fallback:open-er-api:2026-06-02");
+  assert.equal(fetches, 2);
 });
 
 test("creates a Telegram user with persisted defaults", async () => {

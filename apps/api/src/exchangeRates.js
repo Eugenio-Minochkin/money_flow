@@ -366,24 +366,33 @@ async function safelySaveDerivedRates({ pool, logger, rateDate, rates, baseCurre
 
 async function saveDerivedRates(pool, rateDate, rates) {
   const providerCurrencies = rates.providerCurrencies ?? new Set();
+  const baseCurrencies = [];
+  const quoteCurrencies = [];
+  const pairRates = [];
   for (const baseCurrency of providerCurrencies) {
     for (const quoteCurrency of providerCurrencies) {
       if (baseCurrency === quoteCurrency) continue;
       if (!isProviderCoveredPair(rates, baseCurrency, quoteCurrency)) continue;
-      await pool.query(
-        `INSERT INTO exchange_rates (
-           rate_date, base_currency, quote_currency, rate, provider, updated_at
-         )
-         VALUES ($1, $2, $3, $4, $5, now())
-         ON CONFLICT (rate_date, base_currency, quote_currency)
-         DO UPDATE SET rate = EXCLUDED.rate,
-                       provider = EXCLUDED.provider,
-                       updated_at = now()
-         RETURNING rate_date, base_currency, quote_currency, rate, provider`,
-        [rateDate, baseCurrency, quoteCurrency, pairRate(baseCurrency, quoteCurrency, rates), rates.source]
-      );
+      baseCurrencies.push(baseCurrency);
+      quoteCurrencies.push(quoteCurrency);
+      pairRates.push(pairRate(baseCurrency, quoteCurrency, rates));
     }
   }
+  if (baseCurrencies.length === 0) return;
+
+  await pool.query(
+    `INSERT INTO exchange_rates (
+       rate_date, base_currency, quote_currency, rate, provider, updated_at
+     )
+     SELECT $1, pairs.base_currency, pairs.quote_currency, pairs.rate, $2, now()
+     FROM UNNEST($3::text[], $4::text[], $5::numeric[])
+       AS pairs(base_currency, quote_currency, rate)
+     ON CONFLICT (rate_date, base_currency, quote_currency)
+     DO UPDATE SET rate = EXCLUDED.rate,
+                   provider = EXCLUDED.provider,
+                   updated_at = now()`,
+    [rateDate, rates.source, baseCurrencies, quoteCurrencies, pairRates]
+  );
 }
 
 function isProviderCoveredPair(rates, baseCurrency, quoteCurrency) {
