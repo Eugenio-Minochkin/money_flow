@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+import { SUPPORTED_CURRENCIES } from "../../../packages/shared/src/currencies.js";
 import { createExchangeRateProvider } from "../src/exchangeRates.js";
 
 test("passes a finite deadline signal to exchange-rate provider fetches", async () => {
@@ -207,7 +208,42 @@ test("provider success saves derived pair rates and next request uses DB cache",
   assert.equal(first.rate, 32.65);
   assert.equal(second.rate, 32.65);
   assert.equal(fetches, 1);
+  assert.equal(store.writeCalls.length, 1);
   assert.equal(store.rowsFor("2026-06-02", "USD", "THB").length, 1);
+});
+
+test("provider rates persist every supported pair in one bulk write", async () => {
+  const store = createRateStore();
+  const usdRates = Object.fromEntries(SUPPORTED_CURRENCIES
+    .filter(({ code }) => code !== "USD" && code !== "THB")
+    .map(({ code }, index) => [code, index + 2]));
+  usdRates.THB = 32.65;
+  const provider = createExchangeRateProvider({
+    pool: store.pool,
+    async fetchImpl() {
+      return { ok: true, async json() { return { time_last_update_utc: "2026-06-02", rates: usdRates }; } };
+    }
+  });
+
+  await provider.ratesFor("2026-06-02");
+
+  const expectedPairs = SUPPORTED_CURRENCIES.flatMap(({ code: baseCurrency }) => (
+    SUPPORTED_CURRENCIES
+      .filter(({ code: quoteCurrency }) => quoteCurrency !== baseCurrency)
+      .map(({ code: quoteCurrency }) => [baseCurrency, quoteCurrency])
+  ));
+  assert.equal(store.writeCalls.length, 1);
+  assert.equal(store.writeCalls[0].baseCurrencies.length, expectedPairs.length);
+  const actualPairs = store.writeCalls[0].baseCurrencies.map((baseCurrency, index) => [baseCurrency, store.writeCalls[0].quoteCurrencies[index]]);
+  const actualPairKeys = actualPairs.map(([base, quote]) => `${base}/${quote}`).sort();
+  const expectedPairKeys = expectedPairs.map(([base, quote]) => `${base}/${quote}`).sort();
+  assert.deepEqual(actualPairKeys, expectedPairKeys);
+  assert.equal(store.rowsForDate("2026-06-02").length, expectedPairs.length);
+  for (const row of store.rowsForDate("2026-06-02")) {
+    const baseThb = row.base_currency === "THB" ? 1 : 32.65 / (row.base_currency === "USD" ? 1 : usdRates[row.base_currency]);
+    const quoteThb = row.quote_currency === "THB" ? 1 : 32.65 / (row.quote_currency === "USD" ? 1 : usdRates[row.quote_currency]);
+    assert.equal(Number(row.rate), baseThb / quoteThb);
+  }
 });
 
 test("provider success returns provider rate when DB cache save fails", async () => {
@@ -244,6 +280,31 @@ test("provider success returns provider rate when DB cache save fails", async ()
       && context.baseCurrency === "USD"
       && context.quoteCurrency === "THB"
   )));
+});
+
+test("ratesFor returns live provider rates when bulk cache save fails", async () => {
+  const logs = [];
+  const provider = createExchangeRateProvider({
+    pool: createRateStore([], { failWrites: true }).pool,
+    logger: { warn: (...args) => logs.push(args) },
+    async fetchImpl() {
+      return {
+        ok: true,
+        async json() {
+          return {
+            time_last_update_utc: "Tue, 02 Jun 2026 00:02:32 +0000",
+            rates: { EUR: 0.88, THB: 32.65 }
+          };
+        }
+      };
+    }
+  });
+
+  const rates = await provider.ratesFor("2026-06-02");
+
+  assert.equal(rates.source, "open-er-api:2026-06-02");
+  assert.equal(rates.EUR.THB, 32.65 / 0.88);
+  assert.ok(logs.some(([message]) => message === "[rates] provider succeeded; cache persist failed"));
 });
 
 test("exact DB cache read failure logs and continues through provider", async () => {
@@ -443,7 +504,10 @@ test("a provider omission for an expanded currency never becomes a manual rate",
 
 function createRateStore(initialRows = [], options = {}) {
   const rows = initialRows.map(normalizeRow);
+  const rowIndexes = new Map(rows.map((row, index) => [rateRowKey(row), index]));
+  const writeCalls = [];
   return {
+    writeCalls,
     pool: {
       async query(sql, params = []) {
         const query = String(sql);
@@ -466,29 +530,50 @@ function createRateStore(initialRows = [], options = {}) {
         }
         if (query.includes("INSERT INTO exchange_rates")) {
           if (options.failWrites) throw new Error("cache write failed");
-          const row = normalizeRow({
+          assert.match(query, /UNNEST/);
+          const batch = {
             rate_date: params[0],
-            base_currency: params[1],
-            quote_currency: params[2],
-            rate: params[3],
-            provider: params[4]
-          });
-          const existingIndex = rows.findIndex((existing) => (
-            existing.rate_date === row.rate_date
-              && existing.base_currency === row.base_currency
-              && existing.quote_currency === row.quote_currency
-          ));
-          if (existingIndex >= 0) rows[existingIndex] = row;
-          else rows.push(row);
-          return { rows: [row] };
+            provider: params[1],
+            baseCurrencies: params[2],
+            quoteCurrencies: params[3],
+            rates: params[4]
+          };
+          writeCalls.push(batch);
+          for (let index = 0; index < batch.baseCurrencies.length; index += 1) {
+            upsertRow(rows, rowIndexes, normalizeRow({
+              rate_date: batch.rate_date,
+              base_currency: batch.baseCurrencies[index],
+              quote_currency: batch.quoteCurrencies[index],
+              rate: batch.rates[index],
+              provider: batch.provider
+            }));
+          }
+          return { rows: [] };
         }
         throw new Error(`unexpected query: ${query}`);
       }
     },
     rowsFor(rateDate, baseCurrency, quoteCurrency) {
       return rows.filter((row) => row.rate_date === rateDate && row.base_currency === baseCurrency && row.quote_currency === quoteCurrency);
+    },
+    rowsForDate(rateDate) {
+      return rows.filter((row) => row.rate_date === rateDate);
     }
   };
+}
+
+function upsertRow(rows, rowIndexes, row) {
+  const key = rateRowKey(row);
+  const existingIndex = rowIndexes.get(key);
+  if (existingIndex >= 0) rows[existingIndex] = row;
+  else {
+    rowIndexes.set(key, rows.length);
+    rows.push(row);
+  }
+}
+
+function rateRowKey(row) {
+  return `${row.rate_date}/${row.base_currency}/${row.quote_currency}`;
 }
 
 function normalizeRow(row) {

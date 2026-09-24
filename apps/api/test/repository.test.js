@@ -8293,21 +8293,23 @@ test("saveDraftAsExpense reuses DB exchange-rate cache for same date and currenc
       if (query.includes("FROM exchange_rates") && query.includes("rate_date <= $3")) return { rows: [] };
       if (query.includes("FROM exchange_rates") && query.includes("ORDER BY rate_date DESC")) return { rows: [] };
       if (query.includes("INSERT INTO exchange_rates")) {
-        const row = {
-          rate_date: params[0],
-          base_currency: params[1],
-          quote_currency: params[2],
-          rate: String(params[3]),
-          provider: params[4]
-        };
-        const existingIndex = exchangeRateRows.findIndex((existing) => (
-          existing.rate_date === row.rate_date
-            && existing.base_currency === row.base_currency
-            && existing.quote_currency === row.quote_currency
-        ));
-        if (existingIndex >= 0) exchangeRateRows[existingIndex] = row;
-        else exchangeRateRows.push(row);
-        return { rows: [row] };
+        for (let index = 0; index < params[2].length; index += 1) {
+          const row = {
+            rate_date: params[0],
+            base_currency: params[2][index],
+            quote_currency: params[3][index],
+            rate: String(params[4][index]),
+            provider: params[1]
+          };
+          const existingIndex = exchangeRateRows.findIndex((existing) => (
+            existing.rate_date === row.rate_date
+              && existing.base_currency === row.base_currency
+              && existing.quote_currency === row.quote_currency
+          ));
+          if (existingIndex >= 0) exchangeRateRows[existingIndex] = row;
+          else exchangeRateRows.push(row);
+        }
+        return { rows: [] };
       }
       return { rows: [] };
     }

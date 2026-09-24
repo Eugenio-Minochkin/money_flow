@@ -16,6 +16,10 @@ Expense-evidence time coverage must prove that a recognized local date/time is c
 
 Expense-evidence review coverage must prove that aggregate photo/session summaries have no save action, legacy summary-save callbacks open visible review without saving, candidate financial actions are shown only with the rendered owned unresolved draft, duplicate reasons are visible, and missing or terminal drafts clear the keyboard instead of leaving a stale confirmation path.
 
+## Exchange Rate Cache
+
+Run `node --test apps/api/test/exchangeRates.test.js` for provider coverage and fallback behavior. A full synthetic provider catalogue must persist all distinct supported pairs in one parameterized write, preserving derived rates and best-effort cache failure handling. The disposable PostgreSQL smoke also checks full-catalogue insertion, conflict refresh, exact cache hits without network access, and historical fallback during a provider outage.
+
 ## Always Consider
 
 - Monthly budget calculation.
