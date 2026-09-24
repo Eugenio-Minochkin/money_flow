@@ -250,3 +250,44 @@ test("concurrent Telegram delivery shares one parser call and one draft", async 
   assert.equal(firstResult.replayed, false);
   assert.equal(secondResult.replayed, true);
 });
+
+
+test("Telegram draft creation waits for the mutation barrier before persisting", async () => {
+  let releaseBarrier;
+  const barrier = new Promise((resolve) => { releaseBarrier = resolve; });
+  let persisted = false;
+  const operation = createTelegramExpenseDraft({
+    user: { id: 7 }, chatId: 10, messageId: 58, text: "coffee 120",
+    expenseParser: { parse: async () => ({ expenses: [{ description: "coffee", amount: 120 }] }) },
+    repository: {
+      claimTelegramExpenseCapture: async () => ({ state: "claimed", claimVersion: 3 }),
+      completeTelegramExpenseCapture: async ({ claimVersion }) => {
+        assert.equal(claimVersion, 3);
+        persisted = true;
+        return { draft: { id: 45, items: [{ description: "coffee", amount: 120 }] } };
+      },
+      releaseTelegramExpenseCapture: async () => {}
+    },
+    onBeforePersist: () => barrier
+  });
+
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(persisted, false);
+  releaseBarrier();
+  const result = await operation;
+  assert.equal(persisted, true);
+  assert.equal(result.draft.id, 45);
+});
+
+test("Telegram pre-persist safety hook can persist a review marker with the draft", async () => {
+  let storedItems;
+  const result = await createExpenseDraftFromText({
+    user: { id: 7 }, text: "coffee 120", source: "telegram",
+    expenseParser: { parse: async () => ({ expenses: [{ description: "coffee", amount: 120, currency: "THB" }] }) },
+    repository: { createDraft: async (_userId, _sourceText, items) => { storedItems = items; return { id: 47, items }; } },
+    onBeforePersist: async ({ items }) => ({ items: items.map((item) => ({ ...item, needs_review: true })) })
+  });
+
+  assert.equal(storedItems[0].needs_review, true);
+  assert.equal(result.items[0].needs_review, true);
+});

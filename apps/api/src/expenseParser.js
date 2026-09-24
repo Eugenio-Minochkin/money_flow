@@ -38,6 +38,7 @@ export function createExpenseParser(options = {}) {
     model: apiKey ? model : "local-parser",
 
     async parse(text, parseOptions = {}) {
+      throwIfAborted(parseOptions.signal);
       const parserStartedAt = performanceNow();
       const defaultCurrency = normalizeCurrency(parseOptions.defaultCurrency, "THB");
       const timeZone = parseOptions.timeZone ?? "Asia/Bangkok";
@@ -96,6 +97,7 @@ export function createExpenseParser(options = {}) {
           localEvaluateMs = elapsedMs(performanceNow, localEvaluateStartedAt);
         }
       }
+      throwIfAborted(parseOptions.signal);
 
       if (!apiKey || !fetchImpl) {
         if (localParserError) throw localParserError;
@@ -155,6 +157,7 @@ export function createExpenseParser(options = {}) {
       try {
         const parsed = await parseWithOpenAI({
           text, apiKey, model, fetchImpl, now: now(), defaultCurrency, timeZone, performanceNow, llmTimeoutMs,
+          parentSignal: parseOptions.signal,
           consumeUsage: consumeLlmUsage ? () => consumeLlmUsage({
             userId: parseOptions.usageUserId ?? parseOptions.userId,
             requestKey: parseOptions.requestKey ?? null
@@ -189,6 +192,7 @@ export function createExpenseParser(options = {}) {
         });
         return parsed.result;
       } catch (error) {
+        if (parseOptions.signal?.aborted) throw abortReason(parseOptions.signal);
         const fallbackReason = error?.code === LLM_TIMEOUT_ERROR_CODE
           ? LLM_TIMEOUT_ERROR_CODE
           : "llm_error";
@@ -320,16 +324,25 @@ async function parseWithOpenAI({
   timeZone,
   performanceNow,
   llmTimeoutMs
-  ,consumeUsage
+  ,consumeUsage,
+  parentSignal
 }) {
   const systemPrompt = buildSystemPrompt(now, defaultCurrency, timeZone);
   const llmHttpStartedAt = performanceNow();
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), llmTimeoutMs);
+  let timedOut = false;
+  const abortFromParent = () => controller.abort(parentSignal.reason);
+  if (parentSignal?.aborted) throw abortReason(parentSignal);
+  parentSignal?.addEventListener("abort", abortFromParent, { once: true });
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, llmTimeoutMs);
   let response;
   let responseText;
   try {
     await consumeUsage?.();
+    if (parentSignal?.aborted) throw abortReason(parentSignal);
     response = await fetchImpl(OPENAI_RESPONSES_URL, {
       method: "POST",
       headers: {
@@ -360,9 +373,11 @@ async function parseWithOpenAI({
       })
     });
     responseText = await response.text();
+    if (parentSignal?.aborted) throw abortReason(parentSignal);
   } catch (error) {
     const llmHttpMs = elapsedMs(performanceNow, llmHttpStartedAt);
-    if (controller.signal.aborted) {
+    if (parentSignal?.aborted) throw abortReason(parentSignal);
+    if (timedOut) {
       const timeoutError = new Error("Expense parser LLM request timed out");
       timeoutError.code = LLM_TIMEOUT_ERROR_CODE;
       timeoutError.llmHttpMs = llmHttpMs;
@@ -372,6 +387,7 @@ async function parseWithOpenAI({
     throw error;
   } finally {
     clearTimeout(timeout);
+    parentSignal?.removeEventListener("abort", abortFromParent);
   }
   const llmHttpMs = elapsedMs(performanceNow, llmHttpStartedAt);
 
@@ -397,6 +413,14 @@ async function parseWithOpenAI({
       llmDecodeNormalizeMs
     }
   };
+}
+
+function abortReason(signal) {
+  return signal?.reason instanceof Error ? signal.reason : Object.assign(new Error("Expense parsing was cancelled"), { name: "AbortError" });
+}
+
+function throwIfAborted(signal) {
+  if (signal?.aborted) throw abortReason(signal);
 }
 
 function buildSystemPrompt(now, defaultCurrency = "THB", timeZone = "Asia/Bangkok") {
