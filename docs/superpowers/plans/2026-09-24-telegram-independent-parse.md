@@ -11,9 +11,9 @@
 - [x] Queue regression tests first: overtaking, barrier ordering, cancellation, reservations and bounded load. Implement independent scheduling and cancellation-aware mutation acquisition in telegramJobQueue.js.
 - [x] Telegram regression first: real rejected parser A and safe B, independent eligibility, durable replay and stateful barriers. Integrate async pre-persist mutation acquisition in expenseDraftService.js and telegram.js.
 - [x] Parser regression first: propagate parent cancellation without fallback or early resource release.
-- [ ] PostgreSQL checks: concurrent ready drafts, month closure during FX, changed base currency and snapshot revalidation.
+- [x] PostgreSQL checks: concurrent ready drafts, month closure during FX, changed base currency and snapshot revalidation.
 - [x] Lab benchmark: injected 20-second A, B saved and delivered under one second, aggregate stage timings only.
 - [x] Update domain/decision/testing documentation, run focused tests then npm.cmd test and git diff --check.
-- [ ] Final bounded Sol review; resolve concrete findings, open draft PR and verify exact-head unit/PostgreSQL CI. No merge or production operations.
+- [x] Final bounded Sol review; resolve concrete findings, open draft PR and verify exact-head unit/PostgreSQL CI. No merge or production operations.
 
-Validation: local full suite 1753 tests / 1747 pass / 6 Windows POSIX skips. The 20-second lab delay completed B in 194.8 ms before A. Final Sol finding (queued callback ACK) is fixed with a real queue regression. PostgreSQL smoke cases are added; execution awaits disposable GitHub CI because local Docker is unavailable.
+Validation: local full suite 1753 tests / 1747 pass / 6 Windows POSIX skips. The 20-second lab delay completed B in 194.8 ms before A. Final Sol finding (queued callback ACK) is fixed with a real queue regression. Disposable PostgreSQL smoke and Linux unit CI passed on implementation commit 6e90e3d (run 35971377315). Draft PR #236 is open. Local Docker was unavailable; no persistent database or production operation was used.
