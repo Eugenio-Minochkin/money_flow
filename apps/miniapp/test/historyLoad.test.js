@@ -61,6 +61,42 @@ test("History retries after a failed lazy load", async () => {
   assert.equal(calls, 2);
 });
 
+test("History feedback reports loading, success, failure, then retry success", async () => {
+  const states = [];
+  let calls = 0;
+  const loader = createHistoryLoader(async () => {
+    calls += 1;
+    if (calls === 2) throw new Error("offline");
+  }, (state) => states.push(state));
+
+  await loader.ensure();
+  assert.deepEqual(states, ["loading", "loaded"]);
+
+  await assert.rejects(loader.refresh(), /offline/);
+  assert.deepEqual(states, ["loading", "loaded", "loading", "error"]);
+
+  await loader.refresh();
+  assert.deepEqual(states, ["loading", "loaded", "loading", "error", "loading", "loaded"]);
+});
+
+test("queued History refresh keeps feedback loading until the queued request settles", async () => {
+  const pending = [deferred(), deferred()];
+  const states = [];
+  let calls = 0;
+  const loader = createHistoryLoader(() => pending[calls++].promise, (state) => states.push(state));
+  const initial = loader.ensure();
+  const refreshed = loader.refresh();
+
+  pending[0].resolve();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(states, ["loading", "loading", "loading"]);
+
+  pending[1].reject(new Error("offline"));
+  await assert.rejects(initial, /offline/);
+  await assert.rejects(refreshed, /offline/);
+  assert.deepEqual(states, ["loading", "loading", "loading", "error"]);
+});
+
 function deferred() {
   let resolve;
   let reject;

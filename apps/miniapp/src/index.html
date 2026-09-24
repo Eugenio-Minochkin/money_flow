@@ -327,9 +327,10 @@
             <label class="history-search__field">
               <span class="history-search__icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="m16 16 4 4"/></svg></span>
               <span class="visually-hidden" data-i18n="history.search">Поиск</span>
-              <input id="historySearch" name="search" placeholder="Описание, категория, тег или сумма" data-i18n-placeholder="history.searchPlaceholder" />
+              <input id="historySearch" name="search" type="search" enterkeyhint="search" placeholder="Описание, категория, тег или сумма" data-i18n-placeholder="history.searchPlaceholder" />
               <button type="button" class="history-search__clear hidden" id="historySearchClear" aria-label="Очистить поиск" data-i18n-aria-label="history.clearSearch">×</button>
             </label>
+            <button type="submit" class="ghost-button" data-i18n="actions.find">Найти</button>
           </form>
           <section class="history-filters" id="historyFilters">
             <div class="history-filter-title">
@@ -366,6 +367,7 @@
           <div class="section-heading history-saved-heading compact-heading hidden" id="historySavedHeading">
             <h3 data-i18n="history.savedExpenses">Записанные расходы</h3>
           </div>
+          <div class="history-load-status hidden" id="historyLoadStatus" role="status" aria-live="polite"></div>
           <div class="history-list" id="historyList"></div>
         </section>
       </section>

@@ -101,10 +101,11 @@ test("ordinary Mini App startup leaves History out of the Dashboard critical pat
   const switchBlock = app.slice(app.indexOf("function switchTab("), app.indexOf("function setupTabPager"));
 
   assert.doesNotMatch(loadBlock, /await loadHistory\(\)/);
-  assert.match(loadBlock, /await ensureHistoryLoaded\(\)/);
+  assert.doesNotMatch(loadBlock, /await ensureHistoryLoaded\(\)/);
+  assert.match(loadBlock, /if \(params.get\("view"\) === "history"\)\s*{\s*switchTab\("history"\)/);
   assert.doesNotMatch(loadBlock, /requestAnimationFrame\([^]*?ensureHistoryLoaded\(\)/);
   assert.match(loadBlock, /requestAnimationFrame\([^]*?loadDashboardInbox\(\)/);
-  assert.match(switchBlock, /if \(tab === "history"\) void ensureHistoryLoaded\(\)\.catch\(showError\)/);
+  assert.match(switchBlock, /if \(tab === "history"\) void ensureHistoryLoaded\(\)\.catch\(\(\) => \{\}\)/);
   assert.match(app, /markStartup\("history_request_start"\)/);
   assert.match(app, /markStartup\("history_request_finish"\)/);
 });
@@ -505,7 +506,7 @@ test("history period picker CSS avoids horizontal scroll and respects safe areas
   assert.doesNotMatch(css, /\.history-custom-range\s*{/);
 });
 
-test("history refresh uses a four-column period grid, separate dates action and compact search", async () => {
+test("history search has explicit submit and search keyboard hint with a four-column period grid", async () => {
   const [html, css] = await Promise.all([
     readFile(new URL("../src/index.html", import.meta.url), "utf8"),
     readFile(new URL("../src/styles.css", import.meta.url), "utf8")
@@ -513,8 +514,23 @@ test("history refresh uses a four-column period grid, separate dates action and 
   assert.match(html, /id="historyQuickPeriods"[\s\S]*data-history-period="today"[\s\S]*data-history-period="yesterday"[\s\S]*data-history-period="last7"[\s\S]*data-history-period="month"/);
   assert.match(html, /id="historyQuickPeriods"[\s\S]*<\/div>\s*<button[^>]+id="openHistoryDatePicker"/);
   assert.match(html, /id="historySearchClear"/);
-  assert.doesNotMatch(html, /id="historySearchForm"[\s\S]{0,700}data-i18n="actions\.find"/);
+  assert.match(html, /id="historySearch"[^>]+type="search"[^>]+enterkeyhint="search"/);
+  assert.match(html, /id="historySearchForm"[\s\S]{0,900}<button type="submit"[^>]+data-i18n="actions\.find"/);
   assert.match(css, /\.history-filter-chips\s*{[^}]*display:\s*grid[^}]*grid-template-columns:\s*repeat\(4,\s*minmax\(0,\s*1fr\)\)[^}]*overflow-x:\s*visible/s);
+});
+
+test("history loading and error states hide stale results and expose a retry action", async () => {
+  const [html, app, css] = await Promise.all([
+    readFile(new URL("../src/index.html", import.meta.url), "utf8"),
+    readFile(new URL("../src/app.js", import.meta.url), "utf8"),
+    readFile(new URL("../src/styles.css", import.meta.url), "utf8")
+  ]);
+  assert.match(html, /id="historyLoadStatus"[^>]+role="status"[^>]+aria-live="polite"/);
+  assert.match(app, /createHistoryLoader\(performHistoryLoad, setHistoryLoadState\)/);
+  assert.match(app, /historyLoadState = state;[\s\S]*setAttribute\("data-history-load-state", state\)/);
+  assert.match(css, /#historyTab\[data-history-load-state="loading"\] #historyList[\s\S]*#historyTab\[data-history-load-state="error"\] #historyAnalytics\s*{\s*display:\s*none/s);
+  assert.match(app, /data-history-retry/);
+  assert.match(app, /setHistoryLoadState\(historyLoadState\);/);
 });
 
 test("history includes collapsed period analytics and reuses shared category icons", async () => {

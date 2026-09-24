@@ -2994,12 +2994,43 @@ button:disabled {
 }
 
 .history-search {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
   padding: 12px 14px 0;
 }
 
 .history-search__field {
   position: relative;
+  min-width: 0;
   display: block;
+}
+
+.history-search > button[type="submit"] {
+  min-height: 42px;
+  padding: 8px 12px;
+}
+
+.history-load-status {
+  margin: 12px 14px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.history-load-status button {
+  margin-left: 8px;
+}
+
+#historyTab[data-history-load-state="loading"] #historySavedHeading,
+#historyTab[data-history-load-state="loading"] #historyList,
+#historyTab[data-history-load-state="loading"] #historyPeriodSummary,
+#historyTab[data-history-load-state="loading"] #historyAnalytics,
+#historyTab[data-history-load-state="error"] #historySavedHeading,
+#historyTab[data-history-load-state="error"] #historyList,
+#historyTab[data-history-load-state="error"] #historyPeriodSummary,
+#historyTab[data-history-load-state="error"] #historyAnalytics {
+  display: none;
 }
 
 .history-search__field input {
