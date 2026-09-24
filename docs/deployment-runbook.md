@@ -4,18 +4,28 @@ This project deploys from GitHub Actions to the existing production server over 
 
 ## Safe Change Flow
 
-Agents and Codex must not push directly to `master` and must not trigger production deploys themselves. Use a branch and PR for every code or documentation change:
+Agents and Codex must not push directly to `master` and must not trigger production deploys themselves. For requested implementation, ordinary task-branch pushes and draft PR creation/updates are authorized by `AGENTS.md`; use a branch and draft PR unless the user requests local-only work.
+
+Inspect the current branch and local changes before fetching. Preserve unrelated changes; they do not require stopping. Continue in place only when the task can stay separate, otherwise use an isolated worktree from the refreshed `origin/master`. Ask only when overlapping changes cannot be safely separated.
+
+For a new task, start with:
 
 ```bash
+git status -sb
 git fetch origin --prune
+```
+
+On a clean `master` checkout, synchronize before creating the task branch:
+
+```bash
 git switch master
 git pull --ff-only origin master
 git status -sb
 ```
 
-If `git pull --ff-only origin master` fails or shows a diverged branch, stop and ask the user. Do not repair history, reset, stash, delete branches, or overwrite local files without explicit approval for that exact recovery action.
+When continuing an existing task branch, preserve it instead of switching to `master`. If a diverged branch needs integration, stop and ask the user to choose merge or rebase. A fetch/sync failure permits independent read-only work or safe local preparation with the known base disclosed; resolve the base before publishing a new task PR. Do not repair history, reset, stash, delete branches, or overwrite another task's changes without explicit approval for that exact recovery action.
 
-After the preflight succeeds, create a short-lived branch from the updated `master`:
+After the preflight succeeds, create a short-lived branch from the updated `master` (or an isolated worktree from refreshed `origin/master`). Run checks proportionate to the change; use `npm.cmd` on Windows:
 
 ```bash
 git status
@@ -24,7 +34,7 @@ npm test
 git add <files>
 git commit -m "Describe the change"
 git push -u origin codex/<short-change-name>
-gh pr create --base master --head codex/<short-change-name> --title "Describe the change" --body-file <pr-body.md>
+gh pr create --base master --draft --head codex/<short-change-name> --title "Describe the change" --body-file <pr-body.md>
 ```
 
 After opening or updating the PR, send the user the PR link for review and stop. Do not merge the PR, push to `master`, run deployment, SSH into production, or run production commands unless the user explicitly asks for that exact action.
