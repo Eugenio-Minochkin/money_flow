@@ -1953,3 +1953,86 @@ const quietLogger = {
   info() {},
   error() {}
 };
+
+test("Telegram ordered recovery retains a completed result until terminal delivery and never skips an older lease", async () => {
+  const user = await createSmokeUser(990237);
+  const chatId = 880237;
+  const a = await repo.claimTelegramExpenseCapture(user.id, chatId, 101, { text: "synthetic first" });
+  const b = await repo.claimTelegramExpenseCapture(user.id, chatId, 102, { text: "synthetic second" });
+  assert.equal(a.deliveryClaimed, true);
+  assert.deepEqual((await repo.listPrecedingTelegramExpenseCaptures(user.id, chatId, 102)).map(row => Number(row.message_id)), [101]);
+  await repo.deferTelegramExpenseCapture(user.id, chatId, 102, b.claimVersion);
+  assert.ok(!(await repo.listRunnableTelegramExpenseCaptures()).some(row => Number(row.user_id) === Number(user.id)), "expired B must not overtake live A");
+  const { draft } = await repo.completeTelegramExpenseCapture({ userId: user.id, chatId, messageId: 101, claimVersion: a.claimVersion, sourceText: "synthetic first", items: [expenseItem({ category_source: "parser" })] });
+  const liveReplay = await repo.claimTelegramExpenseCapture(user.id, chatId, 101, { text: "synthetic first" });
+  assert.equal(liveReplay.state, "completed");
+  assert.equal(liveReplay.deliveryPending, true);
+  assert.equal(liveReplay.deliveryClaimed, false);
+  assert.equal(String(liveReplay.draft.id), String(draft.id));
+  await pool.query("UPDATE telegram_expense_captures SET lease_expires_at = now() - interval '1 second' WHERE user_id = $1", [user.id]);
+  const heads = (await repo.listRunnableTelegramExpenseCaptures()).filter(row => Number(row.user_id) === Number(user.id));
+  assert.deepEqual(heads.map(row => Number(row.message_id)), [101]);
+  const resumed = await repo.claimTelegramExpenseCapture(user.id, chatId, 101, { text: "synthetic first" });
+  assert.equal(resumed.state, "completed");
+  assert.equal(resumed.deliveryClaimed, true);
+  assert.equal(String(resumed.draft.id), String(draft.id));
+  assert.equal(await repo.finishTelegramExpenseCaptureDelivery(user.id, chatId, 101, a.claimVersion), false, "stale owner cannot finalize reclaimed delivery");
+  assert.equal(await repo.finishTelegramExpenseCaptureDelivery(user.id, chatId, 101, resumed.claimVersion), true);
+  assert.deepEqual((await repo.listRunnableTelegramExpenseCaptures()).filter(row => Number(row.user_id) === Number(user.id)).map(row => Number(row.message_id)), [102]);
+  const second = await repo.claimTelegramExpenseCapture(user.id, chatId, 102, { text: "synthetic second" });
+  await repo.failTelegramExpenseCapture(user.id, chatId, 102, second.claimVersion, "synthetic_parse_failure");
+  assert.equal((await repo.readTelegramExpenseCapture(user.id, chatId, 102)).deliveryPending, true);
+  await pool.query("UPDATE telegram_expense_captures SET lease_expires_at = now() - interval '1 second' WHERE user_id = $1 AND message_id = 102", [user.id]);
+  const failedRecovery = await repo.claimTelegramExpenseCapture(user.id, chatId, 102, { text: "synthetic second" });
+  assert.equal(failedRecovery.state, "failed");
+  assert.equal(failedRecovery.deliveryClaimed, true);
+  assert.equal(failedRecovery.errorCode, "synthetic_parse_failure");
+  assert.equal(await repo.finishTelegramExpenseCaptureDelivery(user.id, chatId, 102, failedRecovery.claimVersion), true);
+  assert.deepEqual(await repo.listPrecedingTelegramExpenseCaptures(user.id, chatId, 103), []);
+  assert.ok(!(await repo.listRunnableTelegramExpenseCaptures()).some(row => Number(row.user_id) === Number(user.id)));
+});
+
+for (const [savedBeforeRestart, voice] of [[false, false], [true, false], [false, true], [true, true], ["failed", false]]) {
+  test(`Telegram restart resumes the older ${savedBeforeRestart === "failed" ? "failed" : savedBeforeRestart ? "saved" : "parsed"} ${voice ? "voice" : "text"} result before a new expense`, { timeout: 10000 }, async () => {
+    const failedBeforeRestart = savedBeforeRestart === "failed";
+    const telegramUserId = failedBeforeRestart ? 990242 : (savedBeforeRestart ? 990239 : 990238) + (voice ? 2 : 0);
+    const chatId = telegramUserId;
+    const user = await createSmokeUser(telegramUserId);
+    await pool.query("UPDATE users SET onboarding_step = 'completed' WHERE id = $1", [user.id]);
+    const a = await repo.claimTelegramExpenseCapture(user.id, chatId, 201, voice ? { voice: { fileId: "synthetic-file", duration: 2 } } : { text: "coffee 40 THB" });
+    let draft;
+    if (failedBeforeRestart) await repo.failTelegramExpenseCapture(user.id, chatId, 201, a.claimVersion, "synthetic_parser_failure");
+    else ({ draft } = await repo.completeTelegramExpenseCapture({ userId: user.id, chatId, messageId: 201, claimVersion: a.claimVersion, sourceText: "coffee 40 THB", items: [expenseItem({ category_source: "parser", amount: 40 })] }));
+    if (savedBeforeRestart === true) await repo.saveDraftAsExpense(draft.id, telegramUserId);
+    const effects = [];
+    let parses = 0;
+    let messageId = 900;
+    const refs = new Map();
+    const isolatedRepo = { ...repo,
+      async listRunnableTelegramExpenseCaptures() { return (await repo.listRunnableTelegramExpenseCaptures()).filter(row => String(row.user_id) === String(user.id)); },
+      async saveDraftAsExpense(id, ...args) { const saved = await repo.saveDraftAsExpense(id, ...args); effects.push(String(id) === String(draft?.id) ? "saveA" : "saveB"); return saved; }
+    };
+    const bot = createTelegramBot({ repository: isolatedRepo, token: "synthetic", miniAppUrl: "https://example.invalid", perfLogger: () => {}, now: () => new Date("2026-09-24T12:00:00Z"),
+      expenseParser: { async parse() { parses++; return { expenses: [expenseItem({ category_source: "parser", amount: 12.64 })] }; } },
+      voiceTranscriber: { isConfigured: () => true, async transcribeTelegramVoice() { assert.fail("completed voice capture must reuse its transcript"); } },
+      telegramClient: {
+        async sendMessage(input) { const id = ++messageId; refs.set(id, input.replyParameters?.message_id); if (/couldn.t process/.test(input.text)) effects.push("terminalA"); return { ok: true, result: { message_id: id } }; },
+        async editMessageText(input) { effects.push(refs.get(input.messageId) === 201 ? "terminalA" : "terminalB"); return { ok: true, result: { message_id: input.messageId } }; },
+        async deleteMessage() { return { ok: true }; }
+      }
+    });
+    const secondUpdate = { message: { message_id: 202, chat: { id: chatId }, from: { id: telegramUserId }, text: "groceries 12.64 THB" } };
+    await bot.handleUpdate(secondUpdate);
+    assert.deepEqual(effects, [], "live B must stay outside workers until orphaned A is recovered");
+    assert.equal(parses, 0);
+    await pool.query("UPDATE telegram_expense_captures SET lease_expires_at = now() - interval '1 second' WHERE user_id = $1", [user.id]);
+    await bot.resumePendingCaptures();
+    await bot.resumePendingCaptures();
+    assert.deepEqual(effects, failedBeforeRestart ? ["terminalA", "saveB", "terminalB"] : ["saveA", "terminalA", "saveB", "terminalB"]);
+    assert.equal(parses, 1, "completed A reuses its durable draft");
+    assert.equal((await pool.query("SELECT count(*)::int AS count FROM expenses WHERE user_id = $1", [user.id])).rows[0].count, failedBeforeRestart ? 1 : 2);
+    assert.equal((await pool.query("SELECT count(*)::int AS count FROM telegram_expense_captures WHERE user_id = $1 AND payload IS NOT NULL", [user.id])).rows[0].count, 0);
+    await bot.handleUpdate(secondUpdate);
+    assert.equal((await pool.query("SELECT count(*)::int AS count FROM expenses WHERE user_id = $1", [user.id])).rows[0].count, failedBeforeRestart ? 1 : 2);
+  });
+}

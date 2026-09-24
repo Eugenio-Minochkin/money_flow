@@ -96,7 +96,9 @@ async function createTelegramExpenseDraftOnce({ user, chatId, messageId, text, e
     onAfterPersist?.();
     return result ? { draft: result.draft, replayed: false } : null;
   } catch (error) {
-    await repository.releaseTelegramExpenseCapture(user.id, chatId, messageId, claim.claimVersion);
+    if (error?.code !== "telegram_capture_order_deferred") {
+      await repository.releaseTelegramExpenseCapture(user.id, chatId, messageId, claim.claimVersion);
+    }
     throw error;
   }
 }
