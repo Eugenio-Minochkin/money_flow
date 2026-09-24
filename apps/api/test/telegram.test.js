@@ -5176,7 +5176,7 @@ test("queued status becomes the processing loader and terminal result for the sa
   const secondLifecycle = calls.filter((call) => call.messageId === queuedCall.resultMessageId);
   assert.ok(secondLifecycle.some((call) => call.method === "editMessageText" && call.text.includes("Заношу расход")));
   assert.ok(secondLifecycle.some((call) => call.method === "editMessageText" && call.text.includes("Записал")));
-  assert.equal(calls.filter((call) => call.method === "sendMessage" && call.replyParameters?.message_id === 102).length, 0);
+  assert.equal(calls.filter((call) => call.method === "sendMessage" && call.replyParameters?.message_id === 102).length, 1);
 });
 
 test("full user queue uses localized text for ru and en users", async () => {

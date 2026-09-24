@@ -84,6 +84,12 @@ class TelegramTerminalDeliveryError extends Error {
 }
 
 class TelegramSmartSaveReviewRequiredError extends Error {}
+class TelegramCaptureOrderDeferredError extends Error {
+  constructor() {
+    super("Telegram capture is waiting for an earlier delivery");
+    this.code = "telegram_capture_order_deferred";
+  }
+}
 
 export function createTelegramBot({
   repository,
@@ -106,6 +112,7 @@ export function createTelegramBot({
   awaitQueuedJobs = true
 }) {
   const activeEvidenceSessions = new Map();
+  const activeCaptureKeys = new Set();
   const sharedExpenseExportService = expenseExportService ?? createExpenseExportService({
     repository,
     now,
@@ -136,8 +143,11 @@ export function createTelegramBot({
         return { ok: true };
       }
       if (update.message) {
+        const admissionTicket = update.message.from
+          ? telegramJobQueue.createAdmissionTicket?.(update.message.from.id)
+          : null;
         try {
-          const result = await handleMessage({ update, repository, token, miniAppUrl, expenseParser, voiceTranscriber, expenseEvidenceImportService, expenseEvidenceSessionService, activeEvidenceSessions, telegramClient, adminTelegramIds, adminStatsService, releaseNotesService, adminAlertService, expenseExportService: sharedExpenseExportService, now, trace, telegramJobQueue, awaitQueuedJobs });
+          const result = await handleMessage({ update, repository, token, miniAppUrl, expenseParser, voiceTranscriber, expenseEvidenceImportService, expenseEvidenceSessionService, activeEvidenceSessions, activeCaptureKeys, telegramClient, adminTelegramIds, adminStatsService, releaseNotesService, adminAlertService, expenseExportService: sharedExpenseExportService, now, trace, telegramJobQueue, awaitQueuedJobs, admissionTicket });
           success = !result?.queued;
           return result;
         } catch (error) {
@@ -145,6 +155,7 @@ export function createTelegramBot({
           trace.finish(false, error);
           throw error;
         } finally {
+          telegramJobQueue.releaseAdmissionTicket?.(admissionTicket);
           if (success) trace.finish(true);
         }
       }
@@ -217,7 +228,7 @@ export async function deliverShortcutCaptureToTelegramBestEffort({ onError = () 
   }
 }
 
-async function handleMessage({ update, repository, token, miniAppUrl, expenseParser, voiceTranscriber, expenseEvidenceImportService, expenseEvidenceSessionService, activeEvidenceSessions, telegramClient, adminTelegramIds, adminStatsService, releaseNotesService, adminAlertService, expenseExportService, now, trace, telegramJobQueue, awaitQueuedJobs, barrierRouted = false, barrierJob = null }) {
+async function handleMessage({ update, repository, token, miniAppUrl, expenseParser, voiceTranscriber, expenseEvidenceImportService, expenseEvidenceSessionService, activeEvidenceSessions, activeCaptureKeys, telegramClient, adminTelegramIds, adminStatsService, releaseNotesService, adminAlertService, expenseExportService, now, trace, telegramJobQueue, awaitQueuedJobs, admissionTicket = null, barrierRouted = false, barrierJob = null }) {
   const admissionStartedAt = performance.now();
   const message = update.message;
   const from = message.from;
@@ -269,8 +280,9 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
     trace.setAdmissionMs?.(Math.max(0, Math.round(performance.now() - admissionStartedAt)));
     const queuedBarrier = telegramJobQueue.enqueue({
       userId: from.id,
+      admissionTicket,
       independent: false,
-      run: async ({ signal, acquireMutation }) => handleMessage({ update, repository, token, miniAppUrl, expenseParser, voiceTranscriber, expenseEvidenceImportService, expenseEvidenceSessionService, activeEvidenceSessions, telegramClient, adminTelegramIds, adminStatsService, releaseNotesService, adminAlertService, expenseExportService, now, trace, telegramJobQueue, awaitQueuedJobs, barrierRouted: true, barrierJob: { signal, acquireMutation } })
+      run: async ({ signal, acquireMutation }) => handleMessage({ update, repository, token, miniAppUrl, expenseParser, voiceTranscriber, expenseEvidenceImportService, expenseEvidenceSessionService, activeEvidenceSessions, activeCaptureKeys, telegramClient, adminTelegramIds, adminStatsService, releaseNotesService, adminAlertService, expenseExportService, now, trace, telegramJobQueue, awaitQueuedJobs, admissionTicket, barrierRouted: true, barrierJob: { signal, acquireMutation } })
     });
     if (!queuedBarrier.accepted) return sendTelegramResponse(trace, () => sendMessage(token, chatId, botText(language, queuedBarrier.status === "globalQueueFull" ? "globalQueueFull" : "userQueueFull"), null, telegramClient));
     return await queuedBarrier.promise;
@@ -459,6 +471,7 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
   }
 
   let expenseCaptureClaim = null;
+  let activeCaptureKey = null;
   let localEvaluation = null;
   if (inputType === "text" && rawText && !commandText?.startsWith("/")) {
     try {
@@ -483,34 +496,74 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
       && !riskyLocalReject.has(localRejectReason));
   } catch { independent = false; }
   trace.setAdmissionMs?.(Math.max(0, Math.round(performance.now() - admissionStartedAt)));
-  const queueReservation = barrierJob ? null : (telegramJobQueue.reserve?.(from.id) ?? null);
+  const queueReservation = barrierJob ? null : (telegramJobQueue.reserve?.(from.id, admissionTicket) ?? null);
   if (queueReservation && !queueReservation.accepted) {
     const key = queueReservation.status === "globalQueueFull" ? "globalQueueFull" : "userQueueFull";
     return sendTelegramResponse(trace, () => sendMessage(token, chatId, botText(language, key), null, telegramClient));
   }
   if (trackExpenseMessage && inputType !== "photo" && typeof repository.claimTelegramExpenseCapture === "function") {
     try {
+      await telegramJobQueue.waitForAdmissionTicket?.(admissionTicket);
       expenseCaptureClaim = await repository.claimTelegramExpenseCapture(
         user.id, chatId, message.message_id, telegramCapturePayload(message)
       );
     } catch (error) {
       telegramJobQueue.releaseReservation?.(queueReservation?.token);
       throw error;
+    } finally {
+      telegramJobQueue.releaseAdmissionTurn?.(admissionTicket);
     }
     trace.linkCapture?.(expenseCaptureClaim);
+    if (expenseCaptureClaim?.deliveryPending && !expenseCaptureClaim.deliveryClaimed) {
+      trace.event("capture_replay_ignored", { captureState: expenseCaptureClaim.state, deliveryPending: true });
+      telegramJobQueue.releaseReservation?.(queueReservation?.token);
+      return { ok: true, replayed: true };
+    }
+    if (expenseCaptureClaim?.state === "claimed" || expenseCaptureClaim?.deliveryClaimed) {
+      activeCaptureKey = telegramActiveCaptureKey(user.id, chatId, message.message_id);
+      activeCaptureKeys?.add(activeCaptureKey);
+    }
+    if (expenseCaptureClaim?.deliveryPending && expenseCaptureClaim.deliveryClaimed
+      && typeof repository.listPrecedingTelegramExpenseCaptures === "function") {
+      let predecessors;
+      try {
+        predecessors = await repository.listPrecedingTelegramExpenseCaptures(user.id, chatId, message.message_id);
+      } catch (error) {
+        activeCaptureKeys?.delete(activeCaptureKey);
+        telegramJobQueue.releaseReservation?.(queueReservation?.token);
+        throw error;
+      }
+      const predecessorIsLocal = (predecessor) => activeCaptureKeys?.has(telegramActiveCaptureKey(
+        user.id, predecessor.chat_id, predecessor.message_id
+      ));
+      if ((predecessors ?? []).some((predecessor) => !predecessorIsLocal(predecessor))) {
+        await repository.deferTelegramExpenseCapture?.(user.id, chatId, message.message_id, expenseCaptureClaim.claimVersion);
+        activeCaptureKeys?.delete(activeCaptureKey);
+        telegramJobQueue.releaseReservation?.(queueReservation?.token);
+        trace.event("capture_deferred_behind_predecessor", { predecessorCount: predecessors.length });
+        try {
+          await sendTelegramResponse(trace, () => sendMessage(token, chatId, botText(language, "queuedBehindPrevious"), null, telegramClient, null, {
+            replyParameters: { message_id: message.message_id, allow_sending_without_reply: true }
+          }));
+        } catch (error) {
+          console.error("[telegram] failed to send deferred capture status", error.message);
+        }
+        return { ok: true, queued: true };
+      }
+    }
     if (expenseCaptureClaim?.state === "processing") {
       trace.event("capture_replay_ignored", { captureState: "processing" });
       telegramJobQueue.releaseReservation?.(queueReservation?.token);
       return { ok: true, replayed: true };
     }
-    if (expenseCaptureClaim?.state === "failed") {
+    if (expenseCaptureClaim?.state === "failed" && !expenseCaptureClaim.deliveryClaimed) {
       trace.event("capture_replay_ignored", { captureState: "failed" });
       telegramJobQueue.releaseReservation?.(queueReservation?.token);
       return { ok: true, replayed: true };
     }
   }
 
-  const renewCaptureLease = expenseCaptureClaim?.state === "claimed"
+  const renewCaptureLease = (expenseCaptureClaim?.state === "claimed" || expenseCaptureClaim?.deliveryClaimed === true)
     && typeof repository.renewTelegramExpenseCapture === "function"
     ? setInterval(() => {
       void repository.renewTelegramExpenseCapture(user.id, chatId, message.message_id, expenseCaptureClaim.claimVersion)
@@ -521,6 +574,7 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
 
   trace.setAdmissionMs?.(Math.max(0, Math.round(performance.now() - admissionStartedAt)));
   const deliveryState = createTelegramJobDeliveryState();
+  let finishCaptureDelivery = true;
   let resolveQueuedStatusMessageId;
   const queuedStatusMessageId = new Promise((resolve) => { resolveQueuedStatusMessageId = resolve; });
   if (barrierJob) {
@@ -533,8 +587,63 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
 
   const queued = telegramJobQueue.enqueue({
     userId: from.id,
+    admissionTicket,
     independent,
-    run: async ({ signal, acquireMutation }) => processQueuedMessage({ message, from, user, rawText, hasVoice, inputType: trackExpenseMessage ? inputType : null, repository, token, miniAppUrl, expenseParser, voiceTranscriber, expenseEvidenceImportService, expenseEvidenceSessionService, activeEvidenceSessions, telegramClient, adminTelegramIds, adminAlertService, now, trace, deliveryState, expenseCaptureClaim, signal, acquireMutation, telegramJobQueue, queuedStatusMessageId: await queuedStatusMessageId }),
+    run: async ({ signal, acquireMutation }) => {
+      try {
+        if (expenseCaptureClaim?.deliveryPending && expenseCaptureClaim.deliveryClaimed
+          && expenseCaptureClaim.state === "failed") {
+          const release = await acquireMutation();
+          try {
+            const renewed = await repository.renewTelegramExpenseCapture?.(user.id, chatId, message.message_id, expenseCaptureClaim.claimVersion);
+            if (renewed === false) throw new TelegramCaptureOrderDeferredError();
+            const loader = await sendExpenseProcessingMessage(token, chatId, language, telegramClient, trace, message.message_id, null, await queuedStatusMessageId);
+            deliveryState.loaderMessageId = loader.messageId;
+            const delivered = await deliverResultMessage({
+              token, chatId, loaderMessageId: loader.messageId, text: botText(language, "jobProcessingFailed"),
+              replyMarkup: null, telegramClient, trace,
+              signal: deadlineSignal(null, TERMINAL_DELIVERY_FALLBACK_TIMEOUT_MS)
+            });
+            if (delivered?.ok !== true) throw new TelegramTerminalDeliveryError();
+            markTelegramJobTerminalResponse(deliveryState);
+            return delivered;
+          } finally { release?.(); }
+        }
+        return await processQueuedMessage({ message, from, user, rawText, hasVoice, inputType: trackExpenseMessage ? inputType : null, repository, token, miniAppUrl, expenseParser, voiceTranscriber, expenseEvidenceImportService, expenseEvidenceSessionService, activeEvidenceSessions, telegramClient, adminTelegramIds, adminAlertService, now, trace, deliveryState, expenseCaptureClaim, signal, acquireMutation, telegramJobQueue, queuedStatusMessageId: await queuedStatusMessageId });
+      } catch (error) {
+        if (error instanceof TelegramCaptureOrderDeferredError) {
+          await repository.deferTelegramExpenseCapture?.(user.id, chatId, message.message_id, expenseCaptureClaim?.claimVersion);
+          finishCaptureDelivery = false;
+          return { ok: true, queued: true, deferred: true };
+        }
+        if (expenseCaptureClaim?.deliveryPending && expenseCaptureClaim.deliveryClaimed
+          && typeof repository.renewTelegramExpenseCapture === "function") {
+          const renewed = await repository.renewTelegramExpenseCapture(user.id, chatId, message.message_id, expenseCaptureClaim.claimVersion).catch(() => false);
+          if (!renewed) {
+            await repository.deferTelegramExpenseCapture?.(user.id, chatId, message.message_id, expenseCaptureClaim.claimVersion);
+            finishCaptureDelivery = false;
+            return { ok: true, queued: true, deferred: true };
+          }
+        }
+        let release = null;
+        try { release = await acquireMutation({ ignoreAbort: true }); } catch {}
+        try {
+          await sendQueuedJobFailure({ error, token, chatId, language, telegramClient, adminAlertService, telegramUserId: from.id, userId: user.id, trace, deliveryState, sourceMessageId: message.message_id });
+        } finally { release?.(); }
+        return { ok: true, failed: true };
+      } finally {
+        clearInterval(renewCaptureLease);
+        if (finishCaptureDelivery && expenseCaptureClaim?.deliveryPending && expenseCaptureClaim.deliveryClaimed) {
+          try {
+            const finished = await repository.finishTelegramExpenseCaptureDelivery?.(user.id, chatId, message.message_id, expenseCaptureClaim.claimVersion);
+            if (finished === false) console.warn("[telegram] capture delivery marker was not owned at finish");
+          } catch (error) {
+            console.error("[telegram] failed to finish capture delivery", error.message);
+          }
+        }
+        activeCaptureKeys?.delete(activeCaptureKey);
+      }
+    },
     onStart: (metadata) => trace.event("queue_job_start", metadata),
     onFinish: (metadata) => {
       clearInterval(renewCaptureLease);
@@ -559,7 +668,9 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
 
   if (queued.status === "queuedBehindPrevious") {
     try {
-      const result = await sendTelegramResponse(trace, () => sendMessage(token, chatId, botText(language, "queuedBehindPrevious"), null, telegramClient));
+      const result = await sendTelegramResponse(trace, () => sendMessage(token, chatId, botText(language, "queuedBehindPrevious"), null, telegramClient, null, {
+        replyParameters: { message_id: message.message_id, allow_sending_without_reply: true }
+      }));
       resolveQueuedStatusMessageId(extractMessageId(result));
     } catch (error) {
       resolveQueuedStatusMessageId(null);
@@ -567,7 +678,9 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
     }
   } else if (queued.status === "globalQueueDelayed") {
     try {
-      const result = await sendTelegramResponse(trace, () => sendMessage(token, chatId, botText(language, "globalQueueDelayed"), null, telegramClient));
+      const result = await sendTelegramResponse(trace, () => sendMessage(token, chatId, botText(language, "globalQueueDelayed"), null, telegramClient, null, {
+        replyParameters: { message_id: message.message_id, allow_sending_without_reply: true }
+      }));
       resolveQueuedStatusMessageId(extractMessageId(result));
     } catch (error) {
       resolveQueuedStatusMessageId(null);
@@ -579,21 +692,18 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
     try {
       await queued.promise;
     } catch (error) {
-      await sendQueuedJobFailure({ error, token, chatId, language, telegramClient, adminAlertService, telegramUserId: from.id, userId: user.id, trace, deliveryState });
+      trace.finish(false, error);
     }
     return { ok: true };
   }
 
   queued.promise
     .then(() => trace.finish(true))
-    .catch(async (error) => {
-      await sendQueuedJobFailure({ error, token, chatId, language, telegramClient, adminAlertService, telegramUserId: from.id, userId: user.id, trace, deliveryState });
-      trace.finish(false, error);
-    });
+    .catch((error) => trace.finish(false, error));
   return { ok: true, queued: true };
 }
 
-async function sendQueuedJobFailure({ error, token, chatId, language, telegramClient, adminAlertService, telegramUserId, userId, trace, deliveryState }) {
+async function sendQueuedJobFailure({ error, token, chatId, language, telegramClient, adminAlertService, telegramUserId, userId, trace, deliveryState, sourceMessageId = null }) {
   trace.failActive(["telegram_file_download", "transcription", "llm_parse", "db_save"], error);
   console.error("[telegram] queued job failed", error.message);
   if (!error?.adminAlertSent) {
@@ -628,10 +738,15 @@ async function sendQueuedJobFailure({ error, token, chatId, language, telegramCl
     return;
   }
   try {
-    const delivered = await sendTelegramResponse(trace, () => sendMessage(token, chatId, botText(language, "jobProcessingFailed"), null, telegramClient, null, {
-      signal: deadlineSignal(null, TERMINAL_DELIVERY_FALLBACK_TIMEOUT_MS),
-      requestTimeoutMs: TERMINAL_DELIVERY_FALLBACK_TIMEOUT_MS
-    }));
+    const text = botText(language, "jobProcessingFailed");
+    const terminalSignal = deadlineSignal(null, TERMINAL_DELIVERY_FALLBACK_TIMEOUT_MS);
+    const delivered = deliveryState?.loaderMessageId
+      ? await deliverResultMessage({ token, chatId, loaderMessageId: deliveryState.loaderMessageId, text, replyMarkup: null, telegramClient, trace, signal: terminalSignal })
+      : await sendTelegramResponse(trace, () => sendMessage(token, chatId, text, null, telegramClient, null, {
+        replyParameters: sourceMessageId == null ? null : { message_id: sourceMessageId, allow_sending_without_reply: true },
+        signal: terminalSignal,
+        requestTimeoutMs: TERMINAL_DELIVERY_FALLBACK_TIMEOUT_MS
+      }));
     if (delivered?.ok === true) markTelegramJobTerminalResponse(deliveryState);
   } catch (sendError) {
     console.error("[telegram] failed to send queued job failure message", sendError.message);
@@ -648,6 +763,10 @@ function telegramCapturePayload(message) {
       duration: Number(voice.duration) || null
     } : null
   };
+}
+
+function telegramActiveCaptureKey(userId, chatId, messageId) {
+  return `${String(userId)}:${String(chatId)}:${String(messageId)}`;
 }
 
 function setPendingFeedback(telegramUserId, now = new Date()) {
@@ -694,6 +813,16 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
     if (mutationRelease || typeof acquireMutation !== "function") return;
     const waitingAt = performance.now();
     mutationRelease = await acquireMutation();
+    if (voiceCaptureClaim?.deliveryPending && voiceCaptureClaim.deliveryClaimed
+      && typeof repository.renewTelegramExpenseCapture === "function") {
+      const renewed = await repository.renewTelegramExpenseCapture(user.id, chatId, message.message_id, voiceCaptureClaim.claimVersion);
+      if (renewed === false) throw new TelegramCaptureOrderDeferredError();
+    }
+    if (voiceCaptureClaim?.deliveryPending && voiceCaptureClaim.deliveryClaimed
+      && typeof repository.listPrecedingTelegramExpenseCaptures === "function") {
+      const earlier = await repository.listPrecedingTelegramExpenseCaptures(user.id, chatId, message.message_id);
+      if (earlier?.length) throw new TelegramCaptureOrderDeferredError();
+    }
     const waited = Math.max(0, Math.round(performance.now() - waitingAt));
     mutationWaitMs += waited;
     trace.event("mutation_lock_acquired", { mutationWaitMs: waited });
@@ -720,6 +849,7 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
   };
 
   const deliverQueuedResult = async (input) => {
+    await acquireFinancialMutation();
     const delivered = await deliverResultMessage({ ...input, signal });
     if (delivered?.ok !== true) throw new TelegramTerminalDeliveryError();
     markTelegramJobTerminalResponse(deliveryState);
@@ -785,7 +915,12 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
     }
 
     const loader = await sendExpenseProcessingMessage(token, chatId, language, telegramClient, trace, message.message_id, signal, queuedStatusMessageId);
+    deliveryState.loaderMessageId = loader.messageId;
     let text = rawText;
+    if (!text && voiceCaptureClaim?.deliveryPending && voiceCaptureClaim.deliveryClaimed
+      && voiceCaptureClaim.state === "completed") {
+      text = voiceCaptureClaim.draft?.source_text ?? null;
+    }
     try {
       if (!text && hasVoice) {
         if (!voiceCaptureClaim && typeof repository.claimTelegramExpenseCapture === "function") {
@@ -793,7 +928,9 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
           durableCaptureState = voiceCaptureClaim?.state ?? "unavailable";
           trace.linkCapture?.(voiceCaptureClaim);
         }
-        if (voiceCaptureClaim?.state === "completed" || voiceCaptureClaim?.state === "processing" || voiceCaptureClaim?.state === "failed") {
+        if (voiceCaptureClaim?.state === "completed" && voiceCaptureClaim.deliveryPending && voiceCaptureClaim.deliveryClaimed) {
+          // Reuse the durable transcript; recovery must not fetch the voice again.
+        } else if (voiceCaptureClaim?.state === "completed" || voiceCaptureClaim?.state === "processing" || voiceCaptureClaim?.state === "failed") {
           const completed = voiceCaptureClaim.state === "completed"
             ? voiceCaptureClaim
             : await repository.waitForTelegramExpenseCapture(user.id, chatId, message.message_id);
@@ -975,7 +1112,7 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
       try {
         created = await createTelegramExpenseDraft({
           user, chatId, messageId: message.message_id, text, expenseParser, repository,
-          claim: voiceCaptureClaim?.state === "claimed" ? voiceCaptureClaim : null,
+          claim: voiceCaptureClaim?.state === "claimed" || voiceCaptureClaim?.state === "completed" ? voiceCaptureClaim : null,
           parserOptions: {
           rolloutUserId: from.id,
           signal,
@@ -995,6 +1132,7 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
           ,onAfterPersist() { trace.end("db_save"); }
         });
       } catch (error) {
+        if (error instanceof TelegramCaptureOrderDeferredError) throw error;
         if (error instanceof ExpenseTextNotRecognizedError) {
           processingResult = "amount_not_found";
           await safeRecordAppEvent(repository, user.id, "expense_parse_failed", { inputType, failureStage: "amount" });
@@ -1018,6 +1156,26 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
       if (created.replayed) {
         await acquireFinancialMutation();
         draft = await repository.getDraftForTelegramUser?.(draft.id, from.id) ?? draft;
+        if (voiceCaptureClaim?.deliveryPending && voiceCaptureClaim.deliveryClaimed && draft.status === "confirmed") {
+          trace.start("db_save");
+          const saved = await repository.saveDraftAsExpense(draft.id, from.id, { signal });
+          trace.end("db_save");
+          markTelegramJobFinancialResultCommitted(deliveryState);
+          processingResult = "expense_saved";
+          const expenses = saved.expenses ?? [];
+          const total = expenses.reduce((sum, expense) => sum + Number(expense.amount_base ?? 0), 0);
+          const savedResult = {
+            text: formatSavedSummary(total, saved.dashboardSnapshot, { language, expenses }),
+            replyMarkup: expenses.length === 1
+              ? savedExpenseKeyboard(expenses[0].id, miniAppUrl, from.id, language)
+              : appKeyboard(miniAppUrl, from.id, language)
+          };
+          retainTelegramJobCommittedResult(deliveryState, savedResult);
+          const delivered = await deliverQueuedResult({ token, chatId, loaderMessageId: loader.messageId, ...savedResult, telegramClient, trace });
+          const refMessageId = extractMessageId(delivered);
+          if (refMessageId) void repository.setDraftMessageRef(draft.id, from.id, chatId, refMessageId).catch((error) => console.error("[telegram] failed to store saved message reference", error.message));
+          return delivered;
+        }
         if (draft.tg_chat_id && draft.tg_message_id) {
           processingResult = draft.status === "confirmed" ? "expense_saved" : "draft_created";
           markTelegramJobTerminalResponse(deliveryState);
@@ -1115,6 +1273,7 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
       }
       return delivered;
     } catch (error) {
+      if (error instanceof TelegramCaptureOrderDeferredError) throw error;
       if (error instanceof TelegramTerminalDeliveryError && processingDraftType === "regular") {
         throw error;
       }

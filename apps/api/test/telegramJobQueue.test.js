@@ -55,7 +55,7 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-test("independent parsing overtakes slow same-user work but mutation and barriers remain serial", async () => {
+test("independent parsing overlaps but ordered mutation waits for the prior admission", async () => {
   const queue = createTelegramJobQueue({ globalConcurrency: 3 });
   const slow = Promise.withResolvers();
   const entered = Promise.withResolvers();
@@ -77,13 +77,72 @@ test("independent parsing overtakes slow same-user work but mutation and barrier
   const d = queue.enqueue({ userId: 7, independent: true, run: async () => { events.push("d"); } });
   try {
     assert.equal(b.status, "accepted");
-    await Promise.race([b.promise, delay(100).then(() => { throw new Error("B blocked by LLM A"); })]);
-    assert.deepEqual(events, ["b"]);
+    await delay(10);
+    assert.deepEqual(events, [], "B must not mutate while A is still parsing");
   } finally {
     slow.resolve();
     await Promise.all([a.promise, b.promise, c.promise, d.promise]);
   }
-  assert.deepEqual(events, ["b", "a", "barrier", "d"]);
+  assert.deepEqual(events, ["a", "b", "barrier", "d"]);
+});
+
+test("a later admission cannot occupy the worker while an earlier admission is unresolved", async () => {
+  const queue = createTelegramJobQueue({ globalConcurrency: 1 });
+  const firstTicket = queue.createAdmissionTicket(7);
+  const secondReservation = queue.reserve(7);
+  const started = [];
+  const second = queue.enqueue({
+    userId: 7,
+    reservation: secondReservation.token,
+    independent: true,
+    run: async () => { started.push("second"); }
+  });
+
+  await delay(5);
+  assert.deepEqual(started, []);
+
+  const firstReservation = queue.reserve(7, firstTicket);
+  const first = queue.enqueue({
+    userId: 7,
+    reservation: firstReservation.token,
+    independent: true,
+    run: async () => { started.push("first"); }
+  });
+  await Promise.all([first.promise, second.promise]);
+  assert.deepEqual(started, ["first", "second"]);
+});
+
+test("a skipped admission releases later work", async () => {
+  const queue = createTelegramJobQueue({ globalConcurrency: 1 });
+  const skipped = queue.createAdmissionTicket(7);
+  const nextTicket = queue.createAdmissionTicket(7);
+  const started = [];
+  const next = queue.enqueue({ userId: 7, admissionTicket: nextTicket, run: async () => { started.push("next"); } });
+  await delay(5);
+  assert.deepEqual(started, []);
+  queue.releaseAdmissionTicket(skipped);
+  await next.promise;
+  assert.deepEqual(started, ["next"]);
+});
+
+test("a released reservation cannot delete state for a later same-user job", async () => {
+  const queue = createTelegramJobQueue({ globalConcurrency: 3 });
+  const ticket = queue.createAdmissionTicket(7);
+  const reservation = queue.reserve(7, ticket);
+  queue.releaseReservation(reservation.token);
+
+  const gate = Promise.withResolvers();
+  const entered = Promise.withResolvers();
+  const events = [];
+  const active = queue.enqueue({ userId: 7, independent: true, run: async () => { entered.resolve(); await gate.promise; } });
+  await entered.promise;
+  queue.releaseAdmissionTicket(ticket);
+  const barrier = queue.enqueue({ userId: 7, run: async () => { events.push("barrier"); } });
+  await delay(5);
+  assert.deepEqual(events, []);
+  gate.resolve();
+  await Promise.all([active.promise, barrier.promise]);
+  assert.deepEqual(events, ["barrier"]);
 });
 
 test("independent jobs retain bounded slots and cancelled mutation waiters never run", async () => {
@@ -104,24 +163,24 @@ test("independent jobs retain bounded slots and cancelled mutation waiters never
     await acquireMutation();
     events.push("late mutation");
   } });
-  const bFailure = assert.rejects(b.promise, TelegramJobTimeoutError);
   await waiter.promise;
-  await bFailure;
+  await delay(30);
   const c = queue.enqueue({ userId: 7, run: async () => { events.push("barrier"); } });
   assert.deepEqual(events, []);
   hold.resolve();
   await aFailure;
+  await b.promise;
   await c.promise;
-  assert.deepEqual(events, ["barrier"]);
+  assert.deepEqual(events, ["late mutation", "barrier"]);
 });
 
 test("parallel jobs share global capacity and reservations survive another job completing", async () => {
   const queue = createTelegramJobQueue({ globalConcurrency: 2, userQueueLimit: 2, globalQueueLimit: 3 });
   const gate = Promise.withResolvers();
   const starts = [];
-  const reserved = queue.reserve(7);
   const a = queue.enqueue({ userId: 7, independent: true, run: async () => { starts.push("a"); } });
   await a.promise;
+  const reserved = queue.reserve(7);
   // Queue finalization must not discard state while admission owns a reservation.
   await delay(0);
   const b = queue.enqueue({ userId: 7, reservation: reserved.token, independent: true, run: async () => { starts.push("b"); await gate.promise; } });
@@ -162,4 +221,20 @@ test("messages admitted behind a stateful barrier stay serial after it changes r
     await Promise.all([barrier.promise, first.promise, second.promise]);
   }
   assert.deepEqual(events, ["first", "second"]);
+});
+
+test("a skipped middle admission cannot release a successor past an unresolved first admission", async () => {
+  const queue = createTelegramJobQueue();
+  const first = queue.createAdmissionTicket(7);
+  const skipped = queue.createAdmissionTicket(7);
+  const last = queue.createAdmissionTicket(7);
+  let lastReady = false;
+  const wait = queue.waitForAdmissionTicket(last).then(() => { lastReady = true; });
+  queue.releaseAdmissionTicket(skipped);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(lastReady, false);
+  queue.releaseAdmissionTicket(first);
+  await wait;
+  assert.equal(lastReady, true);
+  queue.releaseAdmissionTicket(last);
 });

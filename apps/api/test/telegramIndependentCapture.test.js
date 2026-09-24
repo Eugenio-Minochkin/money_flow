@@ -6,7 +6,7 @@ import { parseExpenseText } from "../../../packages/shared/src/parser.js";
 
 const fixedNow = () => new Date("2026-09-23T12:00:00Z");
 
-test("durable local-safe capture saves and delivers before same-user LLM; webhook and restarted replay do not duplicate it", { timeout: 8000 }, async (t) => {
+test("durable local-safe capture parses ahead but saves and delivers in admission order", { timeout: 8000 }, async (t) => {
   const slowText = "coffee 80 taxi 120";
   assert.equal(evaluateLocalFastPath({ text: slowText, localResult: parseExpenseText(slowText) }).localAcceptanceLevel, "local_rejected");
   const entered = Promise.withResolvers();
@@ -82,10 +82,14 @@ test("durable local-safe capture saves and delivers before same-user LLM; webhoo
   await entered.promise;
   await bot.handleUpdate(update(101, slowText));
   const b = bot.handleUpdate(update(102, "кофейня 15 лари"));
-  let timeout;
+  await waitUntil(() => parseCalls === 2);
+  assert.equal(expenses.size, 0, "B must wait for A's terminal result before saving");
   try {
-    await Promise.race([bDelivered.promise, new Promise((_resolve, reject) => { timeout = setTimeout(() => reject(new Error("B did not save and deliver before A release")), 750); })]);
-    await b;
+    assert.equal(await Promise.race([bDelivered.promise.then(() => true), delay(30).then(() => false)]), false,
+      "B must not deliver a terminal result while A is still active");
+    release.resolve();
+    await Promise.all([a, b]);
+    await bDelivered.promise;
     assert.equal(expenses.size, 1);
     await bot.handleUpdate(update(102, "кофейня 15 лари"));
     await createTelegramBot(options).handleUpdate(update(102, "кофейня 15 лари"));
@@ -95,7 +99,6 @@ test("durable local-safe capture saves and delivers before same-user LLM; webhoo
     assert.equal(paidCalls, 1);
     assert.deepEqual(paidKeys, ["telegram:1:10:101"]);
   } finally {
-    clearTimeout(timeout);
     release.resolve();
     await Promise.all([a, b]);
   }
@@ -105,6 +108,18 @@ test("durable local-safe capture saves and delivers before same-user LLM; webhoo
   for (const field of ["parseWaitMs", "mutationWaitMs", "telegramResponseMs", "endToEndTotalMs", "admissionMs", "captureEndToEndMs"]) assert.ok(Number.isFinite(completed[field]) && completed[field] >= 0, field);
   t.diagnostic(JSON.stringify({ parseWaitMs: completed.parseWaitMs, mutationWaitMs: completed.mutationWaitMs, telegramResponseMs: completed.telegramResponseMs, endToEndTotalMs: completed.endToEndTotalMs, admissionMs: completed.admissionMs, captureEndToEndMs: completed.captureEndToEndMs, terminalDeliveryOutcome: completed.terminalDeliveryOutcome }));
 });
+
+async function waitUntil(predicate) {
+  for (let attempt = 0; attempt < 100; attempt++) {
+    if (predicate()) return;
+    await delay(5);
+  }
+  throw new Error("condition was not reached");
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 test("repeated feedback barriers neither nest queue jobs nor leak admission reservations", { timeout: 3000 }, async () => {
   const user = { id: 2, telegram_user_id: 200, interface_language: "en", onboarding_step: "completed", base_currency: "GEL", timezone: "Asia/Tbilisi" };

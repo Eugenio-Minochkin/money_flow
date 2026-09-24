@@ -772,15 +772,19 @@ export function createRepository(pool, options = {}) {
            SET claim_version = captures.claim_version + 1,
                lease_expires_at = now() + interval '2 minutes',
                attempt_count = captures.attempt_count + 1${hasPayload ? ", payload = COALESCE(captures.payload, EXCLUDED.payload)" : ""}
-         WHERE captures.status = 'processing' AND captures.lease_expires_at <= now()
-         RETURNING id AS capture_id, claim_version, attempt_count`,
+         WHERE (captures.status = 'processing' OR captures.payload IS NOT NULL)
+           AND (captures.lease_expires_at IS NULL OR captures.lease_expires_at <= now())
+         RETURNING id AS capture_id, claim_version, attempt_count, status AS request_status`,
         hasPayload ? [userId, chatId, messageId, JSON.stringify(payload)] : [userId, chatId, messageId]
       );
-      if (claimed.rows[0]) return {
-        state: "claimed",
-        claimVersion: claimed.rows[0].claim_version,
-        ...telegramCaptureIdentity(claimed.rows[0])
-      };
+      if (claimed.rows[0]) {
+        const row = claimed.rows[0];
+        const result = row.request_status && row.request_status !== "processing"
+          ? await this.readTelegramExpenseCapture(userId, chatId, messageId)
+          : { state: "claimed", ...telegramCaptureIdentity(row) };
+        return { ...result, claimVersion: row.claim_version,
+          ...(hasPayload ? { deliveryPending: true, deliveryClaimed: true } : {}) };
+      }
       return this.readTelegramExpenseCapture(userId, chatId, messageId);
     },
 
@@ -790,13 +794,54 @@ export function createRepository(pool, options = {}) {
                 users.telegram_user_id, users.first_name
          FROM telegram_expense_captures captures
          JOIN users ON users.id = captures.user_id
-         WHERE captures.status = 'processing' AND captures.payload IS NOT NULL
+         WHERE captures.payload IS NOT NULL
            AND (captures.lease_expires_at IS NULL OR captures.lease_expires_at <= now())
-         ORDER BY captures.created_at, captures.id
+           AND NOT EXISTS (
+             SELECT 1 FROM telegram_expense_captures earlier
+             WHERE earlier.user_id = captures.user_id AND earlier.payload IS NOT NULL
+               AND earlier.id < captures.id
+           )
+         ORDER BY captures.id
          LIMIT $1`,
         [Math.max(1, Math.min(Number(limit) || 100, 500))]
       );
       return result.rows;
+    },
+
+    async listPrecedingTelegramExpenseCaptures(userId, chatId, messageId) {
+      const result = await pool.query(
+        `SELECT earlier.chat_id, earlier.message_id
+         FROM telegram_expense_captures current
+         JOIN telegram_expense_captures earlier
+           ON earlier.user_id = current.user_id AND earlier.id < current.id
+         WHERE current.user_id = $1 AND current.chat_id = $2 AND current.message_id = $3
+           AND earlier.payload IS NOT NULL
+         ORDER BY earlier.id`,
+        [userId, chatId, messageId]
+      );
+      return result.rows;
+    },
+
+    async deferTelegramExpenseCapture(userId, chatId, messageId, claimVersion) {
+      await pool.query(
+        `UPDATE telegram_expense_captures SET lease_expires_at = now()
+         WHERE user_id = $1 AND chat_id = $2 AND message_id = $3
+           AND claim_version = $4 AND payload IS NOT NULL`,
+        [userId, chatId, messageId, claimVersion]
+      );
+    },
+
+    async finishTelegramExpenseCaptureDelivery(userId, chatId, messageId, claimVersion) {
+      const result = await pool.query(
+        `UPDATE telegram_expense_captures
+         SET payload = NULL, lease_expires_at = NULL, finished_at = now(),
+             status = CASE WHEN status = 'processing' THEN 'failed' ELSE status END
+         WHERE user_id = $1 AND chat_id = $2 AND message_id = $3
+           AND claim_version = $4 AND lease_expires_at > now()
+         RETURNING id`,
+        [userId, chatId, messageId, claimVersion]
+      );
+      return result.rowCount === 1;
     },
 
     async renewTelegramExpenseCapture(userId, chatId, messageId, claimVersion) {
@@ -804,7 +849,7 @@ export function createRepository(pool, options = {}) {
         `UPDATE telegram_expense_captures
          SET lease_expires_at = now() + interval '2 minutes'
          WHERE user_id = $1 AND chat_id = $2 AND message_id = $3
-           AND status = 'processing' AND claim_version = $4
+           AND (status = 'processing' OR payload IS NOT NULL) AND claim_version = $4
          RETURNING claim_version`,
         [userId, chatId, messageId, claimVersion]
       );
@@ -814,7 +859,8 @@ export function createRepository(pool, options = {}) {
     async readTelegramExpenseCapture(userId, chatId, messageId) {
       const result = await pool.query(
         `SELECT captures.status AS request_status, captures.id AS capture_id,
-                captures.attempt_count, captures.last_error_code, drafts.*
+                captures.attempt_count, captures.last_error_code,
+                captures.claim_version AS capture_claim_version, captures.payload IS NOT NULL AS delivery_pending, drafts.*
          FROM telegram_expense_captures captures
          LEFT JOIN drafts ON drafts.id = captures.draft_id
          WHERE captures.user_id = $1 AND captures.chat_id = $2 AND captures.message_id = $3`,
@@ -822,7 +868,10 @@ export function createRepository(pool, options = {}) {
       );
       const row = result.rows[0] ?? null;
       if (!row) return null;
-      const identity = telegramCaptureIdentity(row);
+      const identity = { ...telegramCaptureIdentity(row),
+        ...(row.delivery_pending == null ? {} : {
+          claimVersion: row.capture_claim_version, deliveryPending: row.delivery_pending, deliveryClaimed: false
+        }) };
       return row.request_status === "completed"
         ? { state: "completed", draft: normalizeDraft(row), ...identity }
         : row.request_status === "failed"
@@ -842,7 +891,7 @@ export function createRepository(pool, options = {}) {
     async releaseTelegramExpenseCapture(userId, chatId, messageId, claimVersion) {
       await pool.query(
         `UPDATE telegram_expense_captures
-         SET status = 'failed', lease_expires_at = NULL, payload = NULL,
+         SET status = 'failed',
              finished_at = now(), last_error_code = 'telegram_expense_capture_released'
          WHERE user_id = $1 AND chat_id = $2 AND message_id = $3
            AND status = 'processing' AND claim_version = $4`,
@@ -853,7 +902,7 @@ export function createRepository(pool, options = {}) {
     async failTelegramExpenseCapture(userId, chatId, messageId, claimVersion, errorCode = "telegram_expense_capture_failed") {
       await pool.query(
         `UPDATE telegram_expense_captures
-         SET status = 'failed', lease_expires_at = NULL, payload = NULL,
+         SET status = 'failed',
              finished_at = now(), last_error_code = $5
          WHERE user_id = $1 AND chat_id = $2 AND message_id = $3
            AND status = 'processing' AND claim_version = $4`,
@@ -882,8 +931,7 @@ export function createRepository(pool, options = {}) {
         );
         const completed = await client.query(
           `UPDATE telegram_expense_captures
-           SET draft_id = $4, status = 'completed', completed_at = now(), lease_expires_at = NULL,
-               payload = NULL, finished_at = now()
+           SET draft_id = $4, status = 'completed', completed_at = now(), finished_at = now()
            WHERE user_id = $1 AND chat_id = $2 AND message_id = $3 AND status = 'processing'
              AND claim_version = $5 AND lease_expires_at > now()
            RETURNING id`,
