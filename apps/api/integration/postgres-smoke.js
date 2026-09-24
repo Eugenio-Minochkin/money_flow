@@ -662,6 +662,185 @@ test("saves a confirmed draft expense and reads it back", async () => {
   assert.deepEqual(expenses[0].tags, ["latte"]);
 });
 
+test("serializes concurrent ready saves without losing expenses or reserve snapshot state", { timeout: 10_000 }, async () => {
+  const telegramUserId = 990233;
+  const user = await createSmokeUser(telegramUserId);
+  const localDay = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Bangkok", year: "numeric", month: "2-digit", day: "2-digit"
+  }).format(new Date());
+  const period = localDay.slice(0, 7);
+  await pool.query(
+    `INSERT INTO monthly_reserve_instances
+       (user_id, period, timezone, currency, budget_amount, reserve_amount, status)
+     VALUES ($1, $2, 'Asia/Bangkok', 'THB', 45000, 5000, 'active')`,
+    [user.id, period]
+  );
+  const drafts = await Promise.all([120, 230].map((amount) => repo.createDraft(
+    user.id,
+    `ready ${amount}`,
+    [expenseItem({ amount, description: `ready ${amount}`, spent_at: `${localDay}T05:00:00.000Z` })]
+  )));
+
+  const saved = await Promise.all(drafts.map((draft) => repo.saveDraftAsExpense(draft.id, telegramUserId)));
+  assert.deepEqual(saved.map((result) => result.alreadySaved), [false, false]);
+  const stored = await pool.query(
+    `SELECT COUNT(*)::int AS count, SUM(amount_base)::numeric AS total
+     FROM expenses WHERE user_id = $1`,
+    [user.id]
+  );
+  assert.equal(stored.rows[0].count, 2);
+  assert.equal(Number(stored.rows[0].total), 350);
+  const reserve = await pool.query(
+    `SELECT period, budget_amount::numeric, reserve_amount::numeric, status
+     FROM monthly_reserve_instances WHERE user_id = $1`,
+    [user.id]
+  );
+  assert.deepEqual(reserve.rows[0], {
+    period, budget_amount: "45000.00", reserve_amount: "5000.00", status: "active"
+  });
+  const dayDashboard = await repo.dashboard(telegramUserId, new Date(`${localDay}T12:00:00+07:00`));
+  const snapshots = await pool.query(
+    `SELECT day_key::text, budget_amount_base::numeric
+     FROM daily_budget_snapshots WHERE user_id = $1 AND day_key = $2`,
+    [user.id, localDay]
+  );
+  assert.equal(snapshots.rowCount, 1);
+  assert.equal(snapshots.rows[0].day_key, localDay);
+  assert.equal(Number(snapshots.rows[0].budget_amount_base), dayDashboard.snapshot.dayPlanLimit);
+});
+
+test("rechecks a closed source month after exchange-rate preparation is delayed", { timeout: 10_000 }, async (t) => {
+  const telegramUserId = 990234;
+  const user = await createSmokeUser(telegramUserId);
+  const draft = await repo.createDraft(user.id, "delayed July expense", [expenseItem({
+    amount: 10,
+    currency: "USD",
+    description: "delayed July expense",
+    spent_at: "2026-07-10T05:00:00.000Z"
+  })]);
+  let releaseRates;
+  let markRatesRequested;
+  const ratesRequested = new Promise((resolveRequested) => { markRatesRequested = resolveRequested; });
+  const ratesReleased = new Promise((resolveRelease) => { releaseRates = resolveRelease; });
+  const delayedRepo = createRepository(pool, { exchangeRates: {
+    async ratesFor() {
+      markRatesRequested();
+      await ratesReleased;
+      return { USD: { THB: 35 }, THB: { USD: 1 / 35 }, source: "smoke" };
+    }
+  } });
+  t.after(releaseRates);
+  const save = delayedRepo.saveDraftAsExpense(draft.id, telegramUserId);
+  const saveOutcome = save.then((value) => ({ value }), (error) => ({ error }));
+  try {
+    await ratesRequested;
+    await pool.query(
+      `INSERT INTO monthly_reserve_instances
+         (user_id, period, timezone, currency, budget_amount, reserve_amount, status, closed_at)
+       VALUES ($1, '2026-07', 'Asia/Bangkok', 'THB', 45000, 1000, 'closed', now())`,
+      [user.id]
+    );
+  } finally {
+    releaseRates();
+  }
+
+  const outcome = await saveOutcome;
+  assert.equal(outcome.error?.code, "expense_source_month_closed");
+  assert.equal((await pool.query("SELECT COUNT(*)::int AS count FROM expenses WHERE draft_id = $1", [draft.id])).rows[0].count, 0);
+  assert.equal((await repo.getDraftForTelegramUser(draft.id, telegramUserId)).status, "pending");
+  const reserve = await pool.query(
+    "SELECT status, reserve_amount::numeric FROM monthly_reserve_instances WHERE user_id = $1 AND period = '2026-07'",
+    [user.id]
+  );
+  assert.deepEqual(reserve.rows[0], { status: "closed", reserve_amount: "1000.00" });
+});
+
+test("rejects prepared conversion amounts when the user's base currency changes", { timeout: 10_000 }, async (t) => {
+  const telegramUserId = 990235;
+  const user = await createSmokeUser(telegramUserId);
+  const draft = await repo.createDraft(user.id, "currency changed during preparation", [expenseItem({
+    amount: 10,
+    currency: "USD",
+    description: "currency changed during preparation"
+  })]);
+  let releaseRates;
+  let markRatesRequested;
+  const ratesRequested = new Promise((resolveRequested) => { markRatesRequested = resolveRequested; });
+  const ratesReleased = new Promise((resolveRelease) => { releaseRates = resolveRelease; });
+  const delayedRepo = createRepository(pool, { exchangeRates: {
+    async ratesFor() {
+      markRatesRequested();
+      await ratesReleased;
+      return { USD: { THB: 35 }, THB: { USD: 1 / 35 }, source: "smoke" };
+    }
+  } });
+  t.after(releaseRates);
+  const save = delayedRepo.saveDraftAsExpense(draft.id, telegramUserId);
+  const saveOutcome = save.then((value) => ({ value }), (error) => ({ error }));
+  try {
+    await ratesRequested;
+    await repo.updateUserSettings(telegramUserId, { baseCurrency: "USD", displayCurrency: "USD" });
+  } finally {
+    releaseRates();
+  }
+
+  const outcome = await saveOutcome;
+  assert.equal(outcome.error?.code, "draft_changed_retry");
+  assert.equal((await pool.query("SELECT COUNT(*)::int AS count FROM expenses WHERE draft_id = $1", [draft.id])).rows[0].count, 0);
+  const retried = await delayedRepo.saveDraftAsExpense(draft.id, telegramUserId);
+  assert.equal(retried.alreadySaved, false);
+  assert.equal(Number(retried.expenses[0].amount_base), 10);
+  assert.equal(retried.expenses[0].base_currency, "USD");
+  assert.equal(Number((await pool.query("SELECT COUNT(*)::int AS count FROM expenses WHERE draft_id = $1", [draft.id])).rows[0].count), 1);
+});
+
+test("rejects prepared conversion amounts when the draft changes during rate lookup", { timeout: 10_000 }, async (t) => {
+  const telegramUserId = 990236;
+  const user = await createSmokeUser(telegramUserId);
+  const draft = await repo.createDraft(user.id, "amount changed during preparation", [expenseItem({
+    amount: 10,
+    currency: "USD",
+    description: "amount changed during preparation"
+  })]);
+  let releaseRates;
+  let markRatesRequested;
+  const ratesRequested = new Promise((resolveRequested) => { markRatesRequested = resolveRequested; });
+  const ratesReleased = new Promise((resolveRelease) => { releaseRates = resolveRelease; });
+  let rateCalls = 0;
+  const delayedRepo = createRepository(pool, { exchangeRates: {
+    async ratesFor() {
+      rateCalls += 1;
+      if (rateCalls === 1) {
+        markRatesRequested();
+        await ratesReleased;
+      }
+      return { USD: { THB: 35 }, THB: { USD: 1 / 35 }, source: "smoke" };
+    }
+  } });
+  t.after(releaseRates);
+  const save = delayedRepo.saveDraftAsExpense(draft.id, telegramUserId);
+  const saveOutcome = save.then((value) => ({ value }), (error) => ({ error }));
+  try {
+    await ratesRequested;
+    await repo.updateDraftItemForTelegramUser(draft.id, 0, telegramUserId, { amount: 12 });
+  } finally {
+    releaseRates();
+  }
+
+  const outcome = await saveOutcome;
+  assert.equal(outcome.error?.code, "draft_changed_retry");
+  assert.equal((await pool.query("SELECT COUNT(*)::int AS count FROM expenses WHERE draft_id = $1", [draft.id])).rows[0].count, 0);
+  const retried = await delayedRepo.saveDraftAsExpense(draft.id, telegramUserId);
+  assert.equal(retried.alreadySaved, false);
+  assert.equal(Number(retried.expenses[0].amount_original), 12);
+  assert.equal(Number(retried.expenses[0].amount_base), 420);
+  const stored = await pool.query(
+    "SELECT amount_original::numeric, amount_base::numeric FROM expenses WHERE draft_id = $1",
+    [draft.id]
+  );
+  assert.deepEqual(stored.rows[0], { amount_original: "12.00", amount_base: "420.00" });
+});
+
 test("Quick Access token status and concurrent request idempotency are durable", async () => {
   const user = await createSmokeUser(990014);
   const token = await repo.prepareQuickAccessToken(user.id, "smoke-token-hash");

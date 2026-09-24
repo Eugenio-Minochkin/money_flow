@@ -14,8 +14,11 @@ const miniAppQuickCaptureInFlight = new Map();
 const telegramExpenseInFlight = new Map();
 
 export async function createExpenseDraftFromText({ user, text, source, expenseParser, repository, parserOptions = {}, onBeforePersist, onAfterPersist }) {
-  const items = await parseExpenseItems({ user, text, expenseParser, parserOptions });
-  onBeforePersist?.();
+  let items = await parseExpenseItems({ user, text, expenseParser, parserOptions });
+  throwIfAborted(parserOptions.signal);
+  const beforePersist = await onBeforePersist?.({ user, text, items });
+  if (Array.isArray(beforePersist?.items)) items = beforePersist.items;
+  throwIfAborted(parserOptions.signal);
   let draft;
   try { draft = await repository.createDraft(user.id, text, items); } catch (error) { error.expenseDraftStage = "persist"; throw error; }
   onAfterPersist?.();
@@ -74,12 +77,14 @@ async function createTelegramExpenseDraftOnce({ user, chatId, messageId, text, e
     return { draft: completed.draft, replayed: true };
   }
   try {
-    const items = await parseExpenseItems({ user, text, expenseParser, parserOptions: {
+    let items = await parseExpenseItems({ user, text, expenseParser, parserOptions: {
       ...parserOptions,
       requestKey: parserOptions.requestKey ?? `telegram:${user.id}:${chatId}:${messageId}`
     } });
     throwIfAborted(parserOptions.signal);
-    onBeforePersist?.();
+    const beforePersist = await onBeforePersist?.({ user, text, items });
+    if (Array.isArray(beforePersist?.items)) items = beforePersist.items;
+    throwIfAborted(parserOptions.signal);
     const result = await repository.completeTelegramExpenseCapture({
       userId: user.id,
       chatId,

@@ -3962,9 +3962,7 @@ test("text parsing uses user's base currency as default", async () => {
   const seenOptions = [];
   const repository = {
     ...fakeRepository(),
-    async upsertTelegramUser() {
-      return { id: 1, interface_language: "en", base_currency: "IDR" };
-    }
+    user: { id: 1, interface_language: "en", base_currency: "IDR" }
   };
   const originalLog = console.log;
   console.log = () => {};
@@ -4600,7 +4598,8 @@ for (const smartSave of [false, true]) {
     repo.claimTelegramExpenseCapture = async () => ({ state: "claimed", claimVersion: 1 });
     repo.completeTelegramExpenseCapture = async ({ items }) => {
       captureState = "completed";
-      return { draft: { id: 42, status: "pending", items } };
+      repo.storedDraft = { id: 42, status: "pending", items };
+      return { draft: repo.storedDraft };
     };
     repo.failTelegramExpenseCapture = async () => { failures += 1; };
     repo.listClosedReserveMonthsForTelegramUser = async () => [];
@@ -5620,7 +5619,7 @@ test("expired delete_me advance callback returns a localized restart message", a
   assert.match(messages[0].text, /\/delete_me/);
 });
 
-test("pending DELETE confirms before parser queue and final message has no app keyboard", async () => {
+test("pending DELETE confirms inside a stateful barrier without invoking the parser", async () => {
   const messages = [];
   const repo = fakeRepository();
   repo.user = { ...repo.user, interface_language: "en" };
@@ -5637,7 +5636,7 @@ test("pending DELETE confirms before parser queue and final message has no app k
     telegramJobQueue: {
       enqueue(job) {
         queueCalls.push(job);
-        return { accepted: true, status: "started", stats: {}, promise: Promise.resolve() };
+        return { accepted: true, status: "started", stats: {}, promise: job.run({ signal: new AbortController().signal }) };
       }
     },
     expenseParser: {
@@ -5650,14 +5649,15 @@ test("pending DELETE confirms before parser queue and final message has no app k
 
   await bot.handleUpdate(textUpdate("DELETE", 100));
 
-  assert.deepEqual(repo.accountDeletionPendingLookups, [{ telegramUserId: 100, options: { source: "telegram", now } }]);
+  assert.deepEqual(repo.accountDeletionPendingLookups, Array.from({ length: 2 }, () => ({ telegramUserId: 100, options: { source: "telegram", now } })));
   assert.deepEqual(repo.accountDeletionConfirms, [{
     telegramUserId: 100,
     source: "telegram",
     confirmationText: "DELETE",
     now
   }]);
-  assert.equal(queueCalls.length, 0);
+  assert.equal(queueCalls.length, 1);
+  assert.equal(queueCalls[0].independent, false);
   assert.equal(parserCalls.length, 0);
   assert.equal(repo.events.some((event) => event.eventName === "message_received"), false);
   assert.match(messages[0].text, /data has been deleted/i);
@@ -5665,7 +5665,7 @@ test("pending DELETE confirms before parser queue and final message has no app k
   assert.equal(messages[0].replyMarkup?.inline_keyboard, undefined);
 });
 
-test("expired pending DELETE confirmation is handled without parser or queue", async () => {
+test("expired pending DELETE confirmation is handled inside a stateful barrier without parser work", async () => {
   const messages = [];
   const repo = fakeRepository();
   repo.user = { ...repo.user, interface_language: "en" };
@@ -5685,7 +5685,7 @@ test("expired pending DELETE confirmation is handled without parser or queue", a
     telegramJobQueue: {
       enqueue(job) {
         queueCalls.push(job);
-        return { accepted: true, status: "started", stats: {}, promise: Promise.resolve() };
+        return executeFakeQueueJob(job);
       }
     }
   });
@@ -5693,12 +5693,13 @@ test("expired pending DELETE confirmation is handled without parser or queue", a
   await assert.doesNotReject(() => bot.handleUpdate(textUpdate("DELETE", 100)));
 
   assert.equal(repo.accountDeletionConfirms.length, 1);
-  assert.equal(queueCalls.length, 0);
+  assert.equal(queueCalls.length, 1);
+  assert.equal(queueCalls[0].independent, false);
   assert.equal(repo.events.some((event) => event.eventName === "message_received"), false);
   assert.match(messages[0].text, /expired or is no longer pending/i);
 });
 
-test("wrong text during pending deletion does not reach parser or queue", async () => {
+test("wrong text during pending deletion runs only inside a stateful barrier", async () => {
   const messages = [];
   const repo = fakeRepository();
   repo.user = { ...repo.user, interface_language: "en" };
@@ -5713,7 +5714,7 @@ test("wrong text during pending deletion does not reach parser or queue", async 
     telegramJobQueue: {
       enqueue(job) {
         queueCalls.push(job);
-        return { accepted: true, status: "started", stats: {}, promise: Promise.resolve() };
+        return executeFakeQueueJob(job);
       }
     },
     expenseParser: {
@@ -5727,7 +5728,8 @@ test("wrong text during pending deletion does not reach parser or queue", async 
   await bot.handleUpdate(textUpdate("delete", 100));
 
   assert.equal(repo.accountDeletionConfirms.length, 0);
-  assert.equal(queueCalls.length, 0);
+  assert.equal(queueCalls.length, 1);
+  assert.equal(queueCalls[0].independent, false);
   assert.equal(parserCalls.length, 0);
   assert.equal(repo.events.some((event) => event.eventName === "message_received"), false);
   assert.match(messages[0].text, /Type DELETE to confirm or \/delete_me to start again\./);
@@ -5738,7 +5740,7 @@ for (const { name, message } of [
   { name: "photo", message: { photo: [{ file_id: "photo-file-id" }] } },
   { name: "unsupported", message: { sticker: { file_id: "sticker-file-id" } } }
 ]) {
-  test(`pending deletion blocks ${name} input before events, queue, parser, and transcription`, async () => {
+  test(`pending deletion routes ${name} input through a stateful barrier without expense work`, async () => {
     const messages = [];
     const repo = fakeRepository();
     repo.user = { ...repo.user, interface_language: "en" };
@@ -5754,7 +5756,7 @@ for (const { name, message } of [
       telegramJobQueue: {
         enqueue(job) {
           queueCalls.push(job);
-          return { accepted: true, status: "started", stats: {}, promise: Promise.resolve() };
+          return executeFakeQueueJob(job);
         }
       },
       expenseParser: {
@@ -5780,9 +5782,10 @@ for (const { name, message } of [
       }
     });
 
-    assert.equal(repo.accountDeletionPendingLookups.length, 1);
+    assert.equal(repo.accountDeletionPendingLookups.length, 2);
     assert.equal(repo.accountDeletionConfirms.length, 0);
-    assert.equal(queueCalls.length, 0);
+    assert.equal(queueCalls.length, 1);
+    assert.equal(queueCalls[0].independent, false);
     assert.equal(parserCalls.length, 0);
     assert.equal(transcriberCalls.length, 0);
     assert.equal(repo.events.some((event) => event.eventName === "message_received"), false);
@@ -5790,7 +5793,7 @@ for (const { name, message } of [
   });
 }
 
-test("final deletion message failure is best-effort after Telegram account deletion commits", async () => {
+test("final deletion message failure stays best-effort inside a stateful barrier", async () => {
   const repo = fakeRepository();
   const queueCalls = [];
   const parserCalls = [];
@@ -5810,7 +5813,7 @@ test("final deletion message failure is best-effort after Telegram account delet
     telegramJobQueue: {
       enqueue(job) {
         queueCalls.push(job);
-        return { accepted: true, status: "started", stats: {}, promise: Promise.resolve() };
+        return executeFakeQueueJob(job);
       }
     },
     expenseParser: {
@@ -5834,14 +5837,15 @@ test("final deletion message failure is best-effort after Telegram account delet
   }
 
   assert.equal(repo.accountDeletionConfirms.length, 1);
-  assert.equal(queueCalls.length, 0);
+  assert.equal(queueCalls.length, 1);
+  assert.equal(queueCalls[0].independent, false);
   assert.equal(parserCalls.length, 0);
   assert.equal(repo.events.some((event) => event.eventName === "message_received"), false);
   assert.equal(adminAlerts.length, 0);
   assert.deepEqual(errorLogs, [["[telegram] failed to send account deletion completion message"]]);
 });
 
-test("unrelated command during pending deletion sends guidance before command handling", async () => {
+test("unrelated command during pending deletion sends guidance inside a stateful barrier", async () => {
   const messages = [];
   const repo = fakeRepository();
   repo.user = { ...repo.user, interface_language: "en" };
@@ -5861,7 +5865,7 @@ test("unrelated command during pending deletion sends guidance before command ha
     telegramJobQueue: {
       enqueue(job) {
         queueCalls.push(job);
-        return { accepted: true, status: "started", stats: {}, promise: Promise.resolve() };
+        return executeFakeQueueJob(job);
       }
     },
     expenseParser: {
@@ -5875,7 +5879,8 @@ test("unrelated command during pending deletion sends guidance before command ha
   await bot.handleUpdate(textUpdate("/today", 100));
 
   assert.equal(dashboardCalls, 0);
-  assert.equal(queueCalls.length, 0);
+  assert.equal(queueCalls.length, 1);
+  assert.equal(queueCalls[0].independent, false);
   assert.equal(parserCalls.length, 0);
   assert.equal(repo.events.some((event) => event.eventName === "message_received"), false);
   assert.match(messages[0].text, /Type DELETE to confirm or \/delete_me to start again\./);
@@ -6001,12 +6006,14 @@ function fakeRepository() {
     },
     async createDraft(_userId, _sourceText, items) {
       this.draftItems = items;
-      return { id: 42 };
+      this.storedDraft = { id: 42, status: "pending", items };
+      return this.storedDraft;
     },
     async setDraftMessageRef() {
       return null;
     },
     async getDraftForTelegramUser() {
+      if (this.storedDraft) return this.storedDraft;
       return {
         id: 42,
         status: "pending",
@@ -6024,7 +6031,8 @@ function fakeRepository() {
     },
     async updateDraftItems(_draftId, _telegramUserId, items) {
       this.updatedItems = items;
-      return { id: 42, status: "pending", items };
+      this.storedDraft = { id: 42, status: "pending", items };
+      return this.storedDraft;
     },
     async confirmDraft(draftId) {
       this.confirmedDraftId = draftId;
@@ -6034,6 +6042,7 @@ function fakeRepository() {
       this.confirmedDraftId = draftId;
       const alreadySaved = this.savedDraftIds.has(String(draftId));
       this.savedDraftIds.add(String(draftId));
+      if (this.storedDraft) this.storedDraft.status = "confirmed";
       const item = this.draftItems[0] ?? {};
       return {
         expenses: [{
@@ -6112,6 +6121,15 @@ function fakeRepository() {
       };
     }
   };
+}
+
+function executeFakeQueueJob(job) {
+  const controller = new AbortController();
+  const promise = Promise.resolve().then(() => job.run({
+    signal: controller.signal,
+    acquireMutation: async () => () => {}
+  }));
+  return { accepted: true, status: "started", stats: {}, promise };
 }
 
 function captureTelegramClient(messages) {

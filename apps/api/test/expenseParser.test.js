@@ -1376,6 +1376,89 @@ test("LLM timeout returns the reviewable local draft without retry", async () =>
   assert.equal(trace.fallbackReason, "expense_parser_llm_timeout");
 });
 
+test("parent abort skips provider work when already aborted", async () => {
+  const controller = new AbortController();
+  controller.abort(new Error("caller cancelled"));
+  let usageCalls = 0;
+  let fetchCalls = 0;
+  const parser = createExpenseParser({
+    apiKey: "test-key",
+    consumeLlmUsage: async () => { usageCalls += 1; },
+    fetchImpl: async () => { fetchCalls += 1; }
+  });
+
+  await assert.rejects(() => parser.parse("notebook 80", { signal: controller.signal }), /caller cancelled/);
+  assert.equal(usageCalls, 0);
+  assert.equal(fetchCalls, 0);
+});
+
+test("parent abort reaches the request and cannot return a local review draft", async () => {
+  const controller = new AbortController();
+  const requestStarted = Promise.withResolvers();
+  let requestSignal;
+  const parser = createExpenseParser({
+    apiKey: "test-key",
+    fastPathMode: "enabled",
+    localFirstRolloutPercent: 0,
+    parserTextHashSecret: "test-secret",
+    fetchImpl: async (_url, request) => {
+      requestSignal = request.signal;
+      requestStarted.resolve();
+      return await new Promise((_resolve, reject) => request.signal.addEventListener("abort", () => {
+        const error = new Error("request aborted");
+        error.name = "AbortError";
+        reject(error);
+      }, { once: true }));
+    }
+  });
+  const parsed = parser.parse("notebook 80", {
+    signal: controller.signal
+  });
+  await requestStarted.promise;
+  controller.abort(new Error("caller cancelled"));
+
+  await assert.rejects(() => parsed, /caller cancelled/);
+  assert.equal(requestSignal.aborted, true);
+});
+
+test("parent abort after HTTP settlement prevents parsing a late successful response", async () => {
+  const controller = new AbortController();
+  const requestStarted = Promise.withResolvers();
+  const responseRelease = Promise.withResolvers();
+  const parser = createExpenseParser({
+    apiKey: "test-key",
+    fetchImpl: async () => {
+      requestStarted.resolve();
+      await responseRelease.promise;
+      return jsonResponse({ output_text: JSON.stringify({ expenses: [], notes: [] }) });
+    }
+  });
+  const parsing = parser.parse("synthetic 1", { signal: controller.signal });
+  await requestStarted.promise;
+  controller.abort(new Error("caller cancelled"));
+  responseRelease.resolve();
+
+  await assert.rejects(() => parsing, /caller cancelled/);
+});
+
+test("parent abort listener is removed after successful request settlement", async () => {
+  const controller = new AbortController();
+  let added = 0;
+  let removed = 0;
+  const add = controller.signal.addEventListener.bind(controller.signal);
+  const remove = controller.signal.removeEventListener.bind(controller.signal);
+  controller.signal.addEventListener = (...args) => { if (args[0] === "abort") added += 1; return add(...args); };
+  controller.signal.removeEventListener = (...args) => { if (args[0] === "abort") removed += 1; return remove(...args); };
+  const parser = createExpenseParser({
+    apiKey: "test-key",
+    fetchImpl: async () => jsonResponse({ output_text: JSON.stringify({ expenses: [], notes: [] }) })
+  });
+
+  await parser.parse("synthetic 1", { signal: controller.signal });
+  assert.equal(added, 1);
+  assert.equal(removed, 1);
+});
+
 test("OpenAI parser prompt gives compact category meanings and reserves other for no reasonable match", async () => {
   const parser = createExpenseParser({
     apiKey: "test-key",

@@ -5,9 +5,8 @@ import { createExpenseParser, evaluateLocalFastPath } from "../src/expenseParser
 import { createTelegramJobQueue } from "../src/telegramJobQueue.js";
 import { parseExpenseText } from "../../../packages/shared/src/parser.js";
 
-// Characterizes the remaining #231 scheduling limitation, not the desired future
-// behavior: local-safe work for the same user cannot start until the LLM job ends.
-test("LLM-required first job still gates same-user local-safe parsing until it settles", { timeout: 5_000 }, async (t) => {
+// A genuinely rejected input must not delay independent same-user local parsing.
+test("independent local-safe parsing completes while same-user LLM remains pending", { timeout: 5_000 }, async (t) => {
   const now = () => new Date("2026-09-23T12:00:00Z");
   const rejectedText = "coffee 80 taxi 120";
   assert.equal(evaluateLocalFastPath({
@@ -37,6 +36,7 @@ test("LLM-required first job still gates same-user local-safe parsing until it s
   const queue = createTelegramJobQueue({ globalConcurrency: 2 });
   const first = queue.enqueue({
     userId: 7,
+    independent: true,
     run: () => {
       starts.push("llm");
       return parser.parse(rejectedText, { userId: 7, defaultCurrency: "GEL" });
@@ -46,6 +46,7 @@ test("LLM-required first job still gates same-user local-safe parsing until it s
   await llmStarted.promise;
   const second = queue.enqueue({
     userId: 7,
+    independent: true,
     run: () => {
       starts.push("same-user-local");
       return parser.parse("кофейня 15 лари", {
@@ -64,16 +65,17 @@ test("LLM-required first job still gates same-user local-safe parsing until it s
   });
 
   try {
+    await second.promise;
     await otherUser.promise;
-    assert.equal(second.status, "queuedBehindPrevious");
-    assert.deepEqual(starts, ["llm", "other-user-local"]);
+    assert.equal(second.status, "accepted");
+    assert.deepEqual(starts, ["llm", "same-user-local", "other-user-local"]);
     assert.equal(llmCalls, 1);
   } finally {
     llmRelease.resolve();
     await firstFailure;
   }
   const result = await second.promise;
-  assert.deepEqual(starts, ["llm", "other-user-local", "same-user-local"]);
+  assert.deepEqual(starts, ["llm", "same-user-local", "other-user-local"]);
   assert.equal(result.expenses[0].amount, 15);
   assert.equal(result.expenses[0].currency, "GEL");
   assert.equal(traces[0].localAcceptanceLevel, "local_safe");

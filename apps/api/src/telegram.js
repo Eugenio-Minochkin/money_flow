@@ -1,4 +1,4 @@
-import { createExpenseParser } from "./expenseParser.js";
+import { createExpenseParser, evaluateLocalFastPath } from "./expenseParser.js";
 import { parseExpenseText } from "../../../packages/shared/src/parser.js";
 import { parseBudgetTopupText } from "../../../packages/shared/src/budgetTopupParser.js";
 import { parsePlannedExpenseText } from "../../../packages/shared/src/plannedParser.js";
@@ -71,6 +71,7 @@ const FEEDBACK_PENDING_TTL_MS = 30 * 60_000;
 const MIN_FEEDBACK_MESSAGE_LENGTH = 3;
 const EXPENSE_PROCESSING_CUSTOM_EMOJI_ID = "6003518287214808258";
 const pendingFeedbackByTelegramUser = new Map();
+const preAcknowledgedTelegramCallbacks = new Set();
 const ACCOUNT_DELETION_SOURCE_TELEGRAM = "telegram";
 const TERMINAL_DELIVERY_FALLBACK_TIMEOUT_MS = 3_000;
 
@@ -81,6 +82,8 @@ class TelegramTerminalDeliveryError extends Error {
     this.code = "telegram_terminal_delivery_failed";
   }
 }
+
+class TelegramSmartSaveReviewRequiredError extends Error {}
 
 export function createTelegramBot({
   repository,
@@ -146,8 +149,21 @@ export function createTelegramBot({
         }
       }
       if (update.callback_query) {
+        let preAcknowledgedId = null;
         try {
-          const result = await handleCallback({ update, repository, token, miniAppUrl, expenseEvidenceImportService, expenseEvidenceSessionService, activeEvidenceSessions, telegramClient, adminAlertService, expenseExportService: sharedExpenseExportService, trace, now });
+          const callback = update.callback_query;
+          const queuedCallback = telegramJobQueue.enqueue({
+            userId: callback.from.id,
+            independent: false,
+            run: () => handleCallback({ update, repository, token, miniAppUrl, expenseEvidenceImportService, expenseEvidenceSessionService, activeEvidenceSessions, telegramClient, adminAlertService, expenseExportService: sharedExpenseExportService, trace, now })
+          });
+          if (!queuedCallback.accepted) throw new Error("telegram_callback_queue_full");
+          if (queuedCallback.status !== "accepted") {
+            preAcknowledgedId = String(callback.id);
+            preAcknowledgedTelegramCallbacks.add(preAcknowledgedId);
+            void answerCallback(token, callback.id, undefined, telegramClient, { force: true }).catch(() => {});
+          }
+          const result = await queuedCallback.promise;
           success = true;
           return result;
         } catch (error) {
@@ -155,6 +171,7 @@ export function createTelegramBot({
           trace.finish(false, error);
           throw error;
         } finally {
+          if (preAcknowledgedId) preAcknowledgedTelegramCallbacks.delete(preAcknowledgedId);
           if (success) trace.finish(true);
         }
       }
@@ -200,7 +217,8 @@ export async function deliverShortcutCaptureToTelegramBestEffort({ onError = () 
   }
 }
 
-async function handleMessage({ update, repository, token, miniAppUrl, expenseParser, voiceTranscriber, expenseEvidenceImportService, expenseEvidenceSessionService, activeEvidenceSessions, telegramClient, adminTelegramIds, adminStatsService, releaseNotesService, adminAlertService, expenseExportService, now, trace, telegramJobQueue, awaitQueuedJobs }) {
+async function handleMessage({ update, repository, token, miniAppUrl, expenseParser, voiceTranscriber, expenseEvidenceImportService, expenseEvidenceSessionService, activeEvidenceSessions, telegramClient, adminTelegramIds, adminStatsService, releaseNotesService, adminAlertService, expenseExportService, now, trace, telegramJobQueue, awaitQueuedJobs, barrierRouted = false, barrierJob = null }) {
+  const admissionStartedAt = performance.now();
   const message = update.message;
   const from = message.from;
   if (!from) return { ok: true };
@@ -213,15 +231,20 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
     : "direct";
 
   trace.start("user_context");
-  const user = await repository.upsertTelegramUser({
-    id: from.id,
-    firstName: from.first_name,
-    username: from.username,
-    acquisitionSource,
-    acquisitionSeenAt: now()
-  });
+  const user = barrierRouted && typeof repository.getUserByTelegramId === "function"
+    ? await repository.getUserByTelegramId(from.id)
+    : await repository.upsertTelegramUser({
+      id: from.id,
+      firstName: from.first_name,
+      username: from.username,
+      acquisitionSource,
+      acquisitionSeenAt: now()
+    });
   trace.end("user_context");
-  await repository.clearTelegramUserBotBlocked?.(from.id, {
+  if (!user) {
+    return sendTelegramResponse(trace, () => sendMessage(token, message.chat.id, "This account is no longer available.", null, telegramClient));
+  }
+  if (!barrierRouted) await repository.clearTelegramUserBotBlocked?.(from.id, {
     source: "incoming_message",
     now: now()
   });
@@ -230,6 +253,27 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
 
   if (isNonPrivateTelegramChat(message.chat)) {
     return sendTelegramResponse(trace, () => sendMessage(token, chatId, botText(language, "privateChatRequired"), null, telegramClient));
+  }
+
+  const hasVoice = Boolean(message.voice || message.audio);
+  const hasPhoto = Boolean(message.photo?.length);
+  const hasImageDocument = ["image/jpeg", "image/jpg", "image/png"].includes(String(message.document?.mime_type ?? "").toLowerCase());
+  const restartsAccountDeletion = commandText === "/delete_me" && !hasVoice && !hasPhoto;
+  const currentNow = now();
+  const pendingDeletion = !restartsAccountDeletion
+    ? await repository.getPendingAccountDeletion?.(from.id, { source: ACCOUNT_DELETION_SOURCE_TELEGRAM, now: currentNow })
+    : null;
+  const editorSession = await repository.getRoutableTelegramInputSession?.(from.id);
+  const needsBarrier = Boolean(commandText?.startsWith("/") || isFeedbackPending(from.id, currentNow) || pendingDeletion || editorSession);
+  if (needsBarrier && !barrierRouted) {
+    trace.setAdmissionMs?.(Math.max(0, Math.round(performance.now() - admissionStartedAt)));
+    const queuedBarrier = telegramJobQueue.enqueue({
+      userId: from.id,
+      independent: false,
+      run: async ({ signal, acquireMutation }) => handleMessage({ update, repository, token, miniAppUrl, expenseParser, voiceTranscriber, expenseEvidenceImportService, expenseEvidenceSessionService, activeEvidenceSessions, telegramClient, adminTelegramIds, adminStatsService, releaseNotesService, adminAlertService, expenseExportService, now, trace, telegramJobQueue, awaitQueuedJobs, barrierRouted: true, barrierJob: { signal, acquireMutation } })
+    });
+    if (!queuedBarrier.accepted) return sendTelegramResponse(trace, () => sendMessage(token, chatId, botText(language, queuedBarrier.status === "globalQueueFull" ? "globalQueueFull" : "userQueueFull"), null, telegramClient));
+    return await queuedBarrier.promise;
   }
 
   if (commandText === "/start") {
@@ -243,23 +287,14 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
   }
 
   const editorRoute = await routeTelegramExpenseInput({
-    message, rawText, hasVoice: Boolean(message.voice || message.audio), hasPhoto: Boolean(message.photo?.length),
+    message, rawText, hasVoice, hasPhoto,
     commandText, user, repository, telegramUserId: from.id, language, now: now(), token, telegramClient
   });
   if (editorRoute) return sendTelegramResponse(trace, () => editorRoute);
 
   const feedbackCommand = parseFeedbackCommand(rawText);
-  const hasVoice = Boolean(message.voice || message.audio);
-  const hasPhoto = Boolean(message.photo?.length);
-  const hasImageDocument = ["image/jpeg", "image/jpg", "image/png"].includes(String(message.document?.mime_type ?? "").toLowerCase());
-  const restartsAccountDeletion = commandText === "/delete_me" && !hasVoice && !hasPhoto;
 
   if (!restartsAccountDeletion) {
-    const currentNow = now();
-    const pendingDeletion = await repository.getPendingAccountDeletion?.(from.id, {
-      source: ACCOUNT_DELETION_SOURCE_TELEGRAM,
-      now: currentNow
-    });
     if (pendingDeletion?.stage === "awaiting_text") {
       if (rawText === "DELETE" && !hasVoice && !hasPhoto) {
         try {
@@ -424,7 +459,31 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
   }
 
   let expenseCaptureClaim = null;
-  const queueReservation = telegramJobQueue.reserve?.(from.id) ?? null;
+  let localEvaluation = null;
+  if (inputType === "text" && rawText && !commandText?.startsWith("/")) {
+    try {
+      const parsedLocal = parseExpenseText(rawText, { now: currentNow, defaultCurrency: user.base_currency ?? "THB", timeZone: user.timezone });
+      localEvaluation = evaluateLocalFastPath({ text: rawText, localResult: parsedLocal });
+    } catch {}
+  }
+  const localRejectReason = localEvaluation?.rejectReason;
+  const riskyLocalReject = new Set(["unsupported_intent", "split_semantics", "budget_semantics", "explicit_date", "unsafe_split_or_mapping"]);
+  let independent = false;
+  try {
+    independent = Boolean(inputType === "text" && rawText && !commandText?.startsWith("/")
+      && !hasVoice && !hasPhoto && !message.document
+      && !isOnboardingActive(user) && !isFeedbackPending(from.id, currentNow)
+      && !pendingDeletion && !editorSession
+      && !getActiveEvidenceSession(activeEvidenceSessions, user.id, chatId, currentNow)
+      && parseBudgetTopupText(rawText, { defaultCurrency: user.base_currency ?? "THB" }).state === "not_recognized"
+      && !parsePlannedExpenseText(rawText, { defaultCurrency: user.base_currency ?? "THB", timeZone: user.timezone })
+      && !looksLikeNonExpenseIntent(rawText)
+      && localEvaluation
+      && (localEvaluation.accepted || localRejectReason === "multiple_amounts_ambiguous")
+      && !riskyLocalReject.has(localRejectReason));
+  } catch { independent = false; }
+  trace.setAdmissionMs?.(Math.max(0, Math.round(performance.now() - admissionStartedAt)));
+  const queueReservation = barrierJob ? null : (telegramJobQueue.reserve?.(from.id) ?? null);
   if (queueReservation && !queueReservation.accepted) {
     const key = queueReservation.status === "globalQueueFull" ? "globalQueueFull" : "userQueueFull";
     return sendTelegramResponse(trace, () => sendMessage(token, chatId, botText(language, key), null, telegramClient));
@@ -460,12 +519,22 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
     : null;
   renewCaptureLease?.unref?.();
 
+  trace.setAdmissionMs?.(Math.max(0, Math.round(performance.now() - admissionStartedAt)));
   const deliveryState = createTelegramJobDeliveryState();
   let resolveQueuedStatusMessageId;
   const queuedStatusMessageId = new Promise((resolve) => { resolveQueuedStatusMessageId = resolve; });
+  if (barrierJob) {
+    try {
+      return await processQueuedMessage({ message, from, user, rawText, hasVoice, inputType: trackExpenseMessage ? inputType : null, repository, token, miniAppUrl, expenseParser, voiceTranscriber, expenseEvidenceImportService, expenseEvidenceSessionService, activeEvidenceSessions, telegramClient, adminTelegramIds, adminAlertService, now, trace, deliveryState, expenseCaptureClaim, signal: barrierJob.signal, acquireMutation: barrierJob.acquireMutation, telegramJobQueue, queuedStatusMessageId: null });
+    } finally {
+      clearInterval(renewCaptureLease);
+    }
+  }
+
   const queued = telegramJobQueue.enqueue({
     userId: from.id,
-    run: async ({ signal }) => processQueuedMessage({ message, from, user, rawText, hasVoice, inputType: trackExpenseMessage ? inputType : null, repository, token, miniAppUrl, expenseParser, voiceTranscriber, expenseEvidenceImportService, expenseEvidenceSessionService, activeEvidenceSessions, telegramClient, adminTelegramIds, adminAlertService, now, trace, deliveryState, expenseCaptureClaim, signal, queuedStatusMessageId: await queuedStatusMessageId }),
+    independent,
+    run: async ({ signal, acquireMutation }) => processQueuedMessage({ message, from, user, rawText, hasVoice, inputType: trackExpenseMessage ? inputType : null, repository, token, miniAppUrl, expenseParser, voiceTranscriber, expenseEvidenceImportService, expenseEvidenceSessionService, activeEvidenceSessions, telegramClient, adminTelegramIds, adminAlertService, now, trace, deliveryState, expenseCaptureClaim, signal, acquireMutation, telegramJobQueue, queuedStatusMessageId: await queuedStatusMessageId }),
     onStart: (metadata) => trace.event("queue_job_start", metadata),
     onFinish: (metadata) => {
       clearInterval(renewCaptureLease);
@@ -617,9 +686,19 @@ function pruneExpiredPendingFeedback(currentTime) {
   }
 }
 
-export async function processQueuedMessage({ message, from, user, rawText, hasVoice, inputType, repository, token, miniAppUrl, expenseParser, voiceTranscriber, expenseEvidenceImportService, expenseEvidenceSessionService, activeEvidenceSessions, telegramClient, adminTelegramIds = new Set(), adminAlertService, now = () => new Date(), trace, deliveryState = createTelegramJobDeliveryState(), expenseCaptureClaim = null, signal = null, queuedStatusMessageId = null }) {
+export async function processQueuedMessage({ message, from, user, rawText, hasVoice, inputType, repository, token, miniAppUrl, expenseParser, voiceTranscriber, expenseEvidenceImportService, expenseEvidenceSessionService, activeEvidenceSessions, telegramClient, adminTelegramIds = new Set(), adminAlertService, now = () => new Date(), trace, deliveryState = createTelegramJobDeliveryState(), expenseCaptureClaim = null, signal = null, acquireMutation, telegramJobQueue, queuedStatusMessageId = null }) {
   const processingStartedAt = performance.now();
-  const language = user.interface_language ?? "en";
+  let mutationRelease = null;
+  let mutationWaitMs = 0;
+  const acquireFinancialMutation = async () => {
+    if (mutationRelease || typeof acquireMutation !== "function") return;
+    const waitingAt = performance.now();
+    mutationRelease = await acquireMutation();
+    const waited = Math.max(0, Math.round(performance.now() - waitingAt));
+    mutationWaitMs += waited;
+    trace.event("mutation_lock_acquired", { mutationWaitMs: waited });
+  };
+  let language = user.interface_language ?? "en";
   const chatId = message.chat.id;
   let processingResult = inputType ? "processing_failed" : undefined;
   let processingDraftType;
@@ -632,6 +711,14 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
     ? (voiceCaptureClaim?.state ?? (typeof repository.claimTelegramExpenseCapture === "function" ? "not_claimed" : "unavailable"))
     : "not_applicable";
 
+  const failCaptureForStatefulRoute = async (errorCode) => {
+    if (voiceCaptureClaim?.state !== "claimed") return;
+    try {
+      await repository.failTelegramExpenseCapture?.(user.id, chatId, message.message_id, voiceCaptureClaim.claimVersion, errorCode);
+      durableCaptureState = "failed";
+    } catch {}
+  };
+
   const deliverQueuedResult = async (input) => {
     const delivered = await deliverResultMessage({ ...input, signal });
     if (delivered?.ok !== true) throw new TelegramTerminalDeliveryError();
@@ -640,7 +727,38 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
   };
 
   try {
+    const currentUser = await repository.getUserByTelegramId?.(from.id);
+    if (typeof repository.getUserByTelegramId === "function" && !currentUser) {
+      processingResult = "account_deleted_before_processing";
+      return sendTelegramResponse(trace, async () => {
+        if (queuedStatusMessageId) await deleteMessage(token, chatId, queuedStatusMessageId, telegramClient).catch(() => null);
+        const delivered = await sendMessage(token, chatId, language === "ru" ? "Аккаунт удалён до обработки этого сообщения." : "The account was deleted before this message could be processed.", null, telegramClient);
+        if (delivered?.ok !== true) throw new TelegramTerminalDeliveryError();
+        markTelegramJobTerminalResponse(deliveryState);
+        return delivered;
+      });
+    }
+    if (currentUser) user = currentUser;
+    language = user.interface_language ?? language;
+    const latestEditorSession = await repository.getRoutableTelegramInputSession?.(from.id);
+    if (latestEditorSession) {
+      await failCaptureForStatefulRoute("telegram_input_routed_to_editor");
+      const editorRoute = await routeTelegramExpenseInput({
+        message, rawText, hasVoice, hasPhoto: inputType === "photo", commandText: parseBotCommand(rawText).command,
+        user, repository, telegramUserId: from.id, language, now: now(), token, telegramClient
+      });
+      if (editorRoute) {
+        processingResult = "editor_input_routed";
+        return sendTelegramResponse(trace, () => editorRoute);
+      }
+    }
+    const pendingDeletion = await repository.getPendingAccountDeletion?.(from.id, { source: ACCOUNT_DELETION_SOURCE_TELEGRAM, now: now() });
+    if (pendingDeletion?.stage === "awaiting_text") {
+      await failCaptureForStatefulRoute("telegram_account_deletion_pending");
+      return handleMessage({ update: { message }, repository, token, miniAppUrl, expenseParser, voiceTranscriber, expenseEvidenceImportService, expenseEvidenceSessionService, activeEvidenceSessions, telegramClient, adminTelegramIds, adminAlertService, now, trace, telegramJobQueue, awaitQueuedJobs: true, barrierRouted: true });
+    }
     if (rawText && isFeedbackPending(from.id, now())) {
+      await failCaptureForStatefulRoute("telegram_feedback_capture");
       const feedbackText = rawText.trim();
       const result = await saveFeedbackMessage({ feedbackText, repository, user, telegramUserId: from.id, chatId, token, telegramClient, adminTelegramIds, trace, language, deliveryState });
       processingResult = result.processingResult;
@@ -649,6 +767,7 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
     }
 
     if (isOnboardingActive(user)) {
+      await failCaptureForStatefulRoute("telegram_onboarding_capture");
       let onboardingTextInput = rawText;
       if (!onboardingTextInput && hasVoice) {
         try {
@@ -864,7 +983,15 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
             llmMetadata = { ...llmMetadata, ...metadata };
           }
           }
-          ,onBeforePersist() { trace.start("db_save"); }
+          ,async onBeforePersist({ items }) {
+            await acquireFinancialMutation();
+            const currentUser = await repository.getUserByTelegramId?.(from.id);
+            if (typeof repository.getUserByTelegramId === "function" && !currentUser) throw new Error("telegram_user_missing_after_parse");
+            const staleCurrency = Boolean(currentUser && currentUser.base_currency !== user.base_currency && recognizeCurrencyText(text).kind !== "exact");
+            if (currentUser) user = currentUser;
+            trace.start("db_save");
+            return staleCurrency ? { items: items.map((item) => ({ ...item, needs_review: true })) } : undefined;
+          }
           ,onAfterPersist() { trace.end("db_save"); }
         });
       } catch (error) {
@@ -889,7 +1016,8 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
       if (!created) throw new Error("telegram_expense_capture_in_progress");
       let draft = created.draft;
       if (created.replayed) {
-        draft = await repository.getDraftForTelegramUser(draft.id, from.id) ?? draft;
+        await acquireFinancialMutation();
+        draft = await repository.getDraftForTelegramUser?.(draft.id, from.id) ?? draft;
         if (draft.tg_chat_id && draft.tg_message_id) {
           processingResult = draft.status === "confirmed" ? "expense_saved" : "draft_created";
           markTelegramJobTerminalResponse(deliveryState);
@@ -903,6 +1031,12 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
       if (!created.replayed) {
         await safeRecordAppEvent(repository, user.id, "expense_draft_created", { inputType, draftType: "regular" });
       }
+      await acquireFinancialMutation();
+      const currentUser = await repository.getUserByTelegramId?.(from.id);
+      if (typeof repository.getUserByTelegramId === "function" && !currentUser) throw new Error("telegram_user_missing_after_parse");
+      if (currentUser) user = currentUser;
+      language = user.interface_language ?? language;
+      draft = await repository.getDraftForTelegramUser?.(draft.id, from.id) ?? draft;
       processingResult = "draft_created";
       processingDraftType = "regular";
       const closedMonthKeys = typeof repository.listClosedReserveMonthsForTelegramUser === "function"
@@ -914,8 +1048,25 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
         closedMonthKeys
       });
       if (smartSave.eligible) {
+        await acquireFinancialMutation();
         trace.start("db_save");
-        const saved = await repository.saveDraftAsExpense(draft.id, from.id, { signal });
+        let saved;
+        try {
+          saved = await repository.saveDraftAsExpense(draft.id, from.id, {
+            signal,
+            beforeSave(lockedDraft) {
+              const currentEligibility = classifySmartSaveDraft(lockedDraft, { now: now(), timeZone: lockedDraft.timezone ?? user.timezone, closedMonthKeys });
+              if (!currentEligibility.eligible) throw new TelegramSmartSaveReviewRequiredError();
+            }
+          });
+        } catch (error) {
+          if (!(error instanceof TelegramSmartSaveReviewRequiredError)) throw error;
+          smartSave.eligible = false;
+          trace.end("db_save", {}, false, error);
+          draft = await repository.getDraftForTelegramUser?.(draft.id, from.id) ?? draft;
+          processingResult = "draft_created";
+        }
+        if (saved) {
         processingResult = "expense_saved";
         markTelegramJobFinancialResultCommitted(deliveryState);
         trace.end("db_save");
@@ -946,6 +1097,7 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
             .catch((error) => console.error("[telegram] failed to store saved message reference", error.message));
         }
         return delivered;
+        }
       }
       const delivered = await deliverQueuedResult({
         token,
@@ -1021,6 +1173,10 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
         activeProcessingMs,
         endToEndTotalMs: queueWaitMs == null ? activeProcessingMs : activeProcessingMs + queueWaitMs,
         queueWaitMs,
+        parseWaitMs: queueWaitMs,
+        mutationWaitMs,
+        admissionMs: traceMetadata.admissionMs,
+        captureEndToEndMs: trace.elapsed?.() ?? activeProcessingMs,
         telegramResponseMs: stageDurations.telegram_response,
         llmParseMs: stageDurations.llm_parse,
         dbSaveMs: stageDurations.db_save,
@@ -1064,6 +1220,7 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
         await recordProcessingCompleted;
       }
     }
+    mutationRelease?.();
   }
 }
 
@@ -3575,6 +3732,8 @@ async function deleteMessage(token, chatId, messageId, telegramClient, options =
 }
 
 async function answerCallback(token, callbackQueryId, text, telegramClient, options = {}) {
+  const callbackId = String(callbackQueryId);
+  if (!options.force && preAcknowledgedTelegramCallbacks.has(callbackId)) return { ok: true };
   if (telegramClient) {
     let request;
     try {
@@ -3683,6 +3842,7 @@ function createPerfTrace({ update, logger }) {
   const starts = new Map();
   const durations = new Map();
   let queueWaitMs = null;
+  let admissionMs = null;
   let llmParseMetadata = {};
   let captureKey = null;
   let captureAttempt = null;
@@ -3720,6 +3880,10 @@ function createPerfTrace({ update, logger }) {
       return elapsedSince(startedAt);
     },
 
+    setAdmissionMs(value) {
+      admissionMs = Number.isFinite(Number(value)) ? Number(value) : null;
+    },
+
     failActive(stages, error) {
       for (const stage of stages) {
         if (starts.has(stage)) {
@@ -3743,6 +3907,7 @@ function createPerfTrace({ update, logger }) {
     getMetadata() {
       return {
         queueWaitMs,
+        admissionMs,
         llmParse: { ...llmParseMetadata },
         captureKey,
         captureAttempt,
