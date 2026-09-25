@@ -15,6 +15,7 @@ import { confirmDraftForApi } from "./draftConfirmation.js";
 import { createExchangeRateProvider } from "./exchangeRates.js";
 import { createExpenseExportService } from "./expenseExportService.js";
 import { createExpenseParser } from "./expenseParser.js";
+import { createCategoryMemoryLookup } from "./categoryMemory.js";
 import { createExpenseEvidenceAnalyzer } from "./expenseEvidenceAnalyzer.js";
 import { createExpenseEvidenceImportService } from "./expenseEvidenceImportService.js";
 import { downloadAndSanitizeExpenseEvidenceImage } from "./expenseEvidenceImage.js";
@@ -95,6 +96,7 @@ const miniAppLaunchService = createMiniAppLaunchService({
 });
 const adminStatsService = createAdminStatsService({ pool });
 const expenseParser = createExpenseParser({
+  lookupCategoryHint: createCategoryMemoryLookup(pool),
   apiKey: config.openAiApiKey,
   model: config.openAiModel,
   fastPathMode: config.expenseFastPathMode,

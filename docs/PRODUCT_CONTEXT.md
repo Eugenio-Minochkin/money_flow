@@ -1,5 +1,7 @@
 # Money Flow Product Context
 
+For the enabled local-first cohort, a financially clear expense with an unknown category opens review immediately without waiting for AI. Repeated descriptions can reuse a category backed by three explicit confirmations from that user's current history. This does not expand rollout or weaken financial review rules.
+
 Money Flow is a Telegram-first personal finance tracker with an optional Mini App dashboard.
 The product should feel simple, fast, and light: a user records expenses in the place where they already chat, then opens the dashboard only when they need a clearer budget picture.
 

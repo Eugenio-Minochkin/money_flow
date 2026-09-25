@@ -2,6 +2,8 @@
 
 Money Flow UI should feel light and direct. Favor quick comprehension over dense configuration.
 
+Category-only uncertainty in the enabled local-first cohort should show the existing review controls immediately. Do not make users wait for a category guess or silently accept an unknown category. A personal category hint reuses the ordinary saved/review presentation.
+
 Independent text captures may finish parsing out of arrival order, but saves and terminal replies must follow admission order. Keep each loader/result tied to its source message; a ready second capture must not show a saved confirmation before the first capture finishes or receives a controlled error.
 
 Telegram capture replies must reflect the saved financial state: a delivery failure after saving retries the saved result and must not invite the user to resend an already saved expense.

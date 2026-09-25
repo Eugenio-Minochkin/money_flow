@@ -14,6 +14,7 @@ import { createExpenseParser } from "../src/expenseParser.js";
 import { createExpenseEvidenceAnalyzer } from "../src/expenseEvidenceAnalyzer.js";
 import { createExpenseEvidenceImportService } from "../src/expenseEvidenceImportService.js";
 import { createExpenseEvidenceSessionService } from "../src/expenseEvidenceSessionService.js";
+import { createCategoryMemoryLookup } from "../src/categoryMemory.js";
 import { createPaidProviderUsageGate } from "../src/paidProviderUsage.js";
 import { createPlannedPaymentReminderService } from "../src/plannedPaymentReminderService.js";
 import { processMiniAppQuickCapture } from "../src/quickCapture.js";
@@ -41,7 +42,7 @@ test.before(async () => {
   const applied = await pool.query("SELECT filename FROM schema_migrations ORDER BY filename");
   assert.deepEqual(
     applied.rows.map((row) => row.filename),
-    ["001_initial.sql", "002_draft_confirm_flow.sql", "003_budget_topups.sql", "004_report_deliveries.sql", "005_exchange_rates.sql", "006_feedback.sql", "007_account_deletion.sql", "008_product_analytics.sql", "009_telegram_expense_editor.sql", "010_telegram_editor_prompt_message.sql", "011_planned_expense_disabled_at.sql", "012_planned_expense_starts_on.sql", "013_planned_payment_reminders.sql", "014_quick_access_tokens.sql", "015_quick_capture_safety.sql", "016_quick_access_token_single_active.sql", "017_telegram_expense_capture_safety.sql", "018_display_currency_follows_base.sql", "019_paid_provider_usage.sql", "020_expense_evidence_imports.sql", "021_expense_evidence_sessions.sql", "022_telegram_capture_inbox.sql", "023_telegram_capture_terminal_failures.sql", "024_paid_provider_image_analysis.sql", "025_report_delivery_recovery.sql"]
+    ["001_initial.sql", "002_draft_confirm_flow.sql", "003_budget_topups.sql", "004_report_deliveries.sql", "005_exchange_rates.sql", "006_feedback.sql", "007_account_deletion.sql", "008_product_analytics.sql", "009_telegram_expense_editor.sql", "010_telegram_editor_prompt_message.sql", "011_planned_expense_disabled_at.sql", "012_planned_expense_starts_on.sql", "013_planned_payment_reminders.sql", "014_quick_access_tokens.sql", "015_quick_capture_safety.sql", "016_quick_access_token_single_active.sql", "017_telegram_expense_capture_safety.sql", "018_display_currency_follows_base.sql", "019_paid_provider_usage.sql", "020_expense_evidence_imports.sql", "021_expense_evidence_sessions.sql", "022_telegram_capture_inbox.sql", "023_telegram_capture_terminal_failures.sql", "024_paid_provider_image_analysis.sql", "025_report_delivery_recovery.sql", "026_category_memory_lookup.sql"]
   );
 
   const sessions = await pool.query(`
@@ -77,6 +78,152 @@ test.beforeEach(async () => {
 
 test.after(async () => {
   await pool.end();
+});
+
+test("category memory trusts three distinct user-confirmed drafts, normalizes exact text, and uses its index", async (t) => {
+  const user = await createSmokeUser(990216);
+  const description = "Coffee   Shop";
+  for (let index = 0; index < 3; index += 1) {
+    await saveExpense(user.id, 990216, { description, category_slug: "food_cafe", category_source: "user" });
+  }
+  const lookup = createCategoryMemoryLookup(pool);
+
+  assert.equal(await lookup({ userId: user.id, description: "  coffee shop " }), "food_cafe");
+  assert.equal(await lookup({ userId: user.id, description: "coffee shoppe" }), null);
+
+  const index = await pool.query(`
+    SELECT indexdef FROM pg_indexes
+    WHERE schemaname = 'public' AND tablename = 'expenses'
+      AND indexname = 'expenses_user_description_memory_idx'
+  `);
+  assert.match(index.rows[0]?.indexdef ?? "", /md5\(lower\(btrim\(regexp_replace\(description/);
+  const client = await pool.connect();
+  let plan;
+  try {
+    await client.query("BEGIN");
+    // The fixture has only three rows, where PostgreSQL normally prefers a sequential scan.
+    // Disable it locally so this smoke check verifies that the expression can use the intended index.
+    await client.query("SET LOCAL enable_seqscan = off");
+    const explained = await client.query({
+      text: `EXPLAIN (COSTS OFF) SELECT id FROM expenses
+        WHERE user_id = $1
+          AND md5(lower(btrim(regexp_replace(description, '[[:space:]]+', ' ', 'g'))))
+            = md5(lower(btrim(regexp_replace($2::text, '[[:space:]]+', ' ', 'g'))))`,
+      values: [user.id, description]
+    });
+    plan = explained.rows.map((row) => row["QUERY PLAN"]).join("\n");
+    await client.query("ROLLBACK");
+  } finally {
+    client.release();
+  }
+  assert.match(plan, /expenses_user_description_memory_idx/);
+
+  const timings = [];
+  for (let index = 0; index < 30; index += 1) {
+    const started = performance.now();
+    assert.equal(await lookup({ userId: user.id, description }), "food_cafe");
+    timings.push(performance.now() - started);
+  }
+  timings.sort((left, right) => left - right);
+  const p50 = timings[Math.floor((timings.length - 1) * 0.5)];
+  const p95 = timings[Math.ceil(timings.length * 0.95) - 1];
+  t.diagnostic(`category memory warm synthetic lookups: n=30 p50=${p50.toFixed(2)}ms p95=${p95.toFixed(2)}ms`);
+});
+
+test("category memory needs three distinct drafts and replay does not add evidence", async () => {
+  const user = await createSmokeUser(990217);
+  const first = await saveExpense(user.id, 990217, { description: "Coffee", category_slug: "food_cafe", category_source: "user" });
+  const second = await saveExpense(user.id, 990217, { description: "Coffee", category_slug: "food_cafe", category_source: "user" });
+  const lookup = createCategoryMemoryLookup(pool);
+
+  assert.equal(await lookup({ userId: user.id, description: "Coffee" }), null);
+  const replay = await repo.saveDraftAsExpense(first.draft_id, 990217);
+  assert.equal(replay.alreadySaved, true);
+  assert.equal(await lookup({ userId: user.id, description: "Coffee" }), null);
+
+  await saveExpense(user.id, 990217, { description: "Coffee", category_slug: "food_cafe", category_source: "user" });
+  assert.equal(await lookup({ userId: user.id, description: "Coffee" }), "food_cafe");
+  assert.notEqual(first.draft_id, second.draft_id);
+});
+
+test("category memory is isolated by user and ignores parser-selected categories", async () => {
+  const owner = await createSmokeUser(990218);
+  const other = await createSmokeUser(990219);
+  for (let index = 0; index < 3; index += 1) {
+    await saveExpense(owner.id, 990218, { description: "Taxi", category_slug: "transport", category_source: "user" });
+    await saveExpense(other.id, 990219, { description: "Taxi", category_slug: "transport", category_source: "parser" });
+  }
+  const lookup = createCategoryMemoryLookup(pool);
+
+  assert.equal(await lookup({ userId: owner.id, description: "Taxi" }), "transport");
+  assert.equal(await lookup({ userId: other.id, description: "Taxi" }), null);
+});
+
+test("category memory lets even ineligible conflicting rows veto a hint", async () => {
+  const user = await createSmokeUser(990220);
+  for (let index = 0; index < 3; index += 1) {
+    await saveExpense(user.id, 990220, { description: "Groceries", category_slug: "food_groceries", category_source: "user" });
+  }
+  await saveExpense(user.id, 990220, { description: "Groceries", category_slug: "transport", category_source: "parser" });
+
+  assert.equal(await createCategoryMemoryLookup(pool)({ userId: user.id, description: "Groceries" }), null);
+});
+
+test("deleting an expense removes its category-memory evidence", async () => {
+  const user = await createSmokeUser(990221);
+  const expenses = [];
+  for (let index = 0; index < 3; index += 1) {
+    expenses.push(await saveExpense(user.id, 990221, { description: "Lunch", category_slug: "food_cafe", category_source: "user" }));
+  }
+  const lookup = createCategoryMemoryLookup(pool);
+
+  assert.equal(await lookup({ userId: user.id, description: "Lunch" }), "food_cafe");
+  await repo.deleteExpenseForTelegramUser(expenses[0].id, 990221, new Date("2026-06-25T12:00:00Z"));
+  assert.equal(await lookup({ userId: user.id, description: "Lunch" }), null);
+});
+
+test("saved category edits immediately veto stale personal hints", async () => {
+  const user = await createSmokeUser(990223);
+  const rows = [];
+  for (let i = 0; i < 3; i += 1) rows.push(await saveExpense(user.id, 990223, { description: "J3", category_slug: "sport_activities" }));
+  const lookup = createCategoryMemoryLookup(pool);
+  assert.equal(await lookup({ userId: user.id, description: "j3" }), "sport_activities");
+  await repo.updateExpenseForTelegramUser(rows[0].id, 990223, { category_slug: "gear" }, new Date("2026-06-25T12:00:00Z"));
+  assert.equal(await lookup({ userId: user.id, description: "j3" }), null);
+});
+
+test("category memory abstains when an exact phrase has more than 100 matching rows", async () => {
+  const user = await createSmokeUser(990222);
+  const item = {
+    amount: 100,
+    currency: "THB",
+    description: "Bulk synthetic phrase",
+    category_slug: "food_cafe",
+    category_source: "user",
+    needs_review: false,
+    tags: [],
+    spent_at: "2026-06-24T05:00:00.000Z",
+    budget_impact: "regular"
+  };
+  await pool.query(`
+    WITH inserted_drafts AS (
+      INSERT INTO drafts (user_id, status, source_text, items, confirmed_at)
+      SELECT $1, 'confirmed', 'synthetic category-memory fixture', jsonb_build_array($2::jsonb), now()
+      FROM generate_series(1, 101)
+      RETURNING id
+    )
+    INSERT INTO expenses (
+      user_id, draft_id, amount_original, currency_original, amount_base, base_currency,
+      converted_amounts, exchange_rate_date, description, category_slug, tags, spent_at
+    )
+    SELECT $1, id, 100, 'THB', 100, 'THB', '{}'::jsonb, DATE '2026-06-24',
+      'Bulk synthetic phrase', 'food_cafe', ARRAY[]::text[], TIMESTAMPTZ '2026-06-24 05:00:00+00'
+    FROM inserted_drafts
+  `, [user.id, JSON.stringify(item)]);
+
+  const count = await pool.query("SELECT count(*)::int AS count FROM expenses WHERE user_id = $1", [user.id]);
+  assert.equal(count.rows[0].count, 101);
+  assert.equal(await createCategoryMemoryLookup(pool)({ userId: user.id, description: "Bulk synthetic phrase" }), null);
 });
 
 test("bulk FX cache preserves all provider pairs, refreshes conflicts, and serves offline fallback", async () => {
@@ -332,7 +479,7 @@ test("Telegram parsing reserves OpenAI usage for the internal user without chang
     user,
     chatId: 880202,
     messageId: 77,
-    text: "thing 80",
+    text: "coffee 80 taxi 120",
     expenseParser,
     repository: repo,
     parserOptions: { rolloutUserId: telegramUserId }
