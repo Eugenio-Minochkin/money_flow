@@ -138,10 +138,25 @@ export function createExpenseParser(options = {}) {
         return localResult;
       }
 
-      if (fastPathMode === "enabled" && inRollout && isLocalPrimaryAcceptance(localFastPath.localAcceptanceLevel)) {
+      if (fastPathMode === "enabled" && inRollout && (isLocalPrimaryAcceptance(localFastPath.localAcceptanceLevel)
+        || isCategoryOnlyReview(localResult, localFastPath))) {
+        let hintApplied = false;
+        if (isCategoryOnlyReview(localResult, localFastPath) && localResult.expenses.length === 1
+          && parseOptions.usageUserId != null && options.lookupCategoryHint) {
+          let hint;
+          try {
+            hint = await options.lookupCategoryHint({ userId: parseOptions.usageUserId, description: localResult.expenses[0].description });
+          } catch { /* An unavailable hint must still return immediate review. */ }
+          throwIfAborted(parseOptions.signal);
+          if (hint !== "other" && ALLOWED_CATEGORIES.has(hint)) {
+            localResult = { ...localResult, expenses: [{ ...localResult.expenses[0], category_slug: hint, needs_review: false }] };
+            hintApplied = true;
+          }
+        }
         emitTrace({
           parserEngine: "local-fast-path",
-          parserRoute: "local_primary",
+          parserRoute: hintApplied ? "local_category_memory"
+            : localFastPath.localAcceptanceLevel === "local_reviewable" ? "local_review" : "local_primary",
           ...localEvaluationTraceMetadata({ localEvaluationCompleted, localFastPath, localResult }),
           llmSkipped: true,
           fastPathMode,
@@ -299,6 +314,16 @@ export function evaluateLocalFastPath({ text, localResult }) {
 
 function isLocalPrimaryAcceptance(level) {
   return level === "local_safe";
+}
+
+function isCategoryOnlyReview(result, evaluation) {
+  return evaluation.localAcceptanceLevel === "local_reviewable"
+    && result.expenses.every((item) => !item.review_reason
+      && (!item.budget_impact || item.budget_impact === "regular")
+      && ALLOWED_CURRENCIES.has(item.currency)
+      && Number.isFinite(Date.parse(item.spent_at))
+      && ALLOWED_CATEGORIES.has(item.category_slug)
+      && (!item.needs_review || item.category_slug === "other"));
 }
 
 function hasCurrencyAmbiguity(result) {

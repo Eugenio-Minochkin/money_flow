@@ -81,7 +81,7 @@ test("synthetic corpus keeps only local_safe results on the local primary route 
   }
 });
 
-test("local_reviewable results inside rollout use the LLM category instead of returning local other", async () => {
+test("local_reviewable results inside rollout return review without paid category guessing", async () => {
   for (const fixture of SYNTHETIC_EXPENSE_PARSER_CORPUS.filter((item) => item.route === "local_reviewable")) {
     let openAiCalls = 0;
     let trace;
@@ -116,10 +116,11 @@ test("local_reviewable results inside rollout use the LLM category instead of re
       onLlmTrace(metadata) { trace = metadata; }
     });
 
-    assert.equal(openAiCalls, 1, fixture.id);
-    assert.equal(result.expenses[0].category_slug, "education", fixture.id);
+    assert.equal(openAiCalls, 0, fixture.id);
+    assert.equal(result.expenses[0].category_slug, "other", fixture.id);
+    assert.equal(result.expenses[0].needs_review, true, fixture.id);
     assert.equal(trace.localAcceptanceLevel, "local_reviewable", fixture.id);
-    assert.equal(trace.parserRoute, "local_reviewable_llm", fixture.id);
+    assert.equal(trace.parserRoute, "local_review", fixture.id);
   }
 });
 
@@ -277,7 +278,7 @@ test("uses separate rollout and paid usage identities", async () => {
     }], notes: [] }) })
   });
 
-  await parser.parse("thing 80", {
+  await parser.parse("coffee 80 taxi 120", {
     userId: 7,
     rolloutUserId: 100,
     usageUserId: 7,
@@ -285,7 +286,7 @@ test("uses separate rollout and paid usage identities", async () => {
     onLlmTrace(metadata) { trace = metadata; }
   });
 
-  assert.equal(trace.parserRoute, "local_reviewable_llm");
+  assert.equal(trace.parserRoute, "local_rejected_fallback");
   assert.deepEqual(reservation, { userId: 7, requestKey: "telegram:7:10:77" });
 });
 
@@ -650,7 +651,7 @@ test("fractional rollout percent is floored to an integer", async () => {
   assert.equal(openAiCalls, 0);
 });
 
-test("enabled fast-path sends an unknown category to OpenAI", async () => {
+test("enabled fast-path returns an unknown category for immediate review", async () => {
   let openAiCalls = 0;
   let trace;
   const parser = createExpenseParser({
@@ -675,11 +676,70 @@ test("enabled fast-path sends an unknown category to OpenAI", async () => {
     }
   });
 
-  assert.equal(openAiCalls, 1);
-  assert.equal(parsed.expenses[0].category_slug, "education");
-  assert.equal(parsed.expenses[0].needs_review, false);
+  assert.equal(openAiCalls, 0);
+  assert.equal(parsed.expenses[0].category_slug, "other");
+  assert.equal(parsed.expenses[0].needs_review, true);
   assert.equal(trace.categoryResolution, "needs_user_review");
-  assert.equal(trace.parserRoute, "local_reviewable_llm");
+  assert.equal(trace.parserRoute, "local_review");
+});
+
+test("category-only routing does not bypass unrelated review reasons or paid usage gates", async () => {
+  for (const patch of [{ needs_review: true, category_slug: "food_cafe" }, { review_reason: "date_uncertain" }, { budget_impact: "large_oneoff" }]) {
+    let calls = 0;
+    const parser = createExpenseParser({
+      apiKey: "test-key", fastPathMode: "enabled", localFirstRolloutPercent: 100,
+      parserTextHashSecret: "test-secret",
+      localParser: () => ({ expenses: [{ amount: 80, currency: "GEL", description: "unknown",
+        spent_at: "2026-09-01T10:00:00Z", category_slug: "other", needs_review: true, ...patch }] }),
+      consumeLlmUsage: async () => { calls += 1; },
+      fetchImpl: async () => { throw new Error("synthetic provider failure"); }
+    });
+    await parser.parse("unknown 80 GEL", { userId: 7 });
+    assert.equal(calls, 1);
+  }
+});
+
+test("category-only routing consumes no paid allowance", async () => {
+  let calls = 0;
+  const parser = createExpenseParser({ apiKey: "test-key", fastPathMode: "enabled",
+    localFirstRolloutPercent: 100, parserTextHashSecret: "test-secret",
+    consumeLlmUsage: async () => { calls += 1; throw new Error("quota exhausted"); },
+    fetchImpl: async () => { throw new Error("must not call provider"); }
+  });
+  const result = await parser.parse("unknown 80 GEL", { userId: 7 });
+  assert.equal(result.expenses[0].needs_review, true);
+  assert.equal(calls, 0);
+});
+
+test("personal category hint uses internal identity and changes only category review fields", async () => {
+  let requested;
+  let calls = 0;
+  const parser = createExpenseParser({ apiKey: "test-key", fastPathMode: "enabled",
+    localFirstRolloutPercent: 100, parserTextHashSecret: "test-secret",
+    now: () => new Date("2026-09-01T10:00:00Z"),
+    lookupCategoryHint: async (input) => { requested = input; return "sport_activities"; },
+    fetchImpl: async () => { calls += 1; throw new Error("unexpected provider"); }
+  });
+  const options = { userId: 999, usageUserId: 7, defaultCurrency: "GEL", timeZone: "UTC" };
+  const before = parseExpenseText("J3 30 GEL", { now: new Date("2026-09-01T10:00:00Z"), defaultCurrency: "GEL", timeZone: "UTC" });
+  const result = await parser.parse("J3 30 GEL", options);
+  assert.deepEqual(requested, { userId: 7, description: "j3" });
+  assert.deepEqual(result.expenses, [{ ...before.expenses[0], category_slug: "sport_activities", needs_review: false }]);
+  assert.equal(result.expenses[0].category_source, "parser");
+  assert.equal(calls, 0);
+});
+
+test("personal category hint failure or missing internal identity preserves review", async () => {
+  for (const usageUserId of [undefined, 7]) {
+    let lookups = 0;
+    const parser = createExpenseParser({ apiKey: "test-key", fastPathMode: "enabled",
+      localFirstRolloutPercent: 100, parserTextHashSecret: "test-secret",
+      lookupCategoryHint: async () => { lookups += 1; throw new Error("synthetic database failure"); }
+    });
+    const result = await parser.parse("Zeta 30 GEL", { userId: 999, usageUserId });
+    assert.equal(result.expenses[0].needs_review, true);
+    assert.equal(lookups, usageUserId ? 1 : 0);
+  }
 });
 
 test("local acceptance classifies safe reviewable and rejected candidates without changing compatibility flags", () => {

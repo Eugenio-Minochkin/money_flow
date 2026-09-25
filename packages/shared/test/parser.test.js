@@ -4,6 +4,20 @@ import assert from "node:assert/strict";
 import { isCurrencyAlias, parseExpenseText } from "../src/parser.js";
 import { SYNTHETIC_EXPENSE_PARSER_CORPUS } from "../testFixtures/expense-parser-regression-corpus.js";
 
+test("alphanumeric descriptions do not contribute embedded digits to an explicit expense amount", () => {
+  for (const text of ["J3 30 лари", "j3 30 GEL"]) {
+    const result = parseExpenseText(text);
+    assert.equal(result.expenses.length, 1);
+    assert.equal(result.expenses[0].amount, 30);
+    assert.equal(result.expenses[0].currency, "GEL");
+    assert.equal(result.expenses[0].description, "j3");
+    assert.equal(result.expenses[0].needs_review, true);
+  }
+  for (const text of ["J3", "J3 30 40 GEL", "J3 30 GEL 40 GEL"]) {
+    assert.equal(parseExpenseText(text).expenses.length, 0, text);
+  }
+});
+
 test("currency alias predicate exposes parser vocabulary with exact-token matching", () => {
   for (const alias of ["бакс", "บาท", "бел.руб", "$"]) {
     assert.equal(isCurrencyAlias(alias), true, alias);

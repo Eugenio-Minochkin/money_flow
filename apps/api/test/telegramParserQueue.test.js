@@ -6,7 +6,10 @@ import { createTelegramJobQueue } from "../src/telegramJobQueue.js";
 import { parseExpenseText } from "../../../packages/shared/src/parser.js";
 
 // A genuinely rejected input must not delay independent same-user local parsing.
-test("independent local-safe parsing completes while same-user LLM remains pending", { timeout: 5_000 }, async (t) => {
+for (const [localText, acceptance, route] of [
+  ["кофейня 15 лари", "local_safe", "local_primary"],
+  ["Zeta 15 лари", "local_reviewable", "local_review"]
+]) test(`independent ${acceptance} parsing completes while same-user LLM remains pending`, { timeout: 5_000 }, async (t) => {
   const now = () => new Date("2026-09-23T12:00:00Z");
   const rejectedText = "coffee 80 taxi 120";
   assert.equal(evaluateLocalFastPath({
@@ -49,7 +52,7 @@ test("independent local-safe parsing completes while same-user LLM remains pendi
     independent: true,
     run: () => {
       starts.push("same-user-local");
-      return parser.parse("кофейня 15 лари", {
+      return parser.parse(localText, {
         userId: 7,
         defaultCurrency: "GEL",
         onLlmTrace: (metadata) => traces.push(metadata)
@@ -78,7 +81,7 @@ test("independent local-safe parsing completes while same-user LLM remains pendi
   assert.deepEqual(starts, ["llm", "same-user-local", "other-user-local"]);
   assert.equal(result.expenses[0].amount, 15);
   assert.equal(result.expenses[0].currency, "GEL");
-  assert.equal(traces[0].localAcceptanceLevel, "local_safe");
-  assert.equal(traces[0].parserRoute, "local_primary");
+  assert.equal(traces[0].localAcceptanceLevel, acceptance);
+  assert.equal(traces[0].parserRoute, route);
   assert.equal(llmCalls, 1);
 });

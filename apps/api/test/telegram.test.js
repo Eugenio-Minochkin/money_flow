@@ -421,8 +421,12 @@ test("queued voice transcripts create the expected GEL expense through the real 
     ["такси семь лари", 7],
     ["такси три пятьдесят лари", 3.5],
     ["такси три точка пятьдесят лари", 3.5],
+    ["такси 3.50 лари", 3.5],
+    ["такси 3,50 лари", 3.5],
     ["такси триста пятьдесят лари", 350],
-    ["чурчхела семьлари", 7]
+    ["такси 350 лари", 350],
+    ["чурчхела семьлари", 7],
+    ["чурчхела семилари", 7]
   ];
 
   for (const [transcript, amount] of cases) {
@@ -447,7 +451,9 @@ test("queued voice transcripts create the expected GEL expense through the real 
     assert.equal(completed.metadata.normalizationChanged, [
       "такси три пятьдесят лари",
       "такси три точка пятьдесят лари",
-      "чурчхела семьлари"
+      "такси 3,50 лари",
+      "чурчхела семьлари",
+      "чурчхела семилари"
     ].includes(transcript), transcript);
     assert.equal(completed.metadata.currencyRecognition, "exact", transcript);
     assert.equal(completed.metadata.durableCaptureState, "unavailable", transcript);
@@ -1905,13 +1911,13 @@ test("Telegram keeps rollout identity while charging OpenAI usage to the interna
       message_id: 77,
       chat: { id: 10 },
       from: { id: 100, first_name: "M" },
-      text: "thing 80"
+      text: "coffee 80 taxi 120"
     }
   });
 
   assert.deepEqual(usageReservations, [{ userId: 1, requestKey: "telegram:1:10:77" }]);
   const completed = repo.events.find((event) => event.eventName === "message_processing_completed");
-  assert.equal(completed.metadata.parserRoute, "local_reviewable_llm");
+  assert.equal(completed.metadata.parserRoute, "local_rejected_fallback");
 });
 
 test("confirm callback saves draft and returns an informative summary", async () => {

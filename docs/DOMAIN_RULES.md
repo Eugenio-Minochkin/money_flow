@@ -4,6 +4,8 @@ This file records stable product and business rules. Read it before changing bud
 
 ## Quick Capture
 
+- Inside the existing enabled local-first cohort, category-only uncertainty returns immediate review without paid category guessing. A single unknown description may use three distinct human-confirmed single-item drafts of the same internal user, joined to their current expenses. Exact normalized description equality and unanimous current categories are required; a conflict, changed evidence, insufficient history, timeout, or more than 100 matches disables the hint. Automatic parser saves never count as human confirmation. Hints retain parser provenance and change no amount, currency, date, or budget impact; `other` remains review-only.
+
 - A Mini App Quick Capture submission is durably identified by `user_id + clientRequestId`; a retry must return its original draft or saved expense and must never create a second financial operation.
 - Parser-provided category provenance remains `parser` until the user explicitly chooses a category or explicitly accepts the current draft with `Confirm` / `Save as is`. Parser-provided `other` is never auto-confirmed, but an explicit human acceptance may promote that existing valid slug to user-confirmed `other`.
 - `saveDraftAsExpense()` remains the final atomic/idempotent boundary for an individual draft.
