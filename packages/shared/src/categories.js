@@ -16,7 +16,7 @@ export const CATEGORIES = [
       "продукты", "grocery", "groceries", "grocery store", "supermarket", "супермаркет",
       "convenience store", "minimart", "мини-маркет", "7eleven", "7-eleven", "7/11", "seven eleven",
       "lotus", "big c", "tops", "makro", "макро", "молоко", "milk", "eggs", "яйца", "fruits",
-      "фрукты", "vegetables", "овощи", "bread", "хлеб", "cheese", "сыр", "yogurt", "yoghurt", "йогурт", "кефир", "kefir"
+      "фрукты", "vegetables", "овощи", "bread", "хлеб", "cheese", "сыр", "yogurt", "yoghurt", "йогурт", "кефир", "kefir", "дуриан"
     ]
   },
   {
@@ -26,7 +26,7 @@ export const CATEGORIES = [
       "аренда", "rent", "apartment rent", "room rent", "condo rent", "rent payment", "аренда квартиры",
       "оплата квартиры", "квартира", "apartment", "электричество", "electricity", "electricity bill",
       "electric bill", "water bill", "utility bill", "коммунал", "коммуналка", "utilities", "laundry",
-      "стирка", "уборка", "cleaning", "housekeeping", "maid", "клининг"
+      "стирка", "уборка", "cleaning", "housekeeping", "maid", "клининг", "товары для дома"
     ]
   },
   {
@@ -58,7 +58,7 @@ export const CATEGORIES = [
     keywords: [
       "скалолазание", "climbing", "climb", "climbing gym", "скалодром", "bouldering", "боулдеринг",
       "gym", "workout", "тренировка", "fitness", "фитнес", "йога", "yoga", "бассейн", "pool",
-      "swimming", "плавание", "martial arts", "единоборства", "контактка", "contact improv"
+      "swimming", "плавание", "martial arts", "единоборства", "контактка", "contact improv", "спортзал"
     ]
   },
   {
@@ -68,7 +68,7 @@ export const CATEGORIES = [
       "одежда", "clothes", "clothing", "кроссовки", "sneakers", "shoes", "футболка", "t-shirt",
       "экипировка", "gear", "headphones", "наушники", "speaker", "колонка", "backpack", "рюкзак",
       "laptop", "ноутбук", "camera", "камера", "router", "роутер", "charger", "зарядка", "power bank", "powerbank",
-      "пауэрбанк", "helmet", "шлем"
+      "пауэрбанк", "helmet", "шлем", "носки"
     ]
   },
   {

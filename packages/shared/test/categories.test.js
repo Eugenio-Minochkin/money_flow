@@ -47,6 +47,24 @@ test("matches router aliases exactly and preserves existing cross-category prece
   assert.equal(inferCategory("router кофе"), "food_cafe");
 });
 
+test("matches reviewed historical RU aliases exactly without expanding ambiguous words", () => {
+  const cases = [
+    ["дуриан", "groceries", "дуриановый", "дуриан в кафе", "food_cafe"],
+    ["носки", "gear", "носкин", "йога и носки", "sport_activities"],
+    ["спортзал", "sport_activities", "спортзальный", "массаж и спортзал", "health"],
+    ["товары для дома", "home", "товары для домашнего", "продукты и товары для дома", "groceries"]
+  ];
+  for (const [phrase, category, partial, conflict, conflictCategory] of cases) {
+    assert.equal(inferCategory(phrase), category, phrase);
+    assert.equal(inferCategory(`  ${phrase.toUpperCase().replaceAll(" ", "   ")}  `), category, phrase);
+    assert.equal(inferCategory(partial), "other", partial);
+    assert.equal(inferCategory(conflict), conflictCategory, conflict);
+  }
+  for (const phrase of ["еда", "зал", "салат", "чай", "бейгл", "вода", "кола", "сок", "тортик", "расход", "durian", "socks"]) {
+    assert.equal(inferCategory(phrase), "other", phrase);
+  }
+});
+
 test("keeps deliberately ambiguous words as other", () => {
   assert.equal(inferCategory("tea"), "other");
   assert.equal(inferCategory("water"), "other");

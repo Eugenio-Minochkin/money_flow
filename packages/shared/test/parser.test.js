@@ -4,6 +4,26 @@ import assert from "node:assert/strict";
 import { isCurrencyAlias, parseExpenseText } from "../src/parser.js";
 import { SYNTHETIC_EXPENSE_PARSER_CORPUS } from "../testFixtures/expense-parser-regression-corpus.js";
 
+test("reviewed RU aliases preserve explicit expense fields", () => {
+  for (const [description, category] of [
+    ["дуриан", "groceries"], ["носки", "gear"],
+    ["спортзал", "sport_activities"], ["товары для дома", "home"]
+  ]) {
+    const result = parseExpenseText(`${description} 17.25 GEL`, {
+      now: new Date("2026-10-05T12:00:00Z"), timeZone: "Europe/Moscow"
+    });
+    assert.equal(result.expenses.length, 1, description);
+    const item = result.expenses[0];
+    assert.equal(item.category_slug, category, description);
+    assert.equal(item.amount, 17.25, description);
+    assert.equal(item.currency, "GEL", description);
+    assert.equal(item.description, description, description);
+    assert.equal(item.budget_impact, undefined, description);
+    assert.equal(item.needs_review, false, description);
+    assert.equal(Date.parse(item.spent_at), Date.parse("2026-10-05T12:00:00Z"), description);
+  }
+});
+
 test("alphanumeric descriptions do not contribute embedded digits to an explicit expense amount", () => {
   for (const text of ["J3 30 лари", "j3 30 GEL"]) {
     const result = parseExpenseText(text);
