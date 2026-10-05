@@ -8,7 +8,8 @@ const firstText = "coffee 80 taxi 120";
 const secondText = "кофейня 15 лари";
 const sourceMessageIds = new Map([[101, "a"], [102, "b"]]);
 const loaderOwners = new Map();
-const timings = { aHttpAt: null, aFailedAt: null, bDispatchAt: null, bParseStartedAt: null, bParseEndedAt: null, bMutationAt: null, bDeliveryStartedAt: null, bDeliveredAt: null };
+const timings = { aHttpAt: null, aFailedAt: null, aTerminalAt: null, bDispatchAt: null, bParseStartedAt: null, bParseEndedAt: null, bMutationAt: null, bDeliveryStartedAt: null, bDeliveredAt: null };
+const completionOrder = [];
 let nextMessageId = 500;
 let resolveAHttp;
 let resolveAFailed;
@@ -75,7 +76,10 @@ const repository = {
   },
   async completeTelegramExpenseCapture({ userId, chatId, messageId, sourceText, items }) {
     const key = captureKey(userId, chatId, messageId);
-    if (items.some((item) => item.amount === 15 && item.currency === "GEL")) timings.bMutationAt = performance.now();
+    if (items.some((item) => item.amount === 15 && item.currency === "GEL")) {
+      timings.bMutationAt = performance.now();
+      completionOrder.push("draft_b");
+    }
     const draft = { id: this.drafts.length + 1, items, sourceText };
     this.drafts.push(draft);
     this.captures.set(key, { state: "completed", draft });
@@ -90,6 +94,7 @@ const repository = {
   async listClosedReserveMonthsForTelegramUser() { return []; },
   async saveDraftAsExpense(draftId, _telegramUserId) {
     this.saveCalls += 1;
+    completionOrder.push("save_b");
     const draft = this.drafts.find((item) => item.id === draftId);
     const expenses = draft.items.map((item) => ({ id: this.expenses.length + 1, ...item, amount_base: item.amount }));
     this.expenses.push(...expenses);
@@ -112,14 +117,19 @@ const telegramClient = {
     if (owner) loaderOwners.set(messageId, owner);
     return { ok: true, result: { message_id: messageId } };
   },
-  async editMessageText({ messageId }) {
+  async editMessageText({ messageId, text }) {
     const owner = loaderOwners.get(messageId);
     if (owner === "b" && repository.expenses.length === 1 && timings.bDeliveredAt == null) {
       timings.bDeliveryStartedAt = performance.now();
       timings.bDeliveredAt = performance.now();
+      completionOrder.push("terminal_b");
       resolveBDelivered();
     }
-    if (owner === "a") resolveATerminal();
+    if (owner === "a" && text.includes("Не получилось разобрать расход")) {
+      timings.aTerminalAt = performance.now();
+      completionOrder.push("terminal_a");
+      resolveATerminal();
+    }
     return { ok: true };
   },
   async deleteMessage() { return { ok: true }; }
@@ -146,7 +156,7 @@ try {
   await aHttpEntered;
   timings.bDispatchAt = performance.now();
   await bot.handleUpdate(messageUpdate(secondText, 102));
-  await Promise.race([bDelivered, wait(1_000).then(() => { throw new Error("second expense was not delivered within 1 second"); })]);
+  await withDeadline(bDelivered, delayMs + 5_000);
   await aFailed;
   await aTerminal;
 
@@ -159,10 +169,16 @@ try {
     bDeliveryMs: round(timings.bDeliveredAt - timings.bDeliveryStartedAt),
     bEndToEndMs: round(timings.bDeliveredAt - timings.bDispatchAt),
     bExpensePersistedExactlyOnce: repository.expenses.length === 1 && repository.saveCalls === 1,
-    bDeliveredBeforeARelease: timings.bDeliveredAt < timings.aFailedAt
+    bParsedBeforeARelease: timings.bParseEndedAt < timings.aFailedAt,
+    bPersistedAfterATerminal: timings.bMutationAt >= timings.aTerminalAt,
+    bDeliveredAfterATerminal: timings.bDeliveredAt >= timings.aTerminalAt,
+    completionOrder
   };
   console.log(JSON.stringify(result));
-  if (!result.bExpensePersistedExactlyOnce || !result.bDeliveredBeforeARelease || result.bEndToEndMs >= 1_000 || result.aControlledFailureAfterHttpMs < delayMs) process.exitCode = 1;
+  if (!result.bExpensePersistedExactlyOnce || !result.bParsedBeforeARelease
+    || !result.bPersistedAfterATerminal || !result.bDeliveredAfterATerminal
+    || completionOrder.join(",") !== "terminal_a,draft_b,save_b,terminal_b"
+    || result.aControlledFailureAfterHttpMs < delayMs) process.exitCode = 1;
 } finally {
   console.error = originalConsoleError;
 }
@@ -177,6 +193,17 @@ function captureKey(userId, chatId, messageId) {
 
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function withDeadline(promise, timeoutMs) {
+  let timer;
+  try {
+    await Promise.race([promise, new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error("ordered completion did not finish within its deadline")), timeoutMs);
+    })]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function readDelay(args) {
