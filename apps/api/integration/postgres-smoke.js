@@ -1320,6 +1320,9 @@ test("saveDraftAsExpense completes with a one-connection pool", async () => {
 });
 
 test("persists ambiguous currency review without a default and saves only after an allowed choice", async () => {
+  const repo = createRepository(pool, { exchangeRates: {
+    async ratesFor() { return { INR: { THB: 0.4 }, THB: { INR: 2.5 }, source: "smoke" }; }
+  } });
   const telegramUserId = 990041;
   const user = await createSmokeUser(telegramUserId);
   const ambiguousItem = expenseItem({ amount: 1000, description: "taxi", needs_review: true });
