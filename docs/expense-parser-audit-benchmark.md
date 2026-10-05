@@ -116,9 +116,14 @@ Benchmark output is evidence, not a switch. The harness never changes `OPENAI_MO
 
 ## Current status and follow-up
 
-`blocked: production data not provided`
+`completed: approved local-copy historical audit (2026-10-05)`
 
-This status blocks only data-driven conclusions, not the tooling. No historical production audit result, evidence-based alias, or real model benchmark result is claimed in this PR.
+Исторический audit выполнен на разрешённой локальной копии свежего backup;
+production primary не использовалась для audit. Safe report прошёл manual review:
+четыре точных RU aliases добавляются отдельно, неоднозначные и уже поддержанные
+кандидаты не расширяют словарь. Источник, ограничения и решения описаны в
+[review #235](operations/2026-10-05-parser-alias-review.md). Raw data и source totals
+не публикуются. Реальный model/API benchmark не выполнялся.
 
 After tooling merge, the owner can:
 
