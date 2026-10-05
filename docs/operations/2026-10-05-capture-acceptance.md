@@ -98,8 +98,11 @@ latency. Исправление benchmark не устанавливает при
 - 20-second benchmark: B parse start после dispatch ≈193ms; B mutation wait
   ≈19809ms; порядок `terminal_a,draft_b,save_b,terminal_b`; один сохранённый B.
   Это synthetic timing, не результат с телефона или production.
-- #210: владелец выполняет реальную проверку; результат ещё не получен.
+- #210: 2026-10-05 владелец подтвердил «все ок» после предложенного checklist
+  реальных голосовых/текстового сообщения. Manual acceptance принят, issue закрыта.
 - #235: владелец подтвердил отсутствие источника/отчёта; данные готовятся
   отдельно. CLI безопасно отказывается с `missing_audit_database_url`.
-- #237: production evidence ещё не получены; запрошено отдельное разрешение
-  на ограниченную read-only диагностику.
+- #237: 2026-10-05 выполнена явно разрешённая read-only production диагностика:
+  health/revision, safe effective routing config, агрегаты за день инцидента
+  и последние 24 часа. Оставшийся acceptance проверен, issue закрыта.
+  Production diagnosis и metrics остаются только в чате по решению владельца.
