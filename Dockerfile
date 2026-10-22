@@ -1,4 +1,5 @@
-FROM node:24-alpine AS miniapp-build
+FROM node:24.22.1-alpine3.24 AS miniapp-build
+RUN apk add --no-cache 'ca-certificates-bundle>=20261020-r0'
 
 WORKDIR /app
 
@@ -10,7 +11,8 @@ COPY apps apps
 COPY packages packages
 RUN npm run build:miniapp
 
-FROM node:24-alpine
+FROM node:24.22.1-alpine3.24
+RUN apk add --no-cache 'ca-certificates-bundle>=20261020-r0'
 
 ARG APP_REVISION=unknown
 
