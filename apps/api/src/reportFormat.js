@@ -11,14 +11,18 @@ export function formatWeeklyReportWidget(report, options = {}) {
   if (!report.topCategories?.length) return null;
   const language = normalizeLanguage(options.language);
   const currency = report.currency ?? "THB";
-  const { summary, changes, largestExpenses, needsAttention, takeaway, firstWeek } = weeklyReportSections(report, options);
-  const caption = joinWeeklySections([summary, largestExpenses, needsAttention, takeaway, firstWeek]);
+  const { summary, changes, needsAttention, takeaway, firstWeek } = weeklyReportSections(report, options);
+  const caption = joinWeeklySections([summary, needsAttention, takeaway, firstWeek]);
   const chatData = JSON.stringify({
     language,
-    categories: report.topCategories.slice(0, 3).map((item) => ({
+    categories: report.topCategories.slice(0, 5).map((item) => ({
       name: String(item.name ?? ""),
       amount: formatReportMoney(item.amount, currency, language),
       percent: Math.round(Number(item.percent ?? 0))
+    })),
+    largestExpenses: (report.largestExpenses ?? []).slice(0, 5).map((item) => ({
+      name: String(item.name ?? ""),
+      amount: formatReportMoney(item.amount, currency, language)
     })),
     topTwoShare: report.topTwoCategoryShare ?? null,
     changes: changes ? report.changes.slice(0, 3).map((change) => (

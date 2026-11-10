@@ -9,18 +9,27 @@ export const weeklyReportWidgetHtml = `<style>
   .track { height: 4px; margin-top: 4px; border-radius: 4px; background: var(--tg-theme-secondary-bg-color); }
   .fill { height: 4px; border-radius: 4px; background: var(--tg-theme-button-color); }
   .note { margin: 8px 0 0; color: var(--tg-theme-hint-color); font-size: 12px; }
+  .expenses { margin-top: 14px; border-top: 1px solid var(--tg-theme-secondary-bg-color); padding-top: 10px; }
+  .expenses h4 { font-size: 14px; margin: 0 0 6px; }
+  .expenses .row { padding: 3px 0; }
   .hidden { display: none; }
 </style>
 <div class="tabs hidden" id="tabs">
   <button id="categories-button" class="active"></button>
   <button id="changes-button"></button>
 </div>
-<div id="categories"></div>
+<div id="details">
+  <div id="categories"></div>
+  <div id="expenses" class="expenses hidden">
+    <h4 id="expenses-title"></h4>
+  </div>
+</div>
 <div id="changes" class="hidden"></div>
 <script>
   const data = JSON.parse(window.TelegramWidget.chatData);
   const english = data.language === 'en';
   const categories = document.getElementById('categories');
+  const details = document.getElementById('details');
   const changes = document.getElementById('changes');
   const categoriesButton = document.getElementById('categories-button');
   const changesButton = document.getElementById('changes-button');
@@ -41,6 +50,20 @@ export const weeklyReportWidgetHtml = `<style>
     categories.appendChild(note);
   }
 
+  if (data.largestExpenses.length) {
+    const expenses = document.getElementById('expenses');
+    document.getElementById('expenses-title').textContent = english ? 'Largest expenses' : 'Самые большие расходы';
+    for (const item of data.largestExpenses) {
+      const row = document.createElement('div');
+      row.className = 'row';
+      row.innerHTML = '<span></span><strong class="amount"></strong>';
+      row.querySelector('span').textContent = item.name;
+      row.querySelector('strong').textContent = item.amount;
+      expenses.appendChild(row);
+    }
+    expenses.classList.remove('hidden');
+  }
+
   if (data.changes.length) {
     categoriesButton.textContent = english ? 'Categories' : 'Категории';
     changesButton.textContent = english ? 'What changed' : 'Что изменилось';
@@ -50,7 +73,7 @@ export const weeklyReportWidgetHtml = `<style>
       changes.appendChild(item);
     }
     function showChanges(visible) {
-      categories.classList.toggle('hidden', visible);
+      details.classList.toggle('hidden', visible);
       changes.classList.toggle('hidden', !visible);
       categoriesButton.classList.toggle('active', !visible);
       changesButton.classList.toggle('active', visible);
