@@ -1,8 +1,35 @@
 import { MONTHLY_BUDGET_HIGH_USAGE_MIN_PCT } from "./reportAnalytics.js";
+import { weeklyReportWidgetHtml } from "./weeklyReportWidget.js";
 
 const ZERO_DECIMAL_DISPLAY_CURRENCIES = new Set(["THB", "RUB", "IDR", "BYN"]);
 
 export function formatWeeklyReport(report, options = {}) {
+  return joinWeeklySections(Object.values(weeklyReportSections(report, options)));
+}
+
+export function formatWeeklyReportWidget(report, options = {}) {
+  if (!report.topCategories?.length) return null;
+  const language = normalizeLanguage(options.language);
+  const currency = report.currency ?? "THB";
+  const { summary, changes, largestExpenses, needsAttention, takeaway, firstWeek } = weeklyReportSections(report, options);
+  const caption = joinWeeklySections([summary, largestExpenses, needsAttention, takeaway, firstWeek]);
+  const chatData = JSON.stringify({
+    language,
+    categories: report.topCategories.slice(0, 3).map((item) => ({
+      name: String(item.name ?? ""),
+      amount: formatReportMoney(item.amount, currency, language),
+      percent: Math.round(Number(item.percent ?? 0))
+    })),
+    topTwoShare: report.topTwoCategoryShare ?? null,
+    changes: changes ? report.changes.slice(0, 3).map((change) => (
+      formatChangeLine(change, currency, language, { plain: true })
+    )) : []
+  });
+  if (caption.length > 1024 || Buffer.byteLength(chatData) > 1024) return null;
+  return { html: weeklyReportWidgetHtml, caption, chatData };
+}
+
+function weeklyReportSections(report, options) {
   const language = normalizeLanguage(options.language);
   const labels = language === "en" ? enLabels : ruLabels;
   const periodLabel = formatPeriodLabel(report.period, language);
@@ -32,17 +59,19 @@ export function formatWeeklyReport(report, options = {}) {
     lines.push(labels.outsideLine(formatReportMoney(metrics.outOfBudgetTotal, currency, language)));
   }
 
-  pushOptional(lines, formatWeeklyTopCategories(report.topCategories, report.topTwoCategoryShare, currency, language));
-  pushOptional(lines, formatLargestExpenses(report.largestExpenses, currency, language));
-  pushOptional(lines, formatWhatChanged(report.changes, currency, language));
-  pushOptional(lines, formatNeedsAttention(report.needsAttention, currency, language));
-  if (report.takeaway) {
-    pushOptional(lines, `${labels.takeawayHeading}\n${escapeHtml(report.takeaway)}`);
-  }
-  if (report.firstWeek) {
-    pushOptional(lines, labels.firstWeekLine);
-  }
-  return compactMessage(lines);
+  return {
+    summary: lines.join("\n"),
+    categories: formatWeeklyTopCategories(report.topCategories, report.topTwoCategoryShare, currency, language),
+    largestExpenses: formatLargestExpenses(report.largestExpenses, currency, language),
+    changes: formatWhatChanged(report.changes, currency, language),
+    needsAttention: formatNeedsAttention(report.needsAttention, currency, language),
+    takeaway: report.takeaway ? `${labels.takeawayHeading}\n${escapeHtml(report.takeaway)}` : null,
+    firstWeek: report.firstWeek ? labels.firstWeekLine : null
+  };
+}
+
+function joinWeeklySections(sections) {
+  return compactMessage([sections.filter(Boolean).join("\n\n")]);
 }
 
 export function formatMonthlyReport(report, options = {}) {
@@ -238,7 +267,7 @@ function formatMonthlyWhatChanged(changes = [], currency, language) {
   };
   const lines = [labels.monthlyWhatChangedHeading];
   changes.slice(0, 3).forEach((change) => {
-    lines.push(`• ${formatChangeLine(change, currency, language, changeLabels)}`);
+    lines.push(`• ${formatChangeLine(change, currency, language, { labels: changeLabels })}`);
   });
   return lines.join("\n");
 }
@@ -301,9 +330,9 @@ function formatWhatChanged(changes = [], currency, language) {
   return lines.join("\n");
 }
 
-function formatChangeLine(change, currency, language, changeLabels) {
-  const labels = changeLabels ?? (language === "en" ? enLabels : ruLabels);
-  const name = escapeHtml(change.name);
+function formatChangeLine(change, currency, language, options = {}) {
+  const labels = options.labels ?? (language === "en" ? enLabels : ruLabels);
+  const name = options.plain ? String(change.name ?? "") : escapeHtml(change.name);
   if (change.isNew) {
     return labels.changeNew(name, formatReportMoney(change.currentTotal, currency, language));
   }

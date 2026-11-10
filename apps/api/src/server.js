@@ -47,6 +47,7 @@ import {
   savedSummaryKeyboard,
   sendTelegramDocument,
   sendTelegramMessage,
+  sendTelegramWidget,
   updateDraftMessageToCanceled,
   updateDraftMessageToDraftState,
   updateDraftMessageToSaved,
@@ -218,6 +219,8 @@ const plannedPaymentReminderService = createPlannedPaymentReminderService({
 const reportService = createReportService({
   repository,
   miniAppUrl: config.miniAppUrl,
+  weeklyReportWidgetUserIds: config.weeklyReportWidgetUserIds,
+  sendWidget: (message) => sendTelegramWidget({ token: config.telegramBotToken, ...message }),
   sendMessage: (message) => sendTelegramMessage({
     token: config.telegramBotToken,
     ...message

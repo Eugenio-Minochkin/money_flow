@@ -3699,6 +3699,19 @@ export async function sendTelegramMessage({ token, chatId, text, replyMarkup = n
   return sendMessage(token, chatId, text, replyMarkup, telegramClient, null, { replyParameters, signal, requestTimeoutMs });
 }
 
+export async function sendTelegramWidget({ token, chatId, html, caption, chatData, replyMarkup }) {
+  return telegramRequest(token, "sendWidget", {
+    chat_id: chatId,
+    html,
+    caption,
+    chat_data: chatData,
+    parse_mode: "HTML",
+    show_caption_above_media: true,
+    protect_content: true,
+    reply_markup: replyMarkup
+  });
+}
+
 export async function sendTelegramDocument({ token, telegramClient = null, chatId, filename, content, contentType, caption = null }) {
   if (telegramClient?.sendDocument) {
     return telegramClient.sendDocument({ chatId, filename, content, contentType, caption });

@@ -56,6 +56,7 @@ export function buildConfig(env) {
     databaseStatementTimeoutMs: parseStrictPositiveInteger(env.DB_STATEMENT_TIMEOUT_MS, DEFAULT_DB_STATEMENT_TIMEOUT_MS, "DB_STATEMENT_TIMEOUT_MS", MAX_TIMER_DELAY_MS),
     databaseQueryTimeoutMs: parseStrictPositiveInteger(env.DB_QUERY_TIMEOUT_MS, DEFAULT_DB_QUERY_TIMEOUT_MS, "DB_QUERY_TIMEOUT_MS", MAX_TIMER_DELAY_MS),
     telegramBotToken: env.TELEGRAM_BOT_TOKEN,
+    weeklyReportWidgetUserIds: parseCsv(env.TELEGRAM_WEEKLY_REPORT_WIDGET_USER_IDS),
     adminTelegramIds: env.ADMIN_TELEGRAM_IDS ?? "",
     miniAppUrl: env.MINI_APP_URL ?? "http://localhost:3000",
     iosShortcutUrl: env.IOS_SHORTCUT_URL ?? "",
