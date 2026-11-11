@@ -24,7 +24,9 @@ export const weeklyReportWidgetHtml = `<style>
     <h4 id="expenses-title"></h4>
   </div>
 </div>
-<div id="changes" class="hidden"></div>
+<div id="changes" class="expenses hidden">
+  <h4 id="changes-title"></h4>
+</div>
 <script>
   const data = JSON.parse(window.TelegramWidget.chatData);
   const english = data.language === 'en';
@@ -65,8 +67,10 @@ export const weeklyReportWidgetHtml = `<style>
   }
 
   if (data.changes.length) {
-    categoriesButton.textContent = english ? 'Categories' : 'Категории';
+    categoriesButton.textContent = english ? 'Full report' : 'Весь отчёт';
     changesButton.textContent = english ? 'What changed' : 'Что изменилось';
+    const changesTitle = document.getElementById('changes-title');
+    changesTitle.textContent = changesButton.textContent;
     for (const line of data.changes) {
       const item = document.createElement('p');
       item.textContent = line;
@@ -74,12 +78,13 @@ export const weeklyReportWidgetHtml = `<style>
     }
     function showChanges(visible) {
       details.classList.toggle('hidden', visible);
-      changes.classList.toggle('hidden', !visible);
+      changesTitle.classList.toggle('hidden', visible);
       categoriesButton.classList.toggle('active', !visible);
       changesButton.classList.toggle('active', visible);
     }
     categoriesButton.addEventListener('click', () => showChanges(false));
     changesButton.addEventListener('click', () => showChanges(true));
+    changes.classList.remove('hidden');
     document.getElementById('tabs').classList.remove('hidden');
   }
 </script>`;

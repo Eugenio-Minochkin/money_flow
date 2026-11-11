@@ -41,6 +41,15 @@ export function parseExpenseEditorCallback(data) {
 
   const action = parts[offset];
   const value = parts[offset + 1];
+  if (action === "q" && target.type === "expense") {
+    const quickTarget = { ...target, quickCategory: true };
+    if (parts.length === offset + 2 && value === "cm") return { ...quickTarget, action: "category_menu" };
+    if (parts.length === offset + 2 && value === "back") return { ...quickTarget, action: "back" };
+    if (parts.length === offset + 3 && value === "cat" && CATEGORIES.some((category) => category.slug === parts[offset + 2])) {
+      return { ...quickTarget, action: "category", value: parts[offset + 2] };
+    }
+    return null;
+  }
   if (parts.length === offset + 1 && action === "o") return { ...target, action: "open" };
   if (parts.length === offset + 2 && action === "f" && FIELD_CODES[value]) return { ...target, action: "field", field: FIELD_CODES[value] };
   if (parts.length === offset + 2 && action === "b" && (value === "r" || value === "l")) {
@@ -130,21 +139,22 @@ export function expenseInputPrompt(field, { language = "ru" } = {}) {
   return (language === "en" ? en : ru)[field] ?? (language === "en" ? "Send a value as text." : "Отправь значение текстом.");
 }
 
-export function expenseCategoryKeyboard(target, categories = CATEGORIES, { language = "ru", page = 0, pageSize = 6 } = {}) {
-  const key = editorTargetKey(target);
+export function expenseCategoryKeyboard(target, categories = CATEGORIES, { language = "ru", page = 0, pageSize = 6, quickCategory = false } = {}) {
+  const key = editorTargetKey(target) + (quickCategory ? ":q" : "");
   const current = itemFromTarget(target).category_slug;
-  const safePage = Math.max(0, Math.min(Number(page) || 0, Math.max(0, Math.ceil(categories.length / pageSize) - 1)));
-  const start = safePage * pageSize;
-  const visible = categories.slice(start, start + pageSize);
+  const size = quickCategory ? Math.max(categories.length, 1) : pageSize;
+  const safePage = Math.max(0, Math.min(Number(page) || 0, Math.max(0, Math.ceil(categories.length / size) - 1)));
+  const start = safePage * size;
+  const visible = categories.slice(start, start + size);
   const rows = visible.map((category) => [button(
     `${category.slug === current ? "✅" : "⬜"} ${categoryLabel(category.slug, language)}`,
     `ee:${key}:cat:${category.slug}`
   )]);
   const navigation = [];
   if (safePage > 0) navigation.push(button(language === "en" ? "← Previous" : "← Назад", `ee:${key}:p:${safePage - 1}`));
-  if (start + pageSize < categories.length) navigation.push(button(language === "en" ? "Next →" : "Далее →", `ee:${key}:p:${safePage + 1}`));
+  if (start + size < categories.length) navigation.push(button(language === "en" ? "Next →" : "Далее →", `ee:${key}:p:${safePage + 1}`));
   if (navigation.length) rows.push(navigation);
-  rows.push([button(language === "en" ? "← Back" : "← Назад", `ee:${key}:o`)]);
+  rows.push([button(language === "en" ? "← Back" : "← Назад", `ee:${key}:${quickCategory ? "back" : "o"}`)]);
   return keyboard(rows);
 }
 

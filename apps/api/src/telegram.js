@@ -2238,6 +2238,9 @@ async function editorTargetForSession(repository, session, telegramUserId) {
 }
 
 async function handleExpenseEditorCallback({ callback, parsed, repository, token, miniAppUrl, telegramClient, language, user, telegramUserId, now }) {
+  if (parsed.quickCategory && !callback.message?.message_id) {
+    return answerCallback(token, callback.id, editorMessageForCode("expense_not_found", language), telegramClient);
+  }
   if (parsed.action === "cancel") {
     if (!parsed.sessionId) {
       return answerCallback(token, callback.id, editorMessageForCode("expense_not_found", language), telegramClient);
@@ -2299,6 +2302,46 @@ async function handleExpenseEditorCallback({ callback, parsed, repository, token
       telegramClient
     });
     return answerCallback(token, callback.id, editorMessageForCode("expense_not_found", language), telegramClient);
+  }
+  if (parsed.quickCategory) {
+    const { chat: { id: chatId }, message_id: messageId } = callback.message;
+    const summaryKeyboard = savedExpenseKeyboard(target.id, miniAppUrl, telegramUserId, language);
+    const alreadySelected = parsed.action === "category" && target.expense.category_slug === parsed.value;
+    if (parsed.action !== "category") {
+      const keyboard = parsed.action === "category_menu"
+        ? expenseCategoryKeyboard(target, undefined, { language, quickCategory: true })
+        : summaryKeyboard;
+      await answerCallback(token, callback.id, undefined, telegramClient);
+      try {
+        return await editMessageReplyMarkup(token, chatId, messageId, keyboard, telegramClient);
+      } catch (error) {
+        if (!isMessageNotModified(error)) throw error;
+        return { ok: true };
+      }
+    }
+    const changedAt = now();
+    let expense = target.expense;
+    if (!alreadySelected) {
+      try {
+        ({ item: expense } = await applySavedExpenseEditorChange({
+          repository, telegramUserId, target, field: "category", value: parsed.value, now: changedAt
+        }));
+      } catch (error) {
+        return answerCallback(token, callback.id, editorMessageForCode(error.code, language), telegramClient);
+      }
+    }
+    const acknowledgement = alreadySelected
+      ? (language === "ru" ? "Уже выбрано." : "Already selected.")
+      : (language === "ru" ? "Категория изменена." : "Category updated.");
+    await answerCallback(token, callback.id, acknowledgement, telegramClient).catch(() => {});
+    const dashboard = await repository.dashboard(telegramUserId, changedAt).catch(() => null);
+    const text = formatSavedSummary(Number(expense.amount_base), dashboard?.snapshot, { language, expenses: [expense] });
+    try {
+      return await editMessageText(token, chatId, messageId, text, summaryKeyboard, telegramClient);
+    } catch (error) {
+      if (!isMessageNotModified(error)) throw error;
+      return { ok: true };
+    }
   }
   const redraw = (nextTarget = target, keyboard = expenseEditorKeyboard(target, { language })) => editMessageText(
     token, callback.message.chat.id, callback.message.message_id,

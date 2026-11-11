@@ -166,8 +166,9 @@ test("safe text message is saved immediately with edit and delete actions", asyn
   const saved = calls.find((call) => ["sendMessage", "editMessageText"].includes(call.method) && /Записал/.test(call.text));
   assert.ok(saved);
   assert.match(saved.text, /кофе/);
-  assert.equal(saved.replyMarkup.inline_keyboard[0][0].callback_data, "ee:x:91:o");
-  assert.equal(saved.replyMarkup.inline_keyboard[0][1].callback_data, "ee:x:91:del");
+  assert.equal(saved.replyMarkup.inline_keyboard[0][0].callback_data, "ee:x:91:q:cm");
+  assert.equal(saved.replyMarkup.inline_keyboard[1][0].callback_data, "ee:x:91:o");
+  assert.equal(saved.replyMarkup.inline_keyboard[1][1].callback_data, "ee:x:91:del");
   assert.equal(repo.events.filter((event) => event.eventName === "expense_saved").length, 1);
 });
 
@@ -995,9 +996,52 @@ test("/last shows the saved expense card with edit and delete actions", async ()
   assert.ok(message);
   assert.match(message.text, /Записал|Saved/);
   assert.deepEqual(message.replyMarkup.inline_keyboard.map((row) => row.map((button) => button.callback_data ?? button.web_app?.url)), [
+    ["ee:x:91:q:cm"],
     ["ee:x:91:o", "ee:x:91:del"],
     ["http://localhost:3000?telegramUserId=100"]
   ]);
+});
+
+test("saved card opens every category and updates that same card without saving a second expense", async () => {
+  const calls = [];
+  const updates = [];
+  const repo = fakeRepository();
+  let expense = {
+    id: 91, amount_base: 120, amount_original: 120, currency_original: "THB",
+    description: "кроссовки", category_slug: "other", budget_impact: "regular"
+  };
+  repo.getLatestEditableExpenseForTelegramUser = async () => expense;
+  repo.getExpenseForTelegramUser = async (id, userId) => id === 91 && userId === 100 ? expense : null;
+  repo.updateExpenseForTelegramUser = async (id, userId, patch) => {
+    updates.push({ id, userId, patch });
+    expense = { ...expense, ...patch };
+    return expense;
+  };
+  const bot = createTelegramBot({
+    token: "test-token", miniAppUrl: "http://localhost:3000", repository: repo, telegramClient: capturingClient(calls)
+  });
+
+  await bot.handleUpdate(textUpdate("/last", 100));
+  const saved = calls.find((call) => call.method === "sendMessage");
+  const open = saved.replyMarkup.inline_keyboard[0][0];
+  assert.match(open.text, /Сменить категорию/);
+  await bot.handleUpdate(callbackUpdate(open.callback_data, 100));
+  const menu = calls.find((call) => call.method === "editMessageReplyMarkup");
+  const choices = menu.replyMarkup.inline_keyboard.flat();
+  assert.match(choices.find((button) => button.callback_data.endsWith(":other")).text, /^✅/u);
+  assert.ok(choices.some((button) => button.callback_data.endsWith(":entertainment")));
+  const gear = choices.find((button) => button.callback_data.endsWith(":gear"));
+  await bot.handleUpdate(callbackUpdate(gear.callback_data, 200));
+  assert.deepEqual(updates, []);
+  await bot.handleUpdate(callbackUpdate(gear.callback_data, 100));
+  await bot.handleUpdate(callbackUpdate(gear.callback_data, 100));
+  assert.deepEqual(updates, [{ id: 91, userId: 100, patch: { category_slug: "gear" } }]);
+  const changed = calls.find((call) => call.method === "editMessageText");
+  assert.equal(changed.messageId, menu.messageId);
+  assert.match(changed.text, /Вещи \/ экипировка/);
+  assert.match(changed.text, /Сегодня[\s\S]+Месяц/);
+  assert.equal(changed.replyMarkup.inline_keyboard[0][0].callback_data, open.callback_data);
+  assert.equal(calls.filter((call) => call.method === "sendMessage").length, 1);
 });
 
 test("editor Save returns a saved expense to its summary card", async () => {
@@ -1025,6 +1069,7 @@ test("editor Save returns a saved expense to its summary card", async () => {
   assert.ok(message);
   assert.match(message.text, /Записал|Saved/);
   assert.deepEqual(message.replyMarkup.inline_keyboard.map((row) => row.map((button) => button.callback_data ?? button.web_app?.url)), [
+    ["ee:x:91:q:cm"],
     ["ee:x:91:o", "ee:x:91:del"],
     ["http://localhost:3000?telegramUserId=100"]
   ]);
@@ -2428,6 +2473,7 @@ test("confirm callback edits the original draft message into saved summary with 
   assert.equal(edit.messageId, 55);
   assert.match(edit.text, /Записал|Saved/);
   assert.deepEqual(edit.replyMarkup.inline_keyboard.map((row) => row.map((button) => button.callback_data ?? button.web_app?.url)), [
+    ["ee:x:1:q:cm"],
     ["ee:x:1:o", "ee:x:1:del"],
     ["http://localhost:3000?telegramUserId=100"]
   ]);
