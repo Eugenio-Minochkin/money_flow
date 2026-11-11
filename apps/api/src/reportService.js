@@ -1,4 +1,4 @@
-import { formatMonthlyReport, formatWeeklyReport, formatWeeklyReportWidget } from "./reportFormat.js";
+import { formatMonthlyReport, formatWeeklyReport } from "./reportFormat.js";
 import { monthlyReportKeyboard, weeklyReportKeyboard } from "./reportKeyboards.js";
 import {
   monthlyPeriodForSend,
@@ -108,7 +108,6 @@ export function roundPartitionForDisplay({ total, planned, currency = "THB" }) {
 export function createReportService(options = {}) {
   const repository = options.repository;
   const sendMessage = options.sendMessage ?? (async () => null);
-  const sendWidget = options.sendWidget;
   const miniAppUrl = options.miniAppUrl;
   const now = options.now ?? (() => new Date());
 
@@ -206,7 +205,16 @@ export function createReportService(options = {}) {
     await safeRecordAppEvent(repository, user.id, `${reportType}_report_generated`, deliveryMetadata(report));
 
     try {
-      const response = await sendReport(user, reportType, period, report);
+      const response = await sendMessage({
+        chatId: Number(user.telegram_user_id),
+        reportType,
+        text: reportType === "monthly"
+          ? formatMonthlyReport(report, { language: user.interface_language })
+          : formatWeeklyReport(report, { language: user.interface_language }),
+        replyMarkup: reportType === "monthly"
+          ? monthlyReportKeyboard(miniAppUrl, Number(user.telegram_user_id), period, user.interface_language)
+          : weeklyReportKeyboard(miniAppUrl, Number(user.telegram_user_id), period, user.interface_language)
+      });
       await repository.markReportDeliverySent({
         userId: user.id,
         reportType,
@@ -244,31 +252,6 @@ export function createReportService(options = {}) {
       }
       return "failed";
     }
-  }
-
-  async function sendReport(user, reportType, period, report) {
-    const chatId = Number(user.telegram_user_id);
-    const language = user.interface_language;
-    const replyMarkup = reportType === "monthly"
-      ? monthlyReportKeyboard(miniAppUrl, chatId, period, language)
-      : weeklyReportKeyboard(miniAppUrl, chatId, period, language);
-
-    if (reportType === "weekly" && sendWidget) {
-      const widget = formatWeeklyReportWidget(report, { language });
-      if (widget) {
-        try {
-          return await sendWidget({ chatId, replyMarkup, ...widget });
-        } catch (error) {
-          // Only fall back after an explicit rejection. A timeout may have delivered the widget.
-          if (error?.status !== 400 && error?.status !== 404) throw error;
-        }
-      }
-    }
-
-    const text = reportType === "monthly"
-      ? formatMonthlyReport(report, { language })
-      : formatWeeklyReport(report, { language });
-    return sendMessage({ chatId, reportType, text, replyMarkup });
   }
 
   async function claimReportDelivery(input) {

@@ -73,7 +73,6 @@ test("critical production env keys from the example are passed to api container"
   const configEnv = configEnvKeys(readText("apps/api/src/config.js"));
   const derivedOrInternalEnv = new Set(["DATABASE_URL", "MINI_APP_URL", "PORT"]);
   const criticalProductionEnv = [
-    "TELEGRAM_WEEKLY_REPORT_WIDGET_ENABLED",
     "EXPENSE_FAST_PATH_MODE",
     "EXPENSE_PARSER_LLM_TIMEOUT_MS",
     "DAILY_REMINDER_GLOBAL_ENABLED",
@@ -100,5 +99,4 @@ test("critical production env keys from the example are passed to api container"
   assert.equal(composeEnv.get("DAILY_REMINDER_GLOBAL_ENABLED"), "${DAILY_REMINDER_GLOBAL_ENABLED:-true}");
   assert.equal(composeEnv.get("DAILY_REMINDER_ROLLOUT_PERCENT"), "${DAILY_REMINDER_ROLLOUT_PERCENT:-0}");
   assert.equal(composeEnv.get("REQUIRE_TELEGRAM_INIT_DATA"), "${REQUIRE_TELEGRAM_INIT_DATA:-true}");
-  assert.equal(composeEnv.get("TELEGRAM_WEEKLY_REPORT_WIDGET_ENABLED"), "${TELEGRAM_WEEKLY_REPORT_WIDGET_ENABLED:-true}");
 });
