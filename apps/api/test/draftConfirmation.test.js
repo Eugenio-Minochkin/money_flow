@@ -34,4 +34,5 @@ test("API draft confirmation returns saved expenses when the dashboard snapshot 
     alreadySaved: false
   });
   assert.match(messageUpdates[0].text, /Budget summary is temporarily unavailable\./);
+  assert.equal(messageUpdates[0].replyMarkup.inline_keyboard[0][0].callback_data, "ee:x:1:q:cm");
 });
