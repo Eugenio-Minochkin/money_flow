@@ -1117,11 +1117,11 @@ test("saved rich receipt keeps compact spending rows after category selection", 
   assert.equal(calls.filter((call) => call.method === "deleteMessage").at(-1).messageId, 20);
 });
 
-test("saved receipt sends no media and uses the text keyboard if Telegram rejects rich messages", async (t) => {
+test("saved receipt falls back to the rich then text keyboard after explicit Telegram rejection", async (t) => {
   const requests = [];
   t.mock.method(globalThis, "fetch", async (url, { body }) => {
     requests.push({ url, body });
-    return url.endsWith("/sendRichMessage")
+    return url.endsWith("/sendRichMessage") || url.endsWith("/sendWidget")
       ? new Response("Bad Request", { status: 400 })
       : Response.json({ ok: true, result: { message_id: 21 } });
   });
@@ -1136,12 +1136,120 @@ test("saved receipt sends no media and uses the text keyboard if Telegram reject
   });
 
   assert.equal(response.result.message_id, 21);
-  assert.deepEqual(requests.map(({ url }) => url.split("/").at(-1)), ["sendRichMessage", "sendMessage"]);
-  const { rich_message: rich } = JSON.parse(requests[0].body);
+  assert.deepEqual(requests.map(({ url }) => url.split("/").at(-1)), ["sendWidget", "sendRichMessage", "sendMessage"]);
+  const { rich_message: rich } = JSON.parse(requests[1].body);
   assert.ok(rich.blocks.every((block) => block.type !== "photo"));
   assert.match(JSON.stringify(rich.blocks), /▰{4}▱{6}/);
   assert.match(JSON.stringify(rich.blocks), /▰{7}▱{3}/);
-  assert.deepEqual(JSON.parse(requests[1].body).reply_markup, replyMarkup);
+  assert.deepEqual(JSON.parse(requests[2].body).reply_markup, replyMarkup);
+});
+
+test("saved expense widget sends interactive HTML from /last and handles owned category changes", async () => {
+  const calls = [];
+  const repository = fakeRepository();
+  let expense = { id: 91, description: "кофе", category_slug: "food_cafe", amount_base: 70, amount_original: 70, currency_original: "THB" };
+  repository.getLatestEditableExpenseForTelegramUser = async () => expense;
+  repository.getExpenseForTelegramUser = async (_id, userId) => userId === 100 ? expense : null;
+  repository.updateExpenseForTelegramUser = async (_id, userId, patch) => {
+    assert.equal(userId, 100);
+    return expense = {
+      ...expense, ...patch,
+      ...(patch.amount == null ? {} : { amount_original: patch.amount, amount_base: patch.amount })
+    };
+  };
+  const telegramClient = {
+    ...capturingClient(calls),
+    async sendWidget(message) { calls.push({ method: "sendWidget", ...message }); return { ok: true, result: { message_id: 20 } }; },
+    async editMessageWidgetData(message) { calls.push({ method: "editMessageWidgetData", ...message }); return { ok: true }; },
+    async answerWidgetQuery(message) { calls.push({ method: "answerWidgetQuery", ...message }); return { ok: true }; }
+  };
+  const bot = createTelegramBot({ token: "test-token", miniAppUrl: "http://localhost:3000", repository, telegramClient });
+  await bot.handleUpdate(textUpdate("/last", 100));
+  const sent = calls.find((call) => call.method === "sendWidget");
+  assert.equal(sent.allowQueries, true);
+  assert.match(sent.html, /TelegramWidget/);
+  assert.equal(JSON.parse(sent.chatData).name, "кофе");
+  assert.equal(sent.replyMarkup.inline_keyboard.length, 1);
+
+  const update = (userId) => ({ widget_query: {
+    id: "w1", from: { id: userId }, chat: { id: 100, type: "private" }, message_id: 20,
+    type: { type: "data" }, data: "sw:91:cat:gear"
+  } });
+  await bot.handleUpdate(update(200));
+  assert.equal(expense.category_slug, "food_cafe");
+  await bot.handleUpdate(update(100));
+  assert.equal(expense.category_slug, "gear");
+  const edited = calls.find((call) => call.method === "editMessageWidgetData");
+  assert.equal(edited.messageId, 20);
+  assert.equal(JSON.parse(edited.chatData).category, "gear");
+  assert.equal(calls.filter((call) => call.method === "answerWidgetQuery").at(-1).data, "ok");
+  repository.startTelegramInputSession = async (_userId, input) => {
+    assert.equal(input.field, "amount");
+    assert.equal(input.messageId, 20);
+    return { outcome: "started", session: { id: 7 } };
+  };
+  repository.setTelegramInputSessionPrompt = async () => ({ outcome: "stored" });
+  telegramClient.sendMessage = async (message) => {
+    calls.push({ method: "sendMessage", ...message });
+    return { ok: true, result: { message_id: 301 } };
+  };
+  const amount = update(100);
+  amount.widget_query.data = "sw:91:amount";
+  await bot.handleUpdate(amount);
+  assert.equal(calls.filter((call) => call.method === "answerWidgetQuery").at(-1).data, "ok");
+  assert.match(calls.filter((call) => call.method === "sendMessage").at(-1).text, /новую сумму|new amount/);
+  repository.getRoutableTelegramInputSession = async () => ({
+    id: 7, target_type: "expense", target_id: 91, field: "amount", chat_id: 100, message_id: 20, prompt_message_id: 301
+  });
+  repository.consumeTelegramInputSession = async (_userId, { apply }) => {
+    await apply({ client: {} });
+    repository.getRoutableTelegramInputSession = async () => null;
+    return { outcome: "completed" };
+  };
+  await bot.handleUpdate(textUpdate("80", 100));
+  const refreshed = calls.filter((call) => call.method === "editMessageWidgetData").at(-1);
+  assert.equal(refreshed.messageId, 20);
+  assert.match(JSON.parse(refreshed.chatData).amount, /80 THB/);
+  assert.equal(calls.filter((call) => call.method === "sendWidget").length, 1);
+
+  const deleted = [];
+  repository.deleteExpenseForTelegramUser = async (id, userId) => { deleted.push([id, userId]); };
+  const remove = update(100);
+  remove.widget_query.data = "sw:91:del:55";
+  await bot.handleUpdate(remove);
+  assert.deepEqual(deleted, [[91, 100]]);
+  assert.deepEqual(calls.filter((call) => call.method === "sendMessage").at(-1).replyParameters,
+    { message_id: 55, allow_sending_without_reply: true });
+  assert.equal(calls.filter((call) => call.method === "deleteMessage").at(-1).messageId, 20);
+  assert.equal(calls.filter((call) => call.method === "answerWidgetQuery").at(-1).data, "deleted");
+});
+
+test("saved expense widget replaces the Smart Save loader only after confirmed delivery", async (t) => {
+  for (const accepted of [true, false]) await t.test(accepted ? "confirmed" : "ambiguous", async () => {
+    const calls = [];
+    const repository = fakeRepository();
+    repository.listClosedReserveMonthsForTelegramUser = async () => [];
+    const expense = { id: 91, description: "кофе", category_slug: "food_cafe", amount_base: 70, amount_original: 70, currency_original: "THB" };
+    repository.saveDraftAsExpense = async () => ({ expenses: [expense], dashboardSnapshot: (await repository.dashboard()).snapshot });
+    const telegramClient = {
+      ...capturingClient(calls),
+      async sendMessage(message) { calls.push({ method: "sendMessage", ...message }); return { ok: true, result: { message_id: 20 } }; },
+      async sendWidget(message) {
+        calls.push({ method: "sendWidget", ...message });
+        if (!accepted) throw new Error("response lost");
+        return { ok: true, result: { message_id: 21 } };
+      }
+    };
+    const bot = createTelegramBot({
+      token: "test-token", miniAppUrl: "http://localhost:3000", repository, telegramClient,
+      expenseParser: { async parse() { return { expenses: [{ amount: 70, currency: "THB", description: "кофе", category_slug: "food_cafe", category_source: "parser", needs_review: false, spent_at: "2026-08-14T08:00:00.000Z", budget_impact: "regular" }] }; } }
+    });
+    await bot.handleUpdate({ message: { message_id: 55, chat: { id: 10 }, from: { id: 100, first_name: "M" }, text: "кофе 70 бат" } });
+    assert.deepEqual(calls.map((call) => call.method), accepted
+      ? ["sendMessage", "sendWidget", "deleteMessage"] : ["sendMessage", "sendWidget"]);
+    assert.deepEqual(calls[1].replyParameters, { message_id: 55, allow_sending_without_reply: true });
+    if (accepted) assert.equal(calls[2].messageId, 20);
+  });
 });
 
 test("editor Save returns a saved expense to its summary card", async () => {
@@ -3792,7 +3900,7 @@ test("sendMessage retries as plain text when Telegram rejects HTML", async () =>
   globalThis.fetch = async (url, request) => {
     const body = JSON.parse(request.body);
     requests.push({ url: String(url), body });
-    if (body.rich_message) return new Response("Rich messages unavailable", { status: 400 });
+    if (body.rich_message || body.html) return new Response("Rich messages unavailable", { status: 400 });
     if (/<\/?b>/.test(body.text ?? "")) {
       return {
         ok: false,
