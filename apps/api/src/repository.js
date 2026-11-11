@@ -2679,7 +2679,7 @@ export function createRepository(pool, options = {}) {
         })),
         ...unpaidPlanned
       ];
-      const topCategoryResult = categoryPercentages(allCategories, metrics.totalSpent, { language, limit: 5 });
+      const topCategoryResult = categoryPercentages(allCategories, metrics.totalSpent, { language, limit: isWeekly ? 3 : 5 });
 
       let comparison = { available: false };
       let changes = [];
