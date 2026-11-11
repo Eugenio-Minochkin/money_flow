@@ -4003,31 +4003,27 @@ async function tryDeliverSavedExpenseReceipt({ token, telegramClient, chatId, me
   const isEdit = messageId != null;
   const clientMethod = isEdit ? "editRichMessage" : "sendRichMessage";
   if (!replyMarkup?.inline_keyboard || (telegramClient ? !telegramClient[clientMethod] : !token)) return null;
-  const receipt = buildSavedExpenseReceipt(options.savedExpenseReceipt);
-  if (!receipt) return null;
+  const richMessage = buildSavedExpenseReceipt(options.savedExpenseReceipt);
+  if (!richMessage) return null;
   const richMarkup = {
     inline_keyboard: replyMarkup.inline_keyboard
       .map((row) => row.filter((button) => !/:q:cm$|:del$/u.test(button.callback_data ?? "")))
       .filter((row) => row.length)
   };
-  const { richMessage, attachments } = receipt;
   try {
     if (telegramClient) {
       return await telegramClient[clientMethod]({
-        chatId, messageId, richMessage, attachments, replyMarkup: richMarkup,
+        chatId, messageId, richMessage, replyMarkup: richMarkup,
         ...(!isEdit && options.replyParameters ? { replyParameters: options.replyParameters } : {})
       });
     }
-    const form = new FormData();
-    form.set("chat_id", String(chatId));
-    if (isEdit) form.set("message_id", String(messageId));
-    else if (options.replyParameters) form.set("reply_parameters", JSON.stringify(options.replyParameters));
-    form.set("rich_message", JSON.stringify(richMessage));
-    form.set("reply_markup", JSON.stringify(richMarkup));
-    for (const { name, data } of attachments) {
-      form.set(name, new Blob([data], { type: "image/png" }), name + ".png");
-    }
-    return await telegramRequest(token, isEdit ? "editMessageText" : "sendRichMessage", form, {
+    const body = {
+      chat_id: chatId,
+      rich_message: richMessage,
+      reply_markup: richMarkup,
+      ...(isEdit ? { message_id: messageId } : { reply_parameters: options.replyParameters })
+    };
+    return await telegramRequest(token, isEdit ? "editMessageText" : "sendRichMessage", body, {
       signal: options.signal,
       requestTimeoutMs: Math.min(options.requestTimeoutMs ?? 2500, 2500)
     });

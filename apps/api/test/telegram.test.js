@@ -1044,7 +1044,7 @@ test("saved card opens every category and updates that same card without saving 
   assert.equal(calls.filter((call) => call.method === "sendMessage").length, 1);
 });
 
-test("saved rich receipt opens categories in the message and keeps the graphical bars after selection", async () => {
+test("saved rich receipt keeps compact spending rows after category selection", async () => {
   const calls = [];
   const repository = fakeRepository();
   let expense = { id: 91, description: "кофе", category_slug: "food_cafe", amount_base: 70, amount_original: 70, currency_original: "THB" };
@@ -1069,10 +1069,10 @@ test("saved rich receipt opens categories in the message and keeps the graphical
   await bot.handleUpdate({ message: { message_id: 55, chat: { id: 10 }, from: { id: 100, first_name: "M" }, text: "кофе 70 бат" } });
   const receipt = calls.find((call) => call.method === "editRichMessage");
   assert.equal(receipt.messageId, 20);
-  assert.match(receipt.richMessage.blocks[1].text.button.text, /кофе/);
-  assert.match(receipt.richMessage.blocks[2].text.button.text, /70.*THB/);
-  assert.match(receipt.richMessage.blocks[1].text.button.callback_data, /:f:d$/);
-  assert.match(receipt.richMessage.blocks[2].text.button.callback_data, /:f:a$/);
+  assert.deepEqual(receipt.richMessage.blocks[1].text[0], { type: "bold", text: "кофе" });
+  assert.match(receipt.richMessage.blocks[2].text[0].text, /70.*THB/);
+  assert.match(receipt.richMessage.blocks[1].text.at(-1).button.callback_data, /:f:d$/);
+  assert.match(receipt.richMessage.blocks[2].text.at(-1).button.callback_data, /:f:a$/);
   const remove = receipt.richMessage.blocks.find((block) => block.type === "buttons");
   assert.equal(remove.align, "center");
   assert.equal(remove.buttons[0].style, "danger");
@@ -1080,15 +1080,20 @@ test("saved rich receipt opens categories in the message and keeps the graphical
   const categories = receipt.richMessage.blocks.find((block) => block.type === "details");
   assert.match(JSON.stringify(categories.summary), /Категория.*Еда и кафе/);
   assert.ok(!receipt.replyMarkup.inline_keyboard.flat().some((button) => button.callback_data?.endsWith(":q:cm")));
-  assert.equal(receipt.richMessage.blocks.filter((block) => block.type === "photo").length, 2);
-  assert.equal(receipt.attachments.length, 2);
+  assert.ok(receipt.richMessage.blocks.every((block) => block.type !== "photo"));
+  assert.equal(receipt.attachments, undefined);
   const gear = categories.blocks.map((block) => block.text.button).find((button) => button.callback_data.endsWith(":gear"));
   await bot.handleUpdate(callbackUpdate(gear.callback_data, 100));
   const changed = calls.filter((call) => call.method === "editRichMessage").at(-1);
   assert.equal(changed.messageId, 20);
   assert.match(JSON.stringify(changed.richMessage.blocks.find((block) => block.type === "details").summary), /Вещи \/ экипировка/);
-  assert.equal(changed.attachments.length, 2);
-  assert.match(JSON.stringify(changed.richMessage.blocks.find((block) => JSON.stringify(block.summary)?.includes("Прогноз"))), /21[\s\u00a0]800/);
+  const budgetRows = changed.richMessage.blocks.filter((block) => block.type === "paragraph" && JSON.stringify(block.text).includes("▰"));
+  assert.equal(budgetRows.length, 2);
+  assert.match(JSON.stringify(budgetRows[0]), /Сегодня.*1[\s\u00a0]540.*▰{9}▱/);
+  assert.match(JSON.stringify(budgetRows[1]), /Месяц.*12[\s\u00a0]840.*▰{5}▱{5}/);
+  const forecast = changed.richMessage.blocks.find((block) => JSON.stringify(block.summary)?.includes("Прогноз"));
+  assert.match(JSON.stringify(forecast.summary), /21[\s\u00a0]800/);
+  assert.notEqual(forecast.is_open, true);
 
   const deleted = [];
   repository.deleteExpenseForTelegramUser = async (id, userId) => { deleted.push([id, userId]); };
@@ -1112,7 +1117,7 @@ test("saved rich receipt opens categories in the message and keeps the graphical
   assert.equal(calls.filter((call) => call.method === "deleteMessage").at(-1).messageId, 20);
 });
 
-test("saved receipt uploads two images and uses the text keyboard if Telegram rejects rich messages", async (t) => {
+test("saved receipt sends no media and uses the text keyboard if Telegram rejects rich messages", async (t) => {
   const requests = [];
   t.mock.method(globalThis, "fetch", async (url, { body }) => {
     requests.push({ url, body });
@@ -1132,15 +1137,10 @@ test("saved receipt uploads two images and uses the text keyboard if Telegram re
 
   assert.equal(response.result.message_id, 21);
   assert.deepEqual(requests.map(({ url }) => url.split("/").at(-1)), ["sendRichMessage", "sendMessage"]);
-  const form = requests[0].body;
-  const rich = JSON.parse(form.get("rich_message"));
-  const media = rich.blocks.filter((block) => block.type === "photo");
-  assert.deepEqual(media.map((block) => block.photo.media), ["attach://today_progress", "attach://month_progress"]);
-  for (const name of ["today_progress", "month_progress"]) {
-    const png = Buffer.from(await form.get(name).arrayBuffer());
-    assert.equal(png.subarray(1, 4).toString(), "PNG");
-    assert.ok(png.readUInt32BE(16) / png.readUInt32BE(20) <= 20);
-  }
+  const { rich_message: rich } = JSON.parse(requests[0].body);
+  assert.ok(rich.blocks.every((block) => block.type !== "photo"));
+  assert.match(JSON.stringify(rich.blocks), /▰{4}▱{6}/);
+  assert.match(JSON.stringify(rich.blocks), /▰{7}▱{3}/);
   assert.deepEqual(JSON.parse(requests[1].body).reply_markup, replyMarkup);
 });
 
@@ -3790,9 +3790,10 @@ test("sendMessage retries as plain text when Telegram rejects HTML", async () =>
   const requests = [];
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (url, request) => {
-    requests.push({ url: String(url), body: JSON.parse(request.body) });
-    const hasHtmlTags = /<\/?b>/.test(requests[requests.length - 1].body.text ?? "");
-    if (hasHtmlTags && requests.filter((r) => r.url.endsWith("/sendMessage") || r.url.endsWith("/editMessageText")).length <= 2) {
+    const body = JSON.parse(request.body);
+    requests.push({ url: String(url), body });
+    if (body.rich_message) return new Response("Rich messages unavailable", { status: 400 });
+    if (/<\/?b>/.test(body.text ?? "")) {
       return {
         ok: false,
         status: 400,
@@ -3831,7 +3832,7 @@ test("sendMessage retries as plain text when Telegram rejects HTML", async () =>
     globalThis.fetch = originalFetch;
   }
 
-  const draftRequests = requests.filter((request) => request.url.endsWith("/editMessageText"));
+  const draftRequests = requests.filter((request) => request.url.endsWith("/editMessageText") && !request.body.rich_message);
   assert.equal(draftRequests.length, 2);
   assert.equal(draftRequests[0].body.parse_mode, "HTML");
   assert.equal(draftRequests[1].body.parse_mode, undefined);
