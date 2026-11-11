@@ -185,6 +185,77 @@ test("runDueReports sends monthly before weekly when both are due", async () => 
   ]);
 });
 
+test("only the weekly report uses a private widget with the original history button", async () => {
+  const repo = reportRepo();
+  const sent = [];
+  const widgets = [];
+  const service = createReportService({
+    repository: repo,
+    miniAppUrl: "https://example.test",
+    now: () => new Date("2024-07-01T02:30:00Z"),
+    sendMessage: async (message) => sent.push(message),
+    sendWidget: async (message) => {
+      widgets.push(message);
+      return { ok: true, result: { message_id: 42 } };
+    }
+  });
+
+  assert.equal((await service.runDueReports()).sent, 2);
+  assert.deepEqual(sent.map((message) => message.reportType), ["monthly"]);
+  assert.equal(widgets.length, 1);
+  const [widget] = widgets;
+  assert.equal(widget.chatId, repo.candidate.telegram_user_id);
+  assert.match(widget.caption, /Weekly summary[\s\S]+100 THB/);
+  assert.match(widget.chatData, /Food/);
+  assert.doesNotMatch(widget.html, /Food|100 THB/);
+  const button = widget.replyMarkup.inline_keyboard[0][0];
+  assert.equal(button.text, "Open week");
+  assert.equal(new URL(button.web_app.url).searchParams.get("reportKey"), "2024-W26");
+  assert.equal(repo.sent.find((delivery) => delivery.reportType === "weekly").telegramMessageId, 42);
+});
+
+test("weekly reports use text when the widget sender is disabled", async () => {
+  const sent = [];
+  const service = createReportService({
+    repository: reportRepo(),
+    miniAppUrl: "https://example.test",
+    now: () => new Date("2024-07-01T02:30:00Z"),
+    sendMessage: async (message) => sent.push(message)
+  });
+
+  assert.equal((await service.runDueReports()).sent, 2);
+  assert.deepEqual(sent.map((message) => message.reportType), ["monthly", "weekly"]);
+});
+
+for (const [name, error, useTextFallback] of [
+  ["explicit rejection", Object.assign(new Error("Widget rejected"), { status: 400 }), true],
+  ["unknown method", Object.assign(new Error("Unknown method"), { status: 404 }), true],
+  ["timeout", new Error("Timed out"), false]
+]) {
+  test(`weekly widget ${name} ${useTextFallback ? "falls back to text" : "uses report failure handling"}`, async () => {
+    const repo = reportRepo();
+    const sent = [];
+    let attempts = 0;
+    const service = createReportService({
+      repository: repo,
+      miniAppUrl: "https://example.test",
+      now: () => new Date("2024-07-01T02:30:00Z"),
+      sendMessage: async (message) => sent.push(message),
+      sendWidget: async () => {
+        attempts += 1;
+        throw error;
+      }
+    });
+
+    const result = await service.runDueReports();
+    assert.equal(attempts, 1);
+    assert.equal(result.failed, useTextFallback ? 0 : 1);
+    assert.deepEqual(sent.map((message) => message.reportType), useTextFallback ? ["monthly", "weekly"] : ["monthly"]);
+    if (useTextFallback) assert.match(sent[1].text, /Top categories/);
+    assert.equal(repo.claimed.filter((delivery) => delivery.reportType === "weekly").length, 1);
+  });
+}
+
 test("runDueReports dry-run does not create deliveries or send Telegram messages", async () => {
   const sent = [];
   const repo = reportRepo();

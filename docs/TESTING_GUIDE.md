@@ -50,6 +50,7 @@ Run `node --test apps/api/test/exchangeRates.test.js` for provider coverage and 
 - Weekly and monthly report period boundaries, delivery idempotency, dry-run backfill, blocked-bot behavior, and stale-`pending` recovery: no reclaim before 15 minutes, one automatic retry outside the normal send window, atomic concurrent claims, and terminal `delivery_outcome_unknown` after two attempts.
 - Report accounting: paid planned actual linked amounts, budget top-ups as capacity, large one-offs inside total but outside daily projection, and hidden outside-budget block unless an existing model supplies it.
 - Weekly report presentation: localized category names (no internal keys leaked in RU or EN), top-3 categories with percentages, up to five largest expenses, week-over-week comparison only when the previous week had spending, first-week handling, threshold-gated "what changed", needs-attention from unpaid planned payments (with stronger overdue wording), and a data-grounded takeaway that hides when unsupported.
+- For a dev bot, verify one weekly report on the normal scheduler. Check the five-category and five-expense limits, that the full view shows meaningful changes before a tap, the caption with any unpaid payments in clients without widget support, and the History link for the exact week. With `TELEGRAM_WEEKLY_REPORT_WIDGET_ENABLED=false`, check that the scheduler sends the full text report. Automated tests cover the private payload, size limits, text fallback after explicit rejection, and timeout handling.
 
 ## Practical Test Pointers
 

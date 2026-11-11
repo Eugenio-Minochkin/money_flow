@@ -8,6 +8,8 @@ Independent text captures may finish parsing out of arrival order, but saves and
 
 Telegram capture replies must reflect the saved financial state: a delivery failure after saving retries the saved result and must not invite the user to resend an already saved expense.
 
+The weekly Telegram report widget puts the date range, spending total, and any unpaid-payment notices in the caption. Show up to five category amounts and shares, the five largest expenses, and any meaningful changes in the full view. Offer the changes tab only when there are meaningful changes.
+
 ## Dashboard
 
 - Keep the dashboard compact.
