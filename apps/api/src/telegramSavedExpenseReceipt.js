@@ -6,12 +6,13 @@ import { formatMoney } from "./telegramFormat.js";
 const WIDTH = 300;
 const HEIGHT = 16;
 const BAR_HEIGHT = 8;
-const TRACK_COLOR = [211, 224, 235];
-const DAY_COLOR = [39, 128, 94];
-const MONTH_COLOR = [44, 107, 165];
+const TRACK_COLOR = [220, 232, 222];
+const DAY_COLOR = [66, 109, 78];
+const MONTH_COLOR = [82, 119, 93];
+const FORECAST_COLOR = [196, 160, 91];
 const OVER_BUDGET_COLOR = [190, 62, 64];
 
-export function buildSavedExpenseReceipt({ expense, snapshot, language }) {
+export function buildSavedExpenseReceipt({ expense, snapshot, language, confirmDelete = false }) {
   if (!Number.isSafeInteger(Number(expense?.id)) || Number(expense.id) <= 0 || !snapshot) return null;
   const en = language === "en";
   const currency = snapshot.baseCurrency ?? expense.currency_original ?? "THB";
@@ -26,19 +27,22 @@ export function buildSavedExpenseReceipt({ expense, snapshot, language }) {
     type: "button",
     button: { ...choice, style: "link" }
   }));
+  const key = `ee:x:${expense.id}`;
+  const editValue = (label, field) => paragraph({
+    type: "button",
+    button: { text: `${label} ✎`, callback_data: `${key}:f:${field}`, style: "link" }
+  });
   const blocks = [
-    paragraph(bold(en ? "✓ Saved" : "✓ Записал")),
-    paragraph([
-      ...(expense.description ? [bold(expense.description), "  ·  "] : []),
-      bold(money(expense.amount_original ?? expense.amount_base, expense.currency_original ?? currency))
-    ]),
+    paragraph(bold(en ? "✅ Saved" : "✅ Записал")),
+    editValue(expense.description || (en ? "Add a description" : "Добавить название"), "d"),
+    editValue(money(expense.amount_original ?? expense.amount_base, expense.currency_original ?? currency), "a"),
     { type: "details", summary: [en ? "Category  ·  " : "Категория  ·  ", bold(category)], blocks: categoryChoices }
   ];
   const attachments = [];
-  const appendProgress = (name, percent, limit, color) => {
+  const appendProgress = (name, percent, limit, color, forecastPercent) => {
     if (!(limit > 0) || !Number.isFinite(percent)) return;
     blocks.push({ type: "photo", photo: { type: "photo", media: "attach://" + name } });
-    attachments.push({ name, data: progressImage(percent, percent > 100 ? OVER_BUDGET_COLOR : color) });
+    attachments.push({ name, data: progressImage(percent, percent > 100 ? OVER_BUDGET_COLOR : color, forecastPercent) });
   };
 
   blocks.push(paragraph([bold(en ? "Today · regular" : "Сегодня · обычные"), "  ", money(snapshot.today), " / ", money(snapshot.dayPlanLimit)]));
@@ -56,14 +60,42 @@ export function buildSavedExpenseReceipt({ expense, snapshot, language }) {
   }
 
   blocks.push(paragraph([bold(en ? "Month" : "Месяц"), "  ", money(snapshot.month), " / ", money(snapshot.monthlyBudget)]));
-  appendProgress("month_progress", snapshot.budgetProgressPercent, snapshot.monthlyBudget, MONTH_COLOR);
+  const forecast = snapshot.forecastMonthTotal;
+  const hasForecast = Number.isFinite(forecast) && snapshot.monthlyBudget > 0;
+  appendProgress("month_progress", snapshot.budgetProgressPercent, snapshot.monthlyBudget, MONTH_COLOR,
+    hasForecast ? forecast / snapshot.monthlyBudget * 100 : undefined);
   blocks.push(paragraph([en ? "Free after planned payments  " : "Свободно после плановых  ", bold(money(snapshot.freeRemaining))]));
   if (Number(snapshot.plannedRemaining) > 0) {
     blocks.push(paragraph([en ? "Reserved for planned payments  " : "В резерве на плановые  ", money(snapshot.plannedRemaining)]));
   }
-  if (Number.isFinite(snapshot.forecastMonthTotal)) {
-    blocks.push(paragraph([en ? "Month forecast  " : "Прогноз на месяц  ", money(snapshot.forecastMonthTotal)]));
+  if (hasForecast) {
+    const difference = Math.round((forecast - snapshot.monthlyBudget) * 100) / 100;
+    const comparison = difference === 0 ? (en ? "On budget" : "Ровно по бюджету")
+      : `${money(Math.abs(difference))} ${difference > 0 ? (en ? "above budget" : "выше бюджета") : (en ? "below budget" : "ниже бюджета")}`;
+    blocks.push({
+      type: "details",
+      summary: [en ? "Month-end forecast  ·  " : "Прогноз на конец месяца  ·  ", bold(money(forecast))],
+      is_open: true,
+      blocks: [paragraph(comparison), paragraph(en
+        ? "At the current pace, including planned payments"
+        : "При текущем темпе, с учётом плановых платежей")]
+    });
   }
+  if (confirmDelete) blocks.push({
+    type: "pullquote",
+    text: [
+      bold(en ? "Delete this expense?" : "Удалить эту трату?"),
+      en ? "\nIt will no longer count toward the budget." : "\nТрата перестанет учитываться в бюджете."
+    ]
+  });
+  blocks.push({
+    type: "buttons",
+    align: "center",
+    buttons: confirmDelete ? [
+      { text: en ? "Keep" : "Оставить", callback_data: `${key}:r:back` },
+      { text: en ? "Delete" : "Удалить", callback_data: `${key}:r:delok`, style: "danger" }
+    ] : [{ text: en ? "🗑 Delete expense" : "🗑 Удалить трату", callback_data: `${key}:r:del`, style: "danger" }]
+  });
   return { richMessage: { blocks, skip_entity_detection: true }, attachments };
 }
 
@@ -75,15 +107,19 @@ function bold(text) {
   return { type: "bold", text };
 }
 
-function progressImage(percent, color) {
+function progressImage(percent, color, forecastPercent) {
   const fillWidth = Math.round(WIDTH * Math.min(100, Math.max(0, percent)) / 100);
+  const marker = Number.isFinite(forecastPercent)
+    ? Math.max(0, Math.min(WIDTH - 3, Math.round(WIDTH * forecastPercent / 100) - 1))
+    : -1;
   const rowSize = 1 + WIDTH * 4;
   const pixels = Buffer.alloc(rowSize * HEIGHT);
   for (let y = 0; y < HEIGHT; y += 1) {
     for (let x = 0; x < WIDTH; x += 1) {
-      if (!insideBar(x, y, WIDTH)) continue;
+      const onMarker = marker >= 0 && x >= marker && x < marker + 3 && y >= 2 && y < HEIGHT - 2;
+      if (!onMarker && !insideBar(x, y, WIDTH)) continue;
       const pixel = y * rowSize + 1 + x * 4;
-      pixels.set(insideBar(x, y, fillWidth) ? color : TRACK_COLOR, pixel);
+      pixels.set(onMarker ? FORECAST_COLOR : insideBar(x, y, fillWidth) ? color : TRACK_COLOR, pixel);
       pixels[pixel + 3] = 255;
     }
   }

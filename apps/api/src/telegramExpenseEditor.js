@@ -41,6 +41,11 @@ export function parseExpenseEditorCallback(data) {
 
   const action = parts[offset];
   const value = parts[offset + 1];
+  if (action === "r" && target.type === "expense" && parts.length === offset + 2) {
+    if (value === "del" || value === "back") return { ...target, action: "receipt", confirmDelete: value === "del" };
+    if (value === "delok") return { ...target, action: "delete_confirm", receipt: true };
+    return null;
+  }
   if (action === "q" && target.type === "expense") {
     const quickTarget = { ...target, quickCategory: true };
     if (parts.length === offset + 2 && value === "cm") return { ...quickTarget, action: "category_menu" };
