@@ -123,8 +123,6 @@ export function formatSavedSummary(total, snapshot, options = {}) {
   const dayPlanLimit = Number(snapshot.dayPlanLimit ?? 0);
   const dayRemaining = Number(snapshot.dayRemaining ?? 0);
   const dayOverrun = Number(snapshot.dayOverrun ?? 0);
-  const dayProgressBar = savedProgressBar(snapshot.dayProgressPercent, dayPlanLimit);
-  const monthProgressBar = savedProgressBar(snapshot.budgetProgressPercent, snapshot.monthlyBudget);
   const plannedToday = Number(snapshot.plannedToday ?? snapshot.plannedTodayTotal ?? 0);
   const largeToday = Number(snapshot.largeToday ?? snapshot.largeTodayTotal ?? 0);
   const totalToday = todayTotal + plannedToday + largeToday;
@@ -147,7 +145,6 @@ export function formatSavedSummary(total, snapshot, options = {}) {
     "",
     `── <b>${t(language, "today")}</b> ──`,
     todayLine,
-    ...(dayProgressBar ? [dayProgressBar] : []),
     remainingLine
   ];
   if (plannedToday !== 0) lines.push(`🧾 ${t(language, "plannedToday")}: <b>${formatMoney(plannedToday, currency, language)}</b>`);
@@ -159,7 +156,6 @@ export function formatSavedSummary(total, snapshot, options = {}) {
     "",
     `── <b>${t(language, "month")}</b> ──`,
     `📅 <b>${t(language, "spent")}:</b> ${formatMoney(snapshot.month, currency, language)} / ${formatMoney(snapshot.monthlyBudget, currency, language)}${progress}`,
-    ...(monthProgressBar ? [monthProgressBar] : []),
     `🧾 <b>${t(language, "reservedPlanned")}:</b> ${formatMoney(snapshot.plannedRemaining, currency, language)}`,
     `${Number(snapshot.freeRemaining) < 0 ? "🔴" : "🟢"} <b>${t(language, "freeAfterPlanned")}:</b> <b>${formatMoney(snapshot.freeRemaining, currency, language)}</b>`,
     "",
@@ -169,12 +165,6 @@ export function formatSavedSummary(total, snapshot, options = {}) {
   if (planLine) lines.push(planLine);
   if (recovery) lines.push("", recovery);
   return lines.join("\n");
-}
-
-function savedProgressBar(percent, limit) {
-  if (!(limit > 0) || !Number.isFinite(percent)) return null;
-  const filled = Math.floor(Math.min(100, Math.max(0, percent)) / 10);
-  return "▰".repeat(filled) + "▱".repeat(10 - filled);
 }
 
 function formatSavedExpenseLines(expenses, total, currency, language) {
@@ -525,7 +515,7 @@ function formatRecurrence(item, language) {
 const ZERO_DECIMAL_DISPLAY_CURRENCIES = ["THB", "RUB", "IDR", "BYN"];
 const TWO_DECIMAL_DISPLAY_CURRENCIES = ["USD", "EUR", "GEL"];
 
-function formatMoney(value, currency, language) {
+export function formatMoney(value, currency, language) {
   const normalizedCurrency = String(currency || "THB").toUpperCase();
   return `${formatMoneyAmount(value, normalizedCurrency, language)} ${normalizedCurrency}`;
 }

@@ -1044,6 +1044,76 @@ test("saved card opens every category and updates that same card without saving 
   assert.equal(calls.filter((call) => call.method === "sendMessage").length, 1);
 });
 
+test("saved rich receipt opens categories in the message and keeps the graphical bars after selection", async () => {
+  const calls = [];
+  const repository = fakeRepository();
+  let expense = { id: 91, description: "кофе", category_slug: "food_cafe", amount_base: 70, amount_original: 70, currency_original: "THB" };
+  repository.listClosedReserveMonthsForTelegramUser = async () => [];
+  repository.saveDraftAsExpense = async () => ({ expenses: [expense], dashboardSnapshot: (await repository.dashboard()).snapshot });
+  repository.getExpenseForTelegramUser = async () => expense;
+  repository.updateExpenseForTelegramUser = async (id, userId, patch) => (expense = { ...expense, ...patch });
+  repository.dashboard = async () => ({
+    snapshot: { baseCurrency: "THB", today: 1540, dayPlanLimit: 1800, dayProgressPercent: 85.56, dayRemaining: 260,
+      month: 12840, monthlyBudget: 24000, budgetProgressPercent: 53.5, freeRemaining: 8560 }
+  });
+  const telegramClient = {
+    ...capturingClient(calls),
+    async sendMessage(message) { calls.push({ method: "sendMessage", ...message }); return { ok: true, result: { message_id: 20 } }; },
+    async editRichMessage(message) { calls.push({ method: "editRichMessage", ...message }); return { ok: true }; }
+  };
+  const bot = createTelegramBot({
+    token: "test-token", miniAppUrl: "http://localhost:3000", repository, telegramClient,
+    expenseParser: { async parse() { return { expenses: [{ amount: 70, currency: "THB", description: "кофе", category_slug: "food_cafe", category_source: "parser", needs_review: false, spent_at: "2026-08-14T08:00:00.000Z", budget_impact: "regular" }] }; } }
+  });
+
+  await bot.handleUpdate({ message: { message_id: 55, chat: { id: 10 }, from: { id: 100, first_name: "M" }, text: "кофе 70 бат" } });
+  const receipt = calls.find((call) => call.method === "editRichMessage");
+  assert.equal(receipt.messageId, 20);
+  const categories = receipt.richMessage.blocks.find((block) => block.type === "details");
+  assert.match(JSON.stringify(categories.summary), /Категория.*Еда и кафе/);
+  assert.ok(!receipt.replyMarkup.inline_keyboard.flat().some((button) => button.callback_data?.endsWith(":q:cm")));
+  assert.equal(receipt.richMessage.blocks.filter((block) => block.type === "photo").length, 2);
+  assert.equal(receipt.attachments.length, 2);
+  const gear = categories.blocks.map((block) => block.text.button).find((button) => button.callback_data.endsWith(":gear"));
+  await bot.handleUpdate(callbackUpdate(gear.callback_data, 100));
+  const changed = calls.filter((call) => call.method === "editRichMessage").at(-1);
+  assert.equal(changed.messageId, 20);
+  assert.match(JSON.stringify(changed.richMessage.blocks.find((block) => block.type === "details").summary), /Вещи \/ экипировка/);
+  assert.equal(changed.attachments.length, 2);
+});
+
+test("saved receipt uploads two images and uses the text keyboard if Telegram rejects rich messages", async (t) => {
+  const requests = [];
+  t.mock.method(globalThis, "fetch", async (url, { body }) => {
+    requests.push({ url, body });
+    return url.endsWith("/sendRichMessage")
+      ? new Response("Bad Request", { status: 400 })
+      : Response.json({ ok: true, result: { message_id: 21 } });
+  });
+  const replyMarkup = { inline_keyboard: [[{ text: "Change category", callback_data: "ee:x:91:q:cm" }]] };
+  const response = await sendTelegramMessage({
+    token: "test-token", chatId: 100, text: "Saved", replyMarkup,
+    savedExpenseReceipt: {
+      expense: { id: 91, amount_original: 40, currency_original: "THB", category_slug: "food_cafe" },
+      snapshot: { baseCurrency: "THB", dayPlanLimit: 100, dayProgressPercent: 40, monthlyBudget: 1000, budgetProgressPercent: 70 },
+      language: "en"
+    }
+  });
+
+  assert.equal(response.result.message_id, 21);
+  assert.deepEqual(requests.map(({ url }) => url.split("/").at(-1)), ["sendRichMessage", "sendMessage"]);
+  const form = requests[0].body;
+  const rich = JSON.parse(form.get("rich_message"));
+  const media = rich.blocks.filter((block) => block.type === "photo");
+  assert.deepEqual(media.map((block) => block.photo.media), ["attach://today_progress", "attach://month_progress"]);
+  for (const name of ["today_progress", "month_progress"]) {
+    const png = Buffer.from(await form.get(name).arrayBuffer());
+    assert.equal(png.subarray(1, 4).toString(), "PNG");
+    assert.ok(png.readUInt32BE(16) / png.readUInt32BE(20) <= 20);
+  }
+  assert.deepEqual(JSON.parse(requests[1].body).reply_markup, replyMarkup);
+});
+
 test("editor Save returns a saved expense to its summary card", async () => {
   const calls = [];
   const repo = fakeRepository();

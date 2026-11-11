@@ -239,14 +239,15 @@ test("formats saved summary with budget context", () => {
   assert.match(text, /675 THB/);
 });
 
-test("shows separate progress bars for today's ordinary spending and the monthly budget", () => {
+test("keeps the day and month figures readable in the text-only saved summary", () => {
   const text = formatSavedSummary(40, {
     ...snapshot(), today: 40, dayPlanLimit: 100, dayProgressPercent: 40,
     month: 700, monthlyBudget: 1000, budgetProgressPercent: 70
   });
 
-  assert.match(text, /Сегодня[\s\S]*40 THB \/ 100 THB<\/b>\n▰▰▰▰▱▱▱▱▱▱/u);
-  assert.match(text, /Месяц[\s\S]*\(70%\)\n▰▰▰▰▰▰▰▱▱▱/u);
+  assert.match(text, /Сегодня[\s\S]*40 THB \/ 100 THB<\/b>/u);
+  assert.match(text, /Месяц[\s\S]*\(70%\)/u);
+  assert.doesNotMatch(text, /[▰▱]/u);
 });
 
 test("formats a saved expense without dashboard figures when its snapshot is unavailable", () => {

@@ -25,6 +25,7 @@ import { syncTelegramUserCommandMenu } from "./telegramCommands.js";
 import { renderDraftPreview } from "./draftPreview.js";
 import { formatPlannedPaymentReminder } from "./plannedPaymentReminderService.js";
 import { formatBudgetTopupDraft, formatBudgetTopupSuccess, formatBudgetTopupUndoSuccess, formatPlannedDraft, formatReserveClosedEvent, formatSavedSummary, formatTotals, formatWeeklyReport } from "./telegramFormat.js";
+import { buildSavedExpenseReceipt } from "./telegramSavedExpenseReceipt.js";
 import {
   appKeyboard,
   budgetTopupDraftKeyboard,
@@ -210,7 +211,12 @@ export async function deliverShortcutCaptureToTelegram({ result, user, repositor
     replyMarkup = draftKeyboard(draft.id, draft.items, miniAppUrl, user.telegram_user_id, language);
   }
 
-  const delivered = await send({ chatId, text, replyMarkup });
+  const delivered = await send({
+    chatId, text, replyMarkup,
+    ...(result.state === "saved" && !sendMessageOverride
+      ? savedExpenseReceiptOptions([result.expense], result.dashboardSnapshot, language)
+      : {})
+  });
   const messageId = extractMessageId(delivered);
   if (messageId && draft?.id) {
     await repository.setDraftMessageRef(draft.id, user.telegram_user_id, chatId, messageId)
@@ -444,7 +450,8 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
       const dashboard = await repository.dashboard(from.id);
       return sendTelegramResponse(trace, () => sendMessage(
         token, chatId, formatSavedSummary(Number(expense.amount_base), dashboard.snapshot, { language, expenses: [expense] }),
-        savedExpenseKeyboard(expense.id, miniAppUrl, from.id, language), telegramClient
+        savedExpenseKeyboard(expense.id, miniAppUrl, from.id, language), telegramClient, null,
+        savedExpenseReceiptOptions([expense], dashboard.snapshot, language)
       ));
     }
 
@@ -1166,6 +1173,7 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
           const total = expenses.reduce((sum, expense) => sum + Number(expense.amount_base ?? 0), 0);
           const savedResult = {
             text: formatSavedSummary(total, saved.dashboardSnapshot, { language, expenses }),
+            ...savedExpenseReceiptOptions(expenses, saved.dashboardSnapshot, language),
             replyMarkup: expenses.length === 1
               ? savedExpenseKeyboard(expenses[0].id, miniAppUrl, from.id, language)
               : appKeyboard(miniAppUrl, from.id, language)
@@ -1232,6 +1240,7 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
         const total = expenses.reduce((sum, expense) => sum + Number(expense.amount_base ?? 0), 0);
         const savedResult = {
           text: formatSavedSummary(total, saved.dashboardSnapshot, { language, expenses }),
+          ...savedExpenseReceiptOptions(expenses, saved.dashboardSnapshot, language),
           replyMarkup: expenses.length === 1
             ? savedExpenseKeyboard(expenses[0].id, miniAppUrl, from.id, language)
             : appKeyboard(miniAppUrl, from.id, language)
@@ -1699,7 +1708,7 @@ async function sendExpenseProcessingMessage(token, chatId, language, telegramCli
   }
 }
 
-async function deliverResultMessage({ token, chatId, loaderMessageId, text, replyMarkup, telegramClient, trace, signal = null }) {
+async function deliverResultMessage({ token, chatId, loaderMessageId, text, replyMarkup, savedExpenseReceipt, telegramClient, trace, signal = null }) {
   const deliverySignal = deadlineSignal(signal, 15_000);
   const sendConfirmed = async (run) => {
     const result = await sendTelegramResponse(trace, run);
@@ -1708,7 +1717,7 @@ async function deliverResultMessage({ token, chatId, loaderMessageId, text, repl
   };
   if (loaderMessageId) {
     try {
-      const result = await sendConfirmed(() => editMessageText(token, chatId, loaderMessageId, text, replyMarkup, telegramClient, { signal: deliverySignal }));
+      const result = await sendConfirmed(() => editMessageText(token, chatId, loaderMessageId, text, replyMarkup, telegramClient, { signal: deliverySignal, savedExpenseReceipt }));
       trace.event("telegram_terminalization", { mode: "edit" });
       return result;
     } catch {
@@ -1730,7 +1739,7 @@ async function deliverResultMessage({ token, chatId, loaderMessageId, text, repl
     }
   } else {
     try {
-      const result = await sendConfirmed(() => sendMessage(token, chatId, text, replyMarkup, telegramClient, null, { signal: deliverySignal }));
+      const result = await sendConfirmed(() => sendMessage(token, chatId, text, replyMarkup, telegramClient, null, { signal: deliverySignal, savedExpenseReceipt }));
       trace.event("telegram_terminalization", { mode: "delete_and_send_fallback" });
       return result;
     } catch {}
@@ -1751,6 +1760,11 @@ async function deliverResultMessage({ token, chatId, loaderMessageId, text, repl
 
 function extractMessageId(sendResult) {
   return sendResult?.result?.message_id ?? sendResult?.message_id ?? null;
+}
+
+function savedExpenseReceiptOptions(expenses, snapshot, language) {
+  if (expenses.length !== 1) return {};
+  return { savedExpenseReceipt: { expense: expenses[0], snapshot, language } };
 }
 
 async function handleOnboardingMessage({ text, user, repository, token, chatId, miniAppUrl, telegramUserId, telegramClient, now, trace }) {
@@ -2337,7 +2351,10 @@ async function handleExpenseEditorCallback({ callback, parsed, repository, token
     const dashboard = await repository.dashboard(telegramUserId, changedAt).catch(() => null);
     const text = formatSavedSummary(Number(expense.amount_base), dashboard?.snapshot, { language, expenses: [expense] });
     try {
-      return await editMessageText(token, chatId, messageId, text, summaryKeyboard, telegramClient);
+      return await editMessageText(
+        token, chatId, messageId, text, summaryKeyboard, telegramClient,
+        savedExpenseReceiptOptions([expense], dashboard?.snapshot, language)
+      );
     } catch (error) {
       if (!isMessageNotModified(error)) throw error;
       return { ok: true };
@@ -2365,7 +2382,8 @@ async function handleExpenseEditorCallback({ callback, parsed, repository, token
       return sendMessage(
         token, callback.message.chat.id,
         formatSavedSummary(Number(target.expense.amount_base), dashboard.snapshot, { language, expenses: [target.expense] }),
-        savedExpenseKeyboard(target.expense.id, miniAppUrl, telegramUserId, language), telegramClient
+        savedExpenseKeyboard(target.expense.id, miniAppUrl, telegramUserId, language), telegramClient, null,
+        savedExpenseReceiptOptions([target.expense], dashboard.snapshot, language)
       );
     }
     return sendMessage(
@@ -3046,6 +3064,7 @@ async function handleConfirmDraft(trace, token, telegramClient, callback, draftI
   let summaryBuildMs = null;
   let text;
   let replyMarkup;
+  let receiptOptions = {};
   if (successfulSave) {
     const evidenceCandidate = await expenseEvidenceImportService?.getActiveCandidateForDraft?.({ userId: user?.id, draftId });
     if (evidenceCandidate && !result.alreadySaved) {
@@ -3065,6 +3084,7 @@ async function handleConfirmDraft(trace, token, telegramClient, callback, draftI
     const summaryStartedAt = performance.now();
     const total = expenses.reduce((sum, expense) => sum + Number(expense.amount_base), 0);
     text = formatSavedSummary(total, result.dashboardSnapshot, { language, expenses });
+    receiptOptions = savedExpenseReceiptOptions(expenses, result.dashboardSnapshot, language);
     replyMarkup = expenses.length === 1
       ? savedExpenseKeyboard(expenses[0].id, miniAppUrl, telegramUserId, language)
       : appKeyboard(miniAppUrl, telegramUserId, language);
@@ -3087,7 +3107,7 @@ async function handleConfirmDraft(trace, token, telegramClient, callback, draftI
   }
 
   const terminal = await sendConfirmDraftTerminalResponse({
-    trace, outcome, token, telegramClient, chatId, messageId, text, replyMarkup
+    trace, outcome, token, telegramClient, chatId, messageId, text, replyMarkup, ...receiptOptions
   });
   const userResultMs = elapsedSince(startedAt);
   await callbackAckPromise;
@@ -3141,7 +3161,7 @@ async function handleConfirmDraft(trace, token, telegramClient, callback, draftI
   return { ok: true };
 }
 
-async function sendConfirmDraftTerminalResponse({ trace, outcome, token, telegramClient, chatId, messageId, text, replyMarkup }) {
+async function sendConfirmDraftTerminalResponse({ trace, outcome, token, telegramClient, chatId, messageId, text, replyMarkup, savedExpenseReceipt }) {
   const startedAt = performance.now();
   const keepDraftActive = !["success", "already_saved", "cancelled"].includes(outcome);
   let telegramUpdateMode = keepDraftActive ? "send" : "edit";
@@ -3155,14 +3175,14 @@ async function sendConfirmDraftTerminalResponse({ trace, outcome, token, telegra
       }
       if (messageId) {
         try {
-          await editMessageText(token, chatId, messageId, text, replyMarkup, telegramClient);
+          await editMessageText(token, chatId, messageId, text, replyMarkup, telegramClient, { savedExpenseReceipt });
           return;
         } catch (error) {
           console.error("[telegram] editing terminal draft confirmation failed, falling back to new message", error.message);
         }
       }
       telegramUpdateMode = "fallback_send";
-      await sendMessage(token, chatId, text, replyMarkup, telegramClient);
+      await sendMessage(token, chatId, text, replyMarkup, telegramClient, null, messageId ? {} : { savedExpenseReceipt });
     });
     telegramUpdateSucceeded = true;
   } catch (error) {
@@ -3695,6 +3715,10 @@ function nextLogMessageId() {
 
 async function sendMessage(token, chatId, text, replyMarkup, telegramClient, plainTextFallback = null, options = {}) {
   const { replyParameters = null, retryPlainText = true, signal = null, requestTimeoutMs = 15_000 } = options;
+  if (options.savedExpenseReceipt) {
+    const receipt = await tryDeliverSavedExpenseReceipt({ token, telegramClient, chatId, replyMarkup, options });
+    if (receipt) return receipt;
+  }
   const clientMessage = {
     chatId,
     text,
@@ -3738,8 +3762,8 @@ async function sendMessage(token, chatId, text, replyMarkup, telegramClient, pla
   }
 }
 
-export async function sendTelegramMessage({ token, chatId, text, replyMarkup = null, replyParameters = null, telegramClient = null, signal = null, requestTimeoutMs = 15_000 }) {
-  return sendMessage(token, chatId, text, replyMarkup, telegramClient, null, { replyParameters, signal, requestTimeoutMs });
+export async function sendTelegramMessage({ token, chatId, text, replyMarkup = null, replyParameters = null, telegramClient = null, signal = null, requestTimeoutMs = 15_000, savedExpenseReceipt }) {
+  return sendMessage(token, chatId, text, replyMarkup, telegramClient, null, { replyParameters, signal, requestTimeoutMs, savedExpenseReceipt });
 }
 
 export async function sendTelegramWidget({ token, chatId, html, caption, chatData, replyMarkup }) {
@@ -3777,7 +3801,7 @@ export async function sendTelegramDocument({ token, telegramClient = null, chatI
   return telegramRequest(token, "sendDocument", form);
 }
 
-export async function updateDraftMessageToSaved({ token, draft, text, replyMarkup, telegramClient }) {
+export async function updateDraftMessageToSaved({ token, draft, text, replyMarkup, telegramClient, savedExpenseReceipt }) {
   const chatId = draft?.tg_chat_id;
   const messageId = draft?.tg_message_id;
   if (!chatId || !messageId) {
@@ -3785,7 +3809,7 @@ export async function updateDraftMessageToSaved({ token, draft, text, replyMarku
     return;
   }
   try {
-    await editMessageText(token, chatId, messageId, text, replyMarkup, telegramClient);
+    await editMessageText(token, chatId, messageId, text, replyMarkup, telegramClient, { savedExpenseReceipt });
   } catch (error) {
     if (isMessageNotModified(error)) return;
     console.error("[telegram] update draft message to saved failed; sending fallback", error.message);
@@ -3892,6 +3916,10 @@ export function savedSummaryKeyboard(miniAppUrl, telegramUserId, language) {
 }
 
 async function editMessageText(token, chatId, messageId, text, replyMarkup, telegramClient, options = {}) {
+  if (options.savedExpenseReceipt) {
+    const receipt = await tryDeliverSavedExpenseReceipt({ token, telegramClient, chatId, messageId, replyMarkup, options });
+    if (receipt) return receipt;
+  }
   if (telegramClient) {
     return telegramClient.editMessageText({ chatId, messageId, text, replyMarkup, ...(options.signal ? { signal: options.signal } : {}) });
   }
@@ -3920,6 +3948,41 @@ async function editMessageText(token, chatId, messageId, text, replyMarkup, tele
       text: stripTelegramHtml(text),
       parse_mode: undefined
     }, options);
+  }
+}
+
+async function tryDeliverSavedExpenseReceipt({ token, telegramClient, chatId, messageId, replyMarkup, options }) {
+  const isEdit = messageId != null;
+  const clientMethod = isEdit ? "editRichMessage" : "sendRichMessage";
+  if (!replyMarkup?.inline_keyboard || (telegramClient ? !telegramClient[clientMethod] : !token)) return null;
+  const receipt = buildSavedExpenseReceipt(options.savedExpenseReceipt);
+  if (!receipt) return null;
+  const richMarkup = {
+    inline_keyboard: replyMarkup.inline_keyboard.filter((row) => !row.some((button) => button.callback_data?.endsWith(":q:cm")))
+  };
+  const { richMessage, attachments } = receipt;
+  try {
+    if (telegramClient) {
+      return await telegramClient[clientMethod]({ chatId, messageId, richMessage, attachments, replyMarkup: richMarkup });
+    }
+    const form = new FormData();
+    form.set("chat_id", String(chatId));
+    if (isEdit) form.set("message_id", String(messageId));
+    else if (options.replyParameters) form.set("reply_parameters", JSON.stringify(options.replyParameters));
+    form.set("rich_message", JSON.stringify(richMessage));
+    form.set("reply_markup", JSON.stringify(richMarkup));
+    for (const { name, data } of attachments) {
+      form.set(name, new Blob([data], { type: "image/png" }), name + ".png");
+    }
+    return await telegramRequest(token, isEdit ? "editMessageText" : "sendRichMessage", form, {
+      signal: options.signal,
+      requestTimeoutMs: Math.min(options.requestTimeoutMs ?? 2500, 2500)
+    });
+  } catch (error) {
+    if (isEdit && isMessageNotModified(error)) return { ok: true };
+    // Editing the same message again is safe. After an ambiguous send, the card may already exist.
+    if (isEdit || error?.status === 400 || error?.status === 404) return null;
+    throw error;
   }
 }
 

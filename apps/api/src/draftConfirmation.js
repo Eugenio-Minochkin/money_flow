@@ -25,7 +25,10 @@ export async function confirmDraftForApi({
       replyMarkup: result.expenses.length === 1
         ? savedExpenseKeyboard(result.expenses[0].id, miniAppUrl, telegramUserId, language)
         : savedSummaryKeyboard(miniAppUrl, telegramUserId, language),
-      telegramClient
+      telegramClient,
+      ...(result.expenses.length === 1 ? {
+        savedExpenseReceipt: { expense: result.expenses[0], snapshot: result.dashboardSnapshot, language }
+      } : {})
     }).catch((error) => logger.error("[server] confirm message update failed", error.message));
   }
   return {

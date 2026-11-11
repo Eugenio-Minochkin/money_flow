@@ -16,7 +16,7 @@ The product should feel simple, fast, and light: a user records expenses in the 
 - Allow simple one-off budget top-ups when extra money arrives during the month, without turning the product into income accounting.
 - Send lightweight weekly and monthly Telegram report snapshots so the user can notice money movement without opening the Mini App.
 - The weekly report widget shows up to five spending categories, five largest expenses, and meaningful changes in the full view. A separate view lets users focus on the changes. The report button opens the same week in Mini App History.
-- For a single saved expense, the Telegram summary offers direct category correction using the existing expense editor rules and refreshes the same summary after selection.
+- For a single saved expense, the Telegram summary shows the current category in a row that opens the full category list. Choosing a category uses the existing editor rules and refreshes the same summary.
 - Remind users about an exact planned payment in Telegram and let them mark it paid, snooze its notification, or confirm disabling the plan without duplicating Mini App business rules.
 
 ## What It Is Not
