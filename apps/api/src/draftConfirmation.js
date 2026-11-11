@@ -1,4 +1,5 @@
 import { formatSavedSummary } from "./telegramFormat.js";
+import { savedExpenseKeyboard } from "./telegramKeyboards.js";
 
 export async function confirmDraftForApi({
   repository,
@@ -21,8 +22,13 @@ export async function confirmDraftForApi({
       token,
       draft,
       text,
-      replyMarkup: savedSummaryKeyboard(miniAppUrl, telegramUserId, language),
-      telegramClient
+      replyMarkup: result.expenses.length === 1
+        ? savedExpenseKeyboard(result.expenses[0].id, miniAppUrl, telegramUserId, language)
+        : savedSummaryKeyboard(miniAppUrl, telegramUserId, language),
+      telegramClient,
+      ...(result.expenses.length === 1 ? {
+        savedExpenseReceipt: { expense: result.expenses[0], snapshot: result.dashboardSnapshot, language }
+      } : {})
     }).catch((error) => logger.error("[server] confirm message update failed", error.message));
   }
   return {

@@ -25,6 +25,7 @@ import { syncTelegramUserCommandMenu } from "./telegramCommands.js";
 import { renderDraftPreview } from "./draftPreview.js";
 import { formatPlannedPaymentReminder } from "./plannedPaymentReminderService.js";
 import { formatBudgetTopupDraft, formatBudgetTopupSuccess, formatBudgetTopupUndoSuccess, formatPlannedDraft, formatReserveClosedEvent, formatSavedSummary, formatTotals, formatWeeklyReport } from "./telegramFormat.js";
+import { buildSavedExpenseReceipt } from "./telegramSavedExpenseReceipt.js";
 import {
   appKeyboard,
   budgetTopupDraftKeyboard,
@@ -210,7 +211,12 @@ export async function deliverShortcutCaptureToTelegram({ result, user, repositor
     replyMarkup = draftKeyboard(draft.id, draft.items, miniAppUrl, user.telegram_user_id, language);
   }
 
-  const delivered = await send({ chatId, text, replyMarkup });
+  const delivered = await send({
+    chatId, text, replyMarkup,
+    ...(result.state === "saved" && !sendMessageOverride
+      ? savedExpenseReceiptOptions([result.expense], result.dashboardSnapshot, language)
+      : {})
+  });
   const messageId = extractMessageId(delivered);
   if (messageId && draft?.id) {
     await repository.setDraftMessageRef(draft.id, user.telegram_user_id, chatId, messageId)
@@ -300,7 +306,7 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
 
   const editorRoute = await routeTelegramExpenseInput({
     message, rawText, hasVoice, hasPhoto,
-    commandText, user, repository, telegramUserId: from.id, language, now: now(), token, telegramClient
+    commandText, user, repository, telegramUserId: from.id, language, now: now(), token, telegramClient, miniAppUrl
   });
   if (editorRoute) return sendTelegramResponse(trace, () => editorRoute);
 
@@ -444,7 +450,8 @@ async function handleMessage({ update, repository, token, miniAppUrl, expensePar
       const dashboard = await repository.dashboard(from.id);
       return sendTelegramResponse(trace, () => sendMessage(
         token, chatId, formatSavedSummary(Number(expense.amount_base), dashboard.snapshot, { language, expenses: [expense] }),
-        savedExpenseKeyboard(expense.id, miniAppUrl, from.id, language), telegramClient
+        savedExpenseKeyboard(expense.id, miniAppUrl, from.id, language), telegramClient, null,
+        savedExpenseReceiptOptions([expense], dashboard.snapshot, language)
       ));
     }
 
@@ -875,7 +882,7 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
       await failCaptureForStatefulRoute("telegram_input_routed_to_editor");
       const editorRoute = await routeTelegramExpenseInput({
         message, rawText, hasVoice, hasPhoto: inputType === "photo", commandText: parseBotCommand(rawText).command,
-        user, repository, telegramUserId: from.id, language, now: now(), token, telegramClient
+        user, repository, telegramUserId: from.id, language, now: now(), token, telegramClient, miniAppUrl
       });
       if (editorRoute) {
         processingResult = "editor_input_routed";
@@ -1166,6 +1173,7 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
           const total = expenses.reduce((sum, expense) => sum + Number(expense.amount_base ?? 0), 0);
           const savedResult = {
             text: formatSavedSummary(total, saved.dashboardSnapshot, { language, expenses }),
+            ...savedExpenseReceiptOptions(expenses, saved.dashboardSnapshot, language),
             replyMarkup: expenses.length === 1
               ? savedExpenseKeyboard(expenses[0].id, miniAppUrl, from.id, language)
               : appKeyboard(miniAppUrl, from.id, language)
@@ -1232,6 +1240,7 @@ export async function processQueuedMessage({ message, from, user, rawText, hasVo
         const total = expenses.reduce((sum, expense) => sum + Number(expense.amount_base ?? 0), 0);
         const savedResult = {
           text: formatSavedSummary(total, saved.dashboardSnapshot, { language, expenses }),
+          ...savedExpenseReceiptOptions(expenses, saved.dashboardSnapshot, language),
           replyMarkup: expenses.length === 1
             ? savedExpenseKeyboard(expenses[0].id, miniAppUrl, from.id, language)
             : appKeyboard(miniAppUrl, from.id, language)
@@ -1699,7 +1708,7 @@ async function sendExpenseProcessingMessage(token, chatId, language, telegramCli
   }
 }
 
-async function deliverResultMessage({ token, chatId, loaderMessageId, text, replyMarkup, telegramClient, trace, signal = null }) {
+async function deliverResultMessage({ token, chatId, loaderMessageId, text, replyMarkup, savedExpenseReceipt, telegramClient, trace, signal = null }) {
   const deliverySignal = deadlineSignal(signal, 15_000);
   const sendConfirmed = async (run) => {
     const result = await sendTelegramResponse(trace, run);
@@ -1708,7 +1717,7 @@ async function deliverResultMessage({ token, chatId, loaderMessageId, text, repl
   };
   if (loaderMessageId) {
     try {
-      const result = await sendConfirmed(() => editMessageText(token, chatId, loaderMessageId, text, replyMarkup, telegramClient, { signal: deliverySignal }));
+      const result = await sendConfirmed(() => editMessageText(token, chatId, loaderMessageId, text, replyMarkup, telegramClient, { signal: deliverySignal, savedExpenseReceipt }));
       trace.event("telegram_terminalization", { mode: "edit" });
       return result;
     } catch {
@@ -1730,7 +1739,7 @@ async function deliverResultMessage({ token, chatId, loaderMessageId, text, repl
     }
   } else {
     try {
-      const result = await sendConfirmed(() => sendMessage(token, chatId, text, replyMarkup, telegramClient, null, { signal: deliverySignal }));
+      const result = await sendConfirmed(() => sendMessage(token, chatId, text, replyMarkup, telegramClient, null, { signal: deliverySignal, savedExpenseReceipt }));
       trace.event("telegram_terminalization", { mode: "delete_and_send_fallback" });
       return result;
     } catch {}
@@ -1751,6 +1760,11 @@ async function deliverResultMessage({ token, chatId, loaderMessageId, text, repl
 
 function extractMessageId(sendResult) {
   return sendResult?.result?.message_id ?? sendResult?.message_id ?? null;
+}
+
+function savedExpenseReceiptOptions(expenses, snapshot, language) {
+  if (expenses.length !== 1) return {};
+  return { savedExpenseReceipt: { expense: expenses[0], snapshot, language } };
 }
 
 async function handleOnboardingMessage({ text, user, repository, token, chatId, miniAppUrl, telegramUserId, telegramClient, now, trace }) {
@@ -2158,7 +2172,7 @@ async function closeTelegramEditorInput({ repository, telegramUserId, target, no
   return repository.closeTelegramInputSessionForTarget(telegramUserId, editorTargetRef(target, sessionId), now());
 }
 
-async function routeTelegramExpenseInput({ message, rawText, hasVoice, hasPhoto, commandText, user, repository, telegramUserId, language, now, token, telegramClient }) {
+async function routeTelegramExpenseInput({ message, rawText, hasVoice, hasPhoto, commandText, user, repository, telegramUserId, language, now, token, telegramClient, miniAppUrl }) {
   if (!repository.getRoutableTelegramInputSession || (!rawText && !hasVoice && !hasPhoto)) return null;
   const session = await repository.getRoutableTelegramInputSession(telegramUserId);
   if (!session) return null;
@@ -2217,6 +2231,20 @@ async function routeTelegramExpenseInput({ message, rawText, hasVoice, hasPhoto,
     if (consumed.outcome !== "completed") return { ok: true };
     const refreshed = await editorTargetForSession(repository, session, telegramUserId);
     if (!refreshed) return sendMessage(token, message.chat.id, editorMessageForCode("expense_not_found", language), null, telegramClient);
+    if (refreshed.type === "expense" && ["amount", "description"].includes(session.field) && session.message_id && session.chat_id != null) {
+      await deactivateTelegramEditorMessages({ session, fallbackChatId: message.chat.id, includeEditor: false, token, telegramClient });
+      const snapshot = (await repository.dashboard(telegramUserId, now).catch(() => null))?.snapshot;
+      const expense = refreshed.expense;
+      const text = formatSavedSummary(Number(expense.amount_base), snapshot, { language, expenses: [expense] });
+      const keyboard = savedExpenseKeyboard(expense.id, miniAppUrl, telegramUserId, language);
+      try {
+        return await editMessageText(token, session.chat_id, session.message_id, text, keyboard, telegramClient,
+          savedExpenseReceiptOptions([expense], snapshot, language));
+      } catch {
+        return sendMessage(token, message.chat.id, text, keyboard, telegramClient, null,
+          savedExpenseReceiptOptions([expense], snapshot, language));
+      }
+    }
     const text = formatExpenseEditor(refreshed, { language, timeZone: user.timezone });
     const keyboard = expenseEditorKeyboard(refreshed, { language });
     await deactivateTelegramEditorMessages({ session, fallbackChatId: message.chat.id, token, telegramClient });
@@ -2238,6 +2266,9 @@ async function editorTargetForSession(repository, session, telegramUserId) {
 }
 
 async function handleExpenseEditorCallback({ callback, parsed, repository, token, miniAppUrl, telegramClient, language, user, telegramUserId, now }) {
+  if (parsed.quickCategory && !callback.message?.message_id) {
+    return answerCallback(token, callback.id, editorMessageForCode("expense_not_found", language), telegramClient);
+  }
   if (parsed.action === "cancel") {
     if (!parsed.sessionId) {
       return answerCallback(token, callback.id, editorMessageForCode("expense_not_found", language), telegramClient);
@@ -2255,18 +2286,19 @@ async function handleExpenseEditorCallback({ callback, parsed, repository, token
     const message = cancelled?.outcome === "input_in_progress"
       ? (language === "ru" ? "Изменение уже обрабатывается." : "An edit is already being processed.")
       : (language === "ru" ? "Редактирование отменено." : "Editing cancelled.");
+    const keepReceipt = target?.type === "expense" && ["amount", "description"].includes(cancelled?.session?.field);
     if (cancelled?.outcome === "cancelled") {
       await deactivateTelegramEditorMessages({
         session: cancelled.session,
         fallbackChatId: callback.message.chat.id,
         fallbackMessageId: callback.message.message_id,
-        includeEditor: Boolean(target),
+        includeEditor: Boolean(target) && !keepReceipt,
         token,
         telegramClient
       });
     }
     await answerCallback(token, callback.id, target && cancelled?.outcome === "cancelled" ? message : editorMessageForCode("expense_not_found", language), telegramClient);
-    if (!target || cancelled?.outcome !== "cancelled") return { ok: true };
+    if (!target || cancelled?.outcome !== "cancelled" || keepReceipt) return { ok: true };
     return sendMessage(
       token,
       callback.message.chat.id,
@@ -2300,6 +2332,66 @@ async function handleExpenseEditorCallback({ callback, parsed, repository, token
     });
     return answerCallback(token, callback.id, editorMessageForCode("expense_not_found", language), telegramClient);
   }
+  if (parsed.action === "receipt") {
+    const { chat: { id: chatId }, message_id: messageId } = callback.message;
+    await answerCallback(token, callback.id, undefined, telegramClient);
+    const expense = target.expense;
+    const snapshot = (await repository.dashboard(telegramUserId, now()).catch(() => null))?.snapshot;
+    const options = savedExpenseReceiptOptions([expense], snapshot, language);
+    const text = parsed.confirmDelete
+      ? (language === "ru" ? "Удалить эту трату?" : "Delete this expense?")
+      : formatSavedSummary(Number(expense.amount_base), snapshot, { language, expenses: [expense] });
+    const keyboard = savedExpenseKeyboard(target.id, miniAppUrl, telegramUserId, language);
+    if (options.savedExpenseReceipt) options.savedExpenseReceipt.confirmDelete = parsed.confirmDelete;
+    if (parsed.confirmDelete) options.textFallbackKeyboard = { inline_keyboard: [[
+      { text: language === "ru" ? "Оставить" : "Keep", callback_data: `ee:x:${target.id}:r:back` },
+      { text: language === "ru" ? "Удалить" : "Delete", style: "danger", callback_data: `ee:x:${target.id}:r:delok` }
+    ]] };
+    return editMessageText(token, chatId, messageId, text, keyboard, telegramClient, options);
+  }
+  if (parsed.quickCategory) {
+    const { chat: { id: chatId }, message_id: messageId } = callback.message;
+    const summaryKeyboard = savedExpenseKeyboard(target.id, miniAppUrl, telegramUserId, language);
+    const alreadySelected = parsed.action === "category" && target.expense.category_slug === parsed.value;
+    if (parsed.action !== "category") {
+      const keyboard = parsed.action === "category_menu"
+        ? expenseCategoryKeyboard(target, undefined, { language, quickCategory: true })
+        : summaryKeyboard;
+      await answerCallback(token, callback.id, undefined, telegramClient);
+      try {
+        return await editMessageReplyMarkup(token, chatId, messageId, keyboard, telegramClient);
+      } catch (error) {
+        if (!isMessageNotModified(error)) throw error;
+        return { ok: true };
+      }
+    }
+    const changedAt = now();
+    let expense = target.expense;
+    if (!alreadySelected) {
+      try {
+        ({ item: expense } = await applySavedExpenseEditorChange({
+          repository, telegramUserId, target, field: "category", value: parsed.value, now: changedAt
+        }));
+      } catch (error) {
+        return answerCallback(token, callback.id, editorMessageForCode(error.code, language), telegramClient);
+      }
+    }
+    const acknowledgement = alreadySelected
+      ? (language === "ru" ? "Уже выбрано." : "Already selected.")
+      : (language === "ru" ? "Категория изменена." : "Category updated.");
+    await answerCallback(token, callback.id, acknowledgement, telegramClient).catch(() => {});
+    const dashboard = await repository.dashboard(telegramUserId, changedAt).catch(() => null);
+    const text = formatSavedSummary(Number(expense.amount_base), dashboard?.snapshot, { language, expenses: [expense] });
+    try {
+      return await editMessageText(
+        token, chatId, messageId, text, summaryKeyboard, telegramClient,
+        savedExpenseReceiptOptions([expense], dashboard?.snapshot, language)
+      );
+    } catch (error) {
+      if (!isMessageNotModified(error)) throw error;
+      return { ok: true };
+    }
+  }
   const redraw = (nextTarget = target, keyboard = expenseEditorKeyboard(target, { language })) => editMessageText(
     token, callback.message.chat.id, callback.message.message_id,
     formatExpenseEditor(nextTarget, { language, timeZone: user?.timezone }), keyboard, telegramClient
@@ -2322,7 +2414,8 @@ async function handleExpenseEditorCallback({ callback, parsed, repository, token
       return sendMessage(
         token, callback.message.chat.id,
         formatSavedSummary(Number(target.expense.amount_base), dashboard.snapshot, { language, expenses: [target.expense] }),
-        savedExpenseKeyboard(target.expense.id, miniAppUrl, telegramUserId, language), telegramClient
+        savedExpenseKeyboard(target.expense.id, miniAppUrl, telegramUserId, language), telegramClient, null,
+        savedExpenseReceiptOptions([target.expense], dashboard.snapshot, language)
       );
     }
     return sendMessage(
@@ -2385,8 +2478,23 @@ async function handleExpenseEditorCallback({ callback, parsed, repository, token
         token,
         telegramClient
       });
-      await answerCallback(token, callback.id, language === "ru" ? "Расход удалён." : "Expense deleted.", telegramClient);
-      return editMessageText(token, callback.message.chat.id, callback.message.message_id, language === "ru" ? "Расход удалён." : "Expense deleted.", null, telegramClient);
+      if (!parsed.receipt) {
+        await answerCallback(token, callback.id, language === "ru" ? "Расход удалён." : "Expense deleted.", telegramClient);
+        return editMessageText(token, callback.message.chat.id, callback.message.message_id, language === "ru" ? "Расход удалён." : "Expense deleted.", null, telegramClient);
+      }
+      const { chat: { id: chatId }, message_id: messageId, reply_to_message: original } = callback.message;
+      await answerCallback(token, callback.id, undefined, telegramClient).catch(() => {});
+      const text = language === "ru" ? "Трата удалена" : "Expense deleted";
+      const replyParameters = original?.message_id == null ? null
+        : { message_id: original.message_id, allow_sending_without_reply: true };
+      try {
+        const reply = await sendMessage(token, chatId, text, null, telegramClient, null, { replyParameters });
+        const removed = await deleteMessage(token, chatId, messageId, telegramClient);
+        if (removed?.ok === true) return reply;
+      } catch {
+        // The expense is already gone. Fall back to replacing the obsolete receipt.
+      }
+      return editMessageText(token, chatId, messageId, text, { inline_keyboard: [] }, telegramClient);
     } catch (error) {
       return answerCallback(token, callback.id, editorMessageForCode(error.code ?? "expense_not_found", language), telegramClient);
     }
@@ -3003,6 +3111,7 @@ async function handleConfirmDraft(trace, token, telegramClient, callback, draftI
   let summaryBuildMs = null;
   let text;
   let replyMarkup;
+  let receiptOptions = {};
   if (successfulSave) {
     const evidenceCandidate = await expenseEvidenceImportService?.getActiveCandidateForDraft?.({ userId: user?.id, draftId });
     if (evidenceCandidate && !result.alreadySaved) {
@@ -3022,6 +3131,7 @@ async function handleConfirmDraft(trace, token, telegramClient, callback, draftI
     const summaryStartedAt = performance.now();
     const total = expenses.reduce((sum, expense) => sum + Number(expense.amount_base), 0);
     text = formatSavedSummary(total, result.dashboardSnapshot, { language, expenses });
+    receiptOptions = savedExpenseReceiptOptions(expenses, result.dashboardSnapshot, language);
     replyMarkup = expenses.length === 1
       ? savedExpenseKeyboard(expenses[0].id, miniAppUrl, telegramUserId, language)
       : appKeyboard(miniAppUrl, telegramUserId, language);
@@ -3044,7 +3154,7 @@ async function handleConfirmDraft(trace, token, telegramClient, callback, draftI
   }
 
   const terminal = await sendConfirmDraftTerminalResponse({
-    trace, outcome, token, telegramClient, chatId, messageId, text, replyMarkup
+    trace, outcome, token, telegramClient, chatId, messageId, text, replyMarkup, ...receiptOptions
   });
   const userResultMs = elapsedSince(startedAt);
   await callbackAckPromise;
@@ -3098,7 +3208,7 @@ async function handleConfirmDraft(trace, token, telegramClient, callback, draftI
   return { ok: true };
 }
 
-async function sendConfirmDraftTerminalResponse({ trace, outcome, token, telegramClient, chatId, messageId, text, replyMarkup }) {
+async function sendConfirmDraftTerminalResponse({ trace, outcome, token, telegramClient, chatId, messageId, text, replyMarkup, savedExpenseReceipt }) {
   const startedAt = performance.now();
   const keepDraftActive = !["success", "already_saved", "cancelled"].includes(outcome);
   let telegramUpdateMode = keepDraftActive ? "send" : "edit";
@@ -3112,14 +3222,14 @@ async function sendConfirmDraftTerminalResponse({ trace, outcome, token, telegra
       }
       if (messageId) {
         try {
-          await editMessageText(token, chatId, messageId, text, replyMarkup, telegramClient);
+          await editMessageText(token, chatId, messageId, text, replyMarkup, telegramClient, { savedExpenseReceipt });
           return;
         } catch (error) {
           console.error("[telegram] editing terminal draft confirmation failed, falling back to new message", error.message);
         }
       }
       telegramUpdateMode = "fallback_send";
-      await sendMessage(token, chatId, text, replyMarkup, telegramClient);
+      await sendMessage(token, chatId, text, replyMarkup, telegramClient, null, messageId ? {} : { savedExpenseReceipt });
     });
     telegramUpdateSucceeded = true;
   } catch (error) {
@@ -3652,6 +3762,10 @@ function nextLogMessageId() {
 
 async function sendMessage(token, chatId, text, replyMarkup, telegramClient, plainTextFallback = null, options = {}) {
   const { replyParameters = null, retryPlainText = true, signal = null, requestTimeoutMs = 15_000 } = options;
+  if (options.savedExpenseReceipt) {
+    const receipt = await tryDeliverSavedExpenseReceipt({ token, telegramClient, chatId, replyMarkup, options });
+    if (receipt) return receipt;
+  }
   const clientMessage = {
     chatId,
     text,
@@ -3695,8 +3809,8 @@ async function sendMessage(token, chatId, text, replyMarkup, telegramClient, pla
   }
 }
 
-export async function sendTelegramMessage({ token, chatId, text, replyMarkup = null, replyParameters = null, telegramClient = null, signal = null, requestTimeoutMs = 15_000 }) {
-  return sendMessage(token, chatId, text, replyMarkup, telegramClient, null, { replyParameters, signal, requestTimeoutMs });
+export async function sendTelegramMessage({ token, chatId, text, replyMarkup = null, replyParameters = null, telegramClient = null, signal = null, requestTimeoutMs = 15_000, savedExpenseReceipt }) {
+  return sendMessage(token, chatId, text, replyMarkup, telegramClient, null, { replyParameters, signal, requestTimeoutMs, savedExpenseReceipt });
 }
 
 export async function sendTelegramWidget({ token, chatId, html, caption, chatData, replyMarkup }) {
@@ -3734,7 +3848,7 @@ export async function sendTelegramDocument({ token, telegramClient = null, chatI
   return telegramRequest(token, "sendDocument", form);
 }
 
-export async function updateDraftMessageToSaved({ token, draft, text, replyMarkup, telegramClient }) {
+export async function updateDraftMessageToSaved({ token, draft, text, replyMarkup, telegramClient, savedExpenseReceipt }) {
   const chatId = draft?.tg_chat_id;
   const messageId = draft?.tg_message_id;
   if (!chatId || !messageId) {
@@ -3742,7 +3856,7 @@ export async function updateDraftMessageToSaved({ token, draft, text, replyMarku
     return;
   }
   try {
-    await editMessageText(token, chatId, messageId, text, replyMarkup, telegramClient);
+    await editMessageText(token, chatId, messageId, text, replyMarkup, telegramClient, { savedExpenseReceipt });
   } catch (error) {
     if (isMessageNotModified(error)) return;
     console.error("[telegram] update draft message to saved failed; sending fallback", error.message);
@@ -3849,6 +3963,11 @@ export function savedSummaryKeyboard(miniAppUrl, telegramUserId, language) {
 }
 
 async function editMessageText(token, chatId, messageId, text, replyMarkup, telegramClient, options = {}) {
+  if (options.savedExpenseReceipt) {
+    const receipt = await tryDeliverSavedExpenseReceipt({ token, telegramClient, chatId, messageId, replyMarkup, options });
+    if (receipt) return receipt;
+  }
+  replyMarkup = options.textFallbackKeyboard ?? replyMarkup;
   if (telegramClient) {
     return telegramClient.editMessageText({ chatId, messageId, text, replyMarkup, ...(options.signal ? { signal: options.signal } : {}) });
   }
@@ -3877,6 +3996,46 @@ async function editMessageText(token, chatId, messageId, text, replyMarkup, tele
       text: stripTelegramHtml(text),
       parse_mode: undefined
     }, options);
+  }
+}
+
+async function tryDeliverSavedExpenseReceipt({ token, telegramClient, chatId, messageId, replyMarkup, options }) {
+  const isEdit = messageId != null;
+  const clientMethod = isEdit ? "editRichMessage" : "sendRichMessage";
+  if (!replyMarkup?.inline_keyboard || (telegramClient ? !telegramClient[clientMethod] : !token)) return null;
+  const receipt = buildSavedExpenseReceipt(options.savedExpenseReceipt);
+  if (!receipt) return null;
+  const richMarkup = {
+    inline_keyboard: replyMarkup.inline_keyboard
+      .map((row) => row.filter((button) => !/:q:cm$|:del$/u.test(button.callback_data ?? "")))
+      .filter((row) => row.length)
+  };
+  const { richMessage, attachments } = receipt;
+  try {
+    if (telegramClient) {
+      return await telegramClient[clientMethod]({
+        chatId, messageId, richMessage, attachments, replyMarkup: richMarkup,
+        ...(!isEdit && options.replyParameters ? { replyParameters: options.replyParameters } : {})
+      });
+    }
+    const form = new FormData();
+    form.set("chat_id", String(chatId));
+    if (isEdit) form.set("message_id", String(messageId));
+    else if (options.replyParameters) form.set("reply_parameters", JSON.stringify(options.replyParameters));
+    form.set("rich_message", JSON.stringify(richMessage));
+    form.set("reply_markup", JSON.stringify(richMarkup));
+    for (const { name, data } of attachments) {
+      form.set(name, new Blob([data], { type: "image/png" }), name + ".png");
+    }
+    return await telegramRequest(token, isEdit ? "editMessageText" : "sendRichMessage", form, {
+      signal: options.signal,
+      requestTimeoutMs: Math.min(options.requestTimeoutMs ?? 2500, 2500)
+    });
+  } catch (error) {
+    if (isEdit && isMessageNotModified(error)) return { ok: true };
+    // Editing the same message again is safe. After an ambiguous send, the card may already exist.
+    if (isEdit || error?.status === 400 || error?.status === 404) return null;
+    throw error;
   }
 }
 

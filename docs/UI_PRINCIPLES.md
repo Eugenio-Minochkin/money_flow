@@ -10,6 +10,8 @@ Telegram capture replies must reflect the saved financial state: a delivery fail
 
 The weekly Telegram report widget puts the date range, spending total, and any unpaid-payment notices in the caption. Show up to five category amounts and shares, the five largest expenses, and any meaningful changes in the full view. Offer the changes tab only when there are meaningful changes.
 
+In the Telegram summary for one saved expense, put the name above the amount and make both open the chat prompt for that field. Tapping the category row reveals the full list in the message. Mark the current choice and refresh the same summary after a change. Draw separate progress bars for ordinary spending today and spending against the monthly budget. Show the month-end forecast beside its scale and keep amounts readable as text. Center the delete button and its confirmation actions. The text fallback retains a category shortcut and the expense editor.
+
 ## Dashboard
 
 - Keep the dashboard compact.

@@ -166,8 +166,9 @@ test("safe text message is saved immediately with edit and delete actions", asyn
   const saved = calls.find((call) => ["sendMessage", "editMessageText"].includes(call.method) && /Записал/.test(call.text));
   assert.ok(saved);
   assert.match(saved.text, /кофе/);
-  assert.equal(saved.replyMarkup.inline_keyboard[0][0].callback_data, "ee:x:91:o");
-  assert.equal(saved.replyMarkup.inline_keyboard[0][1].callback_data, "ee:x:91:del");
+  assert.equal(saved.replyMarkup.inline_keyboard[0][0].callback_data, "ee:x:91:q:cm");
+  assert.equal(saved.replyMarkup.inline_keyboard[1][0].callback_data, "ee:x:91:o");
+  assert.equal(saved.replyMarkup.inline_keyboard[1][1].callback_data, "ee:x:91:del");
   assert.equal(repo.events.filter((event) => event.eventName === "expense_saved").length, 1);
 });
 
@@ -995,9 +996,152 @@ test("/last shows the saved expense card with edit and delete actions", async ()
   assert.ok(message);
   assert.match(message.text, /Записал|Saved/);
   assert.deepEqual(message.replyMarkup.inline_keyboard.map((row) => row.map((button) => button.callback_data ?? button.web_app?.url)), [
+    ["ee:x:91:q:cm"],
     ["ee:x:91:o", "ee:x:91:del"],
     ["http://localhost:3000?telegramUserId=100"]
   ]);
+});
+
+test("saved card opens every category and updates that same card without saving a second expense", async () => {
+  const calls = [];
+  const updates = [];
+  const repo = fakeRepository();
+  let expense = {
+    id: 91, amount_base: 120, amount_original: 120, currency_original: "THB",
+    description: "кроссовки", category_slug: "other", budget_impact: "regular"
+  };
+  repo.getLatestEditableExpenseForTelegramUser = async () => expense;
+  repo.getExpenseForTelegramUser = async (id, userId) => id === 91 && userId === 100 ? expense : null;
+  repo.updateExpenseForTelegramUser = async (id, userId, patch) => {
+    updates.push({ id, userId, patch });
+    expense = { ...expense, ...patch };
+    return expense;
+  };
+  const bot = createTelegramBot({
+    token: "test-token", miniAppUrl: "http://localhost:3000", repository: repo, telegramClient: capturingClient(calls)
+  });
+
+  await bot.handleUpdate(textUpdate("/last", 100));
+  const saved = calls.find((call) => call.method === "sendMessage");
+  const open = saved.replyMarkup.inline_keyboard[0][0];
+  assert.match(open.text, /Сменить категорию/);
+  await bot.handleUpdate(callbackUpdate(open.callback_data, 100));
+  const menu = calls.find((call) => call.method === "editMessageReplyMarkup");
+  const choices = menu.replyMarkup.inline_keyboard.flat();
+  assert.match(choices.find((button) => button.callback_data.endsWith(":other")).text, /^✅/u);
+  assert.ok(choices.some((button) => button.callback_data.endsWith(":entertainment")));
+  const gear = choices.find((button) => button.callback_data.endsWith(":gear"));
+  await bot.handleUpdate(callbackUpdate(gear.callback_data, 200));
+  assert.deepEqual(updates, []);
+  await bot.handleUpdate(callbackUpdate(gear.callback_data, 100));
+  await bot.handleUpdate(callbackUpdate(gear.callback_data, 100));
+  assert.deepEqual(updates, [{ id: 91, userId: 100, patch: { category_slug: "gear" } }]);
+  const changed = calls.find((call) => call.method === "editMessageText");
+  assert.equal(changed.messageId, menu.messageId);
+  assert.match(changed.text, /Вещи \/ экипировка/);
+  assert.match(changed.text, /Сегодня[\s\S]+Месяц/);
+  assert.equal(changed.replyMarkup.inline_keyboard[0][0].callback_data, open.callback_data);
+  assert.equal(calls.filter((call) => call.method === "sendMessage").length, 1);
+});
+
+test("saved rich receipt opens categories in the message and keeps the graphical bars after selection", async () => {
+  const calls = [];
+  const repository = fakeRepository();
+  let expense = { id: 91, description: "кофе", category_slug: "food_cafe", amount_base: 70, amount_original: 70, currency_original: "THB" };
+  repository.listClosedReserveMonthsForTelegramUser = async () => [];
+  repository.saveDraftAsExpense = async () => ({ expenses: [expense], dashboardSnapshot: (await repository.dashboard()).snapshot });
+  repository.getExpenseForTelegramUser = async () => expense;
+  repository.updateExpenseForTelegramUser = async (id, userId, patch) => (expense = { ...expense, ...patch });
+  repository.dashboard = async () => ({
+    snapshot: { baseCurrency: "THB", today: 1540, dayPlanLimit: 1800, dayProgressPercent: 85.56, dayRemaining: 260,
+      month: 12840, monthlyBudget: 24000, budgetProgressPercent: 53.5, freeRemaining: 8560, forecastMonthTotal: 21800 }
+  });
+  const telegramClient = {
+    ...capturingClient(calls),
+    async sendMessage(message) { calls.push({ method: "sendMessage", ...message }); return { ok: true, result: { message_id: 20 } }; },
+    async editRichMessage(message) { calls.push({ method: "editRichMessage", ...message }); return { ok: true }; }
+  };
+  const bot = createTelegramBot({
+    token: "test-token", miniAppUrl: "http://localhost:3000", repository, telegramClient,
+    expenseParser: { async parse() { return { expenses: [{ amount: 70, currency: "THB", description: "кофе", category_slug: "food_cafe", category_source: "parser", needs_review: false, spent_at: "2026-08-14T08:00:00.000Z", budget_impact: "regular" }] }; } }
+  });
+
+  await bot.handleUpdate({ message: { message_id: 55, chat: { id: 10 }, from: { id: 100, first_name: "M" }, text: "кофе 70 бат" } });
+  const receipt = calls.find((call) => call.method === "editRichMessage");
+  assert.equal(receipt.messageId, 20);
+  assert.match(receipt.richMessage.blocks[1].text.button.text, /кофе/);
+  assert.match(receipt.richMessage.blocks[2].text.button.text, /70.*THB/);
+  assert.match(receipt.richMessage.blocks[1].text.button.callback_data, /:f:d$/);
+  assert.match(receipt.richMessage.blocks[2].text.button.callback_data, /:f:a$/);
+  const remove = receipt.richMessage.blocks.find((block) => block.type === "buttons");
+  assert.equal(remove.align, "center");
+  assert.equal(remove.buttons[0].style, "danger");
+  assert.ok(!receipt.replyMarkup.inline_keyboard.flat().some((button) => button.callback_data?.endsWith(":del")));
+  const categories = receipt.richMessage.blocks.find((block) => block.type === "details");
+  assert.match(JSON.stringify(categories.summary), /Категория.*Еда и кафе/);
+  assert.ok(!receipt.replyMarkup.inline_keyboard.flat().some((button) => button.callback_data?.endsWith(":q:cm")));
+  assert.equal(receipt.richMessage.blocks.filter((block) => block.type === "photo").length, 2);
+  assert.equal(receipt.attachments.length, 2);
+  const gear = categories.blocks.map((block) => block.text.button).find((button) => button.callback_data.endsWith(":gear"));
+  await bot.handleUpdate(callbackUpdate(gear.callback_data, 100));
+  const changed = calls.filter((call) => call.method === "editRichMessage").at(-1);
+  assert.equal(changed.messageId, 20);
+  assert.match(JSON.stringify(changed.richMessage.blocks.find((block) => block.type === "details").summary), /Вещи \/ экипировка/);
+  assert.equal(changed.attachments.length, 2);
+  assert.match(JSON.stringify(changed.richMessage.blocks.find((block) => JSON.stringify(block.summary)?.includes("Прогноз"))), /21[\s\u00a0]800/);
+
+  const deleted = [];
+  repository.deleteExpenseForTelegramUser = async (id, userId) => { deleted.push([id, userId]); };
+  await bot.handleUpdate(callbackUpdate(remove.buttons[0].callback_data, 100));
+  const confirmation = calls.filter((call) => call.method === "editRichMessage").at(-1);
+  const actions = confirmation.richMessage.blocks.find((block) => block.type === "buttons");
+  assert.equal(actions.align, "center");
+  assert.match(JSON.stringify(confirmation.richMessage.blocks.find((block) => block.type === "pullquote")), /Удалить эту трату/);
+  assert.deepEqual(deleted, []);
+  await bot.handleUpdate(callbackUpdate(actions.buttons[0].callback_data, 100));
+  assert.match(JSON.stringify(calls.filter((call) => call.method === "editRichMessage").at(-1).richMessage.blocks), /Удалить трату/);
+  assert.deepEqual(deleted, []);
+  await bot.handleUpdate(callbackUpdate(remove.buttons[0].callback_data, 100));
+  const update = callbackUpdate(actions.buttons[1].callback_data, 100);
+  update.callback_query.message.reply_to_message = { message_id: 55 };
+  await bot.handleUpdate(update);
+  assert.deepEqual(deleted, [[91, 100]]);
+  const reply = calls.filter((call) => call.method === "sendMessage").at(-1);
+  assert.equal(reply.text, "Трата удалена");
+  assert.deepEqual(reply.replyParameters, { message_id: 55, allow_sending_without_reply: true });
+  assert.equal(calls.filter((call) => call.method === "deleteMessage").at(-1).messageId, 20);
+});
+
+test("saved receipt uploads two images and uses the text keyboard if Telegram rejects rich messages", async (t) => {
+  const requests = [];
+  t.mock.method(globalThis, "fetch", async (url, { body }) => {
+    requests.push({ url, body });
+    return url.endsWith("/sendRichMessage")
+      ? new Response("Bad Request", { status: 400 })
+      : Response.json({ ok: true, result: { message_id: 21 } });
+  });
+  const replyMarkup = { inline_keyboard: [[{ text: "Change category", callback_data: "ee:x:91:q:cm" }]] };
+  const response = await sendTelegramMessage({
+    token: "test-token", chatId: 100, text: "Saved", replyMarkup,
+    savedExpenseReceipt: {
+      expense: { id: 91, amount_original: 40, currency_original: "THB", category_slug: "food_cafe" },
+      snapshot: { baseCurrency: "THB", dayPlanLimit: 100, dayProgressPercent: 40, monthlyBudget: 1000, budgetProgressPercent: 70 },
+      language: "en"
+    }
+  });
+
+  assert.equal(response.result.message_id, 21);
+  assert.deepEqual(requests.map(({ url }) => url.split("/").at(-1)), ["sendRichMessage", "sendMessage"]);
+  const form = requests[0].body;
+  const rich = JSON.parse(form.get("rich_message"));
+  const media = rich.blocks.filter((block) => block.type === "photo");
+  assert.deepEqual(media.map((block) => block.photo.media), ["attach://today_progress", "attach://month_progress"]);
+  for (const name of ["today_progress", "month_progress"]) {
+    const png = Buffer.from(await form.get(name).arrayBuffer());
+    assert.equal(png.subarray(1, 4).toString(), "PNG");
+    assert.ok(png.readUInt32BE(16) / png.readUInt32BE(20) <= 20);
+  }
+  assert.deepEqual(JSON.parse(requests[1].body).reply_markup, replyMarkup);
 });
 
 test("editor Save returns a saved expense to its summary card", async () => {
@@ -1025,6 +1169,7 @@ test("editor Save returns a saved expense to its summary card", async () => {
   assert.ok(message);
   assert.match(message.text, /Записал|Saved/);
   assert.deepEqual(message.replyMarkup.inline_keyboard.map((row) => row.map((button) => button.callback_data ?? button.web_app?.url)), [
+    ["ee:x:91:q:cm"],
     ["ee:x:91:o", "ee:x:91:del"],
     ["http://localhost:3000?telegramUserId=100"]
   ]);
@@ -1072,7 +1217,7 @@ test("saved-expense text edit prepares rates before claiming the input session t
   assert.deepEqual(order, ["prepare", "consume", "update"]);
 });
 
-test("text edit removes prompt and stale editor before posting one fresh editor card", async () => {
+test("saved amount edit removes the prompt and refreshes the same receipt", async () => {
   const calls = [];
   const repo = fakeRepository();
   const expense = {
@@ -1097,10 +1242,10 @@ test("text edit removes prompt and stale editor before posting one fresh editor 
 
   await bot.handleUpdate(textUpdate("20", 100));
 
-  assert.deepEqual(calls.filter((call) => call.method === "deleteMessage").map((call) => call.messageId), [301, 20]);
-  assert.equal(calls.some((call) => call.method === "editMessageText"), false);
-  const fresh = calls.filter((call) => call.method === "sendMessage").at(-1);
-  assert.ok(fresh?.replyMarkup?.inline_keyboard?.length);
+  assert.deepEqual(calls.filter((call) => call.method === "deleteMessage").map((call) => call.messageId), [301]);
+  const fresh = calls.find((call) => call.method === "editMessageText");
+  assert.equal(fresh.messageId, 20);
+  assert.match(fresh.text, /Записал|Saved/);
 });
 
 test("description, date, and tags text edits each post one fresh editor card", async (t) => {
@@ -2428,6 +2573,7 @@ test("confirm callback edits the original draft message into saved summary with 
   assert.equal(edit.messageId, 55);
   assert.match(edit.text, /Записал|Saved/);
   assert.deepEqual(edit.replyMarkup.inline_keyboard.map((row) => row.map((button) => button.callback_data ?? button.web_app?.url)), [
+    ["ee:x:1:q:cm"],
     ["ee:x:1:o", "ee:x:1:del"],
     ["http://localhost:3000?telegramUserId=100"]
   ]);

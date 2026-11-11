@@ -515,7 +515,7 @@ function formatRecurrence(item, language) {
 const ZERO_DECIMAL_DISPLAY_CURRENCIES = ["THB", "RUB", "IDR", "BYN"];
 const TWO_DECIMAL_DISPLAY_CURRENCIES = ["USD", "EUR", "GEL"];
 
-function formatMoney(value, currency, language) {
+export function formatMoney(value, currency, language) {
   const normalizedCurrency = String(currency || "THB").toUpperCase();
   return `${formatMoneyAmount(value, normalizedCurrency, language)} ${normalizedCurrency}`;
 }
