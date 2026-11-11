@@ -173,7 +173,6 @@ export function savedExpenseKeyboard(expenseId, miniAppUrl, telegramUserId, lang
   const text = keyboardText(language);
   return {
     inline_keyboard: [
-      [{ text: language === "en" ? "🏷 Change category" : "🏷 Сменить категорию", callback_data: `ee:x:${expenseId}:q:cm` }],
       [
         { text: `✏️ ${text.editorEdit ?? text.edit}`, callback_data: `ee:x:${expenseId}:o` },
         { text: `🗑 ${text.deleteExpense ?? text.cancel}`, callback_data: `ee:x:${expenseId}:del` }

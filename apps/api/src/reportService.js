@@ -109,7 +109,6 @@ export function createReportService(options = {}) {
   const repository = options.repository;
   const sendMessage = options.sendMessage ?? (async () => null);
   const sendWidget = options.sendWidget;
-  const weeklyReportWidgetUserIds = options.weeklyReportWidgetUserIds ?? [];
   const miniAppUrl = options.miniAppUrl;
   const now = options.now ?? (() => new Date());
 
@@ -254,7 +253,7 @@ export function createReportService(options = {}) {
       ? monthlyReportKeyboard(miniAppUrl, chatId, period, language)
       : weeklyReportKeyboard(miniAppUrl, chatId, period, language);
 
-    if (reportType === "weekly" && sendWidget && weeklyReportWidgetUserIds.includes(String(chatId))) {
+    if (reportType === "weekly" && sendWidget) {
       const widget = formatWeeklyReportWidget(report, { language });
       if (widget) {
         try {

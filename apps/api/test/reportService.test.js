@@ -185,7 +185,7 @@ test("runDueReports sends monthly before weekly when both are due", async () => 
   ]);
 });
 
-test("only the opted-in weekly report uses a private widget with the original history button", async () => {
+test("only the weekly report uses a private widget with the original history button", async () => {
   const repo = reportRepo();
   const sent = [];
   const widgets = [];
@@ -193,7 +193,6 @@ test("only the opted-in weekly report uses a private widget with the original hi
     repository: repo,
     miniAppUrl: "https://example.test",
     now: () => new Date("2024-07-01T02:30:00Z"),
-    weeklyReportWidgetUserIds: ["100"],
     sendMessage: async (message) => sent.push(message),
     sendWidget: async (message) => {
       widgets.push(message);
@@ -215,15 +214,13 @@ test("only the opted-in weekly report uses a private widget with the original hi
   assert.equal(repo.sent.find((delivery) => delivery.reportType === "weekly").telegramMessageId, 42);
 });
 
-test("weekly reports stay in text for users outside the widget pilot", async () => {
+test("weekly reports use text when the widget sender is disabled", async () => {
   const sent = [];
   const service = createReportService({
     repository: reportRepo(),
     miniAppUrl: "https://example.test",
     now: () => new Date("2024-07-01T02:30:00Z"),
-    weeklyReportWidgetUserIds: ["101"],
-    sendMessage: async (message) => sent.push(message),
-    sendWidget: async () => assert.fail("Unexpected widget delivery")
+    sendMessage: async (message) => sent.push(message)
   });
 
   assert.equal((await service.runDueReports()).sent, 2);
@@ -243,7 +240,6 @@ for (const [name, error, useTextFallback] of [
       repository: repo,
       miniAppUrl: "https://example.test",
       now: () => new Date("2024-07-01T02:30:00Z"),
-      weeklyReportWidgetUserIds: ["100"],
       sendMessage: async (message) => sent.push(message),
       sendWidget: async () => {
         attempts += 1;

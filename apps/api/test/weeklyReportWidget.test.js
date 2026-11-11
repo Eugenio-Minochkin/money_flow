@@ -15,9 +15,9 @@ const report = {
   needsAttention: { count: 1, shown: [{ name: "Интернет", amount: 400, dueDate: "2026-11-06" }] }
 };
 
-test("weekly widget pilot is opt-in for explicitly listed Telegram users", () => {
-  assert.deepEqual(buildConfig({}).weeklyReportWidgetUserIds, []);
-  assert.deepEqual(buildConfig({ TELEGRAM_WEEKLY_REPORT_WIDGET_USER_IDS: "101, 102" }).weeklyReportWidgetUserIds, ["101", "102"]);
+test("weekly report widgets are enabled by default and can be disabled", () => {
+  assert.equal(buildConfig({}).weeklyReportWidgetEnabled, true);
+  assert.equal(buildConfig({ TELEGRAM_WEEKLY_REPORT_WIDGET_ENABLED: "false" }).weeklyReportWidgetEnabled, false);
 });
 
 test("weekly widget keeps the summary and payment notice in its caption and private chart data out of the HTML", () => {

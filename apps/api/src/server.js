@@ -219,8 +219,9 @@ const plannedPaymentReminderService = createPlannedPaymentReminderService({
 const reportService = createReportService({
   repository,
   miniAppUrl: config.miniAppUrl,
-  weeklyReportWidgetUserIds: config.weeklyReportWidgetUserIds,
-  sendWidget: (message) => sendTelegramWidget({ token: config.telegramBotToken, ...message }),
+  sendWidget: config.weeklyReportWidgetEnabled
+    ? (message) => sendTelegramWidget({ token: config.telegramBotToken, ...message })
+    : undefined,
   sendMessage: (message) => sendTelegramMessage({
     token: config.telegramBotToken,
     ...message

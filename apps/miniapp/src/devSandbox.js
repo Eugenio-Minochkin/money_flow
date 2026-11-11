@@ -72,12 +72,10 @@ async function refreshState() {
 function renderTelegramResult(result) {
   const message = result.messages?.at(-1);
   const callback = result.callbackAnswers?.at(-1);
-  if (message?.method !== "editMessageReplyMarkup") {
-    els.botText.textContent = [
-      callback ? `Callback: ${callback.text}` : "",
-      message?.text ?? "No bot message returned."
-    ].filter(Boolean).join("\n\n");
-  }
+  els.botText.textContent = [
+    callback ? `Callback: ${callback.text}` : "",
+    message?.text ?? "No bot message returned."
+  ].filter(Boolean).join("\n\n");
   renderKeyboard(message?.replyMarkup);
   renderState(result.state);
 }

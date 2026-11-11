@@ -113,8 +113,7 @@ test("app keyboard opens Mini App for the user", () => {
 test("saved expense keyboard keeps editor actions and the final Mini App row", () => {
   const keyboard = savedExpenseKeyboard(91, "http://localhost:3000", 100, "en");
 
-  assert.equal(keyboard.inline_keyboard[0][0].callback_data, "ee:x:91:q:cm");
-  assert.deepEqual(keyboard.inline_keyboard[1].map((button) => button.callback_data), ["ee:x:91:o", "ee:x:91:del"]);
+  assert.deepEqual(keyboard.inline_keyboard[0].map((button) => button.callback_data), ["ee:x:91:o", "ee:x:91:del"]);
   assert.equal(keyboard.inline_keyboard.at(-1)[0].text, "📱 Open Mini App");
   assert.equal(keyboard.inline_keyboard.at(-1)[0].web_app.url, "http://localhost:3000?telegramUserId=100");
 });

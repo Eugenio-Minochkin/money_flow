@@ -3,15 +3,16 @@ export const weeklyReportWidgetHtml = `<style>
   .tabs { display: flex; gap: 6px; margin-bottom: 10px; }
   .tabs button { border: 0; border-radius: 8px; padding: 6px 10px; color: var(--tg-theme-text-color); background: var(--tg-theme-secondary-bg-color); }
   .tabs .active { color: var(--tg-theme-button-text-color); background: var(--tg-theme-button-color); }
-  .category { margin: 8px 0; }
+  .category { margin: 5px 0; }
   .row { display: flex; justify-content: space-between; gap: 8px; }
   .amount { white-space: nowrap; }
   .track { height: 4px; margin-top: 4px; border-radius: 4px; background: var(--tg-theme-secondary-bg-color); }
   .fill { height: 4px; border-radius: 4px; background: var(--tg-theme-button-color); }
   .note { margin: 8px 0 0; color: var(--tg-theme-hint-color); font-size: 12px; }
-  .expenses { margin-top: 14px; border-top: 1px solid var(--tg-theme-secondary-bg-color); padding-top: 10px; }
+  .expenses { margin-top: 10px; border-top: 1px solid var(--tg-theme-secondary-bg-color); padding-top: 8px; }
   .expenses h4 { font-size: 14px; margin: 0 0 6px; }
   .expenses .row { padding: 3px 0; }
+  .expenses p { margin: 6px 0; }
   .hidden { display: none; }
 </style>
 <div class="tabs hidden" id="tabs">
