@@ -1180,6 +1180,7 @@ test("saved expense widget sends interactive HTML from /last and handles owned c
   assert.equal(data.day[1].slice(data.day[3]), "130 THB");
   assert.match(data.month[1].slice(data.month[3]), /^1\s200 THB$/);
   assert.equal(sent.replyMarkup.inline_keyboard.length, 1);
+  assert.equal(sent.replyMarkup.inline_keyboard[0][0].style, "success");
 
   const update = (userId) => ({ widget_query: {
     id: "w1", from: { id: userId }, chat: { id: 100, type: "private" }, message_id: 20,

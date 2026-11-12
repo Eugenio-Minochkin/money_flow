@@ -3,6 +3,14 @@ import { CATEGORIES, categoryLabel } from "../../../packages/shared/src/categori
 import { formatMoney } from "./telegramFormat.js";
 
 const categories = CATEGORIES.map(({ slug }) => [slug, categoryLabel(slug, "ru"), categoryLabel(slug, "en")]);
+const icon = (path, className = "icon") => `<svg class="${className}" viewBox="0 0 16 16" aria-hidden="true"><path d="${path}"/></svg>`;
+const chevron = icon("m4 6 4 4 4-4", "chevron");
+const budgetRow = (id, path, details) => `<div id="${id}" class="row">${icon(path)}<div class="metrics">
+<div class="line"><strong id="${id}-title"></strong><span class="figures"><strong id="${id}-spent"></strong><span id="${id}-limit" class="limit"></span></span></div>
+<div id="${id}-track" class="track"><div id="${id}-fill" class="fill"></div>${id === "month" ? '<div id="marker" hidden></div>' : ""}</div>
+<div class="line"><span class="note"><span id="${id}-note"></span> <strong id="${id}-rest" class="rest"></strong></span><strong id="${id}-percent" class="pill percent"></strong></div>
+${details}</div></div>`;
+
 // Palette from the Money Flow Mini App. Telegram resolves light-dark() using the chat theme.
 const template = `<style>
 body{
@@ -12,61 +20,64 @@ body{
   --panel:light-dark(#fffefa,#111b1a);
   --line:light-dark(#e8e2da,#263938);
   --green:light-dark(#426d4e,#92bd9b);
-  --fill:light-dark(#52775d,#92bd9b);
-  --track:light-dark(#e8f0e8,#243a2c);
+  --soft:light-dark(#eef1e7,#14201a);
+  --mint:light-dark(#dcecd3,#233c2e);
   --red:light-dark(#b13b46,#ff737f);
-  --notice:light-dark(#fff0e8,#251c14);
+  --notice:light-dark(#fbe9e5,#321f22);
   font:13px/1.3 system-ui;color:var(--ink);background:var(--bg);margin:0;padding:0
 }
 #receipt{padding:9px 11px max(7px,env(safe-area-inset-bottom))}
-[hidden]{display:none!important}button{font:inherit;color:inherit}p{margin:0}
+[hidden],#status:empty{display:none!important}
+button{font:inherit;color:inherit;border:0;background:none;padding:0}p{margin:0}
 #heading{margin-bottom:7px}
-.badge{display:block;margin-bottom:3px;font-size:12px;font-weight:650;color:var(--green)}
-.expense-line{display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:1px 9px}
-.field{min-width:0;max-width:100%;padding:2px 0;border:0;background:transparent;text-align:left;font-weight:700;overflow-wrap:anywhere}
-#name{font-size:16px}#amount{font-size:19px;line-height:1.2;font-variant-numeric:tabular-nums}
-.pen{margin-left:4px;font-size:11px;color:var(--green)}
+.pill{border-radius:9px;padding:2px 7px;color:var(--green);background:var(--mint);font-weight:700}
+.badge{display:inline-block;margin-bottom:3px;font-size:11px}
+.expense-line{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:4px 8px}
+.field{max-width:100%;text-align:left;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#name{font-size:19px}#amount{display:flex;align-items:center;gap:6px;margin-left:auto;color:var(--ink);font-size:20px}
+.pen{font-size:11px;color:var(--green)}
+svg{flex:none;width:14px;height:14px;fill:none;stroke:var(--green);stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
 #category,.choice,#forecast-toggle{display:flex;box-sizing:border-box;width:100%;min-width:0;align-items:center;gap:7px;text-align:left}
 #category{border:1px solid var(--line);border-radius:9px;background:var(--panel);min-height:34px;padding:5px 9px}
-#category-title{color:var(--hint);font-size:13px}#selected{margin-left:auto;min-width:0;text-align:right;overflow-wrap:anywhere}
-.chevron{flex:none;width:6px;height:6px;margin:0 2px 3px;border-right:1.5px solid var(--green);border-bottom:1.5px solid var(--green);transform:rotate(45deg)}
-[aria-expanded="true"]>.chevron{margin-top:4px;transform:rotate(225deg)}
-#category[aria-expanded="true"]{border-radius:9px 9px 0 0}
-#choices{border:1px solid var(--line);border-top:0;border-radius:0 0 9px 9px;overflow:hidden;background:var(--panel)}
-.choice{justify-content:space-between;border:0;border-bottom:1px solid var(--line);background:var(--panel);padding:5px 9px;min-height:30px;overflow-wrap:anywhere}
-.choice:last-child{border-bottom:0}.choice[aria-pressed="true"]{color:var(--green);background:var(--track);font-weight:650}
-.tick{flex:none;color:var(--green);visibility:hidden}.choice[aria-pressed="true"] .tick{visibility:visible}
-#budget{margin-top:9px}.row{margin-bottom:7px}.line{display:flex;justify-content:space-between;gap:2px 6px;flex-wrap:wrap}
-.figures,.rest{font-size:13px;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}.figures{text-align:right}.limit{color:var(--hint);font-size:12px}
-.track{height:5px;margin:4px 0 4px;border-radius:9px;background:var(--track);position:relative}
-.fill{height:100%;border-radius:9px;background:var(--fill)}.over .fill{background:var(--red)}
-.note{font-size:13px;color:var(--hint)}.rest{color:var(--green);font-weight:700}.over .rest{color:var(--red)}
+#category-title,.note,#status,.limit{color:var(--hint)}
+#selected,#forecast-value{margin-left:auto;text-align:right;overflow-wrap:anywhere}
+[aria-expanded="true"]>.chevron{transform:rotate(180deg)}
+#choices{border:1px solid var(--line);border-radius:9px;overflow:hidden;background:var(--panel)}
+.choice{justify-content:space-between;padding:5px 9px;min-height:30px;overflow-wrap:anywhere}
+.choice+.choice{border-top:1px solid var(--line)}.choice[aria-pressed="true"]{color:var(--green)}
+.choice[aria-pressed="true"]::after{content:'✓'}
+#budget{margin-top:8px}.row,#forecast{background:var(--soft);border-radius:10px;margin-bottom:5px}
+.row{display:flex;gap:8px;padding:6px 8px}.row>svg{margin-top:2px}.metrics{flex:1;min-width:0}
+.line{display:flex;justify-content:space-between;align-items:baseline;gap:1px 5px;flex-wrap:wrap}
+.figures{font-variant-numeric:tabular-nums;overflow-wrap:anywhere}.limit,.note{font-size:12px}
+.track,.choice[aria-pressed="true"]{background:var(--mint)}
+.track{height:6px;margin:4px 0 2px;border-radius:9px;position:relative}
+.fill{height:100%;border-radius:9px;background:var(--green)}.over .fill{background:var(--red)}
+.note{overflow-wrap:anywhere}.rest{color:var(--green)}.percent{font-size:11px;margin-left:auto}.over .rest,.over .percent{color:var(--red)}
 #marker{position:absolute;width:2px;height:9px;top:-2px;border-radius:2px;background:light-dark(#b26b16,#d3b574)}
-#forecast{border-top:1px solid var(--line)}
-#forecast-toggle{border:0;background:transparent;padding:5px 0;min-height:28px;font-size:13px}
-#forecast-value{margin-left:auto;min-width:0;color:var(--green)}
-#actions{text-align:center;margin-top:4px}#confirm p{margin-bottom:4px}.remove{border:0;border-radius:16px;padding:3px 9px;font-size:12px;font-weight:650;color:var(--red);background:var(--notice);min-height:30px}
-#keep{margin-right:5px;padding:6px 10px;border:0;border-radius:8px;background:var(--panel)}
-#status{margin:0 0 4px;color:var(--hint);font-size:11px}#status:empty{display:none}
-.picking #name{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
-@media(max-width:260px){.picking #heading{display:none}}
+#forecast-toggle{padding:5px 8px;min-height:32px;font-weight:700}
+#forecast-value{white-space:nowrap}#forecast-note{padding:0 8px 6px 29px}
+#actions{text-align:center;margin-top:9px}#confirm p,#status{margin-bottom:4px}
+.remove,#keep{border-radius:16px;padding:5px 10px;font-size:12px;min-height:28px}
+.remove{font-weight:650;color:var(--red);background:var(--notice)}#keep{background:var(--panel)}
+@media(max-width:240px){#category-title,#forecast-toggle>.icon{display:none}}
 </style>
 <main id="receipt" data-source="__SOURCE__">
 <div id="active">
 <div id="heading">
-<span id="badge" class="badge"></span>
+<span id="badge" class="badge pill"></span>
 <div class="expense-line">
-<button id="name" class="field"><span id="description"></span><span class="pen">✎</span></button>
-<button id="amount" class="field"><span id="price"></span><span class="pen">✎</span></button>
+<button id="name" class="field"><span id="description"></span> <span class="pen">✎</span></button>
+<button id="amount" class="field pill"><span class="pen" aria-hidden="true">✎</span><span id="price"></span></button>
 </div>
 </div>
 <p id="status" role="status"></p>
-<button id="category" aria-expanded="false" aria-controls="choices"><span id="category-title"></span><strong id="selected"></strong><span class="chevron" aria-hidden="true"></span></button>
+<button id="category" aria-expanded="false" aria-controls="choices"><span class="pen" aria-hidden="true">▦</span><span id="category-title"></span><strong id="selected"></strong>${chevron}</button>
 <div id="choices" hidden></div>
 <section id="budget">
-<div id="day" class="row"><div class="line"><strong id="day-title"></strong><span class="figures"><strong id="day-spent"></strong><span id="day-limit" class="limit"></span></span></div><div id="day-track" class="track"><div id="day-fill" class="fill"></div></div><div class="line"><span id="day-note" class="note"></span><strong id="day-rest" class="rest"></strong></div><p id="extras" class="note"></p></div>
-<div id="month" class="row"><div class="line"><strong id="month-title"></strong><span class="figures"><strong id="month-spent"></strong><span id="month-limit" class="limit"></span></span></div><div id="month-track" class="track"><div id="month-fill" class="fill"></div><div id="marker" hidden></div></div><div class="line"><span id="month-note" class="note"></span><strong id="month-rest" class="rest"></strong></div></div>
-<div id="forecast"><button id="forecast-toggle" aria-expanded="false" aria-controls="forecast-note"><span id="forecast-title"></span><strong id="forecast-value" class="figures"></strong><span class="chevron" aria-hidden="true"></span></button><p id="forecast-note" class="note" hidden></p></div>
+${budgetRow("day", "M3 4h10v10H3zM3 7h10M5 2v3m6-3v3", '<p id="extras" class="note"></p>')}
+${budgetRow("month", "M3 13v-3m3 3V8m3 5V5m3 8V2", "")}
+<div id="forecast"><button id="forecast-toggle" aria-expanded="false" aria-controls="forecast-note">${icon("m2 12 4-4 3 2 5-6m-4 0h4v4")}<span id="forecast-title"></span><strong id="forecast-value" class="figures pill"></strong>${chevron}</button><p id="forecast-note" class="note" hidden></p></div>
 <div id="actions"><button id="delete" class="remove"></button><div id="confirm" hidden><p id="question"></p><button id="keep"></button><button id="remove" class="remove"></button></div></div>
 </section>
 </div>
@@ -78,17 +89,17 @@ const el=id=>document.getElementById(id), set=(id,value)=>el(id).textContent=val
 let data, busy=false, choosing=false, confirming=false;
 const tr=(ru,en)=>data.en?en:ru;
 function panels(){
-  el('receipt').classList.toggle('picking',choosing);
-  el('choices').hidden=!choosing;el('budget').hidden=choosing;
+  el('choices').hidden=!choosing;el('budget').hidden=el('heading').hidden=choosing;
   el('category').setAttribute('aria-expanded',String(choosing));
   el('confirm').hidden=!confirming;el('delete').hidden=confirming;
 }
 function row(id, values){
   const [spent,limit]=values[0].split(' / ');
   set(id+'-spent',spent);set(id+'-limit',limit?' / '+limit:'');
-  const cut=values[3]??values[1].length;
-  set(id+'-note',values[1].slice(0,cut).trim());set(id+'-rest',values[1].slice(cut));
-  el(id+'-track').hidden=values[2]===null;
+  set(id+'-note',values[1].slice(0,values[3]).trim()+':');
+  set(id+'-rest',values[1].slice(values[3]));
+  el(id+'-track').hidden=el(id+'-percent').hidden=values[2]===null;
+  set(id+'-percent',values[2]+'%');
   el(id+'-fill').style.width=Math.min(100,Math.max(0,values[2]))+'%';
   el(id).classList.toggle('over',values[2]>100||!!values[4]);
 }
@@ -108,11 +119,9 @@ function draw(){
   el('choices').innerHTML='';
   for(const item of labels){
     const button=document.createElement('button');button.className='choice';
-    const name=document.createElement('span'), tick=document.createElement('span');
-    name.textContent=item[index];tick.className='tick';tick.textContent='✓';tick.setAttribute('aria-hidden','true');
-    button.appendChild(name);button.appendChild(tick);
+    button.textContent=item[index];
     button.setAttribute('aria-pressed',String(data.category===item[0]));
-    button.addEventListener('click',()=>ask('cat:'+item[0],()=>{choosing=false;panels()}));
+    button.onclick=()=>ask('cat:'+item[0],()=>{choosing=false;panels()});
     el('choices').appendChild(button);
   }
   set('day-title',tr('Сегодня · обычные','Today · regular'));set('month-title',tr('Месяц','Month'));
