@@ -2343,7 +2343,7 @@ async function handleSavedExpenseWidgetQuery({ query, repository, token, telegra
         session: closed.session, fallbackChatId: chatId, includeEditor: false, token, telegramClient
       });
       const replyParameters = Number(source) > 0 ? { message_id: Number(source), allow_sending_without_reply: true } : null;
-      const text = language === "ru" ? "Трата удалена" : "Expense deleted";
+      const text = botText(language, "expenseDeletedMessage");
       const reply = await sendMessage(token, chatId, text, null, telegramClient, null, { replyParameters }).catch(() => null);
       const removed = reply?.ok === true && await deleteMessage(token, chatId, messageId, telegramClient).catch(() => null);
       if (removed?.ok !== true) {
@@ -2584,7 +2584,7 @@ async function handleExpenseEditorCallback({ callback, parsed, repository, token
       }
       const { chat: { id: chatId }, message_id: messageId, reply_to_message: original } = callback.message;
       await answerCallback(token, callback.id, undefined, telegramClient).catch(() => {});
-      const text = language === "ru" ? "Трата удалена" : "Expense deleted";
+      const text = botText(language, "expenseDeletedMessage");
       const replyParameters = original?.message_id == null ? null
         : { message_id: original.message_id, allow_sending_without_reply: true };
       try {
@@ -4149,7 +4149,7 @@ async function trySendSavedExpenseWidget({ token, telegramClient, chatId, replyM
     const response = telegramClient
       ? await telegramClient.sendWidget({ chatId, ...widget, replyMarkup: widgetMarkup, allowQueries: true, replyParameters, signal })
       : await telegramRequest(token, "sendWidget", {
-        chat_id: chatId, html: widget.html, chat_data: widget.chatData, allow_queries: true,
+        chat_id: chatId, html: widget.html, chat_data: widget.chatData, width: widget.width, allow_queries: true,
         protect_content: true, reply_parameters: replyParameters, reply_markup: widgetMarkup
       }, { signal, requestTimeoutMs: Math.min(options.requestTimeoutMs ?? 2500, 2500) });
     if (response?.ok !== true) throw new TelegramTerminalDeliveryError();
