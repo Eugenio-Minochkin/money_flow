@@ -4,26 +4,40 @@ import { formatMoney } from "./telegramFormat.js";
 
 const categories = CATEGORIES.map(({ slug }) => [slug, categoryLabel(slug, "ru"), categoryLabel(slug, "en")]);
 const template = `<style>
-body{font:13px/1.3 system-ui;color:var(--tg-theme-text-color);margin:0;padding:0}
-#receipt{--green:light-dark(#276247,#85c7a3);--track:light-dark(#dbe9e0,#30493d);--hint:light-dark(#51645a,#adc1b6);padding:9px 11px max(7px,env(safe-area-inset-bottom))}
+/* Palette from the Money Flow Mini App. Telegram resolves light-dark() using the chat theme. */
+body{
+  --bg:light-dark(#f8f6f1,#0a0f0f);
+  --ink:light-dark(#1d2530,#f5f2ea);
+  --hint:light-dark(#6f6a63,#95a6a3);
+  --panel:light-dark(#fffefa,#111b1a);
+  --line:light-dark(#e8e2da,#263938);
+  --green:light-dark(#426d4e,#92bd9b);
+  --fill:light-dark(#52775d,#92bd9b);
+  --track:light-dark(#e8f0e8,#243a2c);
+  --red:light-dark(#b13b46,#ff737f);
+  --notice:light-dark(#fff0e8,#251c14);
+  font:13px/1.3 system-ui;color:var(--ink);background:var(--bg);margin:0;padding:0
+}
+#receipt{padding:9px 11px max(7px,env(safe-area-inset-bottom))}
 [hidden]{display:none!important}button{font:inherit;color:inherit}p{margin:0}
 #heading{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;gap:0 7px;margin-bottom:5px}
 .badge{border-radius:20px;padding:3px 7px;font-size:11px;font-weight:700;color:var(--green);background:var(--track);white-space:nowrap}
 .field{display:block;justify-self:start;max-width:100%;min-width:0;padding:2px 0;border:0;background:transparent;text-align:left;font-weight:700;overflow-wrap:anywhere}
 #name{font-size:16px}#amount{grid-column:1/-1;font-size:21px;line-height:1.15}
 .pen{margin-left:4px;font-size:12px;color:var(--green)}
-#category,.choice{display:block;width:100%;border:0;border-radius:8px;background:var(--tg-theme-secondary-bg-color);padding:7px;text-align:left}
-#category{display:flex;justify-content:space-between;align-items:center;gap:8px;min-height:32px;padding:5px 7px;background:var(--track)}
+#category,.choice{display:block;box-sizing:border-box;width:100%;border:1px solid var(--line);border-radius:8px;background:var(--panel);padding:6px 7px;text-align:left}
+#category{display:flex;justify-content:space-between;align-items:center;gap:8px;min-height:32px;padding:5px 7px}
 #category strong{text-align:right;color:var(--green)}#choices{display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:6px}
 .choice{font-size:12px;min-height:35px}.choice[aria-pressed="true"]{color:var(--green);background:var(--track);font-weight:700}
 #budget{margin-top:8px}.row{margin-bottom:6px}.line{display:flex;justify-content:space-between;gap:2px 6px;flex-wrap:wrap}
 .figures{white-space:nowrap;font-variant-numeric:tabular-nums}.track{height:5px;margin:3px 0;border-radius:9px;background:var(--track);position:relative}
-.fill{height:100%;border-radius:9px;background:var(--green)}.over .fill{background:var(--tg-theme-destructive-text-color)}
+.fill{height:100%;border-radius:9px;background:var(--fill)}.over .fill{background:var(--red)}
 .note{font-size:11px;color:var(--hint)}
-#marker{position:absolute;width:2px;height:9px;top:-2px;border-radius:2px;background:light-dark(#9f6a17,#e8bd6d)}
+#marker{position:absolute;width:2px;height:9px;top:-2px;border-radius:2px;background:light-dark(#b26b16,#d3b574)}
+#forecast{border-top:1px solid var(--line)}
 summary{padding:3px 0;color:var(--green);font-size:12px;font-weight:650}details p{margin-top:2px}
-#actions{text-align:center;margin-top:4px}#confirm p{margin-bottom:4px}.remove{border:0;border-radius:16px;padding:3px 9px;font-size:12px;font-weight:650;color:var(--tg-theme-destructive-text-color);background:light-dark(#faeeee,#482c2e);min-height:30px}
-#keep{margin-right:5px;padding:6px 10px;border:0;border-radius:8px;background:var(--tg-theme-secondary-bg-color)}
+#actions{text-align:center;margin-top:4px}#confirm p{margin-bottom:4px}.remove{border:0;border-radius:16px;padding:3px 9px;font-size:12px;font-weight:650;color:var(--red);background:var(--notice);min-height:30px}
+#keep{margin-right:5px;padding:6px 10px;border:0;border-radius:8px;background:var(--panel)}
 #status{margin:0 0 4px;color:var(--hint);font-size:11px}#status:empty{display:none}
 </style>
 <main id="receipt" data-source="__SOURCE__">
