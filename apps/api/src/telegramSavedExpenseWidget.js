@@ -47,6 +47,7 @@ body{
 #actions{text-align:center;margin-top:4px}#confirm p{margin-bottom:4px}.remove{border:0;border-radius:16px;padding:3px 9px;font-size:12px;font-weight:650;color:var(--red);background:var(--notice);min-height:30px}
 #keep{margin-right:5px;padding:6px 10px;border:0;border-radius:8px;background:var(--panel)}
 #status{margin:0 0 4px;color:var(--hint);font-size:11px}#status:empty{display:none}
+.picking #name{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 @media(max-width:260px){.picking #heading{display:none}}
 </style>
 <main id="receipt" data-source="__SOURCE__">
