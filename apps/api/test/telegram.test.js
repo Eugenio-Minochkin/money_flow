@@ -1150,6 +1150,10 @@ test("saved expense widget sends interactive HTML from /last and handles owned c
   const repository = fakeRepository();
   let expense = { id: 91, description: "кофе", category_slug: "food_cafe", amount_base: 70, amount_original: 70, currency_original: "THB" };
   repository.getLatestEditableExpenseForTelegramUser = async () => expense;
+  repository.dashboard = async () => ({ snapshot: {
+    baseCurrency: "THB", today: 70, dayPlanLimit: 200, dayProgressPercent: 35, dayRemaining: 130,
+    month: 700, monthlyBudget: 2000, budgetProgressPercent: 35, freeRemaining: 1200
+  } });
   repository.getExpenseForTelegramUser = async (_id, userId) => userId === 100 ? expense : null;
   repository.updateExpenseForTelegramUser = async (_id, userId, patch) => {
     assert.equal(userId, 100);
@@ -1170,7 +1174,11 @@ test("saved expense widget sends interactive HTML from /last and handles owned c
   assert.equal(sent.allowQueries, true);
   assert.equal(sent.width, 344);
   assert.match(sent.html, /TelegramWidget/);
-  assert.equal(JSON.parse(sent.chatData).name, "кофе");
+  const data = JSON.parse(sent.chatData);
+  assert.equal(data.name, "кофе");
+  assert.equal(data.day[1], "Осталось 130 THB");
+  assert.equal(data.day[1].slice(data.day[3]), "130 THB");
+  assert.match(data.month[1].slice(data.month[3]), /^1\s200 THB$/);
   assert.equal(sent.replyMarkup.inline_keyboard.length, 1);
 
   const update = (userId) => ({ widget_query: {

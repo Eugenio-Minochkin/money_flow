@@ -20,40 +20,52 @@ body{
 }
 #receipt{padding:9px 11px max(7px,env(safe-area-inset-bottom))}
 [hidden]{display:none!important}button{font:inherit;color:inherit}p{margin:0}
-#heading{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;gap:0 7px;margin-bottom:5px}
-.badge{border-radius:20px;padding:3px 7px;font-size:11px;font-weight:700;color:var(--green);background:var(--track);white-space:nowrap}
-.field{display:block;justify-self:start;max-width:100%;min-width:0;padding:2px 0;border:0;background:transparent;text-align:left;font-weight:700;overflow-wrap:anywhere}
-#name{font-size:16px}#amount{grid-column:1/-1;font-size:21px;line-height:1.15}
-.pen{margin-left:4px;font-size:12px;color:var(--green)}
-#category,.choice{display:block;box-sizing:border-box;width:100%;border:1px solid var(--line);border-radius:8px;background:var(--panel);padding:6px 7px;text-align:left}
-#category{display:flex;justify-content:space-between;align-items:center;gap:8px;min-height:32px;padding:5px 7px}
-#category strong{text-align:right;color:var(--green)}#choices{display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:6px}
-.choice{font-size:12px;min-height:35px}.choice[aria-pressed="true"]{color:var(--green);background:var(--track);font-weight:700}
+#heading{margin-bottom:7px}
+.badge{display:block;margin-bottom:3px;font-size:11px;font-weight:650;color:var(--green)}
+.expense-line{display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:1px 9px}
+.field{min-width:0;max-width:100%;padding:2px 0;border:0;background:transparent;text-align:left;font-weight:700;overflow-wrap:anywhere}
+#name{font-size:16px}#amount{font-size:19px;line-height:1.2;font-variant-numeric:tabular-nums}
+.pen{margin-left:4px;font-size:11px;color:var(--green)}
+#category,.choice,#forecast-toggle{display:flex;box-sizing:border-box;width:100%;min-width:0;align-items:center;gap:7px;text-align:left}
+#category{border:1px solid var(--line);border-radius:9px;background:var(--panel);min-height:34px;padding:5px 9px}
+#category-title{color:var(--hint);font-size:12px}#selected{margin-left:auto;min-width:0;text-align:right;overflow-wrap:anywhere}
+.chevron{flex:none;width:6px;height:6px;margin:0 2px 3px;border-right:1.5px solid var(--green);border-bottom:1.5px solid var(--green);transform:rotate(45deg)}
+[aria-expanded="true"]>.chevron{margin-top:4px;transform:rotate(225deg)}
+#category[aria-expanded="true"]{border-radius:9px 9px 0 0}
+#choices{border:1px solid var(--line);border-top:0;border-radius:0 0 9px 9px;overflow:hidden;background:var(--panel)}
+.choice{justify-content:space-between;border:0;border-bottom:1px solid var(--line);background:var(--panel);padding:5px 9px;min-height:30px;font-size:12px;overflow-wrap:anywhere}
+.choice:last-child{border-bottom:0}.choice[aria-pressed="true"]{color:var(--green);background:var(--track);font-weight:650}
+.tick{flex:none;color:var(--green);visibility:hidden}.choice[aria-pressed="true"] .tick{visibility:visible}
 #budget{margin-top:8px}.row{margin-bottom:6px}.line{display:flex;justify-content:space-between;gap:2px 6px;flex-wrap:wrap}
-.figures{white-space:nowrap;font-variant-numeric:tabular-nums}.track{height:5px;margin:3px 0;border-radius:9px;background:var(--track);position:relative}
+.figures,.rest{font-variant-numeric:tabular-nums;overflow-wrap:anywhere}.figures{font-size:12px}.track{height:5px;margin:4px 0 3px;border-radius:9px;background:var(--track);position:relative}
 .fill{height:100%;border-radius:9px;background:var(--fill)}.over .fill{background:var(--red)}
-.note{font-size:11px;color:var(--hint)}
+.note{font-size:12px;color:var(--hint)}.rest{color:var(--green);font-size:12px;font-weight:650}.over .rest{color:var(--red)}
 #marker{position:absolute;width:2px;height:9px;top:-2px;border-radius:2px;background:light-dark(#b26b16,#d3b574)}
 #forecast{border-top:1px solid var(--line)}
-summary{padding:3px 0;color:var(--green);font-size:12px;font-weight:650}details p{margin-top:2px}
+#forecast-toggle{border:0;background:transparent;padding:5px 0;min-height:28px;color:var(--green);font-size:12px}
+#forecast-value{margin-left:auto;min-width:0}
 #actions{text-align:center;margin-top:4px}#confirm p{margin-bottom:4px}.remove{border:0;border-radius:16px;padding:3px 9px;font-size:12px;font-weight:650;color:var(--red);background:var(--notice);min-height:30px}
 #keep{margin-right:5px;padding:6px 10px;border:0;border-radius:8px;background:var(--panel)}
 #status{margin:0 0 4px;color:var(--hint);font-size:11px}#status:empty{display:none}
+.picking #name{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+@media(max-width:260px){.picking #heading{display:none}}
 </style>
 <main id="receipt" data-source="__SOURCE__">
 <div id="active">
 <div id="heading">
-<button id="name" class="field"><span id="description"></span><span class="pen">✎</span></button>
 <span id="badge" class="badge"></span>
+<div class="expense-line">
+<button id="name" class="field"><span id="description"></span><span class="pen">✎</span></button>
 <button id="amount" class="field"><span id="price"></span><span class="pen">✎</span></button>
 </div>
+</div>
 <p id="status" role="status"></p>
-<button id="category" aria-expanded="false"><span id="category-title"></span><strong id="selected"></strong></button>
+<button id="category" aria-expanded="false" aria-controls="choices"><span id="category-title"></span><strong id="selected"></strong><span class="chevron" aria-hidden="true"></span></button>
 <div id="choices" hidden></div>
 <section id="budget">
-<div id="day" class="row"><div class="line"><strong id="day-title"></strong><span id="day-figures" class="figures"></span></div><div id="day-track" class="track"><div id="day-fill" class="fill"></div></div><p id="day-note" class="note"></p><p id="extras" class="note"></p></div>
-<div id="month" class="row"><div class="line"><strong id="month-title"></strong><span id="month-figures" class="figures"></span></div><div id="month-track" class="track"><div id="month-fill" class="fill"></div><div id="marker" hidden></div></div><p id="month-note" class="note"></p></div>
-<details id="forecast"><summary id="forecast-title"></summary><p id="forecast-note" class="note"></p></details>
+<div id="day" class="row"><div class="line"><strong id="day-title"></strong><span id="day-figures" class="figures"></span></div><div id="day-track" class="track"><div id="day-fill" class="fill"></div></div><div class="line"><span id="day-note" class="note"></span><strong id="day-rest" class="rest"></strong></div><p id="extras" class="note"></p></div>
+<div id="month" class="row"><div class="line"><strong id="month-title"></strong><span id="month-figures" class="figures"></span></div><div id="month-track" class="track"><div id="month-fill" class="fill"></div><div id="marker" hidden></div></div><div class="line"><span id="month-note" class="note"></span><strong id="month-rest" class="rest"></strong></div></div>
+<div id="forecast"><button id="forecast-toggle" aria-expanded="false" aria-controls="forecast-note"><span id="forecast-title"></span><strong id="forecast-value" class="figures"></strong><span class="chevron" aria-hidden="true"></span></button><p id="forecast-note" class="note" hidden></p></div>
 <div id="actions"><button id="delete" class="remove"></button><div id="confirm" hidden><p id="question"></p><button id="keep"></button><button id="remove" class="remove"></button></div></div>
 </section>
 </div>
@@ -65,15 +77,18 @@ const el=id=>document.getElementById(id), set=(id,value)=>el(id).textContent=val
 let data, busy=false, choosing=false, confirming=false;
 const tr=(ru,en)=>data.en?en:ru;
 function panels(){
+  el('receipt').classList.toggle('picking',choosing);
   el('choices').hidden=!choosing;el('budget').hidden=choosing;
   el('category').setAttribute('aria-expanded',String(choosing));
   el('confirm').hidden=!confirming;el('delete').hidden=confirming;
 }
 function row(id, values){
-  set(id+'-figures',values[0]);set(id+'-note',values[1]);
+  set(id+'-figures',values[0]);
+  const cut=values[3]??values[1].length;
+  set(id+'-note',values[1].slice(0,cut).trim());set(id+'-rest',values[1].slice(cut));
   el(id+'-track').hidden=values[2]===null;
   el(id+'-fill').style.width=Math.min(100,Math.max(0,values[2]))+'%';
-  el(id).classList.toggle('over',values[2]>100);
+  el(id).classList.toggle('over',values[2]>100||!!values[4]);
 }
 function showDeleted(){
   el('active').hidden=true;el('deleted').hidden=false;
@@ -87,10 +102,13 @@ function draw(){
   el('name').setAttribute('aria-label',tr('Исправить название','Edit description'));
   el('amount').setAttribute('aria-label',tr('Исправить сумму','Edit amount'));
   set('category-title',tr('Категория','Category'));const index=data.en?2:1;
-  set('selected',(labels.find(item=>item[0]===data.category)||labels[labels.length-1])[index]+' ⌄');
+  set('selected',(labels.find(item=>item[0]===data.category)||labels[labels.length-1])[index]);
   el('choices').innerHTML='';
   for(const item of labels){
-    const button=document.createElement('button');button.className='choice';button.textContent=item[index];
+    const button=document.createElement('button');button.className='choice';
+    const name=document.createElement('span'), tick=document.createElement('span');
+    name.textContent=item[index];tick.className='tick';tick.textContent='✓';tick.setAttribute('aria-hidden','true');
+    button.appendChild(name);button.appendChild(tick);
     button.setAttribute('aria-pressed',String(data.category===item[0]));
     button.addEventListener('click',()=>ask('cat:'+item[0],()=>{choosing=false;panels()}));
     el('choices').appendChild(button);
@@ -99,7 +117,7 @@ function draw(){
   row('day',data.day);row('month',data.month);set('extras',data.extras||'');
   el('forecast').hidden=!data.forecast;el('marker').hidden=data.marker===null;
   if(data.marker!==null)el('marker').style.left=Math.min(99,Math.max(0,data.marker))+'%';
-  if(data.forecast){set('forecast-title',tr('Прогноз · ','Forecast · ')+data.forecast[0]);set('forecast-note',data.forecast[1]);}
+  if(data.forecast){set('forecast-title',tr('Прогноз на месяц','Month-end forecast'));set('forecast-value',data.forecast[0]);set('forecast-note',data.forecast[1]);}
   set('delete',tr('🗑 Удалить трату','🗑 Delete expense'));set('question',tr('Удалить эту трату?','Delete this expense?'));
   set('keep',tr('Оставить','Keep'));set('remove',tr('Удалить','Delete'));panels();
 }
@@ -113,6 +131,10 @@ function ask(action,done){
   },fail).finally(()=>{busy=false});
 }
 el('category').onclick=()=>{choosing=!choosing;confirming=false;panels()};
+el('forecast-toggle').onclick=()=>{
+  const open=el('forecast-note').hidden;
+  el('forecast-note').hidden=!open;el('forecast-toggle').setAttribute('aria-expanded',String(open));
+};
 el('name').onclick=()=>ask('name');
 el('amount').onclick=()=>ask('amount');
 el('delete').onclick=()=>{confirming=true;panels()};
@@ -129,6 +151,10 @@ export function savedExpenseWidgetData({ expense, snapshot, language }) {
   const money = (value, code = currency) => formatMoney(value, code, language);
   const figures = (spent, limit) => `${money(spent)} / ${money(limit)}`;
   const progress = (percent, limit) => Number.isFinite(percent) && limit > 0 ? Math.round(percent) : null;
+  // Keep the combined note in slot 1 for widgets sent before the split layout.
+  const row = (spent, limit, percent, label, amount, over = false) => [
+    figures(spent, limit), label + " " + money(amount), progress(percent, limit), label.length + 1, over
+  ];
   const forecast = snapshot.forecastMonthTotal;
   const hasForecast = Number.isFinite(forecast) && snapshot.monthlyBudget > 0;
   const difference = hasForecast ? Math.round((forecast - snapshot.monthlyBudget) * 100) / 100 : 0;
@@ -143,12 +169,11 @@ export function savedExpenseWidgetData({ expense, snapshot, language }) {
     name: Array.from(expense.description || tr("Трата", "Expense")).slice(0, 90).join(""),
     amount: money(expense.amount_original ?? expense.amount_base, expense.currency_original ?? currency),
     category: expense.category_slug,
-    day: [figures(snapshot.today, snapshot.dayPlanLimit), Number(snapshot.dayOverrun) > 0
-      ? tr("Сверх лимита ", "Over by ") + money(snapshot.dayOverrun)
-      : tr("Осталось ", "Left ") + money(snapshot.dayRemaining), progress(snapshot.dayProgressPercent, snapshot.dayPlanLimit)],
-    month: [figures(snapshot.month, snapshot.monthlyBudget),
-      tr("Свободно после плановых ", "Free after planned ") + money(snapshot.freeRemaining),
-      progress(snapshot.budgetProgressPercent, snapshot.monthlyBudget)],
+    day: Number(snapshot.dayOverrun) > 0
+      ? row(snapshot.today, snapshot.dayPlanLimit, snapshot.dayProgressPercent, tr("Сверх лимита", "Over by"), snapshot.dayOverrun, true)
+      : row(snapshot.today, snapshot.dayPlanLimit, snapshot.dayProgressPercent, tr("Осталось", "Left"), snapshot.dayRemaining),
+    month: row(snapshot.month, snapshot.monthlyBudget, snapshot.budgetProgressPercent,
+      tr("Свободно после плановых", "Free after planned"), snapshot.freeRemaining),
     extras: extras.join(" · "),
     marker: hasForecast ? forecast / snapshot.monthlyBudget * 100 : null,
     forecast: hasForecast ? [money(forecast), difference === 0 ? tr("Ровно по бюджету", "On budget")
