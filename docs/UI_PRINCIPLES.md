@@ -8,7 +8,7 @@ Independent text captures may finish parsing out of arrival order, but saves and
 
 Telegram capture replies must reflect the saved financial state: a delivery failure after saving retries the saved result and must not invite the user to resend an already saved expense.
 
-In the Telegram HTML Widget for one saved expense, put the name above the amount and make each row open the chat prompt for that field. Tapping the category opens all choices and marks the current one. Use CSS for the two green spending bars and show the forecast as a collapsed row with its total visible. Center the delete button and its confirmation actions. If Telegram explicitly rejects the widget, use the existing receipt and editor.
+In the Telegram HTML Widget for one saved expense, keep the name above the amount and put the saved badge beside the name. Each editable row opens its prompt in chat. Tapping the category opens all choices and marks the current one. Use compact green CSS bars and keep the forecast collapsed with its total visible. Center the delete button and its confirmation actions. Use the shared deletion notice with the trash icon after confirming. If Telegram explicitly rejects the widget, use the existing receipt and editor.
 
 ## Dashboard
 

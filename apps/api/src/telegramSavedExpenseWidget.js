@@ -4,33 +4,36 @@ import { formatMoney } from "./telegramFormat.js";
 
 const categories = CATEGORIES.map(({ slug }) => [slug, categoryLabel(slug, "ru"), categoryLabel(slug, "en")]);
 const template = `<style>
-body{font:14px/1.35 system-ui;color:var(--tg-theme-text-color);margin:0}
-#receipt{--green:light-dark(#276247,#85c7a3);--track:light-dark(#dbe9e0,#30493d);padding:12px 13px 24px}
+body{font:13px/1.3 system-ui;color:var(--tg-theme-text-color);margin:0;padding:0}
+#receipt{--green:light-dark(#276247,#85c7a3);--track:light-dark(#dbe9e0,#30493d);--hint:light-dark(#51645a,#adc1b6);padding:9px 11px max(7px,env(safe-area-inset-bottom))}
 [hidden]{display:none!important}button{font:inherit;color:inherit}p{margin:0}
-.badge,.remove{display:inline-block;border-radius:20px;padding:4px 10px;font-size:12px;font-weight:700}
-.badge{color:var(--green);background:var(--track)}
-.field{display:block;max-width:100%;padding:4px 0;border:0;background:transparent;text-align:left;font-weight:700;overflow-wrap:anywhere}
-#name{font-size:17px;margin-top:4px}#amount{font-size:24px;line-height:1.18;margin-bottom:7px}
-.pen{margin-left:6px;font-size:13px;color:var(--green)}
+#heading{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;gap:0 7px;margin-bottom:5px}
+.badge{border-radius:20px;padding:3px 7px;font-size:11px;font-weight:700;color:var(--green);background:var(--track);white-space:nowrap}
+.field{display:block;justify-self:start;max-width:100%;min-width:0;padding:2px 0;border:0;background:transparent;text-align:left;font-weight:700;overflow-wrap:anywhere}
+#name{font-size:16px}#amount{grid-column:1/-1;font-size:21px;line-height:1.15}
+.pen{margin-left:4px;font-size:12px;color:var(--green)}
 #category,.choice{display:block;width:100%;border:0;border-radius:8px;background:var(--tg-theme-secondary-bg-color);padding:7px;text-align:left}
-#category{display:flex;justify-content:space-between;align-items:center;gap:8px;min-height:38px}
+#category{display:flex;justify-content:space-between;align-items:center;gap:8px;min-height:32px;padding:5px 7px;background:var(--track)}
 #category strong{text-align:right;color:var(--green)}#choices{display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:6px}
 .choice{font-size:12px;min-height:35px}.choice[aria-pressed="true"]{color:var(--green);background:var(--track);font-weight:700}
-#budget{margin-top:11px}.row{margin-bottom:9px}.line{display:flex;justify-content:space-between;gap:4px 6px;flex-wrap:wrap}
-.figures{white-space:nowrap;font-variant-numeric:tabular-nums}.track{height:6px;margin:4px 0;border-radius:9px;background:var(--track);position:relative}
+#budget{margin-top:8px}.row{margin-bottom:6px}.line{display:flex;justify-content:space-between;gap:2px 6px;flex-wrap:wrap}
+.figures{white-space:nowrap;font-variant-numeric:tabular-nums}.track{height:5px;margin:3px 0;border-radius:9px;background:var(--track);position:relative}
 .fill{height:100%;border-radius:9px;background:var(--green)}.over .fill{background:var(--tg-theme-destructive-text-color)}
-.note{font-size:12px;color:var(--tg-theme-hint-color)}
-#marker{position:absolute;width:2px;height:10px;top:-2px;border-radius:2px;background:light-dark(#9f6a17,#e8bd6d)}
-details{padding:6px 8px;background:var(--tg-theme-secondary-bg-color);border-radius:8px}summary{color:var(--green);font-weight:650}details p{margin-top:4px}
-#actions{text-align:center;margin-top:9px}#confirm{margin-top:4px}.remove{border:0;color:var(--tg-theme-destructive-text-color);background:light-dark(#faeaea,#482c2e);min-height:36px}
+.note{font-size:11px;color:var(--hint)}
+#marker{position:absolute;width:2px;height:9px;top:-2px;border-radius:2px;background:light-dark(#9f6a17,#e8bd6d)}
+summary{padding:3px 0;color:var(--green);font-size:12px;font-weight:650}details p{margin-top:2px}
+#actions{text-align:center;margin-top:4px}#confirm p{margin-bottom:4px}.remove{border:0;border-radius:16px;padding:3px 9px;font-size:12px;font-weight:650;color:var(--tg-theme-destructive-text-color);background:light-dark(#faeeee,#482c2e);min-height:30px}
 #keep{margin-right:5px;padding:6px 10px;border:0;border-radius:8px;background:var(--tg-theme-secondary-bg-color)}
-#status{margin-top:5px;text-align:center;color:var(--green);font-size:12px}#status:empty{display:none}
+#status{margin:0 0 4px;color:var(--hint);font-size:11px}#status:empty{display:none}
 </style>
 <main id="receipt" data-source="__SOURCE__">
 <div id="active">
-<span id="badge" class="badge"></span>
+<div id="heading">
 <button id="name" class="field"><span id="description"></span><span class="pen">✎</span></button>
+<span id="badge" class="badge"></span>
 <button id="amount" class="field"><span id="price"></span><span class="pen">✎</span></button>
+</div>
+<p id="status" role="status"></p>
 <button id="category" aria-expanded="false"><span id="category-title"></span><strong id="selected"></strong></button>
 <div id="choices" hidden></div>
 <section id="budget">
@@ -39,7 +42,6 @@ details{padding:6px 8px;background:var(--tg-theme-secondary-bg-color);border-rad
 <details id="forecast"><summary id="forecast-title"></summary><p id="forecast-note" class="note"></p></details>
 <div id="actions"><button id="delete" class="remove"></button><div id="confirm" hidden><p id="question"></p><button id="keep"></button><button id="remove" class="remove"></button></div></div>
 </section>
-<p id="status" role="status"></p>
 </div>
 <p id="deleted" hidden></p>
 </main>
@@ -61,7 +63,7 @@ function row(id, values){
 }
 function showDeleted(){
   el('active').hidden=true;el('deleted').hidden=false;
-  set('deleted',tr('Трата удалена','Expense deleted'));
+  set('deleted',tr('🗑 Запись удалена.','🗑 Entry deleted.'));
 }
 function draw(){
   try{data=JSON.parse(bridge.chatData)}catch{return}
@@ -97,8 +99,8 @@ function ask(action,done){
   },fail).finally(()=>{busy=false});
 }
 el('category').onclick=()=>{choosing=!choosing;confirming=false;panels()};
-el('name').onclick=()=>ask('name',()=>set('status',tr('Отправь название в чат','Send the new description in chat')));
-el('amount').onclick=()=>ask('amount',()=>set('status',tr('Отправь сумму в чат','Send the new amount in chat')));
+el('name').onclick=()=>ask('name');
+el('amount').onclick=()=>ask('amount');
 el('delete').onclick=()=>{confirming=true;panels()};
 el('keep').onclick=()=>{confirming=false;panels()};
 el('remove').onclick=()=>ask('del:'+el('receipt').dataset.source);
@@ -147,5 +149,5 @@ export function buildSavedExpenseWidget(receipt, sourceMessageId) {
   const source = Number.isSafeInteger(Number(sourceMessageId)) && Number(sourceMessageId) > 0 ? Number(sourceMessageId) : 0;
   const html = template.replace("__SOURCE__", String(source));
   if (Buffer.byteLength(html) > 32768 || deflateSync(html, { level: 9 }).length > 4096) return null;
-  return { html, chatData };
+  return { html, chatData, width: 344 };
 }

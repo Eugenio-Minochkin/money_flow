@@ -1112,7 +1112,7 @@ test("saved rich receipt keeps compact spending rows after category selection", 
   await bot.handleUpdate(update);
   assert.deepEqual(deleted, [[91, 100]]);
   const reply = calls.filter((call) => call.method === "sendMessage").at(-1);
-  assert.equal(reply.text, "Трата удалена");
+  assert.equal(reply.text, "🗑 Запись удалена.\nРасход удалён из Mini App и больше не учитывается.");
   assert.deepEqual(reply.replyParameters, { message_id: 55, allow_sending_without_reply: true });
   assert.equal(calls.filter((call) => call.method === "deleteMessage").at(-1).messageId, 20);
 });
@@ -1137,6 +1137,7 @@ test("saved receipt falls back to the rich then text keyboard after explicit Tel
 
   assert.equal(response.result.message_id, 21);
   assert.deepEqual(requests.map(({ url }) => url.split("/").at(-1)), ["sendWidget", "sendRichMessage", "sendMessage"]);
+  assert.equal(JSON.parse(requests[0].body).width, 344);
   const { rich_message: rich } = JSON.parse(requests[1].body);
   assert.ok(rich.blocks.every((block) => block.type !== "photo"));
   assert.match(JSON.stringify(rich.blocks), /▰{4}▱{6}/);
@@ -1167,6 +1168,7 @@ test("saved expense widget sends interactive HTML from /last and handles owned c
   await bot.handleUpdate(textUpdate("/last", 100));
   const sent = calls.find((call) => call.method === "sendWidget");
   assert.equal(sent.allowQueries, true);
+  assert.equal(sent.width, 344);
   assert.match(sent.html, /TelegramWidget/);
   assert.equal(JSON.parse(sent.chatData).name, "кофе");
   assert.equal(sent.replyMarkup.inline_keyboard.length, 1);
@@ -1218,7 +1220,9 @@ test("saved expense widget sends interactive HTML from /last and handles owned c
   remove.widget_query.data = "sw:91:del:55";
   await bot.handleUpdate(remove);
   assert.deepEqual(deleted, [[91, 100]]);
-  assert.deepEqual(calls.filter((call) => call.method === "sendMessage").at(-1).replyParameters,
+  const deletionNotice = calls.filter((call) => call.method === "sendMessage").at(-1);
+  assert.equal(deletionNotice.text, "🗑 Запись удалена.\nРасход удалён из Mini App и больше не учитывается.");
+  assert.deepEqual(deletionNotice.replyParameters,
     { message_id: 55, allow_sending_without_reply: true });
   assert.equal(calls.filter((call) => call.method === "deleteMessage").at(-1).messageId, 20);
   assert.equal(calls.filter((call) => call.method === "answerWidgetQuery").at(-1).data, "deleted");
