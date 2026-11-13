@@ -5,8 +5,10 @@ import { readFile } from "node:fs/promises";
 import { parseAdminTelegramIds } from "../src/adminAccess.js";
 import { createExpenseParser } from "../src/expenseParser.js";
 import { createExpenseEvidenceSessionService } from "../src/expenseEvidenceSessionService.js";
+import { categoryIconSvg } from "../../miniapp/src/categoryIcons.js";
 import { createTelegramBot, processQueuedMessage, sendTelegramMessage, sendWeeklyReports } from "../src/telegram.js";
 import { buildTelegramCommandMenu } from "../src/telegramCommands.js";
+import { buildSavedExpenseWidget } from "../src/telegramSavedExpenseWidget.js";
 import { CategoryRequiredError, DraftCanceledError } from "../src/repository.js";
 
 test("exports the Telegram message sender used by the production server", async () => {
@@ -1145,6 +1147,18 @@ test("saved receipt falls back to the rich then text keyboard after explicit Tel
   assert.deepEqual(JSON.parse(requests[2].body).reply_markup, replyMarkup);
 });
 
+test("saved expense widget fits Telegram's size limit with Mini App category icons in both languages", () => {
+  for (const language of ["ru", "en"]) {
+    const widget = buildSavedExpenseWidget({ expense: { id: 91 }, snapshot: {}, language }, Number.MAX_SAFE_INTEGER);
+    assert.ok(widget, `Expected a widget for ${language}`);
+    assert.equal((widget.html.match(/data-slug=/g) ?? []).length, 13);
+    for (const slug of ["food_cafe", "gear", "other"]) {
+      const icon = categoryIconSvg(slug).replace('focusable="false"', 'aria-hidden="true"');
+      assert.ok(widget.html.includes(`data-slug="${slug}">${icon}`));
+    }
+  }
+});
+
 test("saved expense widget sends interactive HTML from /last and handles owned category changes", async () => {
   const calls = [];
   const repository = fakeRepository();
@@ -1180,6 +1194,7 @@ test("saved expense widget sends interactive HTML from /last and handles owned c
   assert.equal(data.day[1].slice(data.day[3]), "130 THB");
   assert.match(data.month[1].slice(data.month[3]), /^1\s200 THB$/);
   assert.equal(sent.replyMarkup.inline_keyboard.length, 1);
+  assert.equal(sent.replyMarkup.inline_keyboard[0][0].style, "success");
 
   const update = (userId) => ({ widget_query: {
     id: "w1", from: { id: userId }, chat: { id: 100, type: "private" }, message_id: 20,

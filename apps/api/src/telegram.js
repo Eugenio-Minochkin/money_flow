@@ -4142,7 +4142,9 @@ async function trySendSavedExpenseWidget({ token, telegramClient, chatId, replyM
   if (!(Number(chatId) > 0) || !replyMarkup?.inline_keyboard || (telegramClient ? !telegramClient.sendWidget : !token)) return null;
   const widget = buildSavedExpenseWidget(options.savedExpenseReceipt, options.replyParameters?.message_id);
   if (!widget) return null;
-  const widgetMarkup = { inline_keyboard: replyMarkup.inline_keyboard.map((row) => row.filter((button) => button.web_app)).filter((row) => row.length) };
+  const widgetMarkup = { inline_keyboard: replyMarkup.inline_keyboard
+    .map((row) => row.filter((button) => button.web_app).map((button) => ({ ...button, style: "success" })))
+    .filter((row) => row.length) };
   const replyParameters = options.replyParameters;
   const signal = options.signal;
   try {
