@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { deflateSync } from "node:zlib";
 
 import { parseAdminTelegramIds } from "../src/adminAccess.js";
 import { createExpenseParser } from "../src/expenseParser.js";
@@ -1046,12 +1047,10 @@ test("saved card opens every category and updates that same card without saving 
   assert.equal(calls.filter((call) => call.method === "sendMessage").length, 1);
 });
 
-test("saved rich receipt keeps compact spending rows after category selection", async () => {
+test("an existing rich receipt keeps compact spending rows after category selection", async () => {
   const calls = [];
   const repository = fakeRepository();
   let expense = { id: 91, description: "кофе", category_slug: "food_cafe", amount_base: 70, amount_original: 70, currency_original: "THB" };
-  repository.listClosedReserveMonthsForTelegramUser = async () => [];
-  repository.saveDraftAsExpense = async () => ({ expenses: [expense], dashboardSnapshot: (await repository.dashboard()).snapshot });
   repository.getExpenseForTelegramUser = async () => expense;
   repository.updateExpenseForTelegramUser = async (id, userId, patch) => (expense = { ...expense, ...patch });
   repository.dashboard = async () => ({
@@ -1060,15 +1059,18 @@ test("saved rich receipt keeps compact spending rows after category selection", 
   });
   const telegramClient = {
     ...capturingClient(calls),
-    async sendMessage(message) { calls.push({ method: "sendMessage", ...message }); return { ok: true, result: { message_id: 20 } }; },
     async editRichMessage(message) { calls.push({ method: "editRichMessage", ...message }); return { ok: true }; }
   };
   const bot = createTelegramBot({
-    token: "test-token", miniAppUrl: "http://localhost:3000", repository, telegramClient,
-    expenseParser: { async parse() { return { expenses: [{ amount: 70, currency: "THB", description: "кофе", category_slug: "food_cafe", category_source: "parser", needs_review: false, spent_at: "2026-08-14T08:00:00.000Z", budget_impact: "regular" }] }; } }
+    token: "test-token", miniAppUrl: "http://localhost:3000", repository, telegramClient
   });
 
-  await bot.handleUpdate({ message: { message_id: 55, chat: { id: 10 }, from: { id: 100, first_name: "M" }, text: "кофе 70 бат" } });
+  const oldReceipt = (data) => {
+    const update = callbackUpdate(data, 100);
+    update.callback_query.message.rich_message = { blocks: [] };
+    return update;
+  };
+  await bot.handleUpdate(oldReceipt("ee:x:91:r:back"));
   const receipt = calls.find((call) => call.method === "editRichMessage");
   assert.equal(receipt.messageId, 20);
   assert.deepEqual(receipt.richMessage.blocks[1].text[0], { type: "bold", text: "кофе" });
@@ -1085,7 +1087,7 @@ test("saved rich receipt keeps compact spending rows after category selection", 
   assert.ok(receipt.richMessage.blocks.every((block) => block.type !== "photo"));
   assert.equal(receipt.attachments, undefined);
   const gear = categories.blocks.map((block) => block.text.button).find((button) => button.callback_data.endsWith(":gear"));
-  await bot.handleUpdate(callbackUpdate(gear.callback_data, 100));
+  await bot.handleUpdate(oldReceipt(gear.callback_data));
   const changed = calls.filter((call) => call.method === "editRichMessage").at(-1);
   assert.equal(changed.messageId, 20);
   assert.match(JSON.stringify(changed.richMessage.blocks.find((block) => block.type === "details").summary), /Вещи \/ экипировка/);
@@ -1119,17 +1121,19 @@ test("saved rich receipt keeps compact spending rows after category selection", 
   assert.equal(calls.filter((call) => call.method === "deleteMessage").at(-1).messageId, 20);
 });
 
-test("saved receipt falls back to the rich then text keyboard after explicit Telegram rejection", async (t) => {
+test("saved receipt falls back to the classic text and keyboard after explicit Telegram rejection", async (t) => {
   const requests = [];
+  const warning = t.mock.method(console, "warn", () => {});
   t.mock.method(globalThis, "fetch", async (url, { body }) => {
     requests.push({ url, body });
-    return url.endsWith("/sendRichMessage") || url.endsWith("/sendWidget")
-      ? new Response("Bad Request", { status: 400 })
+    return url.endsWith("/sendWidget")
+      ? new Response("INPUT_MEDIA_WIDGET_TOO_LARGE private API context", { status: 400 })
       : Response.json({ ok: true, result: { message_id: 21 } });
   });
   const replyMarkup = { inline_keyboard: [[{ text: "Change category", callback_data: "ee:x:91:q:cm" }]] };
   const response = await sendTelegramMessage({
     token: "test-token", chatId: 100, text: "Saved", replyMarkup,
+    replyParameters: { message_id: 55, allow_sending_without_reply: true },
     savedExpenseReceipt: {
       expense: { id: 91, amount_original: 40, currency_original: "THB", category_slug: "food_cafe" },
       snapshot: { baseCurrency: "THB", dayPlanLimit: 100, dayProgressPercent: 40, monthlyBudget: 1000, budgetProgressPercent: 70 },
@@ -1138,19 +1142,23 @@ test("saved receipt falls back to the rich then text keyboard after explicit Tel
   });
 
   assert.equal(response.result.message_id, 21);
-  assert.deepEqual(requests.map(({ url }) => url.split("/").at(-1)), ["sendWidget", "sendRichMessage", "sendMessage"]);
+  assert.deepEqual(requests.map(({ url }) => url.split("/").at(-1)), ["sendWidget", "sendMessage"]);
   assert.equal(JSON.parse(requests[0].body).width, 344);
-  const { rich_message: rich } = JSON.parse(requests[1].body);
-  assert.ok(rich.blocks.every((block) => block.type !== "photo"));
-  assert.match(JSON.stringify(rich.blocks), /▰{4}▱{6}/);
-  assert.match(JSON.stringify(rich.blocks), /▰{7}▱{3}/);
-  assert.deepEqual(JSON.parse(requests[2].body).reply_markup, replyMarkup);
+  const fallback = JSON.parse(requests[1].body);
+  assert.equal(fallback.text, "Saved");
+  assert.deepEqual(fallback.reply_parameters, { message_id: 55, allow_sending_without_reply: true });
+  assert.deepEqual(fallback.reply_markup, replyMarkup);
+  assert.deepEqual(warning.mock.calls.map(({ arguments: args }) => args), [
+    ["[telegram] saved expense widget rejected", { status: 400, reason: "INPUT_MEDIA_WIDGET_TOO_LARGE" }]
+  ]);
 });
 
-test("saved expense widget fits Telegram's size limit with Mini App category icons in both languages", () => {
+test("saved expense widget leaves headroom under Telegram's size limit with all Mini App category icons", () => {
   for (const language of ["ru", "en"]) {
     const widget = buildSavedExpenseWidget({ expense: { id: 91 }, snapshot: {}, language }, Number.MAX_SAFE_INTEGER);
     assert.ok(widget, `Expected a widget for ${language}`);
+    const compressedBytes = deflateSync(widget.html, { level: 9 }).length;
+    assert.ok(compressedBytes <= 3950, `${language} widget compresses to ${compressedBytes} bytes`);
     assert.equal((widget.html.match(/data-slug=/g) ?? []).length, 13);
     for (const slug of ["food_cafe", "gear", "other"]) {
       const icon = categoryIconSvg(slug).replace('focusable="false"', 'aria-hidden="true"');
@@ -1252,7 +1260,7 @@ test("saved expense widget sends interactive HTML from /last and handles owned c
 });
 
 test("saved expense widget replaces the Smart Save loader only after confirmed delivery", async (t) => {
-  for (const accepted of [true, false]) await t.test(accepted ? "confirmed" : "ambiguous", async () => {
+  for (const delivery of ["confirmed", "rejected", "ambiguous"]) await t.test(delivery, async () => {
     const calls = [];
     const repository = fakeRepository();
     repository.listClosedReserveMonthsForTelegramUser = async () => [];
@@ -1261,9 +1269,11 @@ test("saved expense widget replaces the Smart Save loader only after confirmed d
     const telegramClient = {
       ...capturingClient(calls),
       async sendMessage(message) { calls.push({ method: "sendMessage", ...message }); return { ok: true, result: { message_id: 20 } }; },
+      async editRichMessage(message) { calls.push({ method: "editRichMessage", ...message }); return { ok: true }; },
       async sendWidget(message) {
         calls.push({ method: "sendWidget", ...message });
-        if (!accepted) throw new Error("response lost");
+        if (delivery === "rejected") throw Object.assign(new Error("Widget rejected"), { status: 400 });
+        if (delivery === "ambiguous") throw new Error("response lost");
         return { ok: true, result: { message_id: 21 } };
       }
     };
@@ -1272,10 +1282,18 @@ test("saved expense widget replaces the Smart Save loader only after confirmed d
       expenseParser: { async parse() { return { expenses: [{ amount: 70, currency: "THB", description: "кофе", category_slug: "food_cafe", category_source: "parser", needs_review: false, spent_at: "2026-08-14T08:00:00.000Z", budget_impact: "regular" }] }; } }
     });
     await bot.handleUpdate({ message: { message_id: 55, chat: { id: 10 }, from: { id: 100, first_name: "M" }, text: "кофе 70 бат" } });
-    assert.deepEqual(calls.map((call) => call.method), accepted
-      ? ["sendMessage", "sendWidget", "deleteMessage"] : ["sendMessage", "sendWidget"]);
+    const terminalMethod = { confirmed: "deleteMessage", rejected: "editMessageText" }[delivery];
+    assert.deepEqual(calls.map((call) => call.method),
+      ["sendMessage", "sendWidget", ...(terminalMethod ? [terminalMethod] : [])]);
     assert.deepEqual(calls[1].replyParameters, { message_id: 55, allow_sending_without_reply: true });
-    if (accepted) assert.equal(calls[2].messageId, 20);
+    if (terminalMethod) assert.equal(calls[2].messageId, 20);
+    if (delivery === "rejected") {
+      assert.match(calls[2].text, /Записал/);
+      assert.match(calls[2].text, /Сегодня[\s\S]+Месяц/);
+      assert.doesNotMatch(calls[2].text, /[▰▱]/);
+      assert.deepEqual(calls[2].replyMarkup.inline_keyboard.flat().map((button) => button.callback_data).filter(Boolean),
+        ["ee:x:91:q:cm", "ee:x:91:o", "ee:x:91:del"]);
+    }
   });
 });
 
@@ -2661,12 +2679,12 @@ test("confirmation absorbs analytics, cleanup, and diagnostic failures without u
   assert.deepEqual(unhandled, []);
 });
 
-test("confirm callback edits the original draft message into saved summary with expense actions", async () => {
+test("confirm callback edits the original draft message into the classic summary when the widget is rejected", async () => {
   const calls = [];
   const repo = fakeRepository();
   repo.saveDraftAsExpense = async () => ({
     expenses: [{ id: 1, amount_base: 75 }],
-    dashboardSnapshot: null,
+    dashboardSnapshot: (await repo.dashboard()).snapshot,
     alreadySaved: false
   });
   const bot = createTelegramBot({
@@ -2674,6 +2692,11 @@ test("confirm callback edits the original draft message into saved summary with 
     miniAppUrl: "http://localhost:3000",
     repository: repo,
     telegramClient: {
+      async sendWidget(message) {
+        calls.push({ method: "sendWidget", ...message });
+        throw Object.assign(new Error("Widget rejected"), { status: 404 });
+      },
+      async editRichMessage(message) { calls.push({ method: "editRichMessage", ...message }); return { ok: true }; },
       async sendMessage(message) {
         calls.push({ method: "sendMessage", ...message });
         return { ok: true };
@@ -2703,6 +2726,8 @@ test("confirm callback edits the original draft message into saved summary with 
   });
 
   const edit = calls.find((call) => call.method === "editMessageText");
+  assert.ok(calls.some((call) => call.method === "sendWidget"));
+  assert.ok(!calls.some((call) => call.method === "editRichMessage"));
   assert.ok(edit);
   assert.equal(edit.chatId, 10);
   assert.equal(edit.messageId, 55);

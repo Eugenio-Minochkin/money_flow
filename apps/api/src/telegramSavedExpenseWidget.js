@@ -1,15 +1,14 @@
-import { deflateSync } from "node:zlib";
 import { CATEGORIES, categoryLabel } from "../../../packages/shared/src/categories.js";
 import { categoryIconSvg } from "../../miniapp/src/categoryIcons.js";
 import { formatMoney } from "./telegramFormat.js";
 
 const icon = (path) => `<svg viewBox="0 0 16 16" aria-hidden="true"><path d="${path}"/></svg>`;
 const chevron = icon("m4 6 4 4 4-4");
-const budgetRow = (id, title, path, details = "") => `<div id="${id}" class="row">${icon(path)}<div class="metrics">
+const budgetRow = (id, title, details = "") => `<div id="${id}" class="row">
 <div class="line"><strong>${title}</strong><span><b></b><small></small></span></div>
-<div id="${id}-track" class="track"><div id="${id}-fill" class="fill"></div>${id === "month" ? '<div id="marker" hidden></div>' : ""}</div>
+<div class="track"><div class="fill"></div>${id === "month" ? '<div id="marker" hidden></div>' : ""}</div>
 <div class="line"><span class="note"><span></span> <strong class="rest"></strong></span><strong class="pill percent"></strong></div>
-${details}</div></div>`;
+${details}</div>`;
 
 // Palette from the Money Flow Mini App. Telegram resolves light-dark() using the chat theme.
 function widgetTemplate(language) {
@@ -49,7 +48,7 @@ svg{flex:none;width:16px;height:16px;fill:none;stroke:var(--green);stroke-width:
 #choices button+button{border-top:1px solid var(--soft)}
 [aria-pressed="true"]::after{content:'✓';margin-left:auto;color:var(--green)}
 .row,#forecast{background:var(--soft);border-radius:10px;margin-top:5px}
-.row{display:flex;gap:8px;padding:6px 8px}.metrics{flex:1;min-width:0}
+.row{padding:6px 8px}
 .line{flex-wrap:wrap;justify-content:space-between;align-items:baseline;font-variant-numeric:tabular-nums}
 small,.note{font-size:12px}.note{flex:1;min-width:0}
 .track,[aria-pressed="true"]{background:var(--mint)}
@@ -59,11 +58,11 @@ small,.note{font-size:12px}.note{flex:1;min-width:0}
 .over .fill,.over .rest,.over .percent,#actions .remove{color:light-dark(#b13b46,#ff737f)}
 #marker{position:absolute;width:2px;height:9px;top:-2px;border-radius:2px;background:light-dark(#b26b16,#d3b574)}
 #forecast-toggle{padding:5px 8px;min-height:32px;font-weight:700}
-#forecast-value{white-space:nowrap}#forecast-note{padding:0 8px 6px 29px}
+#forecast-value{white-space:nowrap}#forecast-note{padding:0 8px 6px}
 #actions{text-align:center}#status,#category{margin-top:5px}
 #actions button{border-radius:16px;padding:6px 10px;background:var(--soft)}
 #actions .remove{background:light-dark(#fbe9e5,#321f22)}
-@media(max-width:240px){#category-title,#forecast-toggle>svg:first-child{display:none}}
+@media(max-width:240px){#category-title{display:none}}
 </style>
 <main id="receipt" data-source="__SOURCE__">
 <div id="active">
@@ -78,10 +77,10 @@ small,.note{font-size:12px}.note{flex:1;min-width:0}
 <button id="category" aria-expanded="false" aria-controls="choices"><span id="category-title">${tr("Категория", "Category")}</span><strong id="selected"></strong>${chevron}</button>
 <div id="choices" hidden>${choices}</div>
 <section id="budget">
-${budgetRow("day", tr("Сегодня · обычные", "Today · regular"), "M3 4h10v10H3zM3 7h10M5 2v3m6-3v3", '<p id="extras" class="note"></p>')}
-${budgetRow("month", tr("Месяц", "Month"), "M3 13v-3m3 3V8m3 5V5m3 8V2")}
-<div id="forecast"><button id="forecast-toggle" aria-expanded="false" aria-controls="forecast-note">${icon("m2 12 4-4 3 2 5-6m-4 0h4v4")}<span>${tr("Прогноз на месяц", "Month-end forecast")}</span><strong id="forecast-value" class="pill"></strong>${chevron}</button><p id="forecast-note" class="note" hidden></p></div>
-<div id="actions"><button id="delete" class="remove">${tr("🗑 Удалить трату", "🗑 Delete expense")}</button><div id="confirm" hidden><p>${tr("Удалить эту трату?", "Delete this expense?")}</p><button id="keep">${tr("Оставить", "Keep")}</button><button id="remove" class="remove">${tr("Удалить", "Delete")}</button></div></div>
+${budgetRow("day", tr("Сегодня · обычные", "Today · regular"), '<p id="extras" class="note"></p>')}
+${budgetRow("month", tr("Месяц", "Month"))}
+<div id="forecast"><button id="forecast-toggle" aria-expanded="false" aria-controls="forecast-note"><span>${tr("Прогноз на месяц", "Month-end forecast")}</span><strong id="forecast-value" class="pill"></strong>${chevron}</button><p id="forecast-note" class="note" hidden></p></div>
+<div id="actions"><button id="delete" class="remove">${tr("🗑 Удалить трату", "🗑 Delete expense")}</button><div id="confirm" hidden><p>${tr("Удалить трату?", "Delete expense?")}</p><button id="keep">${tr("Оставить", "Keep")}</button><button id="remove" class="remove">${tr("Удалить", "Delete")}</button></div></div>
 </section>
 </div>
 <p id="deleted" hidden>${tr("🗑 Запись удалена.", "🗑 Entry deleted.")}</p>
@@ -102,9 +101,10 @@ function row(id, values){
   const [actual,max]=values[0].split(' / ');
   spent.textContent=actual;limit.textContent=max?' / '+max:'';
   note.textContent=values[1].slice(0,values[3]).trim()+':';rest.textContent=values[1].slice(values[3]);
-  el(id+'-track').hidden=percent.hidden=values[2]===null;
+  const track=section.querySelector('.track');
+  track.hidden=percent.hidden=values[2]===null;
   percent.textContent=values[2]+'%';
-  el(id+'-fill').style.width=Math.min(100,Math.max(0,values[2]))+'%';
+  track.querySelector('.fill').style.width=Math.min(100,Math.max(0,values[2]))+'%';
   section.classList.toggle('over',values[2]>100||!!values[4]);
 }
 function showDeleted(){el('active').hidden=true;el('deleted').hidden=false}
@@ -144,7 +144,7 @@ el('delete').onclick=()=>confirm(true);
 el('keep').onclick=()=>confirm(false);
 el('remove').onclick=()=>ask('del:'+el('receipt').dataset.source);
 bridge.onEvent('chatDataChanged',()=>{set('status','');draw()});draw();bridge.ready();
-</script>`;
+</script>`.replace(/^[ \t]+/gm, "").replace(/>\r?\n</g, "><");
 }
 
 const templates = { ru: widgetTemplate("ru"), en: widgetTemplate("en") };
@@ -185,7 +185,10 @@ export function savedExpenseWidgetData({ expense, snapshot, language }) {
     forecast: hasForecast ? [money(forecast), difference === 0 ? tr("Ровно по бюджету", "On budget")
       : money(Math.abs(difference)) + (difference > 0 ? tr(" выше бюджета", " above budget") : tr(" ниже бюджета", " below budget"))] : null
   });
-  return Buffer.byteLength(chatData) <= 1024 ? chatData : null;
+  const bytes = Buffer.byteLength(chatData);
+  if (bytes <= 1024) return chatData;
+  console.warn("[telegram] saved expense widget state exceeds the Telegram limit", { bytes });
+  return null;
 }
 
 export function buildSavedExpenseWidget(receipt, sourceMessageId) {
@@ -193,6 +196,6 @@ export function buildSavedExpenseWidget(receipt, sourceMessageId) {
   if (!chatData) return null;
   const source = Number.isSafeInteger(Number(sourceMessageId)) && Number(sourceMessageId) > 0 ? Number(sourceMessageId) : 0;
   const html = templates[receipt.language === "en" ? "en" : "ru"].replace("__SOURCE__", String(source));
-  if (Buffer.byteLength(html) > 32768 || deflateSync(html, { level: 9 }).length > 4096) return null;
+  // Telegram compresses the HTML and reports its size errors. CI checks both templates against the limit.
   return { html, chatData, width: 344 };
 }
