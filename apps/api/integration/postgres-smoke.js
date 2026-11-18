@@ -1360,7 +1360,15 @@ test("Mini App validates an ambiguous currency against the stored version before
   const unchanged = await repo.getDraftForTelegramUser(draft.id, 990041);
   assert.equal(unchanged.version, draft.version);
   assert.deepEqual(unchanged.items, draft.items);
-  const selected = await repo.updateMiniAppDraftItems(draft.id, 990041, [{ ...item, currency: "MXN" }], draft.version);
+  const categoryEdit = { ...item, category_slug: "transport", needs_review: false, currency_candidates: ["AED"] };
+  const reviewed = await repo.updateMiniAppDraftItems(draft.id, 990041, [categoryEdit], draft.version);
+  assert.equal(reviewed.items[0].category_slug, "transport");
+  assert.equal(reviewed.items[0].currency, null);
+  assert.equal(reviewed.items[0].needs_review, true);
+  assert.deepEqual(reviewed.items[0].currency_candidates, ["ARS", "MXN"]);
+  await assert.rejects(() => repo.confirmDraftWithExplicitAcceptance(draft.id, 990041, { expectedVersion: reviewed.version }),
+    { code: "currency_selection_required" });
+  const selected = await repo.updateMiniAppDraftItems(draft.id, 990041, [{ ...reviewed.items[0], currency: "MXN" }], reviewed.version);
   assert.equal(selected.items[0].currency, "MXN");
   assert.equal(await repo.updateMiniAppDraftItems(draft.id, 990041, invalid, draft.version), null);
   const changed = await repo.updateMiniAppDraftItems(draft.id, 990041, [{ ...selected.items[0], currency: "THB" }], selected.version);

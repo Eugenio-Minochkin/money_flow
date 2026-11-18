@@ -97,6 +97,24 @@ test("quick review offers the same explicit currency choice", async t => {
   assert.equal((await patch).postDataJSON().items[0].currency, "ARS");
 });
 
+test("Inbox category edits retain the pending currency choice, and Confirm opens its editor", async t => {
+  const inboxDraft = { ...draft, created_at: spentAt };
+  const page = await openApp(t, { api: async (path, route) => {
+    if (path !== "/api/drafts/recovery-preview") return false;
+    await route.fulfill({ json: { drafts: [inboxDraft], reviewDraftIds: [draft.id], reviewCount: 1, totalUnresolved: 1 } });
+    return true;
+  } });
+  const row = page.locator("#dashboardInboxDrafts [data-draft-row]");
+  const patch = page.waitForRequest(request => request.method() === "PATCH");
+  await row.locator("[data-inbox-category=transport]").click();
+  const body = (await patch).postDataJSON();
+  assert.equal(body.expectedVersion, draft.version);
+  assert.equal(body.items[0].category_slug, "transport");
+  assert.equal(body.items[0].currency, null);
+  await row.locator("[data-confirm-draft]").click();
+  assert.equal(await page.locator("[name=draft-0-currency]").inputValue(), "");
+});
+
 test("reopening Quick Capture after a lost response replays one operation; a new entry gets a new key", async t => {
   const keys = [];
   const page = await openApp(t, { api: async (path, route) => {

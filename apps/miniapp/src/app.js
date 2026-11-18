@@ -2116,7 +2116,14 @@ function bindInboxActions(container) {
       button.disabled = true;
       button.setAttribute("aria-busy", "true");
       try {
-        await api(`/api/drafts/${button.dataset.confirmDraft}/confirm`, { method: "POST", body: { telegramUserId } });
+        const draft = inboxState.find(item => String(item.id) === button.dataset.confirmDraft);
+        if (!draft) return;
+        if (draft.items.some(needsCurrencyChoice)) {
+          const row = button.closest(".expense-row");
+          await openDraftInline(draft.id, { returnTab: row.dataset.inboxLocation, row });
+          return;
+        }
+        await confirmEditedDraft(draft);
         await loadDashboard();
         await loadHistory();
         showToast(t("toast.draftConfirmed"));
@@ -2137,7 +2144,7 @@ function bindInboxActions(container) {
         const draft = inboxState.find((item) => String(item.id) === button.dataset.inboxDraft);
         if (!draft) return;
         const items = updateFirstInboxItemCategory(draft, button.dataset.inboxCategory);
-        await api(`/api/drafts/${draft.id}`, { method: "PATCH", body: { telegramUserId, items } });
+        await patchEditedDraft(draft, items, false);
         await loadHistory();
         showToast(t("toast.categoryUpdated"));
       } catch (error) {

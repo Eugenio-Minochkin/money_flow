@@ -3510,13 +3510,17 @@ export function createRepository(pool, options = {}) {
       const draft = await this.getDraftForTelegramUser(draftId, telegramUserId);
       if (!draft || !["pending", "inbox"].includes(draft.status)) return null;
       if (expectedVersion != null && expectedVersion !== draft.version) return null;
+      const edits = [...items];
       for (const [index, original] of draft.items.entries()) {
-        if (original.review_reason === "currency_ambiguous" && original.currency == null
-          && !original.currency_candidates?.includes(items[index]?.currency)) {
+        if (original.review_reason !== "currency_ambiguous" || original.currency != null) continue;
+        const edit = edits[index];
+        if (edit?.currency === null) {
+          edits[index] = { ...edit, review_reason: original.review_reason, currency_candidates: original.currency_candidates };
+        } else if (!original.currency_candidates?.includes(edit?.currency)) {
           throw codedError("Select one of the suggested currencies", "currency_selection_required");
         }
       }
-      return this.updateDraftItems(draftId, telegramUserId, items, { expectedVersion: draft.version });
+      return this.updateDraftItems(draftId, telegramUserId, edits, { expectedVersion: draft.version });
     },
 
     async updateDraftItems(draftId, telegramUserId, items, options = {}) {
