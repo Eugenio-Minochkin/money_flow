@@ -80,6 +80,7 @@ This file records stable product and business rules. Read it before changing bud
 - `users.timezone` is any runtime-valid IANA timezone. Default and fallback is `Asia/Bangkok`; the Mini App offers common entries and the complete runtime list.
 - Missing or invalid timezone values must fall back to `Asia/Bangkok` and log `timezone_missing` or `timezone_invalid`.
 - Changing timezone must not rewrite historical transaction timestamps.
+- Mini App edits preserve the exact stored instant when the date field is unchanged. An edited wall time uses the profile timezone; a skipped or repeated local minute requires another time. Date-only payment occurrences remain calendar dates, and history groups by the full profile-local day including its year.
 - `users.timezone` stores the unchanged IANA identifier. The Mini App uses a bundled deterministic zone catalogue and computes its displayed UTC offset for the current instant; offsets are never persisted.
 - `display_currency` is the user's custom secondary currency preference. `display_currency_follows_base = true` makes the effective display currency equal `base_currency` without overwriting that saved custom preference; the migration keeps existing users unchanged while onboarding explicitly enables following by default.
 

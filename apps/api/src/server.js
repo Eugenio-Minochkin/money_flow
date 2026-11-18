@@ -60,7 +60,7 @@ const root = resolve(fileURLToPath(new URL("../../..", import.meta.url)));
 const webRoot = join(root, "apps", "miniapp", process.env.NODE_ENV === "production" ? "dist" : "src");
 const appRevision = readAppRevision();
 const readJson = createJsonReader({ maxJsonBytes: config.maxJsonBytes });
-const serveStatic = createStaticHandler({ webRoot });
+const serveStatic = createStaticHandler({ webRoot, serveSharedModules: process.env.NODE_ENV !== "production" });
 const apiSecurity = createApiSecurity({
   telegramBotToken: config.telegramBotToken,
   requireTelegramInitData: config.requireTelegramInitData,
@@ -428,6 +428,7 @@ function draftConfirmErrorResponse(error) {
   if ([
     "expense_invalid_amount",
     "expense_invalid_currency",
+    "currency_selection_required",
     "expense_invalid_date",
     "expense_future_date",
     "expense_operation_not_supported"
@@ -1095,9 +1096,16 @@ async function route(req, res) {
       const auth = apiSecurity.resolveTelegramUserId(req, url, body);
       if (auth.error) return sendJson(res, 400, { error: auth.error });
       const expectedVersion = Number.isFinite(Number(body.expectedVersion)) ? Number(body.expectedVersion) : null;
-      const draft = await repository.updateDraftItems(draftId, auth.telegramUserId, body.items ?? [], { expectedVersion });
+      let draft;
+      try {
+        draft = await repository.updateMiniAppDraftItems(draftId, auth.telegramUserId, body.items ?? [], expectedVersion);
+      } catch (error) {
+        if (error.code === "currency_selection_required") return sendJson(res, 422, { error: error.code });
+        throw error;
+      }
       if (!draft) {
         const fresh = await repository.getDraftForTelegramUser(draftId, auth.telegramUserId);
+        if (fresh?.status === "confirmed") return sendJson(res, 409, { error: "draft_already_confirmed" });
         if (fresh && (fresh.status === "pending" || fresh.status === "inbox")) {
           console.warn("[server] draft version conflict", { draftId });
           return sendJson(res, 409, { error: "draft_version_conflict", draft: fresh });
@@ -1145,6 +1153,7 @@ async function route(req, res) {
         const response = await confirmDraftForApi({
           repository,
           draftId,
+          expectedVersion: body.expectedVersion,
           telegramUserId: auth.telegramUserId,
           language,
           token: config.telegramBotToken,
@@ -1155,6 +1164,10 @@ async function route(req, res) {
         });
         return sendJson(res, response.statusCode, response.body);
       } catch (error) {
+        if (error.code === "draft_version_conflict") {
+          const draft = await repository.getDraftForTelegramUser(draftId, auth.telegramUserId);
+          return sendJson(res, 409, { error: error.code, draft });
+        }
         const response = draftConfirmErrorResponse(error);
         if (response) return sendJson(res, response.statusCode, { error: response.error });
         throw error;

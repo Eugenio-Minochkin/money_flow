@@ -1,14 +1,10 @@
 const http = require("http");
-const fs = require("fs");
 const path = require("path");
+const { createStaticHandler } = require("../api/src/http.js");
 
 const port = Number(process.env.PORT ?? 3000);
 const root = path.resolve(__dirname, "src");
-const types = {
-  ".html": "text/html; charset=utf-8",
-  ".css": "text/css; charset=utf-8",
-  ".js": "text/javascript; charset=utf-8"
-};
+const serveStatic = createStaticHandler({ webRoot: root, serveSharedModules: true });
 
 http.createServer((req, res) => {
   const url = new URL(req.url, `http://localhost:${port}`);
@@ -23,15 +19,7 @@ http.createServer((req, res) => {
     return;
   }
 
-  fs.readFile(file, (error, data) => {
-    if (error) {
-      res.writeHead(404);
-      res.end("not found");
-      return;
-    }
-    res.writeHead(200, { "content-type": types[path.extname(file)] ?? "application/octet-stream" });
-    res.end(data);
-  });
+  return serveStatic(res, pathname, { searchParams: url.searchParams, requestHeaders: req.headers });
 }).listen(port, "127.0.0.1", () => {
   console.log(`Mini App dev server listening on http://localhost:${port}`);
 });

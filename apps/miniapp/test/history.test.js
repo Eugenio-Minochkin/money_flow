@@ -151,6 +151,17 @@ test("periodTotal sums amount_base across all expenses", () => {
   ]), 350.5);
 });
 
+test("history headings use the profile day, language and year across a multi-year range", () => {
+  const groups = groupByDay([
+    { spent_at: "2026-11-02T18:15:00Z", amount_base: 5 },
+    { spent_at: "2026-11-03T03:00:00Z", amount_base: 7 },
+    { spent_at: "2025-11-02T18:15:00Z", amount_base: 3 }
+  ], "en", "Asia/Bangkok");
+  assert.deepEqual(groups.map(group => group.total), [12, 3]);
+  assert.match(groups[0].label, /November 3, 2026/);
+  assert.match(groups[1].label, /November 3, 2025/);
+});
+
 test("periodTotal returns 0 for empty list", () => {
   assert.equal(periodTotal([]), 0);
 });

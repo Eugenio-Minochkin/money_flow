@@ -36,6 +36,8 @@ In the Telegram HTML Widget for one saved expense, place the saved badge above t
 
 ## Editing
 
+- In both draft editors, an ambiguous currency starts with “Choose a currency”. Offer only the recognized candidates and require a choice before confirmation.
+
 - Edit saved expenses and active planned payments in the shared modal shell over the screen where editing started. Closing, saving, or deleting must not switch tabs, reset History filters, or discard the user's scroll position.
 - Keep expense Save and confirmed Delete actions inside the modal. Use the modal header close control for cancel without saving instead of a redundant footer Close action.
 - On narrow screens, keep the page behind the modal inert and fixed. Size the modal to its content and center it within the Telegram-safe usable area; when a form reaches the safe maximum height, let its body scroll while the header and actions remain inside the content-safe-area, fullscreen-control, and device-safe-area bounds.

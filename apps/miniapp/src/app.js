@@ -4,11 +4,12 @@ import { categoryIconSvg } from "./categoryIcons.js";
 import { currencyOptions } from "./currencies.js";
 import { resolveDraftSaveResponse, classifyConfirmOutcome } from "./draftSave.js";
 import { activatePreparedShortcut, handoffPreparedShortcut, prepareShortcutSetup } from "./quickAccessSetup.js";
-import { collectQuickCaptureReviewItems, quickCaptureItemNeedsReview } from "./quickCaptureReview.js";
+import { collectQuickCaptureReviewItems, needsCurrencyChoice, quickCaptureItemNeedsReview } from "./quickCaptureReview.js";
 import { describeQuickCaptureSavedResult } from "./quickCaptureSavedResult.js";
 import { buildDashboardCards, buildHeroMetric, renderBudgetTopupBreakdown, renderDashboardCards, shouldShowForecastDifference } from "./dashboardCards.js";
 import {
   dateTimeLocal,
+  expenseTimeFromInput,
   escapeAttribute,
   escapeHtml,
   formatDate,
@@ -233,8 +234,7 @@ let quickAccessClipboardFailed = false;
 let quickAccessKeyRevealed = false;
 let quickAccessConfigured = false;
 let quickAccessSetupError = false;
-let quickEntryRequestId = null;
-quickEntryText?.addEventListener("input", () => { quickEntryRequestId = null; });
+let pendingQuickEntry = null;
 document.querySelector("#openQuickEntryButton")?.addEventListener("click", () => {
   resetQuickEntryView();
   quickEntrySheet.classList.remove("hidden"); quickEntryBackdrop.classList.remove("hidden");
@@ -254,9 +254,9 @@ document.querySelector("#quickEntryForm")?.addEventListener("submit", async (eve
   if (!text) return;
   setQuickEntryPending(true);
   try {
-    quickEntryRequestId ??= crypto.randomUUID();
-    const data = await api("/api/quick-entry", { method: "POST", body: { telegramUserId, text, clientRequestId: quickEntryRequestId } });
-    quickEntryRequestId = null;
+    if (pendingQuickEntry?.text !== text) pendingQuickEntry = { text, id: crypto.randomUUID() };
+    const data = await api("/api/quick-entry", { method: "POST", body: { telegramUserId, text, clientRequestId: pendingQuickEntry.id } });
+    pendingQuickEntry = null;
     if (data.saved) {
       renderQuickCaptureSaved(data.saved.expenses);
     } else {
@@ -298,7 +298,6 @@ function closeQuickEntry({ force = false } = {}) {
 
 function resetQuickEntryView() {
   quickCaptureDraft = null;
-  quickEntryRequestId = null;
   quickEntryForm?.classList.remove("hidden");
   quickCaptureReview?.classList.add("hidden");
   if (quickEntryStatus) quickEntryStatus.textContent = "";
@@ -335,13 +334,15 @@ function renderQuickCaptureReview(draft) {
 
 function quickCaptureReviewItem(item, index) {
   const needsReview = quickCaptureItemNeedsReview(item);
+  const chooseCurrency = needsCurrencyChoice(item);
   return `
     <article class="quick-capture-review__item">
       <strong>${escapeHtml(item.description)}</strong>
-      <span>${formatMoney(item.amount, item.currency)} · ${escapeHtml(categoryLabel(item.category_slug, currentLanguage))}</span>
+      <span>${chooseCurrency ? escapeHtml(item.amount) : formatMoney(item.amount, item.currency)} · ${escapeHtml(categoryLabel(item.category_slug, currentLanguage))}</span>
+      ${chooseCurrency ? editCurrencyField(item, `quick-capture-${index}`) : ""}
       ${needsReview ? `
         <label><span>${t("forms.amount")}</span><input name="quick-capture-${index}-amount" type="number" min="0.01" step="0.01" value="${Number(item.amount)}" required /></label>
-        <label><span>${t("quickEntry.reviewCategory")}</span><select name="quick-capture-${index}-category" data-quick-capture-category-index="${index}" required>${item.category_slug === "other" ? `<option value="" selected disabled>${escapeHtml(t("quickEntry.reviewCategory"))}</option>` : ""}${categories.filter(([slug]) => item.category_slug !== "other" || slug !== "other").map(([slug]) => option(slug, item.category_slug, categoryLabel(slug, currentLanguage))).join("")}</select></label>
+        <label><span>${t(chooseCurrency && item.category_slug !== "other" ? "forms.category" : "quickEntry.reviewCategory")}</span><select name="quick-capture-${index}-category" data-quick-capture-category-index="${index}" required>${item.category_slug === "other" ? `<option value="" selected disabled>${escapeHtml(t("quickEntry.reviewCategory"))}</option>` : ""}${categories.filter(([slug]) => item.category_slug !== "other" || slug !== "other").map(([slug]) => option(slug, item.category_slug, categoryLabel(slug, currentLanguage))).join("")}</select></label>
       ` : ""}
     </article>
   `;
@@ -358,10 +359,9 @@ async function saveQuickCaptureReview(event) {
       (name) => input(name)?.value,
       (index) => quickCaptureCategorySelections.has(index)
     );
-    const savedDraft = await api(`/api/drafts/${quickCaptureDraft.id}`, { method: "PATCH", body: { telegramUserId, items, expectedVersion: quickCaptureDraft.version } });
-    quickCaptureDraft = savedDraft.draft;
-    draftState = savedDraft.draft;
-    const data = await api(`/api/drafts/${quickCaptureDraft.id}/confirm`, { method: "POST", body: { telegramUserId, language: currentLanguage } });
+    quickCaptureDraft = await patchEditedDraft(quickCaptureDraft, items, true);
+    draftState = quickCaptureDraft;
+    const data = await confirmEditedDraft(quickCaptureDraft);
     renderQuickCaptureSaved(data.expenses);
   } catch (error) {
     const outcome = resolveDraftSaveResponse(error?.status ?? 500, error?.body ?? null);
@@ -1202,8 +1202,11 @@ function renderHistoryCalendar() {
 }
 
 function localTodayYmd() {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  return localDateKeyInTimeZone(new Date(), userTimeZone());
+}
+
+function plannedCalendarToday() {
+  return new Date(`${localTodayYmd()}T12:00:00`);
 }
 
 function updateHistoryFilterCurrent() {
@@ -1751,7 +1754,7 @@ function renderReserveSettings() {
 }
 
 function renderPlannedMonthSummary(items) {
-  const summary = dashboardState?.plannedMonthSummary ?? calculatePlannedMonthSummary(items);
+  const summary = dashboardState?.plannedMonthSummary ?? calculatePlannedMonthSummary(items, plannedCalendarToday());
   const baseCurrency = dashboardState?.user?.base_currency ?? dashboardState?.snapshot?.baseCurrency ?? "THB";
   const total = plannedSummaryMoneyParts(summary.total, baseCurrency, summary.display.total, summary.display.currency);
   const paid = plannedSummaryMoneyParts(summary.paid, baseCurrency, summary.display.paid, summary.display.currency);
@@ -1789,9 +1792,10 @@ function plannedSummaryRowHtml(label, parts) {
 
 function renderPlannedNotice(items) {
   const notice = document.querySelector("#plannedNotice");
-  const entries = dueOrOverduePlannedOccurrences(items);
+  const today = plannedCalendarToday();
+  const entries = dueOrOverduePlannedOccurrences(items, today);
   if (!entries.length) {
-    const next = nextUnpaidPlannedItem(items);
+    const next = nextUnpaidPlannedItem(items, today);
     if (!next) {
       notice.classList.add("hidden");
       notice.innerHTML = "";
@@ -1816,7 +1820,7 @@ function plannedFutureRowHtml(entry) {
   const item = entry.item;
   const occurrenceDate = entry.occurrence?.occurrence_date ?? entry.date;
   const metaParts = [
-    formatDateOnly(occurrenceDate, currentLanguage, userTimeZone()),
+    formatDateOnly(occurrenceDate, currentLanguage, "UTC"),
     moneyBase(item.amount_base ?? item.amount)
   ];
   const displayText = moneyDisplay(item.display?.amount, item.display?.currency);
@@ -1839,7 +1843,7 @@ function plannedDueRowHtml(entry, titleKey) {
   const { item, occurrence, isToday } = entry;
   const dateLabel = isToday
     ? t("plan.dueToday")
-    : t("plan.wasDue", { date: formatDateOnly(occurrence.occurrence_date, currentLanguage, userTimeZone()) });
+    : t("plan.wasDue", { date: formatDateOnly(occurrence.occurrence_date, currentLanguage, "UTC") });
   const displayCurrency = item.display?.currency;
   const displayAmount = item.display?.amount;
   const baseAmount = moneyBase(item.amount_base ?? item.amount);
@@ -1946,7 +1950,7 @@ function renderHistory(expenses) {
   }
 
   savedHeading?.classList.remove("hidden");
-  const groups = groupByDay(expenses);
+  const groups = groupByDay(expenses, currentLanguage, userTimeZone());
   list.innerHTML = groups.map((group) => `
     <section class="history-day">
       <div class="history-day-heading">
@@ -2112,7 +2116,14 @@ function bindInboxActions(container) {
       button.disabled = true;
       button.setAttribute("aria-busy", "true");
       try {
-        await api(`/api/drafts/${button.dataset.confirmDraft}/confirm`, { method: "POST", body: { telegramUserId } });
+        const draft = inboxState.find(item => String(item.id) === button.dataset.confirmDraft);
+        if (!draft) return;
+        if (draft.items.some(needsCurrencyChoice)) {
+          const row = button.closest(".expense-row");
+          await openDraftInline(draft.id, { returnTab: row.dataset.inboxLocation, row });
+          return;
+        }
+        await confirmEditedDraft(draft);
         await loadDashboard();
         await loadHistory();
         showToast(t("toast.draftConfirmed"));
@@ -2133,7 +2144,7 @@ function bindInboxActions(container) {
         const draft = inboxState.find((item) => String(item.id) === button.dataset.inboxDraft);
         if (!draft) return;
         const items = updateFirstInboxItemCategory(draft, button.dataset.inboxCategory);
-        await api(`/api/drafts/${draft.id}`, { method: "PATCH", body: { telegramUserId, items } });
+        await patchEditedDraft(draft, items, false);
         await loadHistory();
         showToast(t("toast.categoryUpdated"));
       } catch (error) {
@@ -2325,7 +2336,7 @@ function renderPlannedExpenses(items) {
     list.innerHTML = `<div class="empty">${t("plan.noPlanned")}</div>`;
     return;
   }
-  const today = new Date(`${localDateKeyInTimeZone(new Date(), userTimeZone())}T12:00:00`);
+  const today = plannedCalendarToday();
   list.innerHTML = items.map((item) => {
     const status = plannedPaymentStatus(item, today);
     const paid = status === "paid";
@@ -2626,7 +2637,9 @@ function renderDraftEditor(draft) {
     </div>
   `;
   form.onsubmit = saveDraft;
-  form.querySelector("#confirmDraftButton").addEventListener("click", confirmDraft);
+  form.querySelector("#confirmDraftButton").addEventListener("click", () => {
+    confirmDraft().catch(() => showToast(t("quickEntry.reviewSaveFailed")));
+  });
   form.querySelector("#cancelDraftButton").addEventListener("click", cancelDraftFromEditor);
   form.querySelector("#closeDraftButton").addEventListener("click", closeDraftEditor);
   form.addEventListener("input", () => { draftDirty = true; });
@@ -2653,7 +2666,7 @@ function renderExpenseEditor(expense, options = {}) {
       </div>
     </div>
   `;
-  form.onsubmit = (event) => saveExpense(event, expense.id);
+  form.onsubmit = (event) => saveExpense(event, expense);
   form.querySelector("[data-delete-expense]").addEventListener("click", (event) => {
     deleteExpense(expense, event.currentTarget).catch(showError);
   });
@@ -2683,6 +2696,14 @@ function closeEditModal() {
   editModal.close();
 }
 
+function editCurrencyField(item, prefix) {
+  const choose = needsCurrencyChoice(item);
+  const placeholder = choose ? `<option value="" selected disabled>${t("forms.chooseCurrency")}</option>` : "";
+  const options = currencyOptions(item.currency, option, "", choose ? item.currency_candidates ?? [] : null);
+  return `<label><span>${t("forms.currency")}</span>
+    <select name="${prefix}-currency" required>${placeholder}${options}</select></label>`;
+}
+
 function editableItemFields(item, prefix, index) {
   return `
     <fieldset class="edit-card" data-index="${index}">
@@ -2695,10 +2716,7 @@ function editableItemFields(item, prefix, index) {
           <span>${t("forms.amount")}</span>
           <input name="${prefix}-amount" type="number" min="0.01" step="0.01" value="${Number(item.amount)}" required />
         </label>
-        <label>
-          <span>${t("forms.currency")}</span>
-          <select name="${prefix}-currency">${currencyOptions(item.currency, option)}</select>
-        </label>
+        ${editCurrencyField(item, prefix)}
       </div>
       <label>
         <span>${t("forms.category")}</span>
@@ -2717,7 +2735,7 @@ function editableItemFields(item, prefix, index) {
           </label>
           <label>
             <span>${t("forms.dateAndTime")}</span>
-            <input name="${prefix}-spent_at" type="datetime-local" value="${dateTimeLocal(item.spent_at, dashboardState?.user?.timezone)}" required />
+            <input name="${prefix}-spent_at" type="datetime-local" data-time-zone="${escapeAttribute(userTimeZone())}" value="${dateTimeLocal(item.spent_at, userTimeZone())}" required />
           </label>
           <label>
             <span>${t("forms.tagsComma")}</span>
@@ -2983,17 +3001,33 @@ async function saveDraft(event) {
   await saveDraftItems({ showFeedback: true });
 }
 
-async function saveDraftItems(options = {}) {
-  const items = draftState.items.map((item, index) => collectItem(`draft-${index}`, item));
-  let status = 200;
-  let errorBody = null;
-  let data;
+async function patchEditedDraft(draft, items, confirming) {
   try {
-    data = await api(`/api/drafts/${draftState.id}`, { method: "PATCH", body: { telegramUserId, items, expectedVersion: draftState.version } });
+    const result = await api(`/api/drafts/${draft.id}`, {
+      method: "PATCH", body: { telegramUserId, items, expectedVersion: draft.version }
+    });
+    return result.draft;
   } catch (error) {
-    status = error?.status ?? 500;
-    errorBody = error?.body ?? null;
-    const outcome = resolveDraftSaveResponse(status, errorBody);
+    // A lost confirmation response can leave the editor open after the expense was committed.
+    if (confirming && error.body?.error === "draft_already_confirmed") return draft;
+    throw error;
+  }
+}
+
+function confirmEditedDraft(draft) {
+  return api(`/api/drafts/${draft.id}/confirm`, {
+    method: "POST", body: { telegramUserId, language: currentLanguage, expectedVersion: draft.version }
+  });
+}
+
+async function saveDraftItems(options = {}) {
+  if (!document.querySelector("#draftForm").reportValidity()) return { saved: false };
+  const items = draftState.items.map((item, index) => collectItem(`draft-${index}`, item));
+  if (items.some(item => !item)) return { saved: false };
+  try {
+    draftState = await patchEditedDraft(draftState, items, options.confirming);
+  } catch (error) {
+    const outcome = resolveDraftSaveResponse(error.status, error.body);
     if (outcome.conflict) {
       draftState = outcome.draft;
       renderDraftEditor(draftState);
@@ -3003,7 +3037,6 @@ async function saveDraftItems(options = {}) {
     }
     throw error;
   }
-  draftState = data.draft;
   renderDraftEditor(draftState);
   draftDirty = false;
   if (options.showFeedback) showToast(t("toast.draftSaved"));
@@ -3011,9 +3044,19 @@ async function saveDraftItems(options = {}) {
 }
 
 async function confirmDraft() {
-  const saveResult = await saveDraftItems();
+  const saveResult = await saveDraftItems({ confirming: true });
   if (!saveResult?.saved) return;
-  const data = await api(`/api/drafts/${draftState.id}/confirm`, { method: "POST", body: { telegramUserId, language: currentLanguage } });
+  let data;
+  try {
+    data = await confirmEditedDraft(draftState);
+  } catch (error) {
+    const outcome = resolveDraftSaveResponse(error.status, error.body);
+    if (!outcome.conflict) throw error;
+    draftState = outcome.draft;
+    renderDraftEditor(draftState);
+    showToast(t("toast.draftConflict"));
+    return;
+  }
   const outcome = classifyConfirmOutcome(data);
   document.querySelector("#draftEditorSection").classList.add("hidden");
   await loadDashboard();
@@ -3033,10 +3076,12 @@ async function cancelDraftFromEditor() {
   showToast(t("toast.draftCanceled"));
 }
 
-async function saveExpense(event, expenseId) {
+async function saveExpense(event, expense) {
   event.preventDefault();
+  const patch = collectItem("expense", expense);
+  if (!patch) return;
   await runEditModalSave({
-    save: () => api(`/api/expenses/${expenseId}`, { method: "PATCH", body: { telegramUserId, expense: collectItem("expense", {}) } }),
+    save: () => api(`/api/expenses/${expense.id}`, { method: "PATCH", body: { telegramUserId, expense: patch } }),
     refresh: async () => {
       await loadDashboard();
       await loadHistory();
@@ -3137,6 +3182,14 @@ async function savePlanned(event, {
 }
 
 function collectItem(prefix, original) {
+  const dateInput = input(`${prefix}-spent_at`);
+  const spentAt = expenseTimeFromInput(dateInput.value, original.spent_at, dateInput.dataset.timeZone);
+  if (!spentAt) {
+    dateInput.setCustomValidity(t("forms.invalidLocalTime"));
+    dateInput.addEventListener("input", () => dateInput.setCustomValidity(""), { once: true });
+    dateInput.reportValidity();
+    return null;
+  }
   return {
     amount: Number(input(`${prefix}-amount`).value),
     currency: input(`${prefix}-currency`).value,
@@ -3144,7 +3197,7 @@ function collectItem(prefix, original) {
     category_slug: input(`${prefix}-category_slug`).value,
     budget_impact: input(`${prefix}-budget_impact`)?.value ?? original.budget_impact ?? "regular",
     category_source: "user",
-    spent_at: new Date(input(`${prefix}-spent_at`).value).toISOString(),
+    spent_at: spentAt,
     tags: input(`${prefix}-tags`).value.split(",").map((tag) => tag.trim()).filter(Boolean),
     confidence: original.confidence ?? 1,
     needs_review: false
@@ -3314,7 +3367,7 @@ function setOptionalText(selector, text) {
 }
 
 function recurrenceLabel(item) {
-  return plannedRecurrenceLabel(item, (value) => formatDate(value, currentLanguage, userTimeZone()), currentLanguage);
+  return plannedRecurrenceLabel(item, (value) => formatDateOnly(value, currentLanguage, "UTC"), currentLanguage);
 }
 
 function userTimeZone(user = dashboardState?.user) {

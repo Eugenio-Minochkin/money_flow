@@ -5,9 +5,10 @@ export const currencies = SUPPORTED_CURRENCIES.map((currency) => [
   `${currencyFlag(currency.code)} ${currency.code} — ${currency.name.en} / ${currency.name.ru}`
 ]);
 
-export function currencyOptions(selected, option, query = "") {
+export function currencyOptions(selected, option, query = "", allowed = null) {
   const normalizedQuery = String(query).trim().toLocaleLowerCase();
   return currencies
+    .filter(([code]) => !allowed || allowed.includes(code))
     .filter(([code, label]) => code === selected || !normalizedQuery || `${code} ${label}`.toLocaleLowerCase().includes(normalizedQuery))
     .map(([code, label]) => option(code, selected, label))
     .join("");

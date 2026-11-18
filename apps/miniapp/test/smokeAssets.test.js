@@ -172,9 +172,9 @@ test("Quick Capture saves safe entries with undo and keeps review in the sheet",
   assert.match(app, /renderQuickCaptureReview\(data\.draft\)/);
   assert.match(app, /async function undoQuickCapture\(expense\)/);
   assert.match(app, /api\(`\/api\/expenses\/\$\{expense\.id\}`, \{ method: "DELETE"/);
-  assert.match(app, /expectedVersion: quickCaptureDraft\.version/);
+  assert.match(app, /patchEditedDraft\(quickCaptureDraft, items, true\)/);
   assert.match(app, /quickCaptureReviewStatus\.textContent = t\("quickEntry\.reviewSaveFailed"\)/);
-  assert.match(app, /api\(`\/api\/drafts\/\$\{draftState\.id\}\/confirm`/);
+  assert.match(app, /confirmEditedDraft\(quickCaptureDraft\)/);
 });
 
 test("Shortcut setup copies its key without rendering the raw credential", async () => {
@@ -926,7 +926,7 @@ test("active planned cards share expense visuals while Pay stays direct and dest
 
   const renderBlock = app.slice(app.indexOf("function renderPlannedExpenses"), app.indexOf("function closeAndResetPlannedForm"));
   assert.match(renderBlock, /class="planned-expense-card"/);
-  assert.match(renderBlock, /localDateKeyInTimeZone\(new Date\(\), userTimeZone\(\)\)/);
+  assert.match(renderBlock, /const today = plannedCalendarToday\(\)/);
   assert.match(renderBlock, /class="planned-expense-card__main"[^>]+data-edit-planned/);
   assert.match(renderBlock, /class="dashboard-expense-icon"[^]*categoryIconSvg\(item\.category_slug\)/);
   assert.match(renderBlock, /plannedPaymentStatus\(item, today\)/);
@@ -963,7 +963,7 @@ test("planned disable uses the focused helper and prefers the server-owned month
   const app = await readFile(join(miniAppRoot, "app.js"), "utf8");
 
   assert.match(app, /import\s*{[^}]*runPlannedDisable[^}]*}\s*from "\.\/plannedDisable\.js"/s);
-  assert.match(app, /dashboardState\?\.plannedMonthSummary\s*\?\?\s*calculatePlannedMonthSummary\(items\)/);
+  assert.match(app, /dashboardState\?\.plannedMonthSummary\s*\?\?\s*calculatePlannedMonthSummary\(items, plannedCalendarToday\(\)\)/);
   assert.match(app, /runPlannedDisable\(\{[^]*?confirm:\s*window\.confirm[^]*?disableRequest:[^]*?method:\s*"DELETE"[^]*?loadDashboard[^]*?showResult:\s*showToast/s);
   assert.match(app, /runPlannedDisable\(\{[^]*?language:\s*currentLanguage,[^]*?createTranslator,/s);
 });

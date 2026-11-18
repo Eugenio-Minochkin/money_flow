@@ -28,6 +28,8 @@ The product should feel simple, fast, and light: a user records expenses in the 
 
 ## Experience Principles
 
+- Reopening Quick Capture after a network error keeps the same submission for the same text. Once saving succeeds, the user can enter an identical expense intentionally.
+
 - The main emotional goal is calm clarity: the user should understand money movement without overload.
 - Dashboard screens should show budget state clearly and avoid visual noise.
 - Settings should stay compact even as they cover budget, currencies, planned payments, reserve, language, theme, backup, and a single Siri/Shortcut entry that opens its own setup sheet.

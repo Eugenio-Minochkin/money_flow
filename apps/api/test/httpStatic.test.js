@@ -57,6 +57,19 @@ test("static handler keeps HTML and modules revalidated but caches explicit vers
   assert.equal(staleEtag.status, 200, "If-None-Match takes precedence over If-Modified-Since");
 });
 
+test("source-mode Mini App resolves its two shared browser imports", async () => {
+  const webRoot = join(process.cwd(), "apps/miniapp/src");
+  for (const name of ["time", "currencies"]) {
+    const path = `/packages/shared/src/${name}.js`;
+    const source = responseRecorder();
+    await createStaticHandler({ webRoot, serveSharedModules: true })(source.res, path);
+    assert.equal(source.status, 200);
+    const bundled = responseRecorder();
+    await createStaticHandler({ webRoot })(bundled.res, path);
+    assert.equal(bundled.status, 404);
+  }
+});
+
 function responseRecorder() {
   const record = { status: null, headers: {}, body: "" };
   record.res = {

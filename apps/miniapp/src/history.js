@@ -1,7 +1,10 @@
-export function groupByDay(expenses) {
+export function groupByDay(expenses, language = "ru", timeZone = "Asia/Bangkok") {
   const groups = new Map();
+  const formatter = new Intl.DateTimeFormat(language === "en" ? "en-US" : "ru-RU", {
+    year: "numeric", month: "long", day: "numeric", timeZone
+  });
   for (const expense of expenses) {
-    const label = new Intl.DateTimeFormat("ru-RU", { day: "2-digit", month: "long" }).format(new Date(expense.spent_at));
+    const label = formatter.format(new Date(expense.spent_at));
     if (!groups.has(label)) groups.set(label, { label, total: 0, items: [] });
     const group = groups.get(label);
     group.total += Number(expense.amount_base ?? expense.amount_original);
