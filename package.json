@@ -14,6 +14,7 @@
     "dev:sandbox": "node -e \"console.log('Open http://localhost:3000/dev after running npm run dev:api')\"",
     "build:miniapp": "node apps/miniapp/build.mjs",
     "test": "node --test",
+    "test:browser": "node --test apps/miniapp/integration/editor-browser.js",
     "test:integration:postgres": "node --test apps/api/integration/postgres-smoke.js",
     "dev:miniapp": "node apps/miniapp/dev-server.cjs",
     "start:api": "node --env-file=.env apps/api/src/server.js",
@@ -29,6 +30,7 @@
     "pg": "^8.13.1"
   },
   "devDependencies": {
-    "esbuild": "^0.28.2"
+    "esbuild": "^0.28.2",
+    "playwright-core": "1.65.1"
   }
 }

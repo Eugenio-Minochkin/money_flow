@@ -1,5 +1,6 @@
 import { readFile, stat } from "node:fs/promises";
 import { extname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 export function createJsonReader({ maxJsonBytes }) {
   return async function readJson(req) {
@@ -24,11 +25,14 @@ export function sendJson(res, status, body) {
   res.end(JSON.stringify(body));
 }
 
-export function createStaticHandler({ webRoot }) {
+export function createStaticHandler({ webRoot, serveSharedModules = false }) {
   return async function serveStatic(res, pathname, { searchParams = new URLSearchParams(), requestHeaders = {} } = {}) {
     const safePath = pathname.replace(/^\/+/, "");
-    const filePath = join(webRoot, safePath);
+    let filePath = join(webRoot, safePath);
     if (!filePath.startsWith(webRoot)) return sendJson(res, 403, { error: "forbidden" });
+    if (serveSharedModules && ["/packages/shared/src/time.js", "/packages/shared/src/currencies.js"].includes(pathname)) {
+      filePath = fileURLToPath(new URL(`../../..${pathname}`, import.meta.url));
+    }
     try {
       const fileStat = await stat(filePath);
       const etag = `W/"${fileStat.size}-${Math.trunc(fileStat.mtimeMs)}"`;

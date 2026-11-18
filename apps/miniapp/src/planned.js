@@ -104,7 +104,7 @@ export function nextPlannedDate(item, now = new Date()) {
 
 export function isDueToday(item, today = new Date()) {
   if ((item.recurrence === "one_off" || item.recurrence === "one_time") && item.due_date) {
-    return new Date(item.due_date).toDateString() === today.toDateString();
+    return String(item.due_date).slice(0, 10) === dateKey(today);
   }
   if (item.recurrence === "weekly") {
     const weekday = today.getDay() === 0 ? 7 : today.getDay();
@@ -145,8 +145,8 @@ export function buildPlannedOccurrences(item, now = new Date()) {
 
   if (item.recurrence === "one_off" || item.recurrence === "one_time") {
     if (!item.due_date) return [];
-    const dueDate = new Date(item.due_date);
-    if (dueDate.getFullYear() === year && dueDate.getMonth() === month) dates.push(dateKey(dueDate));
+    const dueDate = String(item.due_date).slice(0, 10);
+    if (dueDate.slice(0, 7) === monthKey(now)) dates.push(dueDate);
   } else if (item.recurrence === "weekly") {
     const target = Number(item.weekday ?? 1);
     for (let day = 1; day <= daysInMonth; day += 1) {

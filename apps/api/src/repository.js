@@ -3506,6 +3506,19 @@ export function createRepository(pool, options = {}) {
       return normalizeDraft(result.rows[0] ?? null);
     },
 
+    async updateMiniAppDraftItems(draftId, telegramUserId, items, expectedVersion) {
+      const draft = await this.getDraftForTelegramUser(draftId, telegramUserId);
+      if (!draft || !["pending", "inbox"].includes(draft.status)) return null;
+      if (expectedVersion != null && expectedVersion !== draft.version) return null;
+      for (const [index, original] of draft.items.entries()) {
+        if (original.review_reason === "currency_ambiguous" && original.currency == null
+          && !original.currency_candidates?.includes(items[index]?.currency)) {
+          throw codedError("Select one of the suggested currencies", "currency_selection_required");
+        }
+      }
+      return this.updateDraftItems(draftId, telegramUserId, items, { expectedVersion: draft.version });
+    },
+
     async updateDraftItems(draftId, telegramUserId, items, options = {}) {
       const normalized = items.map(normalizeDraftItem);
       const expectedVersion = options.expectedVersion;
@@ -3731,6 +3744,9 @@ export function createRepository(pool, options = {}) {
           );
           const snapshot = ownsTransaction ? await readDashboardSnapshot() : null;
           return { expenses: existing.rows, dashboardSnapshot: snapshot, alreadySaved: true };
+        }
+        if (options.expectedVersion != null && options.expectedVersion !== draft.version) {
+          throw codedError("Draft changed before confirmation", "draft_version_conflict");
         }
 
         let items = Array.isArray(draft.items) ? draft.items : JSON.parse(draft.items);
@@ -4080,7 +4096,7 @@ export function createRepository(pool, options = {}) {
       }
       const result = await pool.query(
         `SELECT id, amount_original, currency_original, amount_base, converted_amounts,
-                description, category_slug, tags, spent_at
+                description, category_slug, tags, spent_at, budget_impact
          FROM expenses
          WHERE user_id = $1 AND spent_at >= $2 AND spent_at < $3
          ${searchSql}
@@ -5768,6 +5784,8 @@ function withDisplayTotal(row, user) {
 function withDisplayPlanned(row, user) {
   return {
     ...row,
+    due_date: normalizePlannedDateKey(row.due_date),
+    starts_on: normalizePlannedDateKey(row.starts_on),
     display: {
       currency: effectiveDisplayCurrency(user),
       amount: displayFromBase(row.amount_base, user)

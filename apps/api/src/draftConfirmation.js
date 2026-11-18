@@ -4,6 +4,7 @@ import { savedExpenseKeyboard } from "./telegramKeyboards.js";
 export async function confirmDraftForApi({
   repository,
   draftId,
+  expectedVersion,
   telegramUserId,
   language,
   token,
@@ -13,7 +14,7 @@ export async function confirmDraftForApi({
   telegramClient,
   logger = console
 }) {
-  const result = await repository.confirmDraftWithExplicitAcceptance(draftId, telegramUserId);
+  const result = await repository.confirmDraftWithExplicitAcceptance(draftId, telegramUserId, { expectedVersion });
   const draft = await repository.getDraftForTelegramUser(draftId, telegramUserId);
   if (draft?.tg_chat_id && draft?.tg_message_id) {
     const total = result.expenses.reduce((sum, expense) => sum + Number(expense.amount_base), 0);

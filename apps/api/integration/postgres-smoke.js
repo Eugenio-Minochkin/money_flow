@@ -1349,6 +1349,39 @@ test("persists ambiguous currency review without a default and saves only after 
   assert.equal(saved.expenses[0].currency_original, "INR");
 });
 
+test("Mini App validates an ambiguous currency against the stored version before updating", async () => {
+  const user = await createSmokeUser(990041);
+  const item = { ...expenseItem(), currency: null, currency_candidates: ["ARS", "MXN"],
+    review_reason: "currency_ambiguous", needs_review: true };
+  const draft = await repo.createDraft(user.id, "coffee 100 pesos", [item]);
+  const invalid = [{ ...item, currency: "AED", currency_candidates: ["AED"] }];
+  await assert.rejects(() => repo.updateMiniAppDraftItems(draft.id, 990041, invalid, draft.version),
+    { code: "currency_selection_required" });
+  const unchanged = await repo.getDraftForTelegramUser(draft.id, 990041);
+  assert.equal(unchanged.version, draft.version);
+  assert.deepEqual(unchanged.items, draft.items);
+  const selected = await repo.updateMiniAppDraftItems(draft.id, 990041, [{ ...item, currency: "MXN" }], draft.version);
+  assert.equal(selected.items[0].currency, "MXN");
+  assert.equal(await repo.updateMiniAppDraftItems(draft.id, 990041, invalid, draft.version), null);
+  const changed = await repo.updateMiniAppDraftItems(draft.id, 990041, [{ ...selected.items[0], currency: "THB" }], selected.version);
+  await assert.rejects(() => repo.confirmDraftWithExplicitAcceptance(draft.id, 990041, { expectedVersion: selected.version }),
+    { code: "draft_version_conflict" });
+  const saved = await repo.confirmDraftWithExplicitAcceptance(draft.id, 990041, { expectedVersion: changed.version });
+  assert.equal(saved.expenses[0].currency_original, "THB");
+  const replay = await repo.confirmDraftWithExplicitAcceptance(draft.id, 990041, { expectedVersion: changed.version });
+  assert.equal(replay.alreadySaved, true);
+  assert.equal(replay.expenses[0].id, saved.expenses[0].id);
+});
+
+test("history preserves the stored budget impact of large and planned expenses", async () => {
+  const user = await createSmokeUser(990006);
+  for (const impact of ["large_oneoff", "planned"]) {
+    await saveExpense(user.id, 990006, { budget_impact: impact, spent_at: "2026-06-24T05:00:00Z" });
+  }
+  const rows = await repo.listExpensesForTelegramUser(990006, { fromDate: "2026-06-24", toDate: "2026-06-24" });
+  assert.deepEqual(rows.map(row => row.budget_impact).sort(), ["large_oneoff", "planned"]);
+});
+
 test("explicit review acceptance saves the historical IDR backlog atomically and idempotently", async () => {
   const telegramUserId = 990019;
   const user = await createSmokeUser(telegramUserId);

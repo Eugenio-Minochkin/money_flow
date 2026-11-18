@@ -3552,6 +3552,7 @@ test("lists expenses with last7 period and filters by spent_at", async () => {
   });
 
   const listCall = calls.at(-1);
+  assert.match(listCall.sql.split("FROM expenses")[0], /\bbudget_impact\b/);
   assert.match(listCall.sql, /spent_at >= \$2 AND spent_at < \$3/);
   assert.doesNotMatch(listCall.sql, /created_at/);
   assert.equal(listCall.params[1].toISOString(), "2026-06-09T17:00:00.000Z");
@@ -5410,7 +5411,8 @@ test("dashboard counts current-month one-off planned expenses when due_date is a
     description: "one-off",
     category_slug: "other",
     recurrence: "one_off",
-    due_date: new Date("2026-06-10T00:00:00.000Z"),
+    due_date: new Date(2026, 5, 10),
+    starts_on: new Date(2026, 5, 1),
     paid_count: 0,
     paid_occurrence_dates: []
   }]));
@@ -5418,6 +5420,8 @@ test("dashboard counts current-month one-off planned expenses when due_date is a
   const dashboard = await repo.dashboard(222386362, new Date("2026-06-10T10:00:00+07:00"));
 
   assert.equal(dashboard.snapshot.plannedRemaining, 1234);
+  assert.equal(dashboard.plannedExpenses[0].due_date, "2026-06-10");
+  assert.equal(dashboard.plannedExpenses[0].starts_on, "2026-06-01");
   assert.equal(dashboard.snapshot.freeRemaining, 43766);
 });
 

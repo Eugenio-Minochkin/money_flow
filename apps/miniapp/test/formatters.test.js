@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   dateTimeLocal,
+  expenseTimeFromInput,
   escapeAttribute,
   escapeHtml,
   formatMoney,
@@ -56,6 +57,15 @@ test("formats dates in Bangkok timezone", () => {
 
 test("formats datetime-local values in a supplied timezone", () => {
   assert.equal(dateTimeLocal("2026-06-01T03:30:00.000Z", "America/New_York"), "2026-05-31T23:30");
+});
+
+test("edits respect fractional offsets and DST gaps or folds; untouched instants retain precision", () => {
+  assert.equal(expenseTimeFromInput("2026-10-31T11:05", null, "Asia/Kathmandu"), "2026-10-31T05:20:00.000Z");
+  assert.equal(expenseTimeFromInput("2026-03-08T02:15", null, "America/New_York"), null);
+  assert.equal(expenseTimeFromInput("2026-11-01T01:15", null, "America/New_York"), null);
+  for (const original of ["2026-11-01T05:15:44.567Z", "2026-11-01T06:15:12.345Z"]) {
+    assert.equal(expenseTimeFromInput("2026-11-01T01:15", original, "America/New_York"), original);
+  }
 });
 
 test("formats user-local calendar keys independently of the browser timezone", () => {

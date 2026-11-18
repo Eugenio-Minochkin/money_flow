@@ -40,6 +40,15 @@ jobs:
       - name: Run tests
         run: npm test
 
+      - name: Check Mini App calendar across device timezones
+        run: |
+          for zone in UTC America/New_York Asia/Kathmandu; do
+            TZ="$zone" node --test apps/miniapp/test/{history,planned,formatters}.test.js
+          done
+
+      - name: Run Mini App browser regressions
+        run: npm run test:browser
+
   postgres-integration:
     name: Postgres integration smoke
     runs-on: ubuntu-latest

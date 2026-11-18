@@ -166,7 +166,7 @@ export function localDateKey(date, timeZone = DEFAULT_TIMEZONE) {
   return `${parts.year}-${pad2(parts.month)}-${pad2(parts.day)}`;
 }
 
-export function localDateTimeToUtc(parts, timeZone = DEFAULT_TIMEZONE) {
+export function localDateTimeToUtc(parts, timeZone = DEFAULT_TIMEZONE, { rejectAmbiguous = false } = {}) {
   const values = [parts?.year, parts?.month, parts?.day, parts?.hour, parts?.minute ?? 0];
   if (!values.every(Number.isInteger)) throw new Error("invalid_local_date_time");
 
@@ -197,6 +197,16 @@ export function localDateTimeToUtc(parts, timeZone = DEFAULT_TIMEZONE) {
     roundTrip.hour !== hour || roundTrip.minute !== minute
   ) {
     throw new Error("invalid_local_date_time");
+  }
+  if (rejectAmbiguous) {
+    // At a backward clock change two different offsets map to the same wall time.
+    for (const day of [-1, 1]) {
+      const offset = timeZoneOffsetMinutes(new Date(guessMs + day * 86_400_000), zone);
+      const alternative = new Date(targetMs - offset * 60_000);
+      if (alternative.getTime() !== guessMs && timeZoneOffsetMinutes(alternative, zone) === offset) {
+        throw new Error("invalid_local_date_time");
+      }
+    }
   }
   return result;
 }

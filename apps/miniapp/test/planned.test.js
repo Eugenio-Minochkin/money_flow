@@ -26,6 +26,15 @@ test("parses due days from comma separated input", () => {
   assert.deepEqual(parseDueDays("4, 18, nope, 40, 0"), [4, 18]);
 });
 
+test("one-off date-only and serialized SQL dates stay on November 1 in every device timezone", () => {
+  for (const due_date of ["2026-11-01", "2026-11-01T00:00:00.000Z"]) {
+    const item = { recurrence: "one_off", due_date };
+    assert.deepEqual(buildPlannedOccurrences(item, new Date(2026, 9, 31)), []);
+    assert.deepEqual(buildPlannedOccurrences(item, new Date(2026, 10, 1)).map(row => row.occurrence_date), ["2026-11-01"]);
+    assert.equal(isDueToday(item, new Date(2026, 10, 1)), true);
+  }
+});
+
 test("defaults planned currency to user base currency", () => {
   assert.equal(defaultPlannedCurrency({}, "IDR"), "IDR");
   assert.equal(defaultPlannedCurrency({ currency: "USD" }, "IDR"), "USD");
@@ -43,7 +52,7 @@ test("finds the next planned item across recurrence types", () => {
 });
 
 test("detects due and paid planned items", () => {
-  const today = new Date("2026-06-02T10:00:00+07:00");
+  const today = new Date(2026, 5, 2, 12);
 
   assert.equal(isDueToday({ recurrence: "monthly", due_day: 2 }, today), true);
   assert.equal(isDueToday({ recurrence: "weekly", weekday: 2 }, today), true);
@@ -316,7 +325,7 @@ test("calculates current month planned summary from active occurrences", () => {
 });
 
 test("dueOrOverduePlannedOccurrences excludes future, paid and inactive occurrences", () => {
-  const now = new Date("2026-06-18T10:00:00+07:00");
+  const now = new Date(2026, 5, 18, 12);
   const items = [
     { id: 1, recurrence: "monthly", due_day: 18, due_days: [18], amount: 100, currency: "THB", description: "today" },
     { id: 2, recurrence: "monthly", due_day: 10, due_days: [10], amount: 200, currency: "THB", description: "overdue", paid_count: 0 },

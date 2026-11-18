@@ -1,3 +1,5 @@
+import { localDateTimeToUtc } from "../../../packages/shared/src/time.js";
+
 export const ZERO_DECIMAL_DISPLAY_CURRENCIES = ["THB", "RUB", "IDR", "BYN"];
 export const TWO_DECIMAL_DISPLAY_CURRENCIES = ["USD", "EUR", "GEL"];
 
@@ -101,6 +103,17 @@ export function dateTimeLocal(value, timeZone = "Asia/Bangkok") {
     hourCycle: "h23"
   }).formatToParts(date).filter((part) => part.type !== "literal").map((part) => [part.type, part.value]));
   return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
+}
+
+export function expenseTimeFromInput(value, original, timeZone) {
+  if (original && value === dateTimeLocal(original, timeZone)) return original;
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(value)) return null;
+  const [year, month, day, hour, minute] = value.split(/[-T:]/).map(Number);
+  try {
+    return localDateTimeToUtc({ year, month, day, hour, minute }, timeZone, { rejectAmbiguous: true }).toISOString();
+  } catch {
+    return null;
+  }
 }
 
 export function localDateKeyInTimeZone(value = new Date(), timeZone = "Asia/Bangkok") {
